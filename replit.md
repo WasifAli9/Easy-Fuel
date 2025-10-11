@@ -32,8 +32,18 @@ The authentication system is fully implemented but requires Supabase configurati
 - ⚠️ Redirect URLs must be configured
 - ⚠️ Database migration must be applied
 - ⚠️ Foreign key constraints must be added
+- ⚠️ Run seed script to create test accounts
 
 **See `SUPABASE_SETUP.md` for complete setup instructions**
+
+### Test Accounts Available
+Run `tsx server/seed.ts` to create 4 pre-configured test accounts:
+- 👤 `customer@easyfuel.ai` - Customer with company details
+- 🚚 `driver@easyfuel.ai` - Driver (KYC approved, vehicle ready)
+- 🏢 `supplier@easyfuel.ai` - Supplier (KYB approved, CIPC verified)
+- 👑 `admin@easyfuel.ai` - Admin user
+
+**See `TEST_ACCOUNTS.md` for complete details**
 
 ## Architecture
 

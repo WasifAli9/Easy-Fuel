@@ -67,6 +67,15 @@ You must configure Supabase authentication following the instructions in `SUPABA
 3. **Apply Database Migration** via SQL Editor
 4. **Add Foreign Key Constraints** to auth.users
 
+### Test Accounts Available
+✅ **4 pre-seeded test accounts** with @easyfuel.ai emails:
+- `customer@easyfuel.ai` - Customer role (Acme Industries)
+- `driver@easyfuel.ai` - Driver role (KYC approved, vehicle ready)
+- `supplier@easyfuel.ai` - Supplier role (KYB approved, CIPC verified)
+- `admin@easyfuel.ai` - Admin role
+
+Run `tsx server/seed.ts` to create these accounts. See `TEST_ACCOUNTS.md` for details.
+
 ### Current Limitation
 ⚠️ **Email authentication will return a 400 error until Supabase is properly configured**. This is expected and documented in SUPABASE_SETUP.md.
 

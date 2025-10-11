@@ -70,13 +70,26 @@ supabase link --project-ref your-project-ref
 supabase db push
 ```
 
-## Seed Initial Data
+## 3. Seed Initial Data & Test Accounts
 
-After applying the migration, run the seed script:
+After applying the migration, run the seed script to create:
+- Default app settings (service fees, SLA timings)
+- Default fuel types (Diesel, Petrol 95, Petrol 93, Paraffin)
+- **4 Pre-configured test accounts** (customer, driver, supplier, admin)
+
+Run the seed script:
 
 ```bash
-npm run seed
+tsx server/seed.ts
 ```
+
+This will create **4 test accounts** with @easyfuel.ai emails:
+- `customer@easyfuel.ai` - Customer with company details
+- `driver@easyfuel.ai` - Driver with approved KYC & vehicle (ABC 123 GP, 5000L)
+- `supplier@easyfuel.ai` - Supplier with approved KYB & CIPC
+- `admin@easyfuel.ai` - Admin user
+
+See `TEST_ACCOUNTS.md` for complete details and sign-in instructions.
 
 This will populate:
 - Default app settings (service fee, delivery fee, dispatch radius, SLA)
