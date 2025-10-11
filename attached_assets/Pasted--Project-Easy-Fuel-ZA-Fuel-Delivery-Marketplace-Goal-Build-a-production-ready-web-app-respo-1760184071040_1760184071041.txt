@@ -1,0 +1,163 @@
+
+Project: Easy Fuel (ZA) — Fuel Delivery Marketplace
+Goal: Build a production-ready web app (responsive; can be installed as a PWA) that connects Customers who need fuel delivered with vetted Drivers who collect from approved Suppliers. South Africa only. Supports any fuel type (diesel, petrol 95/93, paraffin, etc.).
+Stack: Next.js (App Router, TypeScript) + Supabase (Auth, Postgres, Storage, RLS) + TailwindCSS + Map provider (Mapbox or Google Maps) + PayFast (payments & driver subscriptions).
+Branding: Use the provided logo public/logo-easyfuel.png (I will upload it). Primary color = the logo’s teal (#1fbfb8 / #0e6763 family). Light/dark themes.
+Core Roles
+•	Customer – creates fuel requests, pays, tracks, confirms, rates.
+•	Driver – must pass KYC; accepts jobs, navigates pickup→drop, uploads proof.
+•	Supplier – registers depots, sets price per litre by fuel type, sets availability.
+•	Admin – approves KYC, configures fees & dispatch, monitors performance, refunds.
+Must-Have Features (MVP)
+1.	Auth & Roles
+o	Supabase Auth (email OTP or magic link; phone optional).
+o	Post-signup role selection (Customer / Driver / Supplier).
+o	Role-based navigation guards.
+2.	KYC (Drivers/Suppliers)
+o	Drivers upload: ID, driver’s license, vehicle reg & capacity, insurance, proof of address; company doc if trading as a business.
+o	Suppliers upload: company registration, depot license.
+o	Files stored in Supabase Storage with presigned URLs; status = pending/approved/rejected.
+o	Admin KYC queue: review, approve/reject with notes.
+o	(Placeholder) CIPC verify button on KYC review that sets a mock “verified_with_cipc” flag (we’ll wire a real service later).
+3.	Fuel Catalog & Depots
+o	Admin-editable fuel types (diesel, petrol_95, petrol_93, paraffin…).
+o	Suppliers: create depots (name, lat/lng, hours); set price per litre per fuel type.
+4.	Request → Pay → Dispatch → Deliver
+o	Customer creates request: fuel type, litres, address pin, time window.
+o	Price calc = (litres × depot price) + delivery fee + service fee (admin-config).
+o	Redirect to PayFast checkout; ITN webhook sets order=paid.
+o	Dispatch: find eligible Drivers (KYC approved, capacity, within radius).
+	Premium Drivers (active subscription) get a scoring boost (priority).
+	Offer to top driver with SLA 120s; on reject/timeout, next driver.
+o	Driver workflow: pickup at supplier depot → en-route (background tracking) → delivered.
+o	Proof of Delivery: photo, geotag, customer e-signature.
+o	Customer can rate delivery.
+5.	Driver Premium Subscription
+o	Plans (e.g., “premium-monthly”) via PayFast recurring.
+o	ITN updates subscription status: active / past_due / cancelled.
+o	Dispatch scoring includes premium_boost when active.
+6.	Admin Console
+o	Settings: service fee % + min (ZAR cents), base delivery fee, dispatch radius (km), SLA seconds.
+o	KYC approvals, refund actions, live orders map, performance dashboards (sales, driver acceptance rate, delivery times, supplier fulfilment).
+o	Manage fuel types and toggle active/inactive.
+7.	Branding & UX
+o	Public landing page with the Easy Fuel logo.
+o	App header uses logo, favicon from logo.
+o	Mobile-first, offline-friendly lists, toasts, and error states.
+o	PWA manifest & icons.
+
+Data Model (Supabase SQL – create migrations)
+Enums
+•	role = ('customer','driver','supplier','admin')
+•	kyc_status = ('pending','approved','rejected')
+•	order_state = ('created','awaiting_payment','paid','assigned','picked_up','en_route','delivered','cancelled','refunded')
+•	dispatch_offer_state = ('offered','accepted','rejected','timeout')
+Tables (keys only; include standard timestamps)
+•	profiles(id uuid pk -> auth.users, role, full_name, phone)
+•	app_settings(id smallint pk=1, service_fee_percent numeric, service_fee_min_cents int, base_delivery_fee_cents int, dispatch_radius_km numeric, dispatch_sla_seconds int)
+•	fuel_types(id uuid, code text unique, label text, active bool)
+•	suppliers(id uuid, owner_id uuid->auth.users, name, kyb_status kyc_status, cipc_number text, verified_with_cipc bool)
+•	depots(id uuid, supplier_id uuid->suppliers, name, lat float8, lng float8, open_hours jsonb)
+•	depot_prices(id uuid, depot_id uuid->depots, fuel_type_id uuid->fuel_types, price_cents int, unique(depot_id,fuel_type_id))
+•	drivers(id uuid, user_id uuid->auth.users, kyc_status kyc_status, company_name text, cipc_number text, verified_with_cipc bool, vehicle_registration text, vehicle_capacity_litres int, insurance_doc_url text, premium_status text)
+•	driver_suppliers(driver_id uuid->drivers, supplier_id uuid->suppliers, pk(driver_id,supplier_id))
+•	customers(id uuid, user_id uuid->auth.users, company_name text, vat_number text)
+•	orders(id uuid, customer_id uuid->customers, fuel_type_id uuid->fuel_types, litres numeric, drop_lat float8, drop_lng float8, time_window jsonb, fuel_price_cents int, delivery_fee_cents int, service_fee_cents int, total_cents int, selected_depot_id uuid->depots, state order_state, assigned_driver_id uuid->drivers, paid_at timestamptz, delivered_at timestamptz)
+•	dispatch_offers(id uuid, order_id uuid->orders, driver_id uuid->drivers, state dispatch_offer_state, expires_at timestamptz, unique(order_id,driver_id))
+•	proof_of_delivery(id uuid, order_id uuid->orders, photo_url text, signature_url text, geotag point)
+•	payments(id uuid, order_id uuid->orders, gateway_ref text, amount_cents int, status text, raw jsonb)
+•	driver_subscriptions(id uuid, driver_id uuid->drivers, plan_code text, status text, next_billing_at timestamptz, raw jsonb)
+RLS (enable and add policies)
+•	Customers can read/write their own customers row and their orders.
+•	Drivers can read/update their drivers row, their dispatch_offers, and orders assigned to them.
+•	Suppliers can manage their suppliers/depots/depot_prices.
+•	Admin can access everything (use a server-side key or admin flag).
+•	Files in Storage: restrict to owner or admin; serve via presigned URLs.
+
+API (Next.js route handlers or Express inside /api)
+Payments (PayFast)
+•	POST /api/payments/create → returns PayFast checkout URL (server-signed), including order ref & amount (ZAR cents).
+•	POST /api/payments/itn → verify signature & amounts; set payments.status='paid', orders.state='paid', set paid_at, then enqueue dispatch.
+Orders & Dispatch
+•	POST /api/orders { fuel_type_id, litres, drop_lat, drop_lng, time_window } → computes price using selected depot price + base delivery + service fee (from app_settings), creates orders row in awaiting_payment, returns paymentUrl.
+•	POST /api/dispatch/:orderId/offer-next (server/internal) → rank drivers by distance, capacity, premium boost, and acceptance rate; create an dispatch_offers row for the next candidate with expires_at = now()+SLA.
+•	POST /api/dispatch-offers/:id/respond { accept|reject } → on accept, set orders.assigned_driver_id, cancel other offers; on reject/timeout, call offer-next.
+Driver Workflow
+•	GET /api/driver/jobs → active offers + assigned orders.
+•	POST /api/orders/:id/mark-picked-up
+•	POST /api/orders/:id/mark-en-route
+•	POST /api/orders/:id/proof (receive presigned URLs, then store paths)
+•	POST /api/orders/:id/mark-delivered → set delivered_at, send receipt.
+Subscriptions (Driver Premium)
+•	POST /api/subscriptions/driver/create (PayFast recurring)
+•	POST /api/subscriptions/driver/itn → update driver_subscriptions.status + drivers.premium_status.
+Admin
+•	GET /api/admin/overview (KPIs)
+•	PUT /api/admin/settings (service fee %, min, base delivery fee, radius, SLA)
+•	POST /api/admin/kyc/driver/:id/decision { approve|reject, notes }
+•	POST /api/admin/kyc/supplier/:id/decision { approve|reject, notes }
+•	POST /api/admin/refunds/:orderId (MVP can mark refunded & process manually)
+
+Pages / Screens
+Public/Landing
+•	/ – brand hero using logo, “Order fuel to your site”, login/register CTA.
+Customer
+•	/app/request – choose fuel type, litres, address (map), time window; price breakdown.
+•	/app/checkout – forwards to PayFast; handles return/cancel.
+•	/app/orders – list + detail with live tracking & receipt.
+•	/app/profile
+Driver
+•	/driver/kyc – upload docs, status.
+•	/driver/jobs – inbox (offers with 120s timer), assigned job detail.
+•	/driver/navigation – pickup/route (link to native maps).
+•	/driver/proof – photo + signature capture.
+•	/driver/subscription – buy/cancel/view status.
+•	/driver/profile
+Supplier
+•	/supplier/kyc
+•	/supplier/depots – CRUD + price per fuel type.
+•	/supplier/orders – fulfilled via their depots.
+Admin
+•	/admin/kyc – driver & supplier queues, approve/reject.
+•	/admin/settings – fees, radius, SLA, fuel types.
+•	/admin/overview – live map + KPIs (sales, acceptance rate, delivery times).
+•	/admin/reports – CSV exports.
+
+Dispatch Scoring (implement a helper)
+score = w1 * (-distanceKm) 
+      + w2 * reliabilityScore 
+      + w3 * premiumBoost 
+      - w4 * currentWorkload
+•	premiumBoost = 1 when subscription active, else 0.
+•	Defaults: w1=0.6, w2=0.2, w3=0.3, w4=0.1 (expose in admin later).
+
+Config / Secrets (.env)
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...   # for server-only admin tasks
+
+# PayFast
+PF_MODE=sandbox
+PF_MERCHANT_ID=...
+PF_MERCHANT_KEY=...
+PF_PASSPHRASE=...
+PF_RETURN_URL=https://your-domain/api/payments/return
+PF_CANCEL_URL=https://your-domain/api/payments/cancel
+PF_NOTIFY_URL=https://your-domain/api/payments/itn
+
+# Maps
+NEXT_PUBLIC_MAPBOX_TOKEN=...    # or Google Maps key
+
+Assets
+•	Place the provided logo at: public/logo-easyfuel.png and set favicon from it.
+•	Use the teal from the logo as the primary Tailwind color (e.g., --primary: #16b3ac; and a deeper #0e6763).
+
+Acceptance Criteria (MVP ready)
+•	Driver/Supplier cannot transact until KYC=approved.
+•	Customer can create request → PayFast → ITN sets order to paid → dispatch begins.
+•	Premium Driver gets priority when all else equal.
+•	Proof of delivery stored; receipt accessible to Customer.
+•	Admin can change service fee, dispatch radius, SLA and see changes apply to new orders.
+•	RLS prevents cross-tenant data leakage.
+
