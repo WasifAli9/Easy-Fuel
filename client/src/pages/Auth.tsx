@@ -4,17 +4,19 @@ import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, ArrowRight } from "lucide-react";
+import { Mail, KeyRound } from "lucide-react";
 
 export default function Auth() {
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
-  const { signInWithOtp } = useAuth();
+  const { signInWithOtp, signInWithPassword } = useAuth();
   const { toast } = useToast();
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleMagicLink(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
 
@@ -30,6 +32,28 @@ export default function Auth() {
       toast({
         title: "Authentication Error",
         description: error.message || "Failed to send magic link. Please check Supabase configuration.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handlePasswordSignIn(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+
+    try {
+      await signInWithPassword(email, password);
+      toast({
+        title: "Success!",
+        description: "Signed in successfully",
+      });
+    } catch (error: any) {
+      console.error("Sign in error:", error);
+      toast({
+        title: "Authentication Error",
+        description: error.message || "Invalid email or password",
         variant: "destructive",
       });
     } finally {
@@ -54,53 +78,113 @@ export default function Auth() {
           </div>
         </CardHeader>
         <CardContent>
-          {!otpSent ? (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <label htmlFor="email" className="text-sm font-medium">
-                  Email
-                </label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="your@email.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  data-testid="input-email"
-                />
-              </div>
-              <Button
-                type="submit"
-                className="w-full"
-                disabled={loading}
-                data-testid="button-signin"
-              >
+          <Tabs defaultValue="password" className="w-full">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="password" data-testid="tab-password">
+                <KeyRound className="h-4 w-4 mr-2" />
+                Password
+              </TabsTrigger>
+              <TabsTrigger value="magic-link" data-testid="tab-magic-link">
                 <Mail className="h-4 w-4 mr-2" />
-                {loading ? "Sending..." : "Send Magic Link"}
-              </Button>
-              <p className="text-xs text-center text-muted-foreground">
-                We'll send you a secure link to sign in
-              </p>
-            </form>
-          ) : (
-            <div className="text-center space-y-4">
-              <div className="p-6 bg-primary/10 rounded-lg">
-                <Mail className="h-12 w-12 text-primary mx-auto mb-3" />
-                <p className="text-sm text-muted-foreground">
-                  We've sent a magic link to <strong>{email}</strong>
+                Magic Link
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="password" className="mt-4">
+              <form onSubmit={handlePasswordSignIn} className="space-y-4">
+                <div className="space-y-2">
+                  <label htmlFor="email-pass" className="text-sm font-medium">
+                    Email
+                  </label>
+                  <Input
+                    id="email-pass"
+                    type="email"
+                    placeholder="customer@easyfuel.ai"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    data-testid="input-email-password"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="password" className="text-sm font-medium">
+                    Password
+                  </label>
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder="Enter your password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    data-testid="input-password"
+                  />
+                </div>
+                <Button
+                  type="submit"
+                  className="w-full"
+                  disabled={loading}
+                  data-testid="button-signin-password"
+                >
+                  <KeyRound className="h-4 w-4 mr-2" />
+                  {loading ? "Signing in..." : "Sign In"}
+                </Button>
+                <p className="text-xs text-center text-muted-foreground">
+                  Use this for @easyfuel.ai test accounts
                 </p>
-              </div>
-              <Button
-                variant="outline"
-                onClick={() => setOtpSent(false)}
-                className="w-full"
-                data-testid="button-back"
-              >
-                Use different email
-              </Button>
-            </div>
-          )}
+              </form>
+            </TabsContent>
+
+            <TabsContent value="magic-link" className="mt-4">
+              {!otpSent ? (
+                <form onSubmit={handleMagicLink} className="space-y-4">
+                  <div className="space-y-2">
+                    <label htmlFor="email-magic" className="text-sm font-medium">
+                      Email
+                    </label>
+                    <Input
+                      id="email-magic"
+                      type="email"
+                      placeholder="your@email.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      required
+                      data-testid="input-email-magic"
+                    />
+                  </div>
+                  <Button
+                    type="submit"
+                    className="w-full"
+                    disabled={loading}
+                    data-testid="button-magic-link"
+                  >
+                    <Mail className="h-4 w-4 mr-2" />
+                    {loading ? "Sending..." : "Send Magic Link"}
+                  </Button>
+                  <p className="text-xs text-center text-muted-foreground">
+                    We'll send you a secure link to sign in
+                  </p>
+                </form>
+              ) : (
+                <div className="text-center space-y-4">
+                  <div className="p-6 bg-primary/10 rounded-lg">
+                    <Mail className="h-12 w-12 text-primary mx-auto mb-3" />
+                    <p className="text-sm text-muted-foreground">
+                      We've sent a magic link to <strong>{email}</strong>
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => setOtpSent(false)}
+                    className="w-full"
+                    data-testid="button-back"
+                  >
+                    Use different email
+                  </Button>
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
         </CardContent>
       </Card>
     </div>

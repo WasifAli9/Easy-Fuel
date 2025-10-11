@@ -15,6 +15,7 @@ interface AuthContextType {
   session: Session | null;
   loading: boolean;
   signInWithOtp: (email: string) => Promise<void>;
+  signInWithPassword: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   setUserRole: (role: "customer" | "driver" | "supplier" | "admin", fullName: string, phone?: string) => Promise<void>;
 }
@@ -91,6 +92,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (error) throw error;
   }
 
+  async function signInWithPassword(email: string, password: string) {
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) throw error;
+  }
+
   async function signOut() {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
@@ -138,6 +148,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     session,
     loading,
     signInWithOtp,
+    signInWithPassword,
     signOut,
     setUserRole,
   };
