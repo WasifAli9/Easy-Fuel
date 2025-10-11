@@ -37,7 +37,7 @@ export const dispatchOfferStateEnum = pgEnum("dispatch_offer_state", [
   "timeout"
 ]);
 
-// Profiles table
+// Profiles table - id references Supabase auth.users(id)
 export const profiles = pgTable("profiles", {
   id: uuid("id").primaryKey().notNull(),
   role: roleEnum("role").notNull(),
@@ -68,7 +68,7 @@ export const fuelTypes = pgTable("fuel_types", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-// Suppliers table
+// Suppliers table - owner_id references auth.users(id)
 export const suppliers = pgTable("suppliers", {
   id: uuid("id").primaryKey().defaultRandom(),
   ownerId: uuid("owner_id").notNull(),
@@ -102,7 +102,7 @@ export const depotPrices = pgTable("depot_prices", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-// Drivers table
+// Drivers table - user_id references auth.users(id)
 export const drivers = pgTable("drivers", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull(),
@@ -125,7 +125,7 @@ export const driverSuppliers = pgTable("driver_suppliers", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-// Customers table
+// Customers table - user_id references auth.users(id)
 export const customers = pgTable("customers", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull(),

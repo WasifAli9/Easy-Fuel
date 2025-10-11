@@ -1,19 +1,24 @@
-import { db } from "./db";
-import { appSettings, fuelTypes } from "@shared/schema";
+import { supabaseAdmin } from "./supabase";
 
 async function seed() {
   try {
     console.log("Seeding database...");
 
     // Insert default app settings
-    await db.insert(appSettings).values({
-      id: 1,
-      serviceFeePercent: "5",
-      serviceFeeMinCents: 10000, // R100
-      baseDeliveryFeeCents: 35000, // R350
-      dispatchRadiusKm: "50",
-      dispatchSlaSeconds: 120,
-    }).onConflictDoNothing();
+    const { error: settingsError } = await supabaseAdmin
+      .from("app_settings")
+      .upsert({
+        id: 1,
+        service_fee_percent: "5",
+        service_fee_min_cents: 10000, // R100
+        base_delivery_fee_cents: 35000, // R350
+        dispatch_radius_km: "50",
+        dispatch_sla_seconds: 120,
+      });
+
+    if (settingsError) {
+      console.log("Settings already exist or error:", settingsError.message);
+    }
 
     // Insert default fuel types
     const defaultFuelTypes = [
@@ -24,7 +29,13 @@ async function seed() {
     ];
 
     for (const fuel of defaultFuelTypes) {
-      await db.insert(fuelTypes).values(fuel).onConflictDoNothing();
+      const { error } = await supabaseAdmin
+        .from("fuel_types")
+        .upsert(fuel, { onConflict: "code" });
+      
+      if (error && !error.message.includes("duplicate")) {
+        console.log(`Error inserting ${fuel.code}:`, error.message);
+      }
     }
 
     console.log("Database seeded successfully!");
