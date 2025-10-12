@@ -7,6 +7,7 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import Landing from "@/pages/Landing";
 import Auth from "@/pages/Auth";
+import ResetPassword from "@/pages/ResetPassword";
 import RoleSetup from "@/pages/RoleSetup";
 import CustomerDashboard from "@/pages/CustomerDashboard";
 import DriverDashboard from "@/pages/DriverDashboard";
@@ -70,6 +71,7 @@ function Router() {
         )}
       </Route>
       <Route path="/auth" component={Auth} />
+      <Route path="/reset-password" component={ResetPassword} />
       <Route path="/setup">
         {() => <ProtectedRoute component={RoleSetup} allowWithoutProfile={true} />}
       </Route>

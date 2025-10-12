@@ -16,6 +16,8 @@ interface AuthContextType {
   loading: boolean;
   signInWithOtp: (email: string) => Promise<void>;
   signInWithPassword: (email: string, password: string) => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
+  updatePassword: (newPassword: string) => Promise<void>;
   signOut: () => Promise<void>;
   setUserRole: (role: "customer" | "driver" | "supplier" | "admin", fullName: string, phone?: string) => Promise<void>;
 }
@@ -104,6 +106,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (error) throw error;
   }
 
+  async function resetPassword(email: string) {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+
+    if (error) throw error;
+  }
+
+  async function updatePassword(newPassword: string) {
+    const { error } = await supabase.auth.updateUser({
+      password: newPassword,
+    });
+
+    if (error) throw error;
+  }
+
   async function signOut() {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
@@ -152,6 +170,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loading,
     signInWithOtp,
     signInWithPassword,
+    resetPassword,
+    updatePassword,
     signOut,
     setUserRole,
   };

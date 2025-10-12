@@ -13,7 +13,9 @@ export default function Auth() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
-  const { signInWithOtp, signInWithPassword } = useAuth();
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [resetEmailSent, setResetEmailSent] = useState(false);
+  const { signInWithOtp, signInWithPassword, resetPassword } = useAuth();
   const { toast } = useToast();
 
   async function handleMagicLink(e: React.FormEvent) {
@@ -61,6 +63,29 @@ export default function Auth() {
     }
   }
 
+  async function handleForgotPassword(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+
+    try {
+      await resetPassword(email);
+      setResetEmailSent(true);
+      toast({
+        title: "Check your email",
+        description: "We've sent you a password reset link",
+      });
+    } catch (error: any) {
+      console.error("Password reset error:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to send reset email",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/20 via-background to-background p-4">
       <Card className="w-full max-w-md">
@@ -91,48 +116,127 @@ export default function Auth() {
             </TabsList>
 
             <TabsContent value="password" className="mt-4">
-              <form onSubmit={handlePasswordSignIn} className="space-y-4">
-                <div className="space-y-2">
-                  <label htmlFor="email-pass" className="text-sm font-medium">
-                    Email
-                  </label>
-                  <Input
-                    id="email-pass"
-                    type="email"
-                    placeholder="customer@easyfuel.ai"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    data-testid="input-email-password"
-                  />
+              {!showForgotPassword ? (
+                <form onSubmit={handlePasswordSignIn} className="space-y-4">
+                  <div className="space-y-2">
+                    <label htmlFor="email-pass" className="text-sm font-medium">
+                      Email
+                    </label>
+                    <Input
+                      id="email-pass"
+                      type="email"
+                      placeholder="customer@easyfuel.ai"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      required
+                      data-testid="input-email-password"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label htmlFor="password" className="text-sm font-medium">
+                        Password
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setShowForgotPassword(true)}
+                        className="text-xs text-primary hover:underline"
+                        data-testid="button-forgot-password"
+                      >
+                        Forgot password?
+                      </button>
+                    </div>
+                    <Input
+                      id="password"
+                      type="password"
+                      placeholder="Enter your password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                      data-testid="input-password"
+                    />
+                  </div>
+                  <Button
+                    type="submit"
+                    className="w-full"
+                    disabled={loading}
+                    data-testid="button-signin-password"
+                  >
+                    <KeyRound className="h-4 w-4 mr-2" />
+                    {loading ? "Signing in..." : "Sign In"}
+                  </Button>
+                  <p className="text-xs text-center text-muted-foreground">
+                    Use this for @easyfuel.ai test accounts
+                  </p>
+                </form>
+              ) : (
+                <div className="space-y-4">
+                  {!resetEmailSent ? (
+                    <>
+                      <div className="text-center space-y-2">
+                        <h3 className="text-lg font-semibold">Reset Password</h3>
+                        <p className="text-sm text-muted-foreground">
+                          Enter your email and we'll send you a reset link
+                        </p>
+                      </div>
+                      <form onSubmit={handleForgotPassword} className="space-y-4">
+                        <div className="space-y-2">
+                          <label htmlFor="email-reset" className="text-sm font-medium">
+                            Email
+                          </label>
+                          <Input
+                            id="email-reset"
+                            type="email"
+                            placeholder="your@email.com"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            required
+                            data-testid="input-email-reset"
+                          />
+                        </div>
+                        <Button
+                          type="submit"
+                          className="w-full"
+                          disabled={loading}
+                          data-testid="button-send-reset"
+                        >
+                          <Mail className="h-4 w-4 mr-2" />
+                          {loading ? "Sending..." : "Send Reset Link"}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setShowForgotPassword(false)}
+                          className="w-full"
+                          data-testid="button-back-to-signin"
+                        >
+                          Back to Sign In
+                        </Button>
+                      </form>
+                    </>
+                  ) : (
+                    <div className="text-center space-y-4">
+                      <div className="p-6 bg-primary/10 rounded-lg">
+                        <Mail className="h-12 w-12 text-primary mx-auto mb-3" />
+                        <p className="text-sm text-muted-foreground">
+                          Password reset link sent to <strong>{email}</strong>
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setShowForgotPassword(false);
+                          setResetEmailSent(false);
+                        }}
+                        className="w-full"
+                        data-testid="button-back-signin"
+                      >
+                        Back to Sign In
+                      </Button>
+                    </div>
+                  )}
                 </div>
-                <div className="space-y-2">
-                  <label htmlFor="password" className="text-sm font-medium">
-                    Password
-                  </label>
-                  <Input
-                    id="password"
-                    type="password"
-                    placeholder="Enter your password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    data-testid="input-password"
-                  />
-                </div>
-                <Button
-                  type="submit"
-                  className="w-full"
-                  disabled={loading}
-                  data-testid="button-signin-password"
-                >
-                  <KeyRound className="h-4 w-4 mr-2" />
-                  {loading ? "Signing in..." : "Sign In"}
-                </Button>
-                <p className="text-xs text-center text-muted-foreground">
-                  Use this for @easyfuel.ai test accounts
-                </p>
-              </form>
+              )}
             </TabsContent>
 
             <TabsContent value="magic-link" className="mt-4">
