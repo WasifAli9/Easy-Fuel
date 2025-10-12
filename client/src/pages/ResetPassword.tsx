@@ -7,26 +7,48 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { KeyRound } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
 export default function ResetPassword() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const { updatePassword, user } = useAuth();
+  const [isReady, setIsReady] = useState(false);
+  const { updatePassword } = useAuth();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
 
   useEffect(() => {
-    // If user is not authenticated, redirect to auth page
-    if (!user) {
-      toast({
-        title: "Session expired",
-        description: "Please request a new password reset link",
-        variant: "destructive",
-      });
-      setLocation("/auth");
-    }
-  }, [user, setLocation, toast]);
+    // Check for password recovery session from URL hash
+    const checkSession = async () => {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      
+      if (error) {
+        console.error("Session error:", error);
+        toast({
+          title: "Invalid reset link",
+          description: "This password reset link is invalid or has expired",
+          variant: "destructive",
+        });
+        setTimeout(() => setLocation("/auth"), 2000);
+        return;
+      }
+
+      if (!session) {
+        toast({
+          title: "Session expired",
+          description: "Please request a new password reset link",
+          variant: "destructive",
+        });
+        setTimeout(() => setLocation("/auth"), 2000);
+        return;
+      }
+
+      setIsReady(true);
+    };
+
+    checkSession();
+  }, [toast, setLocation]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -73,8 +95,15 @@ export default function ResetPassword() {
     }
   }
 
-  if (!user) {
-    return null;
+  if (!isReady) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-4 text-muted-foreground">Verifying reset link...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
