@@ -1,45 +1,185 @@
 import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AppHeader } from "@/components/AppHeader";
 import { KYCDocumentCard } from "@/components/KYCDocumentCard";
 import { StatsCard } from "@/components/StatsCard";
 import { DollarSign, Users, Truck, TrendingUp } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+
+interface PendingKYC {
+  drivers: Array<{
+    id: string;
+    user_id: string;
+    kyc_status: string;
+    vehicle_registration?: string;
+    profiles: {
+      full_name: string;
+    };
+    created_at: string;
+  }>;
+  suppliers: Array<{
+    id: string;
+    owner_id: string;
+    name: string;
+    kyb_status: string;
+    created_at: string;
+    profiles: {
+      full_name: string;
+    };
+  }>;
+}
 
 export default function AdminDashboard() {
-  // TODO: remove mock functionality
-  const [driverKYC] = useState([
-    {
-      id: "1",
-      applicantName: "John Doe",
-      applicantType: "driver" as const,
-      documentType: "Driver's License",
-      submittedDate: "2025-01-10 14:30",
-      status: "pending" as const,
-    },
-    {
-      id: "2",
-      applicantName: "Jane Smith",
-      applicantType: "driver" as const,
-      documentType: "Vehicle Registration",
-      submittedDate: "2025-01-12 09:15",
-      status: "pending" as const,
-    },
-  ]);
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
 
-  const [supplierKYC] = useState([
-    {
-      id: "3",
-      applicantName: "ABC Fuel Suppliers",
-      applicantType: "supplier" as const,
-      documentType: "Company Registration",
-      submittedDate: "2025-01-11 11:20",
-      status: "pending" as const,
+  // Fetch pending KYC/KYB applications
+  const { data: pendingKYC, isLoading } = useQuery<PendingKYC>({
+    queryKey: ["/api/admin/kyc/pending"],
+  });
+
+  // Approve driver mutation
+  const approveDriverMutation = useMutation({
+    mutationFn: async (driverId: string) => {
+      return apiRequest("POST", `/api/admin/kyc/driver/${driverId}/approve`);
     },
-  ]);
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/kyc/pending"] });
+      toast({
+        title: "Success",
+        description: "Driver KYC approved successfully",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to approve driver KYC",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Reject driver mutation
+  const rejectDriverMutation = useMutation({
+    mutationFn: async (driverId: string) => {
+      return apiRequest("POST", `/api/admin/kyc/driver/${driverId}/reject`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/kyc/pending"] });
+      toast({
+        title: "Success",
+        description: "Driver KYC rejected",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to reject driver KYC",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Approve supplier mutation
+  const approveSupplierMutation = useMutation({
+    mutationFn: async (supplierId: string) => {
+      return apiRequest("POST", `/api/admin/kyc/supplier/${supplierId}/approve`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/kyc/pending"] });
+      toast({
+        title: "Success",
+        description: "Supplier KYB approved successfully",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to approve supplier KYB",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Reject supplier mutation
+  const rejectSupplierMutation = useMutation({
+    mutationFn: async (supplierId: string) => {
+      return apiRequest("POST", `/api/admin/kyc/supplier/${supplierId}/reject`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/kyc/pending"] });
+      toast({
+        title: "Success",
+        description: "Supplier KYB rejected",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to reject supplier KYB",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const driverKYC = pendingKYC?.drivers?.map(driver => ({
+    id: driver.id,
+    applicantName: driver.profiles.full_name,
+    applicantType: "driver" as const,
+    documentType: driver.vehicle_registration || "Driver Application",
+    submittedDate: new Date(driver.created_at).toLocaleString(),
+    status: "pending" as const,
+  })) || [];
+
+  const supplierKYC = pendingKYC?.suppliers?.map(supplier => ({
+    id: supplier.id,
+    applicantName: supplier.name,
+    applicantType: "supplier" as const,
+    documentType: "Company Registration",
+    submittedDate: new Date(supplier.created_at).toLocaleString(),
+    status: "pending" as const,
+  })) || [];
+
+  const handleDriverApprove = (id: string) => {
+    approveDriverMutation.mutate(id);
+  };
+
+  const handleDriverReject = (id: string) => {
+    rejectDriverMutation.mutate(id);
+  };
+
+  const handleSupplierApprove = (id: string) => {
+    approveSupplierMutation.mutate(id);
+  };
+
+  const handleSupplierReject = (id: string) => {
+    rejectSupplierMutation.mutate(id);
+  };
+
+  const handleView = (id: string, type: string) => {
+    toast({
+      title: "View Document",
+      description: `Opening ${type} document for ID: ${id}`,
+    });
+    // TODO: Implement document viewer modal
+  };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-4 text-muted-foreground">Loading admin dashboard...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
-      <AppHeader notificationCount={5} />
+      <AppHeader notificationCount={driverKYC.length + supplierKYC.length} />
       
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
@@ -50,21 +190,19 @@ export default function AdminDashboard() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           <StatsCard
             title="Total Revenue"
-            value="R 125,430"
+            value="R 0"
             description="Last 30 days"
             icon={DollarSign}
-            trend={{ value: 12.5, isPositive: true }}
           />
           <StatsCard
             title="Active Drivers"
-            value="48"
+            value="0"
             description="Currently online"
             icon={Truck}
-            trend={{ value: 8.2, isPositive: true }}
           />
           <StatsCard
             title="Total Orders"
-            value="342"
+            value="0"
             description="This month"
             icon={TrendingUp}
           />
@@ -88,31 +226,43 @@ export default function AdminDashboard() {
           </TabsList>
 
           <TabsContent value="driver-kyc" className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {driverKYC.map((doc) => (
-                <KYCDocumentCard
-                  key={doc.id}
-                  {...doc}
-                  onApprove={() => console.log("Approve", doc.id)}
-                  onReject={() => console.log("Reject", doc.id)}
-                  onView={() => console.log("View", doc.id)}
-                />
-              ))}
-            </div>
+            {driverKYC.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <p>No pending driver KYC applications</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {driverKYC.map((doc) => (
+                  <KYCDocumentCard
+                    key={doc.id}
+                    {...doc}
+                    onApprove={() => handleDriverApprove(doc.id)}
+                    onReject={() => handleDriverReject(doc.id)}
+                    onView={() => handleView(doc.id, "driver")}
+                  />
+                ))}
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="supplier-kyc" className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {supplierKYC.map((doc) => (
-                <KYCDocumentCard
-                  key={doc.id}
-                  {...doc}
-                  onApprove={() => console.log("Approve", doc.id)}
-                  onReject={() => console.log("Reject", doc.id)}
-                  onView={() => console.log("View", doc.id)}
-                />
-              ))}
-            </div>
+            {supplierKYC.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <p>No pending supplier KYB applications</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {supplierKYC.map((doc) => (
+                  <KYCDocumentCard
+                    key={doc.id}
+                    {...doc}
+                    onApprove={() => handleSupplierApprove(doc.id)}
+                    onReject={() => handleSupplierReject(doc.id)}
+                    onView={() => handleView(doc.id, "supplier")}
+                  />
+                ))}
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="settings" className="space-y-4">
