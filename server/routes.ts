@@ -2,6 +2,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import adminRoutes from "./admin-routes";
+import customerRoutes from "./customer-routes";
 import { supabaseAdmin } from "./supabase";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { ObjectPermission } from "./objectAcl";
@@ -160,6 +161,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Internal server error" });
     }
   });
+
+  // Register customer routes (protected with auth middleware)
+  app.use("/api", requireAuth, customerRoutes);
 
   // Register admin routes (protected with auth and admin middleware)
   app.use("/api/admin", requireAuth, requireAdmin, adminRoutes);
