@@ -630,4 +630,69 @@ router.delete("/api/admin/vehicles/:vehicleId", async (req, res) => {
   }
 });
 
+// Get user documents
+router.get("/api/admin/users/:userId/documents", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    const { data, error } = await supabaseAdmin
+      .from("documents")
+      .select("*")
+      .eq("owner_id", userId)
+      .order("created_at", { ascending: false });
+    
+    if (error) throw error;
+    res.json(data || []);
+  } catch (error: any) {
+    console.error("Error fetching documents:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create document
+router.post("/api/admin/users/:userId/documents", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { owner_type, doc_type, title, file_path, file_size, mime_type } = req.body;
+    
+    const { data, error } = await supabaseAdmin
+      .from("documents")
+      .insert({
+        owner_type,
+        owner_id: userId,
+        doc_type,
+        title,
+        file_path,
+        file_size,
+        mime_type,
+      })
+      .select()
+      .single();
+    
+    if (error) throw error;
+    res.json(data);
+  } catch (error: any) {
+    console.error("Error creating document:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete document
+router.delete("/api/admin/documents/:documentId", async (req, res) => {
+  try {
+    const { documentId } = req.params;
+    
+    const { error } = await supabaseAdmin
+      .from("documents")
+      .delete()
+      .eq("id", documentId);
+    
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error("Error deleting document:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;

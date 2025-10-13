@@ -373,12 +373,9 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
               )}
             </TabsContent>
 
-            {/* Documents Tab - Placeholder */}
+            {/* Documents Tab */}
             <TabsContent value="documents" className="mt-0">
-              <div className="text-center py-8 text-muted-foreground">
-                <FileText className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                <p>Document management coming soon</p>
-              </div>
+              <DocumentsTab userId={userId!} userRole={userDetails.profile.role} />
             </TabsContent>
 
             {/* Activity Tab - Placeholder */}
@@ -789,6 +786,260 @@ function SupplierDetails({ supplier, formData, setFormData, isEditing }: any) {
           <Label>Email</Label>
           <p className="text-sm mt-1">{supplier.primary_contact_email || "N/A"}</p>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Documents Tab Component
+function DocumentsTab({ userId, userRole }: { userId: string; userRole: string }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [selectedDocType, setSelectedDocType] = useState<string>("");
+  const [documentTitle, setDocumentTitle] = useState<string>("");
+
+  // Fetch documents
+  const { data: documents, isLoading } = useQuery<any[]>({
+    queryKey: ["/api/admin/users", userId, "documents"],
+    enabled: !!userId,
+  });
+
+  // Delete mutation
+  const deleteMutation = useMutation({
+    mutationFn: async (documentId: string) => {
+      return apiRequest("DELETE", `/api/admin/documents/${documentId}`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users", userId, "documents"] });
+      toast({
+        title: "Success",
+        description: "Document deleted successfully",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to delete document",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleDocumentUpload = async (result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
+    if (!result.successful || result.successful.length === 0) return;
+    
+    const uploadedFile = result.successful[0];
+    if (!uploadedFile?.uploadURL) return;
+
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch("/api/documents", {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ documentURL: uploadedFile.uploadURL }),
+      });
+
+      if (!response.ok) throw new Error("Failed to set document ACL");
+
+      const { objectPath } = await response.json();
+      
+      // Create document record
+      await apiRequest("POST", `/api/admin/users/${userId}/documents`, {
+        owner_type: userRole,
+        doc_type: selectedDocType,
+        title: documentTitle || uploadedFile.name,
+        file_path: objectPath,
+        file_size: uploadedFile.size,
+        mime_type: uploadedFile.type,
+      });
+      
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users", userId, "documents"] });
+      
+      toast({
+        title: "Success",
+        description: "Document uploaded successfully",
+      });
+
+      // Reset form
+      setSelectedDocType("");
+      setDocumentTitle("");
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to upload document",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const getUploadURL = async () => {
+    const headers = await getAuthHeaders();
+    const response = await fetch("/api/objects/upload", {
+      method: "POST",
+      headers,
+    });
+    const { uploadURL } = await response.json();
+    return { method: "PUT" as const, url: uploadURL };
+  };
+
+  const getDocumentTypeLabel = (docType: string) => {
+    const labels: Record<string, string> = {
+      za_id: "SA ID Document",
+      passport: "Passport",
+      drivers_license: "Driver's License",
+      prdp: "PRDP Certificate",
+      vehicle_registration: "Vehicle Registration",
+      roadworthy_certificate: "Roadworthy Certificate",
+      insurance_certificate: "Insurance Certificate",
+      cipc_certificate: "CIPC Certificate",
+      vat_certificate: "VAT Certificate",
+      tax_clearance: "Tax Clearance",
+      bbbee_certificate: "B-BBEE Certificate",
+      dmre_license: "DMRE License",
+      coid_certificate: "COID Certificate",
+      bank_statement: "Bank Statement",
+      proof_of_address: "Proof of Address",
+      msds: "MSDS",
+      safety_certificate: "Safety Certificate",
+      other: "Other",
+    };
+    return labels[docType] || docType;
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Upload Section */}
+      <div className="border rounded-lg p-4 space-y-3">
+        <h4 className="font-semibold text-sm">Upload New Document</h4>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label>Document Type</Label>
+            <Select value={selectedDocType} onValueChange={setSelectedDocType}>
+              <SelectTrigger data-testid="select-document-type">
+                <SelectValue placeholder="Select type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="za_id">SA ID Document</SelectItem>
+                <SelectItem value="passport">Passport</SelectItem>
+                <SelectItem value="drivers_license">Driver's License</SelectItem>
+                <SelectItem value="prdp">PRDP Certificate</SelectItem>
+                <SelectItem value="vehicle_registration">Vehicle Registration</SelectItem>
+                <SelectItem value="roadworthy_certificate">Roadworthy Certificate</SelectItem>
+                <SelectItem value="insurance_certificate">Insurance Certificate</SelectItem>
+                <SelectItem value="cipc_certificate">CIPC Certificate</SelectItem>
+                <SelectItem value="vat_certificate">VAT Certificate</SelectItem>
+                <SelectItem value="tax_clearance">Tax Clearance</SelectItem>
+                <SelectItem value="bbbee_certificate">B-BBEE Certificate</SelectItem>
+                <SelectItem value="dmre_license">DMRE License</SelectItem>
+                <SelectItem value="coid_certificate">COID Certificate</SelectItem>
+                <SelectItem value="bank_statement">Bank Statement</SelectItem>
+                <SelectItem value="proof_of_address">Proof of Address</SelectItem>
+                <SelectItem value="msds">MSDS</SelectItem>
+                <SelectItem value="safety_certificate">Safety Certificate</SelectItem>
+                <SelectItem value="other">Other</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label>Document Title (Optional)</Label>
+            <Input
+              value={documentTitle}
+              onChange={(e) => setDocumentTitle(e.target.value)}
+              placeholder="Custom title"
+              data-testid="input-document-title"
+            />
+          </div>
+        </div>
+        <ObjectUploader
+          maxNumberOfFiles={1}
+          maxFileSize={10485760}
+          allowedFileTypes={["image/*", "application/pdf"]}
+          onGetUploadParameters={getUploadURL}
+          onComplete={handleDocumentUpload}
+          buttonVariant="default"
+          buttonClassName="w-full"
+        >
+          <Upload className="h-4 w-4 mr-2" />
+          Upload Document
+        </ObjectUploader>
+      </div>
+
+      {/* Documents List */}
+      <div className="space-y-2">
+        <h4 className="font-semibold text-sm">Uploaded Documents</h4>
+        {!documents || documents.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground">
+            <FileText className="h-12 w-12 mx-auto mb-3 opacity-50" />
+            <p>No documents uploaded yet</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {documents.map((doc) => (
+              <div
+                key={doc.id}
+                className="flex items-center justify-between p-3 border rounded-lg hover-elevate"
+                data-testid={`document-${doc.id}`}
+              >
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium text-sm">{doc.title}</p>
+                    <Badge variant="outline" className="text-xs">
+                      {getDocumentTypeLabel(doc.doc_type)}
+                    </Badge>
+                    {doc.verification_status && (
+                      <Badge
+                        variant={
+                          doc.verification_status === "approved"
+                            ? "default"
+                            : doc.verification_status === "pending"
+                            ? "secondary"
+                            : "destructive"
+                        }
+                        className="text-xs capitalize"
+                      >
+                        {doc.verification_status}
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {new Date(doc.created_at).toLocaleDateString()} • {doc.mime_type}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => window.open(doc.file_path, "_blank")}
+                    data-testid={`button-view-${doc.id}`}
+                  >
+                    View
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => deleteMutation.mutate(doc.id)}
+                    disabled={deleteMutation.isPending}
+                    data-testid={`button-delete-${doc.id}`}
+                  >
+                    {deleteMutation.isPending ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      "Delete"
+                    )}
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
