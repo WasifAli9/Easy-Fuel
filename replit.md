@@ -187,6 +187,11 @@ npm run db:push      # Push schema to database
 - **Architecture**: Production-ready with scalability
 
 ## Recent Changes (Latest Session)
+- ✅ **Login Redirection Fix** - Authenticated users now properly redirect to dashboards
+  - **Auth.tsx**: Added useEffect to detect authenticated state and redirect
+  - **Role-based routing**: Customer→/customer, Driver→/driver, Supplier→/supplier, Admin→/admin
+  - **New user flow**: Users without profile redirect to /setup for role selection
+  - **Fix verified**: E2E test confirms customer login redirects correctly
 - ✅ **Customer Order Management API** - Complete CRUD endpoints for fuel orders
   - **GET /api/fuel-types**: Fetch active fuel types for order creation
   - **GET /api/orders**: List customer orders with fuel type details and pricing
@@ -260,9 +265,10 @@ npm run db:push      # Push schema to database
 ## Testing Status
 - ✅ Auth page navigation tested
 - ✅ Email input and form submission tested
+- ✅ Login redirection to dashboards tested (customer verified)
+- ✅ Customer order management tested (create, view, edit, cancel)
 - ⚠️ Magic link flow pending Supabase configuration
 - ⚠️ Role selection flow pending Supabase setup
-- ⚠️ Dashboard access pending implementation
 
 ## Security Considerations
 - Foreign keys ensure data integrity
