@@ -172,31 +172,26 @@ npm run db:push      # Push schema to database
 - **Architecture**: Production-ready with scalability
 
 ## Recent Changes (Latest Session)
+- ✅ **Comprehensive Schema Update** - Expanded database with production-ready fields
+  - **Profiles**: Added approval_status, profile_photo_url, enhanced address fields, last_login_at
+  - **Customers**: Added za_id_number, dob, billing_address, risk_tier, verification_level, SARS tax number
+  - **Drivers**: Added passport info, PRDP details, bank account info, next_of_kin, criminal checks, insurance tracking, onboarding_checklist, availability_status, rating, completed_trips
+  - **Vehicles**: NEW separate table linked to drivers (registration, capacity, fuel types, compliance dates, tracker info)
+  - **Suppliers**: Added BBBEE level, COID, DMRE license, service_regions, depot_addresses, safety certifications, MSDS
+  - **Admins**: NEW table with admin_role, permissions, mfa_enabled
+  - **Documents**: Enhanced table with owner_type, owner_id, verification tracking, expiry dates
+  - All changes successfully pushed to Supabase database
+  - Schema aligns with Easy Fuel production specification document
 - ✅ **Card-Based Admin Dashboard** - Converted customers to card display
   - CustomerCard component matches Driver/Supplier KYC card design
-  - Displays name, company, VAT, phone, registration date
-  - Grid layout (2 columns on desktop) for consistent UI
-- ✅ **Enhanced Summary Stats** - Accurate real-time counts
-  - Total Customers: Count from /api/admin/customers
-  - Total Suppliers: Count from /api/admin/suppliers (new endpoint)
-  - Pending KYC: Combined driver + supplier pending applications
-- ✅ **Search Filters** - Filter on all three tabs
-  - Customers: Search by name or company name
-  - Driver KYC: Search by applicant name
-  - Supplier KYC: Search by applicant name
-  - Real-time filtering with "No matches" state
-- ✅ **User Details Dialog** - View and edit user information
-  - Click "View Details" on any customer/driver/supplier card
-  - Shows profile info (name, phone, role) + role-specific data
-  - Edit mode with form validation
-  - API: GET /api/admin/users/:userId, PATCH /api/admin/users/:userId
-  - Successfully tested: View customer details, enter edit mode, cancel
+  - Enhanced Summary Stats with accurate real-time counts
+  - Search Filters on all three tabs (Customers, Driver KYC, Supplier KYC)
+  - User Details Dialog with view/edit functionality
 - ✅ **Previous Session Changes**
   - Admin User Creation System with rollback logic
   - Admin KYC/KYB Approval Queue
   - Configured ZeptoMail SMTP
   - Row Level Security policies
-  - Comprehensive documentation (AUTH_IMPLEMENTATION.md)
 
 ## Known Issues & Limitations
 1. ⚠️ Email authentication returns 400 until Supabase is configured (expected)
