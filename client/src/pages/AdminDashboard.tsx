@@ -2,9 +2,12 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AppHeader } from "@/components/AppHeader";
 import { KYCDocumentCard } from "@/components/KYCDocumentCard";
+import { CustomerCard } from "@/components/CustomerCard";
 import { StatsCard } from "@/components/StatsCard";
 import { CreateUserDialog } from "@/components/CreateUserDialog";
-import { DollarSign, Users, Truck, TrendingUp } from "lucide-react";
+import { UserDetailsDialog } from "@/components/UserDetailsDialog";
+import { Input } from "@/components/ui/input";
+import { DollarSign, Users, Truck, TrendingUp, Building2, UserCheck, Search } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -49,6 +52,11 @@ interface Customer {
 export default function AdminDashboard() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [userDialogOpen, setUserDialogOpen] = useState(false);
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [driverSearch, setDriverSearch] = useState("");
+  const [supplierSearch, setSupplierSearch] = useState("");
 
   // Fetch pending KYC/KYB applications
   const { data: pendingKYC, isLoading } = useQuery<PendingKYC>({
@@ -146,6 +154,7 @@ export default function AdminDashboard() {
 
   const driverKYC = pendingKYC?.drivers?.map(driver => ({
     id: driver.id,
+    userId: driver.user_id,
     applicantName: driver.profiles.full_name,
     applicantType: "driver" as const,
     documentType: driver.vehicle_registration || "Driver Application",
@@ -155,6 +164,7 @@ export default function AdminDashboard() {
 
   const supplierKYC = pendingKYC?.suppliers?.map(supplier => ({
     id: supplier.id,
+    userId: supplier.owner_id,
     applicantName: supplier.name,
     applicantType: "supplier" as const,
     documentType: "Company Registration",
@@ -178,13 +188,26 @@ export default function AdminDashboard() {
     rejectSupplierMutation.mutate(id);
   };
 
-  const handleView = (id: string, type: string) => {
-    toast({
-      title: "View Document",
-      description: `Opening ${type} document for ID: ${id}`,
-    });
-    // TODO: Implement document viewer modal
+  const handleView = (userId: string, type: string) => {
+    setSelectedUserId(userId);
+    setUserDialogOpen(true);
   };
+
+  // Filter customers based on search
+  const filteredCustomers = customers?.filter((customer) =>
+    customer.profiles?.full_name.toLowerCase().includes(customerSearch.toLowerCase()) ||
+    customer.company_name?.toLowerCase().includes(customerSearch.toLowerCase())
+  ) || [];
+
+  // Filter drivers based on search
+  const filteredDriverKYC = driverKYC.filter((driver) =>
+    driver.applicantName.toLowerCase().includes(driverSearch.toLowerCase())
+  );
+
+  // Filter suppliers based on search
+  const filteredSupplierKYC = supplierKYC.filter((supplier) =>
+    supplier.applicantName.toLowerCase().includes(supplierSearch.toLowerCase())
+  );
 
   if (isLoading || customersLoading) {
     return (
@@ -210,30 +233,24 @@ export default function AdminDashboard() {
           <CreateUserDialog />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
           <StatsCard
-            title="Total Revenue"
-            value="R 0"
-            description="Last 30 days"
-            icon={DollarSign}
+            title="Total Customers"
+            value={customers?.length || 0}
+            description="Registered accounts"
+            icon={Users}
           />
           <StatsCard
-            title="Active Drivers"
-            value="0"
-            description="Currently online"
-            icon={Truck}
-          />
-          <StatsCard
-            title="Total Orders"
-            value="0"
-            description="This month"
-            icon={TrendingUp}
+            title="Total Suppliers"
+            value={pendingKYC?.suppliers?.length || 0}
+            description="Active suppliers"
+            icon={Building2}
           />
           <StatsCard
             title="Pending KYC"
             value={driverKYC.length + supplierKYC.length}
             description="Awaiting review"
-            icon={Users}
+            icon={UserCheck}
           />
         </div>
 
@@ -252,68 +269,70 @@ export default function AdminDashboard() {
           </TabsList>
 
           <TabsContent value="customers" className="space-y-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search customers by name or company..."
+                className="pl-10"
+                value={customerSearch}
+                onChange={(e) => setCustomerSearch(e.target.value)}
+                data-testid="input-search-customers"
+              />
+            </div>
             {!customers || customers.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground">
                 <p>No customers registered yet</p>
               </div>
+            ) : filteredCustomers.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <p>No customers match your search</p>
+              </div>
             ) : (
-              <div className="bg-card rounded-lg border overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead className="bg-muted/50 border-b">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-sm font-medium">Name</th>
-                        <th className="px-4 py-3 text-left text-sm font-medium">Company</th>
-                        <th className="px-4 py-3 text-left text-sm font-medium">VAT Number</th>
-                        <th className="px-4 py-3 text-left text-sm font-medium">Phone</th>
-                        <th className="px-4 py-3 text-left text-sm font-medium">Registered</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {customers.map((customer) => (
-                        <tr 
-                          key={customer.id} 
-                          className="hover-elevate"
-                          data-testid={`customer-row-${customer.id}`}
-                        >
-                          <td className="px-4 py-3 text-sm" data-testid={`customer-name-${customer.id}`}>
-                            {customer.profiles?.full_name || 'N/A'}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-muted-foreground">
-                            {customer.company_name || '-'}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-muted-foreground">
-                            {customer.vat_number || '-'}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-muted-foreground">
-                            {customer.profiles?.phone || '-'}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-muted-foreground">
-                            {new Date(customer.created_at).toLocaleDateString()}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {filteredCustomers.map((customer) => (
+                  <CustomerCard
+                    key={customer.id}
+                    id={customer.id}
+                    name={customer.profiles?.full_name || 'N/A'}
+                    companyName={customer.company_name}
+                    vatNumber={customer.vat_number}
+                    phone={customer.profiles?.phone}
+                    registeredDate={new Date(customer.created_at).toLocaleDateString()}
+                    onView={() => handleView(customer.user_id, "customer")}
+                  />
+                ))}
               </div>
             )}
           </TabsContent>
 
           <TabsContent value="driver-kyc" className="space-y-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search drivers by name..."
+                className="pl-10"
+                value={driverSearch}
+                onChange={(e) => setDriverSearch(e.target.value)}
+                data-testid="input-search-drivers"
+              />
+            </div>
             {driverKYC.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground">
                 <p>No pending driver KYC applications</p>
               </div>
+            ) : filteredDriverKYC.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <p>No drivers match your search</p>
+              </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {driverKYC.map((doc) => (
+                {filteredDriverKYC.map((doc) => (
                   <KYCDocumentCard
                     key={doc.id}
                     {...doc}
                     onApprove={() => handleDriverApprove(doc.id)}
                     onReject={() => handleDriverReject(doc.id)}
-                    onView={() => handleView(doc.id, "driver")}
+                    onView={() => handleView(doc.userId, "driver")}
                   />
                 ))}
               </div>
@@ -321,19 +340,33 @@ export default function AdminDashboard() {
           </TabsContent>
 
           <TabsContent value="supplier-kyc" className="space-y-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search suppliers by name..."
+                className="pl-10"
+                value={supplierSearch}
+                onChange={(e) => setSupplierSearch(e.target.value)}
+                data-testid="input-search-suppliers"
+              />
+            </div>
             {supplierKYC.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground">
                 <p>No pending supplier KYB applications</p>
               </div>
+            ) : filteredSupplierKYC.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <p>No suppliers match your search</p>
+              </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {supplierKYC.map((doc) => (
+                {filteredSupplierKYC.map((doc) => (
                   <KYCDocumentCard
                     key={doc.id}
                     {...doc}
                     onApprove={() => handleSupplierApprove(doc.id)}
                     onReject={() => handleSupplierReject(doc.id)}
-                    onView={() => handleView(doc.id, "supplier")}
+                    onView={() => handleView(doc.userId, "supplier")}
                   />
                 ))}
               </div>
@@ -347,6 +380,12 @@ export default function AdminDashboard() {
           </TabsContent>
         </Tabs>
       </main>
+
+      <UserDetailsDialog
+        userId={selectedUserId}
+        open={userDialogOpen}
+        onOpenChange={setUserDialogOpen}
+      />
     </div>
   );
 }

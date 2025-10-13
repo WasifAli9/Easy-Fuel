@@ -374,4 +374,107 @@ router.post("/api/admin/users/create", async (req, res) => {
   }
 });
 
+// Get user details by ID
+router.get("/api/admin/users/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Fetch profile
+    const { data: profile, error: profileError } = await supabaseAdmin
+      .from("profiles")
+      .select("id, full_name, phone, role")
+      .eq("id", userId)
+      .single();
+
+    if (profileError) throw profileError;
+
+    const result: any = { profile };
+
+    // Fetch role-specific data
+    if (profile.role === "customer") {
+      const { data: customer } = await supabaseAdmin
+        .from("customers")
+        .select("*")
+        .eq("user_id", userId)
+        .single();
+      result.customer = customer;
+    } else if (profile.role === "driver") {
+      const { data: driver } = await supabaseAdmin
+        .from("drivers")
+        .select("*")
+        .eq("user_id", userId)
+        .single();
+      result.driver = driver;
+    } else if (profile.role === "supplier") {
+      const { data: supplier } = await supabaseAdmin
+        .from("suppliers")
+        .select("*")
+        .eq("owner_id", userId)
+        .single();
+      result.supplier = supplier;
+    }
+
+    res.json(result);
+  } catch (error: any) {
+    console.error("Error fetching user details:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update user details
+router.patch("/api/admin/users/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { full_name, phone, role, ...roleData } = req.body;
+
+    // Update profile
+    const { error: profileError } = await supabaseAdmin
+      .from("profiles")
+      .update({
+        full_name,
+        phone: phone || null,
+        role,
+      })
+      .eq("id", userId);
+
+    if (profileError) throw profileError;
+
+    // Update role-specific data
+    if (role === "customer" && (roleData.company_name !== undefined || roleData.vat_number !== undefined)) {
+      const { error } = await supabaseAdmin
+        .from("customers")
+        .update({
+          company_name: roleData.company_name || null,
+          vat_number: roleData.vat_number || null,
+        })
+        .eq("user_id", userId);
+      if (error) throw error;
+    } else if (role === "driver" && (roleData.vehicle_registration !== undefined || roleData.vehicle_capacity_litres !== undefined)) {
+      const { error } = await supabaseAdmin
+        .from("drivers")
+        .update({
+          vehicle_registration: roleData.vehicle_registration || null,
+          vehicle_capacity_litres: roleData.vehicle_capacity_litres ? parseInt(roleData.vehicle_capacity_litres) : null,
+          company_name: roleData.driver_company_name || null,
+        })
+        .eq("user_id", userId);
+      if (error) throw error;
+    } else if (role === "supplier" && (roleData.supplier_name !== undefined || roleData.cipc_number !== undefined)) {
+      const { error } = await supabaseAdmin
+        .from("suppliers")
+        .update({
+          name: roleData.supplier_name,
+          cipc_number: roleData.cipc_number || null,
+        })
+        .eq("owner_id", userId);
+      if (error) throw error;
+    }
+
+    res.json({ success: true, message: "User updated successfully" });
+  } catch (error: any) {
+    console.error("Error updating user:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;
