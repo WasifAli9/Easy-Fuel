@@ -46,14 +46,6 @@ router.get("/orders", async (req, res) => {
           id,
           code,
           label
-        ),
-        drivers (
-          id,
-          user_id,
-          profiles (
-            full_name,
-            phone
-          )
         )
       `)
       .eq("customer_id", customer.id)
@@ -96,14 +88,6 @@ router.get("/orders/:id", async (req, res) => {
           code,
           label
         ),
-        drivers (
-          id,
-          user_id,
-          profiles (
-            full_name,
-            phone
-          )
-        ),
         depots (
           id,
           name
@@ -138,6 +122,22 @@ router.post("/orders", async (req, res) => {
   } = req.body;
 
   try {
+    // Validate inputs
+    if (!fuelTypeId) {
+      return res.status(400).json({ error: "Fuel type is required" });
+    }
+
+    const litresNum = parseFloat(litres);
+    if (isNaN(litresNum) || litresNum <= 0) {
+      return res.status(400).json({ error: "Invalid litres value" });
+    }
+
+    const lat = parseFloat(dropLat);
+    const lng = parseFloat(dropLng);
+    if (isNaN(lat) || isNaN(lng)) {
+      return res.status(400).json({ error: "Invalid coordinates" });
+    }
+
     // Get customer ID from user ID
     const { data: customer, error: customerError } = await supabaseAdmin
       .from("customers")
@@ -182,7 +182,7 @@ router.post("/orders", async (req, res) => {
     }
 
     // Calculate costs
-    const fuelPriceCents = Math.round(parseFloat(litres) * priceCents);
+    const fuelPriceCents = Math.round(litresNum * priceCents);
     const deliveryFeeCents = 50000; // R500 delivery fee
     const serviceFeeCents = Math.round(fuelPriceCents * 0.05); // 5% service fee
     const totalCents = fuelPriceCents + deliveryFeeCents + serviceFeeCents;
@@ -193,10 +193,10 @@ router.post("/orders", async (req, res) => {
       .insert({
         customer_id: customer.id,
         fuel_type_id: fuelTypeId,
-        litres: litres.toString(),
-        drop_lat: dropLat,
-        drop_lng: dropLng,
-        time_window: timeWindow,
+        litres: litresNum.toString(),
+        drop_lat: lat,
+        drop_lng: lng,
+        time_window: timeWindow || null,
         fuel_price_cents: fuelPriceCents,
         delivery_fee_cents: deliveryFeeCents,
         service_fee_cents: serviceFeeCents,
@@ -268,35 +268,74 @@ router.patch("/orders/:id", async (req, res) => {
     // If fuel type or litres changed, recalculate pricing
     if (fuelTypeId || litres) {
       const newFuelTypeId = fuelTypeId || existingOrder.fuel_type_id;
-      const newLitres = litres || existingOrder.litres;
+      const newLitres = parseFloat(litres || existingOrder.litres);
 
-      const { data: fuelType } = await supabaseAdmin
-        .from("fuel_types")
-        .select("*")
-        .eq("id", newFuelTypeId)
-        .single();
-
-      if (fuelType) {
-        const fuelPriceCents = Math.round(parseFloat(newLitres) * fuelType.price_cents);
-        const deliveryFeeCents = 50000;
-        const serviceFeeCents = Math.round(fuelPriceCents * 0.05);
-        const totalCents = fuelPriceCents + deliveryFeeCents + serviceFeeCents;
-
-        updateData = {
-          ...updateData,
-          fuel_type_id: newFuelTypeId,
-          litres: newLitres.toString(),
-          fuel_price_cents: fuelPriceCents,
-          delivery_fee_cents: deliveryFeeCents,
-          service_fee_cents: serviceFeeCents,
-          total_cents: totalCents,
-        };
+      if (isNaN(newLitres) || newLitres <= 0) {
+        return res.status(400).json({ error: "Invalid litres value" });
       }
+
+      // Get fuel type pricing from depot (use existing depot or find new one)
+      let priceCents = 2500; // Default price per litre (R25.00)
+      const depotId = existingOrder.selected_depot_id;
+
+      if (depotId) {
+        const { data: depotPrice } = await supabaseAdmin
+          .from("depot_prices")
+          .select("price_cents")
+          .eq("depot_id", depotId)
+          .eq("fuel_type_id", newFuelTypeId)
+          .single();
+
+        if (depotPrice) {
+          priceCents = depotPrice.price_cents;
+        }
+      } else {
+        // Find a depot with this fuel type
+        const { data: depotPrice } = await supabaseAdmin
+          .from("depot_prices")
+          .select("price_cents")
+          .eq("fuel_type_id", newFuelTypeId)
+          .limit(1)
+          .single();
+
+        if (depotPrice) {
+          priceCents = depotPrice.price_cents;
+        }
+      }
+
+      const fuelPriceCents = Math.round(newLitres * priceCents);
+      const deliveryFeeCents = 50000;
+      const serviceFeeCents = Math.round(fuelPriceCents * 0.05);
+      const totalCents = fuelPriceCents + deliveryFeeCents + serviceFeeCents;
+
+      updateData = {
+        ...updateData,
+        fuel_type_id: newFuelTypeId,
+        litres: newLitres.toString(),
+        fuel_price_cents: fuelPriceCents,
+        delivery_fee_cents: deliveryFeeCents,
+        service_fee_cents: serviceFeeCents,
+        total_cents: totalCents,
+      };
     }
 
-    if (dropLat) updateData.drop_lat = dropLat;
-    if (dropLng) updateData.drop_lng = dropLng;
-    if (timeWindow) updateData.time_window = timeWindow;
+    if (dropLat !== undefined) {
+      const lat = parseFloat(dropLat);
+      if (isNaN(lat)) {
+        return res.status(400).json({ error: "Invalid latitude value" });
+      }
+      updateData.drop_lat = lat;
+    }
+    
+    if (dropLng !== undefined) {
+      const lng = parseFloat(dropLng);
+      if (isNaN(lng)) {
+        return res.status(400).json({ error: "Invalid longitude value" });
+      }
+      updateData.drop_lng = lng;
+    }
+    
+    if (timeWindow !== undefined) updateData.time_window = timeWindow;
 
     // Update order
     const { data: updatedOrder, error: updateError } = await supabaseAdmin
@@ -346,10 +385,11 @@ router.delete("/orders/:id", async (req, res) => {
       return res.status(404).json({ error: "Order not found" });
     }
 
-    // Only allow cancellation for certain states
-    if (["delivered", "cancelled", "refunded"].includes(existingOrder.state)) {
+    // Only allow cancellation for orders that haven't been picked up yet
+    const nonCancellableStates = ["delivered", "cancelled", "refunded", "picked_up", "en_route"];
+    if (nonCancellableStates.includes(existingOrder.state)) {
       return res.status(400).json({ 
-        error: "Order cannot be cancelled in current state" 
+        error: "Order cannot be cancelled - already in progress or completed" 
       });
     }
 

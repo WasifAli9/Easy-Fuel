@@ -1,41 +1,21 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { AppHeader } from "@/components/AppHeader";
 import { OrderCard } from "@/components/OrderCard";
+import { CreateOrderDialog } from "@/components/CreateOrderDialog";
+import { ViewOrderDialog } from "@/components/ViewOrderDialog";
 import { Button } from "@/components/ui/button";
-import { Plus, Filter } from "lucide-react";
+import { Filter, Plus } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function CustomerDashboard() {
-  // TODO: remove mock functionality
-  const [orders] = useState([
-    {
-      id: "1",
-      fuelType: "Diesel",
-      litres: 500,
-      location: "123 Industrial Rd, Johannesburg",
-      date: "2025-01-15 14:30",
-      totalAmount: 11250.00,
-      status: "delivered" as const,
-    },
-    {
-      id: "2",
-      fuelType: "Petrol 95",
-      litres: 200,
-      location: "45 Main St, Cape Town",
-      date: "2025-01-15 10:00",
-      totalAmount: 4850.00,
-      status: "en_route" as const,
-    },
-    {
-      id: "3",
-      fuelType: "Paraffin",
-      litres: 100,
-      location: "78 Farm Rd, Pretoria",
-      date: "2025-01-14 16:00",
-      totalAmount: 1950.00,
-      status: "awaiting_payment" as const,
-    },
-  ]);
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [viewDialogOpen, setViewDialogOpen] = useState(false);
+
+  // Fetch orders from API
+  const { data: orders = [], isLoading } = useQuery<any[]>({
+    queryKey: ["/api/orders"],
+  });
 
   return (
     <div className="min-h-screen bg-background">
@@ -47,10 +27,7 @@ export default function CustomerDashboard() {
             <h1 className="text-3xl font-bold">My Orders</h1>
             <p className="text-muted-foreground">Track and manage your fuel deliveries</p>
           </div>
-          <Button data-testid="button-new-order">
-            <Plus className="h-4 w-4 mr-2" />
-            New Order
-          </Button>
+          <CreateOrderDialog />
         </div>
 
         <Tabs defaultValue="all" className="space-y-6">
@@ -67,42 +44,96 @@ export default function CustomerDashboard() {
           </div>
 
           <TabsContent value="all" className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {orders.map((order) => (
-                <OrderCard
-                  key={order.id}
-                  {...order}
-                  onView={() => console.log("View order", order.id)}
-                />
-              ))}
-            </div>
+            {isLoading ? (
+              <div className="text-center py-8 text-muted-foreground">Loading orders...</div>
+            ) : orders.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">No orders found. Create your first order!</div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {orders.map((order) => (
+                  <OrderCard
+                    key={order.id}
+                    id={order.id}
+                    fuelType={order.fuel_types?.label || "Unknown"}
+                    litres={parseFloat(order.litres)}
+                    location={`${order.drop_lat}, ${order.drop_lng}`}
+                    date={new Date(order.created_at).toLocaleString()}
+                    totalAmount={order.total_cents / 100}
+                    status={order.state}
+                    onView={() => {
+                      setSelectedOrderId(order.id);
+                      setViewDialogOpen(true);
+                    }}
+                  />
+                ))}
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="active" className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {orders.filter(o => !["delivered", "cancelled"].includes(o.status)).map((order) => (
-                <OrderCard
-                  key={order.id}
-                  {...order}
-                  onView={() => console.log("View order", order.id)}
-                />
-              ))}
-            </div>
+            {isLoading ? (
+              <div className="text-center py-8 text-muted-foreground">Loading orders...</div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {orders
+                  .filter(o => !["delivered", "cancelled"].includes(o.state))
+                  .map((order) => (
+                    <OrderCard
+                      key={order.id}
+                      id={order.id}
+                      fuelType={order.fuel_types?.label || "Unknown"}
+                      litres={parseFloat(order.litres)}
+                      location={`${order.drop_lat}, ${order.drop_lng}`}
+                      date={new Date(order.created_at).toLocaleString()}
+                      totalAmount={order.total_cents / 100}
+                      status={order.state}
+                      onView={() => {
+                        setSelectedOrderId(order.id);
+                        setViewDialogOpen(true);
+                      }}
+                    />
+                  ))}
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="completed" className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {orders.filter(o => o.status === "delivered").map((order) => (
-                <OrderCard
-                  key={order.id}
-                  {...order}
-                  onView={() => console.log("View order", order.id)}
-                />
-              ))}
-            </div>
+            {isLoading ? (
+              <div className="text-center py-8 text-muted-foreground">Loading orders...</div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {orders
+                  .filter(o => o.state === "delivered")
+                  .map((order) => (
+                    <OrderCard
+                      key={order.id}
+                      id={order.id}
+                      fuelType={order.fuel_types?.label || "Unknown"}
+                      litres={parseFloat(order.litres)}
+                      location={`${order.drop_lat}, ${order.drop_lng}`}
+                      date={new Date(order.created_at).toLocaleString()}
+                      totalAmount={order.total_cents / 100}
+                      status={order.state}
+                      onView={() => {
+                        setSelectedOrderId(order.id);
+                        setViewDialogOpen(true);
+                      }}
+                    />
+                  ))}
+              </div>
+            )}
           </TabsContent>
         </Tabs>
       </main>
+
+      {/* View/Edit Order Dialog */}
+      {selectedOrderId && (
+        <ViewOrderDialog
+          orderId={selectedOrderId}
+          open={viewDialogOpen}
+          onOpenChange={setViewDialogOpen}
+        />
+      )}
     </div>
   );
 }
