@@ -4,7 +4,7 @@ import { supabaseAdmin } from "./supabase";
 const router = Router();
 
 // Get all users with their profiles and role-specific data
-router.get("/api/admin/users", async (req, res) => {
+router.get("/users", async (req, res) => {
   try {
     // Fetch all profiles with joined data
     const { data: profilesData, error: profilesError } = await supabaseAdmin
@@ -55,7 +55,7 @@ router.get("/api/admin/users", async (req, res) => {
 });
 
 // Get all customers
-router.get("/api/admin/customers", async (req, res) => {
+router.get("/customers", async (req, res) => {
   try {
     const { data: customers, error } = await supabaseAdmin
       .from("customers")
@@ -69,7 +69,7 @@ router.get("/api/admin/customers", async (req, res) => {
       (customers || []).map(async (customer) => {
         const { data: profile } = await supabaseAdmin
           .from("profiles")
-          .select("id, full_name, phone, role")
+          .select("id, full_name, phone, role, profile_photo_url")
           .eq("id", customer.user_id)
           .single();
         
@@ -88,7 +88,7 @@ router.get("/api/admin/customers", async (req, res) => {
 });
 
 // Get all suppliers
-router.get("/api/admin/suppliers", async (req, res) => {
+router.get("/suppliers", async (req, res) => {
   try {
     const { data: suppliers, error } = await supabaseAdmin
       .from("suppliers")
@@ -103,7 +103,7 @@ router.get("/api/admin/suppliers", async (req, res) => {
 });
 
 // Get pending KYC/KYB applications
-router.get("/api/admin/kyc/pending", async (req, res) => {
+router.get("/kyc/pending", async (req, res) => {
   try {
     // Fetch pending drivers
     const { data: pendingDrivers, error: driversError } = await supabaseAdmin
@@ -164,7 +164,7 @@ router.get("/api/admin/kyc/pending", async (req, res) => {
 });
 
 // Approve driver KYC
-router.post("/api/admin/kyc/driver/:id/approve", async (req, res) => {
+router.post("/kyc/driver/:id/approve", async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -183,7 +183,7 @@ router.post("/api/admin/kyc/driver/:id/approve", async (req, res) => {
 });
 
 // Reject driver KYC
-router.post("/api/admin/kyc/driver/:id/reject", async (req, res) => {
+router.post("/kyc/driver/:id/reject", async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -202,7 +202,7 @@ router.post("/api/admin/kyc/driver/:id/reject", async (req, res) => {
 });
 
 // Approve supplier KYB
-router.post("/api/admin/kyc/supplier/:id/approve", async (req, res) => {
+router.post("/kyc/supplier/:id/approve", async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -221,7 +221,7 @@ router.post("/api/admin/kyc/supplier/:id/approve", async (req, res) => {
 });
 
 // Reject supplier KYB
-router.post("/api/admin/kyc/supplier/:id/reject", async (req, res) => {
+router.post("/kyc/supplier/:id/reject", async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -240,7 +240,7 @@ router.post("/api/admin/kyc/supplier/:id/reject", async (req, res) => {
 });
 
 // Reset user password
-router.post("/api/admin/users/:id/reset-password", async (req, res) => {
+router.post("/users/:id/reset-password", async (req, res) => {
   try {
     const { id } = req.params;
     const { password } = req.body;
@@ -263,7 +263,7 @@ router.post("/api/admin/users/:id/reset-password", async (req, res) => {
 });
 
 // Update user profile
-router.patch("/api/admin/users/:id/profile", async (req, res) => {
+router.patch("/users/:id/profile", async (req, res) => {
   try {
     const { id } = req.params;
     const { full_name, phone, role } = req.body;
@@ -291,7 +291,7 @@ router.patch("/api/admin/users/:id/profile", async (req, res) => {
 });
 
 // Create new user
-router.post("/api/admin/users/create", async (req, res) => {
+router.post("/users/create", async (req, res) => {
   let userId: string | null = null;
   
   try {
@@ -390,7 +390,7 @@ router.post("/api/admin/users/create", async (req, res) => {
 });
 
 // Get user details by ID
-router.get("/api/admin/users/:userId", async (req, res) => {
+router.get("/users/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
 
@@ -437,7 +437,7 @@ router.get("/api/admin/users/:userId", async (req, res) => {
 });
 
 // Update user details
-router.patch("/api/admin/users/:userId", async (req, res) => {
+router.patch("/users/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
     const { 
@@ -551,7 +551,7 @@ router.patch("/api/admin/users/:userId", async (req, res) => {
 });
 
 // Get driver vehicles
-router.get("/api/admin/drivers/:driverId/vehicles", async (req, res) => {
+router.get("/drivers/:driverId/vehicles", async (req, res) => {
   try {
     const { driverId } = req.params;
     
@@ -569,7 +569,7 @@ router.get("/api/admin/drivers/:driverId/vehicles", async (req, res) => {
 });
 
 // Add vehicle for driver
-router.post("/api/admin/drivers/:driverId/vehicles", async (req, res) => {
+router.post("/drivers/:driverId/vehicles", async (req, res) => {
   try {
     const { driverId } = req.params;
     const vehicleData = req.body;
@@ -592,7 +592,7 @@ router.post("/api/admin/drivers/:driverId/vehicles", async (req, res) => {
 });
 
 // Update vehicle
-router.patch("/api/admin/vehicles/:vehicleId", async (req, res) => {
+router.patch("/vehicles/:vehicleId", async (req, res) => {
   try {
     const { vehicleId } = req.params;
     const vehicleData = req.body;
@@ -613,7 +613,7 @@ router.patch("/api/admin/vehicles/:vehicleId", async (req, res) => {
 });
 
 // Delete vehicle
-router.delete("/api/admin/vehicles/:vehicleId", async (req, res) => {
+router.delete("/vehicles/:vehicleId", async (req, res) => {
   try {
     const { vehicleId } = req.params;
     
@@ -631,7 +631,7 @@ router.delete("/api/admin/vehicles/:vehicleId", async (req, res) => {
 });
 
 // Get user documents
-router.get("/api/admin/users/:userId/documents", async (req, res) => {
+router.get("/users/:userId/documents", async (req, res) => {
   try {
     const { userId } = req.params;
     
@@ -650,7 +650,7 @@ router.get("/api/admin/users/:userId/documents", async (req, res) => {
 });
 
 // Create document
-router.post("/api/admin/users/:userId/documents", async (req, res) => {
+router.post("/users/:userId/documents", async (req, res) => {
   try {
     const { userId } = req.params;
     const { owner_type, doc_type, title, file_path, file_size, mime_type } = req.body;
@@ -678,7 +678,7 @@ router.post("/api/admin/users/:userId/documents", async (req, res) => {
 });
 
 // Delete document
-router.delete("/api/admin/documents/:documentId", async (req, res) => {
+router.delete("/documents/:documentId", async (req, res) => {
   try {
     const { documentId } = req.params;
     

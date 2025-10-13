@@ -33,6 +33,28 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   next();
 }
 
+// Admin middleware for admin-only routes
+export async function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  const user = (req as any).user;
+  
+  if (!user) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  // Check if user has admin role in the profiles table
+  const { data: profile, error } = await supabaseAdmin
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+
+  if (error || !profile || profile.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden - Admin access required" });
+  }
+
+  next();
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   const objectStorageService = new ObjectStorageService();
 
@@ -139,8 +161,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Register admin routes
-  app.use(adminRoutes);
+  // Register admin routes (protected with auth and admin middleware)
+  app.use("/api/admin", requireAuth, requireAdmin, adminRoutes);
 
   const httpServer = createServer(app);
 
