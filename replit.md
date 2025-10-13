@@ -172,28 +172,31 @@ npm run db:push      # Push schema to database
 - **Architecture**: Production-ready with scalability
 
 ## Recent Changes (Latest Session)
-- ✅ **Admin User Creation System** - Complete with rollback logic and validation
-  - Dynamic form shows role-specific fields (customer/driver/supplier/admin)
-  - Server-side validation with automatic cleanup if creation fails
-  - Supplier company name enforced as required (frontend + backend)
-  - Successfully tested: Creates customer, driver, and supplier accounts
-  - Rollback logic prevents orphaned records in Supabase
-- ✅ **Admin KYC/KYB Approval Queue** - Real-time pending applications
-  - Fetches pending drivers and suppliers with profile data
-  - Approve/reject functionality with status updates
-  - Toast notifications for success/error feedback
-- ✅ **Admin Customers View** - Complete customer management
-  - Customers tab shows all registered customers in table format
-  - Displays name, company, VAT number, phone, registration date
-  - API endpoint: GET /api/admin/customers with profile data
-  - Successfully tested with 5 customer accounts visible
-- ✅ Configured ZeptoMail SMTP (10,000 free emails/month) in Supabase
-- ✅ Fixed password reset redirect flow to /reset-password page
-- ✅ Created admin profile for nadeem.mohammed@deffinity.com
-- ✅ Implemented Row Level Security policies for users and admin access
-- ✅ Fixed ProtectedRoute to allow /setup for users without profiles
-- ✅ Added foreign key documentation in SUPABASE_SETUP.md
-- ✅ Created comprehensive documentation (AUTH_IMPLEMENTATION.md)
+- ✅ **Card-Based Admin Dashboard** - Converted customers to card display
+  - CustomerCard component matches Driver/Supplier KYC card design
+  - Displays name, company, VAT, phone, registration date
+  - Grid layout (2 columns on desktop) for consistent UI
+- ✅ **Enhanced Summary Stats** - Accurate real-time counts
+  - Total Customers: Count from /api/admin/customers
+  - Total Suppliers: Count from /api/admin/suppliers (new endpoint)
+  - Pending KYC: Combined driver + supplier pending applications
+- ✅ **Search Filters** - Filter on all three tabs
+  - Customers: Search by name or company name
+  - Driver KYC: Search by applicant name
+  - Supplier KYC: Search by applicant name
+  - Real-time filtering with "No matches" state
+- ✅ **User Details Dialog** - View and edit user information
+  - Click "View Details" on any customer/driver/supplier card
+  - Shows profile info (name, phone, role) + role-specific data
+  - Edit mode with form validation
+  - API: GET /api/admin/users/:userId, PATCH /api/admin/users/:userId
+  - Successfully tested: View customer details, enter edit mode, cancel
+- ✅ **Previous Session Changes**
+  - Admin User Creation System with rollback logic
+  - Admin KYC/KYB Approval Queue
+  - Configured ZeptoMail SMTP
+  - Row Level Security policies
+  - Comprehensive documentation (AUTH_IMPLEMENTATION.md)
 
 ## Known Issues & Limitations
 1. ⚠️ Email authentication returns 400 until Supabase is configured (expected)
