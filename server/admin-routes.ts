@@ -54,6 +54,39 @@ router.get("/api/admin/users", async (req, res) => {
   }
 });
 
+// Get all customers
+router.get("/api/admin/customers", async (req, res) => {
+  try {
+    const { data: customers, error } = await supabaseAdmin
+      .from("customers")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+
+    // Fetch profiles for customers
+    const customersWithProfiles = await Promise.all(
+      (customers || []).map(async (customer) => {
+        const { data: profile } = await supabaseAdmin
+          .from("profiles")
+          .select("id, full_name, phone, role")
+          .eq("id", customer.user_id)
+          .single();
+        
+        return {
+          ...customer,
+          profiles: profile,
+        };
+      })
+    );
+
+    res.json(customersWithProfiles);
+  } catch (error: any) {
+    console.error("Error fetching customers:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get pending KYC/KYB applications
 router.get("/api/admin/kyc/pending", async (req, res) => {
   try {

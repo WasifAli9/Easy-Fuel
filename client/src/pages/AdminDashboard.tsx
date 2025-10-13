@@ -32,6 +32,20 @@ interface PendingKYC {
   }>;
 }
 
+interface Customer {
+  id: string;
+  user_id: string;
+  company_name?: string;
+  vat_number?: string;
+  created_at: string;
+  profiles: {
+    id: string;
+    full_name: string;
+    phone?: string;
+    role: string;
+  };
+}
+
 export default function AdminDashboard() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -39,6 +53,11 @@ export default function AdminDashboard() {
   // Fetch pending KYC/KYB applications
   const { data: pendingKYC, isLoading } = useQuery<PendingKYC>({
     queryKey: ["/api/admin/kyc/pending"],
+  });
+
+  // Fetch all customers
+  const { data: customers, isLoading: customersLoading } = useQuery<Customer[]>({
+    queryKey: ["/api/admin/customers"],
   });
 
   // Approve driver mutation
@@ -167,7 +186,7 @@ export default function AdminDashboard() {
     // TODO: Implement document viewer modal
   };
 
-  if (isLoading) {
+  if (isLoading || customersLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
@@ -218,8 +237,11 @@ export default function AdminDashboard() {
           />
         </div>
 
-        <Tabs defaultValue="driver-kyc" className="space-y-6">
+        <Tabs defaultValue="customers" className="space-y-6">
           <TabsList>
+            <TabsTrigger value="customers" data-testid="tab-customers">
+              Customers ({customers?.length || 0})
+            </TabsTrigger>
             <TabsTrigger value="driver-kyc" data-testid="tab-driver-kyc">
               Driver KYC ({driverKYC.length})
             </TabsTrigger>
@@ -228,6 +250,55 @@ export default function AdminDashboard() {
             </TabsTrigger>
             <TabsTrigger value="settings" data-testid="tab-settings">Settings</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="customers" className="space-y-4">
+            {!customers || customers.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <p>No customers registered yet</p>
+              </div>
+            ) : (
+              <div className="bg-card rounded-lg border overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-muted/50 border-b">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-sm font-medium">Name</th>
+                        <th className="px-4 py-3 text-left text-sm font-medium">Company</th>
+                        <th className="px-4 py-3 text-left text-sm font-medium">VAT Number</th>
+                        <th className="px-4 py-3 text-left text-sm font-medium">Phone</th>
+                        <th className="px-4 py-3 text-left text-sm font-medium">Registered</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {customers.map((customer) => (
+                        <tr 
+                          key={customer.id} 
+                          className="hover-elevate"
+                          data-testid={`customer-row-${customer.id}`}
+                        >
+                          <td className="px-4 py-3 text-sm" data-testid={`customer-name-${customer.id}`}>
+                            {customer.profiles?.full_name || 'N/A'}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-muted-foreground">
+                            {customer.company_name || '-'}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-muted-foreground">
+                            {customer.vat_number || '-'}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-muted-foreground">
+                            {customer.profiles?.phone || '-'}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-muted-foreground">
+                            {new Date(customer.created_at).toLocaleDateString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </TabsContent>
 
           <TabsContent value="driver-kyc" className="space-y-4">
             {driverKYC.length === 0 ? (

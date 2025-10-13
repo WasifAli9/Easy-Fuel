@@ -182,6 +182,11 @@ npm run db:push      # Push schema to database
   - Fetches pending drivers and suppliers with profile data
   - Approve/reject functionality with status updates
   - Toast notifications for success/error feedback
+- ✅ **Admin Customers View** - Complete customer management
+  - Customers tab shows all registered customers in table format
+  - Displays name, company, VAT number, phone, registration date
+  - API endpoint: GET /api/admin/customers with profile data
+  - Successfully tested with 5 customer accounts visible
 - ✅ Configured ZeptoMail SMTP (10,000 free emails/month) in Supabase
 - ✅ Fixed password reset redirect flow to /reset-password page
 - ✅ Created admin profile for nadeem.mohammed@deffinity.com
