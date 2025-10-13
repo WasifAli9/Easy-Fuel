@@ -18,6 +18,7 @@ import { z } from "zod";
 
 // Enums
 export const roleEnum = pgEnum("role", ["customer", "driver", "supplier", "admin"]);
+export const approvalStatusEnum = pgEnum("approval_status", ["pending", "approved", "rejected", "needs_more_info", "suspended"]);
 export const kycStatusEnum = pgEnum("kyc_status", ["pending", "approved", "rejected"]);
 export const orderStateEnum = pgEnum("order_state", [
   "created",
@@ -36,6 +37,33 @@ export const dispatchOfferStateEnum = pgEnum("dispatch_offer_state", [
   "rejected",
   "timeout"
 ]);
+export const verificationLevelEnum = pgEnum("verification_level", ["none", "basic", "enhanced"]);
+export const riskTierEnum = pgEnum("risk_tier", ["low", "medium", "high"]);
+export const driverAvailabilityEnum = pgEnum("driver_availability", ["offline", "available", "on_delivery", "unavailable"]);
+export const genderEnum = pgEnum("gender", ["male", "female", "other", "prefer_not_to_say"]);
+export const accountTypeEnum = pgEnum("account_type", ["cheque", "savings", "transmission"]);
+export const adminRoleEnum = pgEnum("admin_role", ["super_admin", "compliance_officer", "finance_manager", "support_agent"]);
+export const documentTypeEnum = pgEnum("document_type", [
+  "za_id",
+  "passport",
+  "drivers_license",
+  "prdp",
+  "vehicle_registration",
+  "roadworthy_certificate",
+  "insurance_certificate",
+  "cipc_certificate",
+  "vat_certificate",
+  "tax_clearance",
+  "bbbee_certificate",
+  "dmre_license",
+  "coid_certificate",
+  "bank_statement",
+  "proof_of_address",
+  "msds",
+  "safety_certificate",
+  "other"
+]);
+export const ownerTypeEnum = pgEnum("owner_type", ["customer", "driver", "supplier", "vehicle"]);
 
 // Profiles table - id references Supabase auth.users(id)
 export const profiles = pgTable("profiles", {
@@ -43,6 +71,20 @@ export const profiles = pgTable("profiles", {
   role: roleEnum("role").notNull(),
   fullName: text("full_name").notNull(),
   phone: text("phone"),
+  phoneCountryCode: text("phone_country_code").default("+27"),
+  profilePhotoUrl: text("profile_photo_url"),
+  approvalStatus: approvalStatusEnum("approval_status").notNull().default("pending"),
+  approvalReason: text("approval_reason"),
+  approvedBy: uuid("approved_by"),
+  approvedAt: timestamp("approved_at"),
+  isActive: boolean("is_active").notNull().default(true),
+  notes: text("notes"),
+  addressStreet: text("address_street"),
+  addressCity: text("address_city"),
+  addressProvince: text("address_province"),
+  addressPostalCode: text("address_postal_code"),
+  addressCountry: text("address_country").default("South Africa"),
+  lastLoginAt: timestamp("last_login_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -72,8 +114,30 @@ export const fuelTypes = pgTable("fuel_types", {
 export const suppliers = pgTable("suppliers", {
   id: uuid("id").primaryKey().defaultRandom(),
   ownerId: uuid("owner_id").notNull(),
+  registeredName: text("registered_name").notNull(),
+  tradingAs: text("trading_as"),
   name: text("name").notNull(),
   kybStatus: kycStatusEnum("kyb_status").notNull().default("pending"),
+  registrationNumber: text("registration_number"),
+  vatNumber: text("vat_number"),
+  sarsTaxNumber: text("sars_tax_number"),
+  bbbeeLevel: text("bbbee_level"),
+  coidNumber: text("coid_number"),
+  taxClearancePin: text("tax_clearance_pin"),
+  dmreLicenseNumber: text("dmre_license_number"),
+  dmreLicenseExpiry: timestamp("dmre_license_expiry"),
+  bankAccountName: text("bank_account_name"),
+  bankName: text("bank_name"),
+  accountNumber: text("account_number"),
+  branchCode: text("branch_code"),
+  accountType: accountTypeEnum("account_type"),
+  primaryContactName: text("primary_contact_name"),
+  primaryContactPhone: text("primary_contact_phone"),
+  primaryContactEmail: text("primary_contact_email"),
+  serviceRegions: text("service_regions").array(),
+  depotAddresses: jsonb("depot_addresses").default([]),
+  safetyCertifications: text("safety_certifications").array(),
+  msdsAvailable: boolean("msds_available").default(false),
   cipcNumber: text("cipc_number"),
   verifiedWithCipc: boolean("verified_with_cipc").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -107,6 +171,32 @@ export const drivers = pgTable("drivers", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull(),
   kycStatus: kycStatusEnum("kyc_status").notNull().default("pending"),
+  zaIdNumber: text("za_id_number"),
+  passportNumber: text("passport_number"),
+  passportCountry: text("passport_country"),
+  dob: timestamp("dob"),
+  gender: genderEnum("gender"),
+  driversLicenseNumber: text("drivers_license_number"),
+  driversLicenseExpiry: timestamp("drivers_license_expiry"),
+  prdpNumber: text("prdp_number"),
+  prdpExpiry: timestamp("prdp_expiry"),
+  sarsTaxNumber: text("sars_tax_number"),
+  bankAccountName: text("bank_account_name"),
+  bankName: text("bank_name"),
+  accountNumber: text("account_number"),
+  branchCode: text("branch_code"),
+  accountType: accountTypeEnum("account_type"),
+  nextOfKinName: text("next_of_kin_name"),
+  nextOfKinPhone: text("next_of_kin_phone"),
+  criminalCheckStatus: text("criminal_check_status").default("pending"),
+  insuranceRequired: boolean("insurance_required").default(true),
+  insuranceStatus: text("insurance_status").default("pending"),
+  insurancePolicyNumber: text("insurance_policy_number"),
+  insuranceExpiry: timestamp("insurance_expiry"),
+  onboardingChecklist: jsonb("onboarding_checklist").default({}),
+  availabilityStatus: driverAvailabilityEnum("availability_status").default("offline"),
+  rating: doublePrecision("rating"),
+  completedTrips: integer("completed_trips").default(0),
   companyName: text("company_name"),
   cipcNumber: text("cipc_number"),
   verifiedWithCipc: boolean("verified_with_cipc").notNull().default(false),
@@ -114,6 +204,26 @@ export const drivers = pgTable("drivers", {
   vehicleCapacityLitres: integer("vehicle_capacity_litres"),
   insuranceDocUrl: text("insurance_doc_url"),
   premiumStatus: text("premium_status").default("inactive"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Vehicles table - linked to drivers
+export const vehicles = pgTable("vehicles", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  driverId: uuid("driver_id").notNull().references(() => drivers.id),
+  registrationNumber: text("registration_number").notNull(),
+  make: text("make"),
+  model: text("model"),
+  year: integer("year"),
+  capacityLitres: integer("capacity_litres"),
+  fuelTypes: text("fuel_types").array(),
+  licenseDiskExpiry: timestamp("license_disk_expiry"),
+  roadworthyExpiry: timestamp("roadworthy_expiry"),
+  insuranceExpiry: timestamp("insurance_expiry"),
+  trackerInstalled: boolean("tracker_installed").default(false),
+  trackerProvider: text("tracker_provider"),
+  vehicleRegistrationCertDocId: uuid("vehicle_registration_cert_doc_id"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -129,8 +239,53 @@ export const driverSuppliers = pgTable("driver_suppliers", {
 export const customers = pgTable("customers", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull(),
+  zaIdNumber: text("za_id_number"),
+  dob: timestamp("dob"),
   companyName: text("company_name"),
+  tradingAs: text("trading_as"),
+  registrationNumber: text("registration_number"),
   vatNumber: text("vat_number"),
+  sarsTaxNumber: text("sars_tax_number"),
+  defaultPaymentMethodId: text("default_payment_method_id"),
+  deliveryPreferences: text("delivery_preferences"),
+  billingAddressStreet: text("billing_address_street"),
+  billingAddressCity: text("billing_address_city"),
+  billingAddressProvince: text("billing_address_province"),
+  billingAddressPostalCode: text("billing_address_postal_code"),
+  billingAddressCountry: text("billing_address_country"),
+  riskTier: riskTierEnum("risk_tier").default("low"),
+  verificationLevel: verificationLevelEnum("verification_level").default("none"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Admins table - user_id references auth.users(id)
+export const admins = pgTable("admins", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull(),
+  adminRole: adminRoleEnum("admin_role").notNull().default("support_agent"),
+  permissions: jsonb("permissions").default({}),
+  mfaEnabled: boolean("mfa_enabled").default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Documents table - stores all uploaded files
+export const documents = pgTable("documents", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ownerType: ownerTypeEnum("owner_type").notNull(),
+  ownerId: uuid("owner_id").notNull(),
+  docType: documentTypeEnum("doc_type").notNull(),
+  title: text("title").notNull(),
+  filePath: text("file_path").notNull(),
+  fileSize: integer("file_size"),
+  mimeType: text("mime_type"),
+  uploadedBy: uuid("uploaded_by"),
+  verificationStatus: text("verification_status").default("pending"),
+  verifiedBy: uuid("verified_by"),
+  verifiedAt: timestamp("verified_at"),
+  expiryDate: timestamp("expiry_date"),
+  notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -279,6 +434,24 @@ export const insertDriverSubscriptionSchema = createInsertSchema(driverSubscript
   updatedAt: true 
 });
 
+export const insertVehicleSchema = createInsertSchema(vehicles).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true 
+});
+
+export const insertAdminSchema = createInsertSchema(admins).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true 
+});
+
+export const insertDocumentSchema = createInsertSchema(documents).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true 
+});
+
 // Types
 export type InsertProfile = z.infer<typeof insertProfileSchema>;
 export type Profile = typeof profiles.$inferSelect;
@@ -318,3 +491,12 @@ export type Payment = typeof payments.$inferSelect;
 
 export type InsertDriverSubscription = z.infer<typeof insertDriverSubscriptionSchema>;
 export type DriverSubscription = typeof driverSubscriptions.$inferSelect;
+
+export type InsertVehicle = z.infer<typeof insertVehicleSchema>;
+export type Vehicle = typeof vehicles.$inferSelect;
+
+export type InsertAdmin = z.infer<typeof insertAdminSchema>;
+export type Admin = typeof admins.$inferSelect;
+
+export type InsertDocument = z.infer<typeof insertDocumentSchema>;
+export type Document = typeof documents.$inferSelect;
