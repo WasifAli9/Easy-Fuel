@@ -46,6 +46,7 @@ interface Customer {
     full_name: string;
     phone?: string;
     role: string;
+    profile_photo_url?: string;
   };
 }
 
@@ -303,6 +304,7 @@ export default function AdminDashboard() {
                     vatNumber={customer.vat_number}
                     phone={customer.profiles?.phone}
                     registeredDate={new Date(customer.created_at).toLocaleDateString()}
+                    profilePhotoUrl={customer.profiles?.profile_photo_url}
                     onView={() => handleView(customer.user_id, "customer")}
                   />
                 ))}
