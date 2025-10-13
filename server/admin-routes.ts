@@ -102,6 +102,39 @@ router.get("/suppliers", async (req, res) => {
   }
 });
 
+// Get all drivers
+router.get("/drivers", async (req, res) => {
+  try {
+    const { data: drivers, error } = await supabaseAdmin
+      .from("drivers")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+
+    // Fetch profiles for drivers
+    const driversWithProfiles = await Promise.all(
+      (drivers || []).map(async (driver) => {
+        const { data: profile } = await supabaseAdmin
+          .from("profiles")
+          .select("id, full_name, phone, role, profile_photo_url")
+          .eq("id", driver.user_id)
+          .single();
+        
+        return {
+          ...driver,
+          profiles: profile,
+        };
+      })
+    );
+
+    res.json(driversWithProfiles);
+  } catch (error: any) {
+    console.error("Error fetching drivers:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get pending KYC/KYB applications
 router.get("/kyc/pending", async (req, res) => {
   try {

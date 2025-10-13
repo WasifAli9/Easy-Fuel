@@ -74,6 +74,11 @@ export default function AdminDashboard() {
     queryKey: ["/api/admin/suppliers"],
   });
 
+  // Fetch all drivers for count
+  const { data: allDrivers } = useQuery<any[]>({
+    queryKey: ["/api/admin/drivers"],
+  });
+
   // Approve driver mutation
   const approveDriverMutation = useMutation({
     mutationFn: async (driverId: string) => {
@@ -239,12 +244,18 @@ export default function AdminDashboard() {
           <CreateUserDialog />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           <StatsCard
             title="Total Customers"
             value={customers?.length || 0}
             description="Registered accounts"
             icon={Users}
+          />
+          <StatsCard
+            title="Total Drivers"
+            value={allDrivers?.length || 0}
+            description="Active drivers"
+            icon={Truck}
           />
           <StatsCard
             title="Total Suppliers"
