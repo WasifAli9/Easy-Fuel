@@ -68,6 +68,11 @@ export default function AdminDashboard() {
     queryKey: ["/api/admin/customers"],
   });
 
+  // Fetch all suppliers for count
+  const { data: allSuppliers } = useQuery<any[]>({
+    queryKey: ["/api/admin/suppliers"],
+  });
+
   // Approve driver mutation
   const approveDriverMutation = useMutation({
     mutationFn: async (driverId: string) => {
@@ -242,7 +247,7 @@ export default function AdminDashboard() {
           />
           <StatsCard
             title="Total Suppliers"
-            value={pendingKYC?.suppliers?.length || 0}
+            value={allSuppliers?.length || 0}
             description="Active suppliers"
             icon={Building2}
           />

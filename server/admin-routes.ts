@@ -87,6 +87,21 @@ router.get("/api/admin/customers", async (req, res) => {
   }
 });
 
+// Get all suppliers
+router.get("/api/admin/suppliers", async (req, res) => {
+  try {
+    const { data: suppliers, error } = await supabaseAdmin
+      .from("suppliers")
+      .select("*");
+
+    if (error) throw error;
+    res.json(suppliers);
+  } catch (error: any) {
+    console.error("Error fetching suppliers:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get pending KYC/KYB applications
 router.get("/api/admin/kyc/pending", async (req, res) => {
   try {
