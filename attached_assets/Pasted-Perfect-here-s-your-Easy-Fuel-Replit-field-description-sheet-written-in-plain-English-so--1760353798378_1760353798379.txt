@@ -1,0 +1,211 @@
+Perfect — here’s your **Easy Fuel Replit field description sheet**, written in **plain English** so you can paste it straight into your Replit project “Documentation” or “Schema setup” area.
+
+This describes **what each user type (Customer, Driver, Supplier, and Admin)** needs, **what each field means**, and **why it exists** — all in clear, human-readable language for your devs and collaborators.
+
+---
+
+# 🧱 EASY FUEL — USER DATA STRUCTURE EXPLANATION
+
+Each person or company that signs up will fall under one of these roles:
+**Customer, Driver, Supplier, or Admin.**
+All roles share some basic information, and then each role adds its own details.
+
+---
+
+## 🧍‍♂️ SHARED PROFILE FIELDS (everyone)
+
+These are stored for every account, regardless of role.
+
+| Field                                       | Description                                                                                   |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| **user_id**                                 | Unique ID automatically assigned to every user.                                               |
+| **role**                                    | The type of account (Customer, Driver, Supplier, Admin).                                      |
+| **first_name / last_name / full_name**      | Basic user name information.                                                                  |
+| **email**                                   | Used for login and communication.                                                             |
+| **phone_country_code / phone_number**       | Phone number for verification or contact.                                                     |
+| **profile_photo_url**                       | Picture of the user or company logo.                                                          |
+| **approval_status**                         | Shows if the account is *Pending*, *Approved*, *Rejected*, *Needs more info*, or *Suspended*. |
+| **approval_reason**                         | Explains why an account was approved or rejected.                                             |
+| **approved_by / approved_at**               | Records which admin approved the user and when.                                               |
+| **is_active**                               | Marks whether the user can currently access the platform.                                     |
+| **notes**                                   | Free text field for admin notes or comments.                                                  |
+| **address**                                 | Stores address information (street, city, province, postal code, country).                    |
+| **created_at / updated_at / last_login_at** | Tracks when the profile was created, last updated, and last logged in.                        |
+
+---
+
+## 🛢️ CUSTOMER FIELDS
+
+Used for people or businesses ordering fuel.
+
+| Field                            | Description                                                       |
+| -------------------------------- | ----------------------------------------------------------------- |
+| **customer_id**                  | Unique ID that links the customer to their profile.               |
+| **za_id_number**                 | South African ID number (if individual).                          |
+| **dob**                          | Date of birth (for individuals).                                  |
+| **company_name / trading_as**    | Business name (for business customers).                           |
+| **registration_number**          | CIPC registration number (for businesses).                        |
+| **vat_number / sars_tax_number** | Tax and VAT information.                                          |
+| **default_payment_method_id**    | Preferred payment method (card, EFT, etc.).                       |
+| **delivery_preferences**         | Notes like “deliver only weekdays” or “preferred fuel type.”      |
+| **billing_address**              | Where invoices are sent.                                          |
+| **risk_tier**                    | Rating of customer’s reliability (low, medium, high).             |
+| **verification_level**           | How much verification has been completed (none, basic, enhanced). |
+
+---
+
+## 🚚 DRIVER FIELDS
+
+Used for delivery drivers. Includes KYC details.
+
+| Field                                                                                  | Description                                                            |
+| -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **driver_id**                                                                          | Unique ID linking to profile.                                          |
+| **za_id_number / passport_number / passport_country**                                  | Identity details.                                                      |
+| **dob / gender**                                                                       | Personal information.                                                  |
+| **drivers_license_number / expiry**                                                    | South African driving license and expiry date.                         |
+| **prdp_number / prdp_expiry**                                                          | Professional Driving Permit details (required for transporting fuel).  |
+| **sars_tax_number**                                                                    | Tax number for payouts.                                                |
+| **bank_account_name / bank_name / account_number / branch_code / account_type**        | Bank details for payments.                                             |
+| **next_of_kin_name / next_of_kin_phone**                                               | Emergency contact.                                                     |
+| **criminal_check_status**                                                              | Status of background check (clear, pending, etc.).                     |
+| **insurance_required / insurance_status / insurance_policy_number / insurance_expiry** | Tracks driver insurance information.                                   |
+| **onboarding_checklist**                                                               | A list of all documents submitted (e.g. license, ID, PRDP).            |
+| **availability_status**                                                                | Whether the driver is offline, available, on delivery, or unavailable. |
+| **rating / completed_trips**                                                           | Average customer rating and total deliveries done.                     |
+
+---
+
+## 🚛 VEHICLE FIELDS (linked to driver)
+
+Each driver can have one or more vehicles.
+
+| Field                                                          | Description                                                            |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **vehicle_id**                                                 | Unique vehicle record ID.                                              |
+| **driver_id**                                                  | Links the vehicle to the driver.                                       |
+| **registration_number**                                        | Vehicle’s registration plate number.                                   |
+| **make / model / year**                                        | Vehicle information.                                                   |
+| **capacity_liters**                                            | Fuel carrying capacity.                                                |
+| **fuel_types**                                                 | List of fuel types the vehicle can transport (diesel, petrol93, etc.). |
+| **license_disk_expiry / roadworthy_expiry / insurance_expiry** | Important expiry dates for compliance.                                 |
+| **tracker_installed / tracker_provider**                       | Indicates if a tracking device is fitted.                              |
+| **vehicle_registration_cert_doc_id**                           | Links to uploaded registration document.                               |
+
+---
+
+## ⛽ SUPPLIER FIELDS
+
+Used for fuel suppliers or depot owners.
+
+| Field                                                                           | Description                                        |
+| ------------------------------------------------------------------------------- | -------------------------------------------------- |
+| **supplier_id**                                                                 | Unique ID linked to profile.                       |
+| **registered_name / trading_as**                                                | Company name and trading name.                     |
+| **registration_number**                                                         | CIPC company registration number.                  |
+| **vat_number / sars_tax_number**                                                | Tax and VAT details.                               |
+| **bbbee_level**                                                                 | B-BBEE certification level.                        |
+| **coid_number**                                                                 | Compensation Fund number.                          |
+| **tax_clearance_pin**                                                           | SARS tax clearance pin.                            |
+| **dmre_license_number / expiry**                                                | Department of Mineral Resources & Energy license.  |
+| **bank_account_name / bank_name / account_number / branch_code / account_type** | Payment details.                                   |
+| **primary_contact_name / phone / email**                                        | Main contact person.                               |
+| **service_regions**                                                             | Areas where supplier operates.                     |
+| **depot_addresses**                                                             | List of depot locations.                           |
+| **safety_certifications**                                                       | Safety or compliance certificates held.            |
+| **msds_available**                                                              | Whether Material Safety Data Sheets are available. |
+
+---
+
+## 👨‍💼 ADMIN FIELDS
+
+Used for Easy Fuel staff members.
+
+| Field           | Description                                                         |
+| --------------- | ------------------------------------------------------------------- |
+| **admin_id**    | Unique ID linked to profile.                                        |
+| **admin_role**  | Role type (Super Admin, Compliance Officer, Finance Manager, etc.). |
+| **permissions** | Defines what sections this admin can manage.                        |
+| **mfa_enabled** | Whether two-factor authentication is turned on.                     |
+
+---
+
+## 📂 DOCUMENT UPLOADS (applies to everyone)
+
+Stores uploaded files such as IDs, licenses, certificates, and compliance proofs.
+
+| Field                                            | Description                                                               |
+| ------------------------------------------------ | ------------------------------------------------------------------------- |
+| **document_id**                                  | Unique document record ID.                                                |
+| **owner_type**                                   | Whether the document belongs to a Customer, Driver, Supplier, or Vehicle. |
+| **owner_id**                                     | The specific ID of that person or vehicle.                                |
+| **doc_type**                                     | Type of document (e.g., CIPC Cert, SARS Pin, PRDP Card, etc.).            |
+| **title**                                        | A human-readable name for the document.                                   |
+| **file_path**                                    | Where the file is stored in Supabase.                                     |
+| **mime_type**                                    | File type (PDF, JPG, PNG).                                                |
+| **issued_on / expires_on**                       | Dates for document validity.                                              |
+| **verification_status**                          | Whether the document is Submitted, In Review, Verified, or Rejected.      |
+| **verified_by / verified_at / rejection_reason** | Admin verification information.                                           |
+| **uploaded_by / uploaded_at**                    | Who uploaded the file and when.                                           |
+| **metadata**                                     | Extra info like license number or extracted OCR data.                     |
+
+---
+
+## ✅ APPROVAL TRACKING
+
+Records every approval or rejection event for audit purposes.
+
+| Field                           | Description                                                          |
+| ------------------------------- | -------------------------------------------------------------------- |
+| **approval_id**                 | Unique approval record ID.                                           |
+| **entity_type**                 | What kind of entity was reviewed (Customer, Driver, Supplier, etc.). |
+| **entity_id**                   | The specific record being approved.                                  |
+| **status**                      | Pending / Approved / Rejected / Needs More Info / Suspended.         |
+| **requested_by / requested_at** | Who submitted and when.                                              |
+| **reviewed_by / reviewed_at**   | Which admin handled the review and when.                             |
+| **notes**                       | Optional notes about the review.                                     |
+
+---
+
+## 📸 DOCUMENT TYPES (examples)
+
+Drivers and suppliers will need to upload some or all of the following:
+
+* **CIPC Certificate**
+* **SARS Tax Clearance Pin**
+* **VAT Certificate**
+* **Bank Letter / Proof of Account**
+* **Proof of Address**
+* **South African ID or Passport**
+* **Selfie / Liveness check**
+* **Driver’s License (front & back)**
+* **PRDP Card**
+* **Vehicle Registration Certificate**
+* **License Disk**
+* **Roadworthy Certificate**
+* **Insurance Certificate**
+* **DMRE License**
+* **B-BBEE Certificate**
+* **COID Letter**
+* **MSDS Safety Sheet**
+
+---
+
+## 🗂️ STORAGE BUCKETS (Supabase)
+
+* `profile-photos` — stores all user profile images (public read).
+* `kyc-docs` — stores sensitive KYC and compliance documents (private, admin access only).
+
+---
+
+### ✅ Summary
+
+* **Customers:** order and pay for fuel.
+* **Drivers:** must pass KYC, upload documents, and manage deliveries.
+* **Suppliers:** manage depots, licensing, and supply details.
+* **Admins:** verify, approve, and manage the system.
+* **Documents:** store all KYC, licenses, and certifications securely.
+
+---
+
+Would you like me to now format this into a **JSON-style schema** (easy to paste directly into your Replit Supabase setup file)? That would let you auto-generate tables and forms in one go.
