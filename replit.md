@@ -13,7 +13,7 @@ Easy Fuel ZA is a production-ready fuel delivery marketplace for South Africa th
 - **State Management**: TanStack Query
 - **Routing**: Wouter
 
-## Project Status: Profile & Document Management Complete ✅
+## Project Status: Customer Order Management Complete ✅
 
 ### Completed Features
 1. ✅ Supabase integration with environment variables
@@ -30,6 +30,12 @@ Easy Fuel ZA is a production-ready fuel delivery marketplace for South Africa th
 12. ✅ **Document management with private ACL**
 13. ✅ **Avatar components in cards and dialogs**
 14. ✅ **Admin route security (requireAuth + requireAdmin)**
+15. ✅ **Customer Order Management System**
+    - Complete CRUD API for orders
+    - Depot-based pricing with fallback
+    - Order creation, viewing, editing, cancellation
+    - State-based validation and guards
+    - Real-time order tracking UI
 
 ### Current Phase: Supabase Configuration Required
 The authentication system is fully implemented but requires Supabase configuration:
@@ -111,7 +117,9 @@ All colors use HSL format for theme compatibility:
 ### Backend Core
 - `server/index.ts` - Express server
 - `server/supabase.ts` - Supabase server client
-- `server/routes.ts` - API routes (to be implemented)
+- `server/routes.ts` - Main API route registration
+- `server/admin-routes.ts` - Admin endpoints (protected)
+- `server/customer-routes.ts` - Customer order endpoints (protected)
 - `server/storage.ts` - Storage interface (to be implemented)
 
 ### Schema & Types
@@ -122,6 +130,8 @@ All colors use HSL format for theme compatibility:
 ### UI Components
 - `client/src/components/Logo.tsx` - Easy Fuel logo
 - `client/src/components/AppHeader.tsx` - Header with auth menu
+- `client/src/components/CreateOrderDialog.tsx` - Order creation form
+- `client/src/components/ViewOrderDialog.tsx` - Order viewing/editing dialog
 - `client/src/components/ui/*` - shadcn/ui components
 - Component library for OrderCard, JobCard, DepotCard, etc. (to be built)
 
@@ -177,7 +187,24 @@ npm run db:push      # Push schema to database
 - **Architecture**: Production-ready with scalability
 
 ## Recent Changes (Latest Session)
-- ✅ **Object Storage & File Management** - Complete profile picture and document upload system
+- ✅ **Customer Order Management API** - Complete CRUD endpoints for fuel orders
+  - **GET /api/fuel-types**: Fetch active fuel types for order creation
+  - **GET /api/orders**: List customer orders with fuel type details and pricing
+  - **GET /api/orders/:id**: Get single order with depot information
+  - **POST /api/orders**: Create new order with depot-based pricing, validation, and cost calculation
+  - **PATCH /api/orders/:id**: Update order (only in created/awaiting_payment states) with pricing recalculation
+  - **DELETE /api/orders/:id**: Cancel order (prevented for in-progress/completed orders)
+  - **Security**: All routes protected with requireAuth middleware
+  - **Validation**: Input validation for litres, coordinates, fuel types
+  - **Pricing Model**: Uses depot_prices table with R25/L fallback
+  - **State Guards**: Proper lifecycle validation for updates and cancellations
+- ✅ **Customer Order UI Components**
+  - **CreateOrderDialog**: Form with fuel type selection, litres, coordinates, time window
+  - **ViewOrderDialog**: Display order details, edit mode (state-dependent), cancel functionality
+  - **CustomerDashboard**: Updated to use real API data with tab filtering (all/active/completed)
+  - **Real-time Updates**: TanStack Query integration with cache invalidation
+- ✅ **Previous Sessions**
+  - **Object Storage & File Management** - Complete profile picture and document upload system
   - **Replit Object Storage**: Presigned URL uploads with ACL policies
   - **Profile Pictures**: Public ACL (visible to all) with Avatar display in cards/dialogs
   - **Documents**: Private ACL (owner-only) with type selection and verification tracking
