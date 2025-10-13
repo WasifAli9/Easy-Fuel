@@ -60,14 +60,7 @@ router.get("/api/admin/kyc/pending", async (req, res) => {
     // Fetch pending drivers
     const { data: pendingDrivers, error: driversError } = await supabaseAdmin
       .from("drivers")
-      .select(`
-        *,
-        profiles:user_id (
-          id,
-          full_name,
-          phone
-        )
-      `)
+      .select("*")
       .eq("kyc_status", "pending");
 
     if (driversError) throw driversError;
@@ -75,21 +68,46 @@ router.get("/api/admin/kyc/pending", async (req, res) => {
     // Fetch pending suppliers
     const { data: pendingSuppliers, error: suppliersError } = await supabaseAdmin
       .from("suppliers")
-      .select(`
-        *,
-        profiles:owner_id (
-          id,
-          full_name,
-          phone
-        )
-      `)
+      .select("*")
       .eq("kyb_status", "pending");
 
     if (suppliersError) throw suppliersError;
 
+    // Fetch profiles for drivers
+    const driversWithProfiles = await Promise.all(
+      (pendingDrivers || []).map(async (driver) => {
+        const { data: profile } = await supabaseAdmin
+          .from("profiles")
+          .select("id, full_name, phone")
+          .eq("id", driver.user_id)
+          .single();
+        
+        return {
+          ...driver,
+          profiles: profile,
+        };
+      })
+    );
+
+    // Fetch profiles for suppliers
+    const suppliersWithProfiles = await Promise.all(
+      (pendingSuppliers || []).map(async (supplier) => {
+        const { data: profile } = await supabaseAdmin
+          .from("profiles")
+          .select("id, full_name, phone")
+          .eq("id", supplier.owner_id)
+          .single();
+        
+        return {
+          ...supplier,
+          profiles: profile,
+        };
+      })
+    );
+
     res.json({
-      drivers: pendingDrivers || [],
-      suppliers: pendingSuppliers || [],
+      drivers: driversWithProfiles,
+      suppliers: suppliersWithProfiles,
     });
   } catch (error: any) {
     console.error("Error fetching pending KYC:", error);
@@ -220,6 +238,105 @@ router.patch("/api/admin/users/:id/profile", async (req, res) => {
     res.json({ success: true, message: "Profile updated successfully" });
   } catch (error: any) {
     console.error("Error updating profile:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create new user
+router.post("/api/admin/users/create", async (req, res) => {
+  let userId: string | null = null;
+  
+  try {
+    const { email, password, role, full_name, phone, additionalData } = req.body;
+
+    // Validate required fields
+    if (!email || !password || !role || !full_name) {
+      return res.status(400).json({ error: "Email, password, role, and full name are required" });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters" });
+    }
+
+    if (!["customer", "driver", "supplier", "admin"].includes(role)) {
+      return res.status(400).json({ error: "Invalid role" });
+    }
+
+    // Validate role-specific required fields
+    if (role === "supplier" && !additionalData?.companyName) {
+      return res.status(400).json({ error: "Company name is required for suppliers" });
+    }
+
+    // 1. Create user in Supabase Auth
+    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: {
+        full_name,
+      },
+    });
+
+    if (authError) throw authError;
+    if (!authData.user) throw new Error("Failed to create user");
+
+    userId = authData.user.id;
+
+    // 2. Create profile
+    const { error: profileError } = await supabaseAdmin.from("profiles").insert({
+      id: userId,
+      role,
+      full_name,
+      phone: phone || null,
+    });
+
+    if (profileError) {
+      // Rollback: delete auth user if profile creation fails
+      await supabaseAdmin.auth.admin.deleteUser(userId);
+      throw profileError;
+    }
+
+    // 3. Create role-specific record
+    try {
+      if (role === "customer") {
+        const { error } = await supabaseAdmin.from("customers").insert({
+          user_id: userId,
+          company_name: additionalData?.companyName || null,
+          vat_number: additionalData?.vatNumber || null,
+        });
+        if (error) throw error;
+      } else if (role === "driver") {
+        const { error } = await supabaseAdmin.from("drivers").insert({
+          user_id: userId,
+          kyc_status: "pending",
+          vehicle_registration: additionalData?.vehicleRegistration || null,
+          vehicle_capacity_litres: additionalData?.vehicleCapacityLitres || null,
+          company_name: additionalData?.companyName || null,
+        });
+        if (error) throw error;
+      } else if (role === "supplier") {
+        const { error } = await supabaseAdmin.from("suppliers").insert({
+          owner_id: userId,
+          name: additionalData.companyName, // Required - already validated above
+          kyb_status: "pending",
+          cipc_number: additionalData?.cipcNumber || null,
+        });
+        if (error) throw error;
+      }
+    } catch (roleError: any) {
+      // Rollback: delete profile and auth user if role-specific insert fails
+      await supabaseAdmin.from("profiles").delete().eq("id", userId);
+      await supabaseAdmin.auth.admin.deleteUser(userId);
+      throw new Error(`Failed to create ${role} record: ${roleError.message}`);
+    }
+
+    res.json({
+      success: true,
+      message: `${role.charAt(0).toUpperCase() + role.slice(1)} account created successfully`,
+      userId,
+    });
+  } catch (error: any) {
+    console.error("Error creating user:", error);
     res.status(500).json({ error: error.message });
   }
 });

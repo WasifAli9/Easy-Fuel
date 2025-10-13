@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AppHeader } from "@/components/AppHeader";
 import { KYCDocumentCard } from "@/components/KYCDocumentCard";
 import { StatsCard } from "@/components/StatsCard";
+import { CreateUserDialog } from "@/components/CreateUserDialog";
 import { DollarSign, Users, Truck, TrendingUp } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiRequest } from "@/lib/queryClient";
@@ -182,9 +183,12 @@ export default function AdminDashboard() {
       <AppHeader notificationCount={driverKYC.length + supplierKYC.length} />
       
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">Admin Dashboard</h1>
-          <p className="text-muted-foreground">Monitor platform operations and manage verifications</p>
+        <div className="mb-8 flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold mb-2">Admin Dashboard</h1>
+            <p className="text-muted-foreground">Monitor platform operations and manage verifications</p>
+          </div>
+          <CreateUserDialog />
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
