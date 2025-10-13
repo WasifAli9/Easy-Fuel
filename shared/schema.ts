@@ -64,6 +64,9 @@ export const documentTypeEnum = pgEnum("document_type", [
   "other"
 ]);
 export const ownerTypeEnum = pgEnum("owner_type", ["customer", "driver", "supplier", "vehicle"]);
+export const priorityLevelEnum = pgEnum("priority_level", ["low", "medium", "high", "urgent"]);
+export const paymentMethodTypeEnum = pgEnum("payment_method_type", ["bank_account", "credit_card", "debit_card"]);
+export const addressVerificationStatusEnum = pgEnum("address_verification_status", ["pending", "verified", "rejected"]);
 
 // Profiles table - id references Supabase auth.users(id)
 export const profiles = pgTable("profiles", {
@@ -259,6 +262,52 @@ export const customers = pgTable("customers", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// Delivery Addresses table
+export const deliveryAddresses = pgTable("delivery_addresses", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  customerId: uuid("customer_id").notNull().references(() => customers.id),
+  label: text("label").notNull(), // e.g., "Home", "Office", "Warehouse"
+  addressStreet: text("address_street").notNull(),
+  addressCity: text("address_city").notNull(),
+  addressProvince: text("address_province").notNull(),
+  addressPostalCode: text("address_postal_code").notNull(),
+  addressCountry: text("address_country").notNull().default("South Africa"),
+  lat: doublePrecision("lat").notNull(),
+  lng: doublePrecision("lng").notNull(),
+  accessInstructions: text("access_instructions"),
+  verificationStatus: addressVerificationStatusEnum("verification_status").notNull().default("pending"),
+  isDefault: boolean("is_default").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Payment Methods table
+export const paymentMethods = pgTable("payment_methods", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  customerId: uuid("customer_id").notNull().references(() => customers.id),
+  methodType: paymentMethodTypeEnum("method_type").notNull(),
+  label: text("label").notNull(), // e.g., "Personal Card", "Company Account"
+  
+  // Bank account fields
+  bankName: text("bank_name"),
+  accountHolderName: text("account_holder_name"),
+  accountNumber: text("account_number"),
+  branchCode: text("branch_code"),
+  accountType: accountTypeEnum("account_type"),
+  
+  // Card fields (tokenized)
+  cardLastFour: text("card_last_four"),
+  cardBrand: text("card_brand"), // e.g., "Visa", "Mastercard"
+  cardExpiryMonth: text("card_expiry_month"),
+  cardExpiryYear: text("card_expiry_year"),
+  paymentGatewayToken: text("payment_gateway_token"), // Stripe/PayFast token
+  
+  isDefault: boolean("is_default").notNull().default(false),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 // Admins table - user_id references auth.users(id)
 export const admins = pgTable("admins", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -295,14 +344,35 @@ export const orders = pgTable("orders", {
   id: uuid("id").primaryKey().defaultRandom(),
   customerId: uuid("customer_id").notNull().references(() => customers.id),
   fuelTypeId: uuid("fuel_type_id").notNull().references(() => fuelTypes.id),
+  
+  // Fuel and pricing
   litres: numeric("litres").notNull(),
-  dropLat: doublePrecision("drop_lat").notNull(),
-  dropLng: doublePrecision("drop_lng").notNull(),
-  timeWindow: jsonb("time_window"),
-  fuelPriceCents: integer("fuel_price_cents").notNull(),
+  fuelPriceCents: integer("fuel_price_cents").notNull(), // Cost per litre in cents
   deliveryFeeCents: integer("delivery_fee_cents").notNull(),
   serviceFeeCents: integer("service_fee_cents").notNull(),
   totalCents: integer("total_cents").notNull(),
+  
+  // Delivery details
+  deliveryAddressId: uuid("delivery_address_id").references(() => deliveryAddresses.id),
+  dropLat: doublePrecision("drop_lat").notNull(),
+  dropLng: doublePrecision("drop_lng").notNull(),
+  accessInstructions: text("access_instructions"),
+  fromTime: timestamp("from_time"),
+  toTime: timestamp("to_time"),
+  priorityLevel: priorityLevelEnum("priority_level").notNull().default("medium"),
+  
+  // Vehicle/Equipment information
+  vehicleRegistration: text("vehicle_registration"),
+  equipmentType: text("equipment_type"),
+  tankCapacity: numeric("tank_capacity"),
+  
+  // Payment and Legal
+  paymentMethodId: uuid("payment_method_id").references(() => paymentMethods.id),
+  termsAccepted: boolean("terms_accepted").notNull().default(false),
+  termsAcceptedAt: timestamp("terms_accepted_at"),
+  signatureData: text("signature_data"), // Base64 encoded signature
+  
+  // Order management
   selectedDepotId: uuid("selected_depot_id").references(() => depots.id),
   state: orderStateEnum("state").notNull().default("created"),
   assignedDriverId: uuid("assigned_driver_id").references(() => drivers.id),
@@ -343,6 +413,20 @@ export const payments = pgTable("payments", {
   raw: jsonb("raw"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Order Attachments table - for proof of payment and other documents
+export const orderAttachments = pgTable("order_attachments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orderId: uuid("order_id").notNull().references(() => orders.id),
+  attachmentType: text("attachment_type").notNull(), // e.g., "proof_of_payment", "invoice", "other"
+  fileName: text("file_name").notNull(),
+  filePath: text("file_path").notNull(),
+  fileSize: integer("file_size"),
+  mimeType: text("mime_type"),
+  uploadedBy: uuid("uploaded_by").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 // Driver Subscriptions table
@@ -452,6 +536,23 @@ export const insertDocumentSchema = createInsertSchema(documents).omit({
   updatedAt: true 
 });
 
+export const insertDeliveryAddressSchema = createInsertSchema(deliveryAddresses).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true 
+});
+
+export const insertPaymentMethodSchema = createInsertSchema(paymentMethods).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true 
+});
+
+export const insertOrderAttachmentSchema = createInsertSchema(orderAttachments).omit({ 
+  id: true, 
+  createdAt: true 
+});
+
 // Types
 export type InsertProfile = z.infer<typeof insertProfileSchema>;
 export type Profile = typeof profiles.$inferSelect;
@@ -500,3 +601,12 @@ export type Admin = typeof admins.$inferSelect;
 
 export type InsertDocument = z.infer<typeof insertDocumentSchema>;
 export type Document = typeof documents.$inferSelect;
+
+export type InsertDeliveryAddress = z.infer<typeof insertDeliveryAddressSchema>;
+export type DeliveryAddress = typeof deliveryAddresses.$inferSelect;
+
+export type InsertPaymentMethod = z.infer<typeof insertPaymentMethodSchema>;
+export type PaymentMethod = typeof paymentMethods.$inferSelect;
+
+export type InsertOrderAttachment = z.infer<typeof insertOrderAttachmentSchema>;
+export type OrderAttachment = typeof orderAttachments.$inferSelect;
