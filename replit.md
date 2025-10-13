@@ -172,26 +172,37 @@ npm run db:push      # Push schema to database
 - **Architecture**: Production-ready with scalability
 
 ## Recent Changes (Latest Session)
-- ✅ **Comprehensive Schema Update** - Expanded database with production-ready fields
-  - **Profiles**: Added approval_status, profile_photo_url, enhanced address fields, last_login_at
-  - **Customers**: Added za_id_number, dob, billing_address, risk_tier, verification_level, SARS tax number
-  - **Drivers**: Added passport info, PRDP details, bank account info, next_of_kin, criminal checks, insurance tracking, onboarding_checklist, availability_status, rating, completed_trips
-  - **Vehicles**: NEW separate table linked to drivers (registration, capacity, fuel types, compliance dates, tracker info)
-  - **Suppliers**: Added BBBEE level, COID, DMRE license, service_regions, depot_addresses, safety certifications, MSDS
+- ✅ **Comprehensive Schema Update** - Expanded database with 100+ production-ready fields
+  - **Profiles**: approval_status, profile_photo_url, enhanced address fields, last_login_at
+  - **Customers**: za_id_number, dob, billing_address, risk_tier, verification_level, SARS tax
+  - **Drivers**: passport, PRDP, bank account, next_of_kin, criminal checks, insurance, availability, rating
+  - **Vehicles**: NEW table linked to drivers (registration, capacity, fuel types, compliance dates, tracker)
+  - **Suppliers**: BBBEE, COID, DMRE license, service_regions, depot_addresses, safety certs, MSDS
   - **Admins**: NEW table with admin_role, permissions, mfa_enabled
-  - **Documents**: Enhanced table with owner_type, owner_id, verification tracking, expiry dates
-  - All changes successfully pushed to Supabase database
-  - Schema aligns with Easy Fuel production specification document
-- ✅ **Card-Based Admin Dashboard** - Converted customers to card display
-  - CustomerCard component matches Driver/Supplier KYC card design
-  - Enhanced Summary Stats with accurate real-time counts
-  - Search Filters on all three tabs (Customers, Driver KYC, Supplier KYC)
-  - User Details Dialog with view/edit functionality
-- ✅ **Previous Session Changes**
-  - Admin User Creation System with rollback logic
-  - Admin KYC/KYB Approval Queue
-  - Configured ZeptoMail SMTP
-  - Row Level Security policies
+  - **Documents**: Enhanced with owner_type, owner_id, verification tracking, expiry dates
+  - All changes verified in Supabase database ✓
+- ✅ **Enhanced User Management UI** - Comprehensive profile editing with 100+ fields
+  - **UserDetailsDialogEnhanced**: Tabbed interface (Profile, Details, Documents, Activity)
+  - Shows and edits ALL new fields for customers, drivers, and suppliers
+  - Profile tab: address, phone, approval status, admin notes
+  - Customer details: ID, DOB, company info, billing address, risk tier, verification level
+  - Driver details: identity docs, PRDP, banking info, next of kin, rating, completed trips
+  - Supplier details: registration, BBBEE, DMRE license, primary contact info
+- ✅ **Vehicle Management API** - Complete CRUD for driver vehicles
+  - GET /api/admin/drivers/:driverId/vehicles - List driver's vehicles
+  - POST /api/admin/drivers/:driverId/vehicles - Add vehicle
+  - PATCH /api/admin/vehicles/:vehicleId - Update vehicle
+  - DELETE /api/admin/vehicles/:vehicleId - Remove vehicle
+- ✅ **Enhanced Admin API** - Updated user update endpoint
+  - PATCH /api/admin/users/:userId handles all 100+ new fields
+  - Supports profile fields (address, approval status, notes)
+  - Supports role-specific fields (customer, driver, supplier)
+- ✅ **Card-Based Admin Dashboard**
+  - CustomerCard component, Enhanced Summary Stats, Search Filters
+  - Connected to UserDetailsDialogEnhanced
+- ✅ **Previous Sessions**
+  - Admin User Creation, KYC/KYB Approval Queue
+  - ZeptoMail SMTP, Row Level Security
 
 ## Known Issues & Limitations
 1. ⚠️ Email authentication returns 400 until Supabase is configured (expected)

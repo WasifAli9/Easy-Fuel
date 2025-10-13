@@ -440,54 +440,192 @@ router.get("/api/admin/users/:userId", async (req, res) => {
 router.patch("/api/admin/users/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
-    const { full_name, phone, role, ...roleData } = req.body;
+    const { 
+      full_name, 
+      phone, 
+      phone_country_code,
+      role, 
+      address_street,
+      address_city,
+      address_province,
+      address_postal_code,
+      approval_status,
+      is_active,
+      notes,
+      ...roleData 
+    } = req.body;
 
-    // Update profile
+    // Update profile with all new fields
+    const profileUpdate: any = {};
+    if (full_name !== undefined) profileUpdate.full_name = full_name;
+    if (phone !== undefined) profileUpdate.phone = phone || null;
+    if (phone_country_code !== undefined) profileUpdate.phone_country_code = phone_country_code;
+    if (role !== undefined) profileUpdate.role = role;
+    if (address_street !== undefined) profileUpdate.address_street = address_street;
+    if (address_city !== undefined) profileUpdate.address_city = address_city;
+    if (address_province !== undefined) profileUpdate.address_province = address_province;
+    if (address_postal_code !== undefined) profileUpdate.address_postal_code = address_postal_code;
+    if (approval_status !== undefined) profileUpdate.approval_status = approval_status;
+    if (is_active !== undefined) profileUpdate.is_active = is_active;
+    if (notes !== undefined) profileUpdate.notes = notes;
+
     const { error: profileError } = await supabaseAdmin
       .from("profiles")
-      .update({
-        full_name,
-        phone: phone || null,
-        role,
-      })
+      .update(profileUpdate)
       .eq("id", userId);
 
     if (profileError) throw profileError;
 
-    // Update role-specific data
-    if (role === "customer" && (roleData.company_name !== undefined || roleData.vat_number !== undefined)) {
-      const { error } = await supabaseAdmin
-        .from("customers")
-        .update({
-          company_name: roleData.company_name || null,
-          vat_number: roleData.vat_number || null,
-        })
-        .eq("user_id", userId);
-      if (error) throw error;
-    } else if (role === "driver" && (roleData.vehicle_registration !== undefined || roleData.vehicle_capacity_litres !== undefined)) {
-      const { error } = await supabaseAdmin
-        .from("drivers")
-        .update({
-          vehicle_registration: roleData.vehicle_registration || null,
-          vehicle_capacity_litres: roleData.vehicle_capacity_litres ? parseInt(roleData.vehicle_capacity_litres) : null,
-          company_name: roleData.driver_company_name || null,
-        })
-        .eq("user_id", userId);
-      if (error) throw error;
-    } else if (role === "supplier" && (roleData.supplier_name !== undefined || roleData.cipc_number !== undefined)) {
-      const { error } = await supabaseAdmin
-        .from("suppliers")
-        .update({
-          name: roleData.supplier_name,
-          cipc_number: roleData.cipc_number || null,
-        })
-        .eq("owner_id", userId);
-      if (error) throw error;
+    // Update customer-specific data
+    if (role === "customer") {
+      const customerUpdate: any = {};
+      if (roleData.za_id_number !== undefined) customerUpdate.za_id_number = roleData.za_id_number;
+      if (roleData.dob !== undefined) customerUpdate.dob = roleData.dob;
+      if (roleData.company_name !== undefined) customerUpdate.company_name = roleData.company_name;
+      if (roleData.trading_as !== undefined) customerUpdate.trading_as = roleData.trading_as;
+      if (roleData.vat_number !== undefined) customerUpdate.vat_number = roleData.vat_number;
+      if (roleData.sars_tax_number !== undefined) customerUpdate.sars_tax_number = roleData.sars_tax_number;
+      if (roleData.billing_address_street !== undefined) customerUpdate.billing_address_street = roleData.billing_address_street;
+      if (roleData.billing_address_city !== undefined) customerUpdate.billing_address_city = roleData.billing_address_city;
+      if (roleData.risk_tier !== undefined) customerUpdate.risk_tier = roleData.risk_tier;
+      if (roleData.verification_level !== undefined) customerUpdate.verification_level = roleData.verification_level;
+
+      if (Object.keys(customerUpdate).length > 0) {
+        const { error } = await supabaseAdmin
+          .from("customers")
+          .update(customerUpdate)
+          .eq("user_id", userId);
+        if (error) throw error;
+      }
+    }
+    
+    // Update driver-specific data
+    else if (role === "driver") {
+      const driverUpdate: any = {};
+      if (roleData.za_id_number !== undefined) driverUpdate.za_id_number = roleData.za_id_number;
+      if (roleData.passport_number !== undefined) driverUpdate.passport_number = roleData.passport_number;
+      if (roleData.dob !== undefined) driverUpdate.dob = roleData.dob;
+      if (roleData.drivers_license_number !== undefined) driverUpdate.drivers_license_number = roleData.drivers_license_number;
+      if (roleData.prdp_number !== undefined) driverUpdate.prdp_number = roleData.prdp_number;
+      if (roleData.bank_account_name !== undefined) driverUpdate.bank_account_name = roleData.bank_account_name;
+      if (roleData.bank_name !== undefined) driverUpdate.bank_name = roleData.bank_name;
+      if (roleData.account_number !== undefined) driverUpdate.account_number = roleData.account_number;
+      if (roleData.branch_code !== undefined) driverUpdate.branch_code = roleData.branch_code;
+      if (roleData.next_of_kin_name !== undefined) driverUpdate.next_of_kin_name = roleData.next_of_kin_name;
+      if (roleData.next_of_kin_phone !== undefined) driverUpdate.next_of_kin_phone = roleData.next_of_kin_phone;
+
+      if (Object.keys(driverUpdate).length > 0) {
+        const { error } = await supabaseAdmin
+          .from("drivers")
+          .update(driverUpdate)
+          .eq("user_id", userId);
+        if (error) throw error;
+      }
+    }
+    
+    // Update supplier-specific data
+    else if (role === "supplier") {
+      const supplierUpdate: any = {};
+      if (roleData.registered_name !== undefined) supplierUpdate.registered_name = roleData.registered_name;
+      if (roleData.trading_as !== undefined) supplierUpdate.trading_as = roleData.trading_as;
+      if (roleData.vat_number !== undefined) supplierUpdate.vat_number = roleData.vat_number;
+      if (roleData.bbbee_level !== undefined) supplierUpdate.bbbee_level = roleData.bbbee_level;
+      if (roleData.dmre_license_number !== undefined) supplierUpdate.dmre_license_number = roleData.dmre_license_number;
+      if (roleData.primary_contact_name !== undefined) supplierUpdate.primary_contact_name = roleData.primary_contact_name;
+      if (roleData.primary_contact_phone !== undefined) supplierUpdate.primary_contact_phone = roleData.primary_contact_phone;
+
+      if (Object.keys(supplierUpdate).length > 0) {
+        const { error } = await supabaseAdmin
+          .from("suppliers")
+          .update(supplierUpdate)
+          .eq("owner_id", userId);
+        if (error) throw error;
+      }
     }
 
     res.json({ success: true, message: "User updated successfully" });
   } catch (error: any) {
     console.error("Error updating user:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get driver vehicles
+router.get("/api/admin/drivers/:driverId/vehicles", async (req, res) => {
+  try {
+    const { driverId } = req.params;
+    
+    const { data: vehicles, error } = await supabaseAdmin
+      .from("vehicles")
+      .select("*")
+      .eq("driver_id", driverId);
+    
+    if (error) throw error;
+    res.json(vehicles || []);
+  } catch (error: any) {
+    console.error("Error fetching vehicles:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add vehicle for driver
+router.post("/api/admin/drivers/:driverId/vehicles", async (req, res) => {
+  try {
+    const { driverId } = req.params;
+    const vehicleData = req.body;
+    
+    const { data, error } = await supabaseAdmin
+      .from("vehicles")
+      .insert({
+        driver_id: driverId,
+        ...vehicleData
+      })
+      .select()
+      .single();
+    
+    if (error) throw error;
+    res.json(data);
+  } catch (error: any) {
+    console.error("Error adding vehicle:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update vehicle
+router.patch("/api/admin/vehicles/:vehicleId", async (req, res) => {
+  try {
+    const { vehicleId } = req.params;
+    const vehicleData = req.body;
+    
+    const { data, error } = await supabaseAdmin
+      .from("vehicles")
+      .update(vehicleData)
+      .eq("id", vehicleId)
+      .select()
+      .single();
+    
+    if (error) throw error;
+    res.json(data);
+  } catch (error: any) {
+    console.error("Error updating vehicle:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete vehicle
+router.delete("/api/admin/vehicles/:vehicleId", async (req, res) => {
+  try {
+    const { vehicleId } = req.params;
+    
+    const { error } = await supabaseAdmin
+      .from("vehicles")
+      .delete()
+      .eq("id", vehicleId);
+    
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error("Error deleting vehicle:", error);
     res.status(500).json({ error: error.message });
   }
 });

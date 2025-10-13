@@ -5,7 +5,7 @@ import { KYCDocumentCard } from "@/components/KYCDocumentCard";
 import { CustomerCard } from "@/components/CustomerCard";
 import { StatsCard } from "@/components/StatsCard";
 import { CreateUserDialog } from "@/components/CreateUserDialog";
-import { UserDetailsDialog } from "@/components/UserDetailsDialog";
+import { UserDetailsDialogEnhanced } from "@/components/UserDetailsDialogEnhanced";
 import { Input } from "@/components/ui/input";
 import { DollarSign, Users, Truck, TrendingUp, Building2, UserCheck, Search } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -386,7 +386,7 @@ export default function AdminDashboard() {
         </Tabs>
       </main>
 
-      <UserDetailsDialog
+      <UserDetailsDialogEnhanced
         userId={selectedUserId}
         open={userDialogOpen}
         onOpenChange={setUserDialogOpen}
