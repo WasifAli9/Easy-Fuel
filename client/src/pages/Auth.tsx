@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useLocation } from "wouter";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,8 +16,26 @@ export default function Auth() {
   const [otpSent, setOtpSent] = useState(false);
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [resetEmailSent, setResetEmailSent] = useState(false);
-  const { signInWithOtp, signInWithPassword, resetPassword } = useAuth();
+  const { user, profile, loading: authLoading, signInWithOtp, signInWithPassword, resetPassword } = useAuth();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
+
+  // Redirect authenticated users to their dashboard
+  useEffect(() => {
+    if (!authLoading && user) {
+      if (profile) {
+        // Redirect to role-specific dashboard
+        const dashboardPath = profile.role === 'customer' ? '/customer' :
+                             profile.role === 'driver' ? '/driver' :
+                             profile.role === 'supplier' ? '/supplier' :
+                             profile.role === 'admin' ? '/admin' : '/';
+        setLocation(dashboardPath);
+      } else {
+        // No profile yet, redirect to setup
+        setLocation('/setup');
+      }
+    }
+  }, [user, profile, authLoading, setLocation]);
 
   async function handleMagicLink(e: React.FormEvent) {
     e.preventDefault();
