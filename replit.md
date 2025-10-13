@@ -13,7 +13,7 @@ Easy Fuel ZA is a production-ready fuel delivery marketplace for South Africa th
 - **State Management**: TanStack Query
 - **Routing**: Wouter
 
-## Project Status: Authentication Phase Complete ✅
+## Project Status: Profile & Document Management Complete ✅
 
 ### Completed Features
 1. ✅ Supabase integration with environment variables
@@ -25,6 +25,11 @@ Easy Fuel ZA is a production-ready fuel delivery marketplace for South Africa th
 7. ✅ Mobile-first design with Easy Fuel teal branding
 8. ✅ Dark mode support
 9. ✅ Component library (Logo, Cards, Forms)
+10. ✅ **Object Storage integration with presigned URLs**
+11. ✅ **Profile picture upload with public ACL**
+12. ✅ **Document management with private ACL**
+13. ✅ **Avatar components in cards and dialogs**
+14. ✅ **Admin route security (requireAuth + requireAdmin)**
 
 ### Current Phase: Supabase Configuration Required
 The authentication system is fully implemented but requires Supabase configuration:
@@ -172,6 +177,19 @@ npm run db:push      # Push schema to database
 - **Architecture**: Production-ready with scalability
 
 ## Recent Changes (Latest Session)
+- ✅ **Object Storage & File Management** - Complete profile picture and document upload system
+  - **Replit Object Storage**: Presigned URL uploads with ACL policies
+  - **Profile Pictures**: Public ACL (visible to all) with Avatar display in cards/dialogs
+  - **Documents**: Private ACL (owner-only) with type selection and verification tracking
+  - **ObjectUploader**: Uppy-based component for seamless file uploads
+  - **Security**: Admin routes protected with requireAuth + requireAdmin middleware
+  - **API Auth**: QueryClient automatically adds Supabase JWT tokens to all requests
+  - **Files**: server/objectStorage.ts, server/objectAcl.ts, client/src/components/ObjectUploader.tsx
+- ✅ **Admin Route Security** - Critical security fixes implemented
+  - **requireAdmin Middleware**: Validates user role from profiles table (403 for non-admins)
+  - **Protected Endpoints**: All /api/admin/* routes require authentication and admin role
+  - **Auth Headers**: Automatic JWT token injection via queryClient for all API calls
+  - **Customer API**: Now returns profile_photo_url for Avatar rendering
 - ✅ **Comprehensive Schema Update** - Expanded database with 100+ production-ready fields
   - **Profiles**: approval_status, profile_photo_url, enhanced address fields, last_login_at
   - **Customers**: za_id_number, dob, billing_address, risk_tier, verification_level, SARS tax
