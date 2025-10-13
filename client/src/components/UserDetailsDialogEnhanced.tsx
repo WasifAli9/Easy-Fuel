@@ -20,9 +20,13 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Loader2, User, FileText, Truck, Building2, ShieldCheck } from "lucide-react";
+import { Loader2, User, FileText, Truck, Building2, ShieldCheck, Upload, Camera } from "lucide-react";
+import { ObjectUploader } from "@/components/ObjectUploader";
+import { getAuthHeaders } from "@/lib/auth-headers";
+import type { UploadResult } from "@uppy/core";
 
 interface UserDetailsDialogProps {
   userId: string | null;
@@ -147,12 +151,83 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
 
   if (!userDetails) return null;
 
+  const handleProfilePictureUpload = async (result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
+    if (!result.successful || result.successful.length === 0) return;
+    
+    const uploadedFile = result.successful[0];
+    if (!uploadedFile?.uploadURL) return;
+
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch("/api/profile-picture", {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ profilePictureURL: uploadedFile.uploadURL }),
+      });
+
+      if (!response.ok) throw new Error("Failed to set profile picture");
+
+      const { objectPath } = await response.json();
+      
+      // Update the profile with the new picture path
+      await apiRequest("PATCH", `/api/admin/users/${userId}`, { 
+        profile_photo_url: objectPath 
+      });
+      
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users", userId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/customers"] });
+      
+      toast({
+        title: "Success",
+        description: "Profile picture updated successfully",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to update profile picture",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const getUploadURL = async () => {
+    const headers = await getAuthHeaders();
+    const response = await fetch("/api/objects/upload", {
+      method: "POST",
+      headers,
+    });
+    const { uploadURL } = await response.json();
+    return { method: "PUT" as const, url: uploadURL };
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col" data-testid="dialog-user-details">
         <DialogHeader>
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex items-center gap-4">
+            <div className="relative">
+              <Avatar className="h-16 w-16">
+                <AvatarImage src={userDetails.profile.profile_photo_url || undefined} />
+                <AvatarFallback className="bg-primary text-primary-foreground text-lg">
+                  {userDetails.profile.full_name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)}
+                </AvatarFallback>
+              </Avatar>
+              <div className="absolute -bottom-1 -right-1">
+                <ObjectUploader
+                  maxNumberOfFiles={1}
+                  maxFileSize={5242880}
+                  allowedFileTypes={["image/*"]}
+                  onGetUploadParameters={getUploadURL}
+                  onComplete={handleProfilePictureUpload}
+                  buttonVariant="outline"
+                  buttonSize="icon"
+                  buttonClassName="h-7 w-7 rounded-full"
+                >
+                  <Camera className="h-3.5 w-3.5" />
+                </ObjectUploader>
+              </div>
+            </div>
+            <div className="flex-1">
               <DialogTitle className="text-xl">{userDetails.profile.full_name}</DialogTitle>
               <DialogDescription className="flex items-center gap-2 mt-1">
                 <Badge variant="outline" className="capitalize">{userDetails.profile.role}</Badge>
