@@ -75,16 +75,14 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
 
   const createOrderMutation = useMutation({
     mutationFn: async (values: OrderFormValues) => {
-      return await apiRequest("/api/orders", {
-        method: "POST",
-        body: JSON.stringify({
-          fuelTypeId: values.fuelTypeId,
-          litres: values.litres,
-          dropLat: parseFloat(values.dropLat),
-          dropLng: parseFloat(values.dropLng),
-          timeWindow: values.timeWindow || null,
-        }),
+      const response = await apiRequest("POST", "/api/orders", {
+        fuelTypeId: values.fuelTypeId,
+        litres: values.litres,
+        dropLat: parseFloat(values.dropLat),
+        dropLng: parseFloat(values.dropLng),
+        timeWindow: values.timeWindow || null,
       });
+      return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
