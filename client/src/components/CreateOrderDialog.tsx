@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -29,22 +29,32 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Plus } from "lucide-react";
+import { Plus, MapPin, Truck, CreditCard, FileSignature } from "lucide-react";
 
 const orderFormSchema = z.object({
   fuelTypeId: z.string().min(1, "Please select a fuel type"),
   litres: z.string().min(1, "Litres is required").refine((val) => !isNaN(Number(val)) && Number(val) > 0, {
     message: "Litres must be a positive number",
   }),
-  dropLat: z.string().min(1, "Latitude is required").refine((val) => !isNaN(Number(val)), {
-    message: "Latitude must be a number",
+  deliveryAddressId: z.string().min(1, "Please select a delivery address"),
+  fromTime: z.string().optional(),
+  toTime: z.string().optional(),
+  priorityLevel: z.enum(["low", "medium", "high"]).default("medium"),
+  accessInstructions: z.string().optional(),
+  vehicleRegistration: z.string().optional(),
+  equipmentType: z.string().optional(),
+  tankCapacity: z.string().optional().refine((val) => !val || (!isNaN(Number(val)) && Number(val) > 0), {
+    message: "Tank capacity must be a positive number",
   }),
-  dropLng: z.string().min(1, "Longitude is required").refine((val) => !isNaN(Number(val)), {
-    message: "Longitude must be a number",
+  paymentMethodId: z.string().optional(),
+  termsAccepted: z.boolean().refine((val) => val === true, {
+    message: "You must accept the terms and conditions",
   }),
-  timeWindow: z.string().optional(),
 });
 
 type OrderFormValues = z.infer<typeof orderFormSchema>;
@@ -55,6 +65,9 @@ interface CreateOrderDialogProps {
 
 export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
   const [open, setOpen] = useState(false);
+  const [signatureData, setSignatureData] = useState<string | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [isDrawing, setIsDrawing] = useState(false);
   const { toast } = useToast();
 
   // Fetch fuel types
@@ -62,25 +75,108 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
     queryKey: ["/api/fuel-types"],
   });
 
+  // Fetch delivery addresses
+  const { data: deliveryAddresses = [], isLoading: loadingAddresses } = useQuery<any[]>({
+    queryKey: ["/api/customer/delivery-addresses"],
+  });
+
+  // Fetch payment methods
+  const { data: paymentMethods = [], isLoading: loadingPaymentMethods } = useQuery<any[]>({
+    queryKey: ["/api/customer/payment-methods"],
+  });
+
   const form = useForm<OrderFormValues>({
     resolver: zodResolver(orderFormSchema),
     defaultValues: {
       fuelTypeId: "",
       litres: "",
-      dropLat: "",
-      dropLng: "",
-      timeWindow: "",
+      deliveryAddressId: "",
+      fromTime: "",
+      toTime: "",
+      priorityLevel: "medium",
+      accessInstructions: "",
+      vehicleRegistration: "",
+      equipmentType: "",
+      tankCapacity: "",
+      paymentMethodId: "",
+      termsAccepted: false,
     },
   });
+
+  // Signature canvas handlers
+  const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = "touches" in e ? e.touches[0].clientX - rect.left : e.clientX - rect.left;
+    const y = "touches" in e ? e.touches[0].clientY - rect.top : e.clientY - rect.top;
+
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    setIsDrawing(true);
+  };
+
+  const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    if (!isDrawing) return;
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = "touches" in e ? e.touches[0].clientX - rect.left : e.clientX - rect.left;
+    const y = "touches" in e ? e.touches[0].clientY - rect.top : e.clientY - rect.top;
+
+    ctx.lineTo(x, y);
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.stroke();
+  };
+
+  const stopDrawing = () => {
+    if (isDrawing) {
+      const canvas = canvasRef.current;
+      if (canvas) {
+        setSignatureData(canvas.toDataURL());
+      }
+      setIsDrawing(false);
+    }
+  };
+
+  const clearSignature = () => {
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+    }
+    setSignatureData(null);
+  };
 
   const createOrderMutation = useMutation({
     mutationFn: async (values: OrderFormValues) => {
       const response = await apiRequest("POST", "/api/orders", {
         fuelTypeId: values.fuelTypeId,
         litres: values.litres,
-        dropLat: parseFloat(values.dropLat),
-        dropLng: parseFloat(values.dropLng),
-        timeWindow: values.timeWindow || null,
+        deliveryAddressId: values.deliveryAddressId,
+        fromTime: values.fromTime || null,
+        toTime: values.toTime || null,
+        priorityLevel: values.priorityLevel,
+        accessInstructions: values.accessInstructions || null,
+        vehicleRegistration: values.vehicleRegistration || null,
+        equipmentType: values.equipmentType || null,
+        tankCapacity: values.tankCapacity || null,
+        paymentMethodId: values.paymentMethodId || null,
+        termsAccepted: values.termsAccepted,
+        signatureData: signatureData || null,
       });
       return response.json();
     },
@@ -91,6 +187,7 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
         description: "Your order has been placed successfully",
       });
       form.reset();
+      clearSignature();
       setOpen(false);
     },
     onError: (error: any) => {
@@ -116,131 +213,387 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[500px]" data-testid="dialog-create-order">
+      <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto" data-testid="dialog-create-order">
         <DialogHeader>
           <DialogTitle>Create New Order</DialogTitle>
           <DialogDescription>
-            Place a new fuel delivery order. Fill in the details below.
+            Place a new fuel delivery order. Fill in all required details below.
           </DialogDescription>
         </DialogHeader>
 
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-            <FormField
-              control={form.control}
-              name="fuelTypeId"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Fuel Type</FormLabel>
-                  <Select
-                    onValueChange={field.onChange}
-                    defaultValue={field.value}
-                    disabled={loadingFuelTypes}
-                  >
-                    <FormControl>
-                      <SelectTrigger data-testid="select-fuel-type">
-                        <SelectValue placeholder="Select fuel type" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {fuelTypes.map((fuelType) => (
-                        <SelectItem
-                          key={fuelType.id}
-                          value={fuelType.id}
-                          data-testid={`option-fuel-type-${fuelType.code}`}
-                        >
-                          {fuelType.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+            <Tabs defaultValue="fuel" className="w-full">
+              <TabsList className="grid w-full grid-cols-4">
+                <TabsTrigger value="fuel">Fuel</TabsTrigger>
+                <TabsTrigger value="delivery">
+                  <MapPin className="h-4 w-4 mr-1" />
+                  Delivery
+                </TabsTrigger>
+                <TabsTrigger value="vehicle">
+                  <Truck className="h-4 w-4 mr-1" />
+                  Vehicle
+                </TabsTrigger>
+                <TabsTrigger value="payment">
+                  <CreditCard className="h-4 w-4 mr-1" />
+                  Payment
+                </TabsTrigger>
+              </TabsList>
 
-            <FormField
-              control={form.control}
-              name="litres"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Litres</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="number"
-                      placeholder="e.g. 500"
-                      {...field}
-                      data-testid="input-litres"
-                    />
-                  </FormControl>
-                  <FormDescription>Enter the amount of fuel in litres</FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              <TabsContent value="fuel" className="space-y-4 mt-4">
+                <FormField
+                  control={form.control}
+                  name="fuelTypeId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Fuel Type *</FormLabel>
+                      <Select
+                        onValueChange={field.onChange}
+                        defaultValue={field.value}
+                        disabled={loadingFuelTypes}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-fuel-type">
+                            <SelectValue placeholder="Select fuel type" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {fuelTypes.map((fuelType) => (
+                            <SelectItem
+                              key={fuelType.id}
+                              value={fuelType.id}
+                              data-testid={`option-fuel-type-${fuelType.code}`}
+                            >
+                              {fuelType.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
 
-            <div className="grid grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
-                name="dropLat"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Latitude</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        step="any"
-                        placeholder="e.g. -26.2041"
-                        {...field}
-                        data-testid="input-latitude"
+                <FormField
+                  control={form.control}
+                  name="litres"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Litres *</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          placeholder="e.g. 500"
+                          {...field}
+                          data-testid="input-litres"
+                        />
+                      </FormControl>
+                      <FormDescription>Enter the amount of fuel in litres</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="priorityLevel"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Priority Level</FormLabel>
+                      <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-priority">
+                            <SelectValue placeholder="Select priority" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="low">Low</SelectItem>
+                          <SelectItem value="medium">Medium</SelectItem>
+                          <SelectItem value="high">High</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </TabsContent>
+
+              <TabsContent value="delivery" className="space-y-4 mt-4">
+                <FormField
+                  control={form.control}
+                  name="deliveryAddressId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Delivery Address *</FormLabel>
+                      <Select
+                        onValueChange={field.onChange}
+                        defaultValue={field.value}
+                        disabled={loadingAddresses}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-delivery-address">
+                            <SelectValue placeholder="Select delivery address" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {deliveryAddresses.length === 0 ? (
+                            <div className="p-2 text-sm text-muted-foreground">
+                              No addresses saved. Add one in your profile settings.
+                            </div>
+                          ) : (
+                            deliveryAddresses.map((address) => (
+                              <SelectItem
+                                key={address.id}
+                                value={address.id}
+                                data-testid={`option-address-${address.id}`}
+                              >
+                                {address.label} - {address.address_city}
+                              </SelectItem>
+                            ))
+                          )}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="fromTime"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>From Time</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="time"
+                            {...field}
+                            data-testid="input-from-time"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="toTime"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>To Time</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="time"
+                            {...field}
+                            data-testid="input-to-time"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <FormField
+                  control={form.control}
+                  name="accessInstructions"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Access Instructions</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="e.g. Gate code #1234, use side entrance"
+                          {...field}
+                          data-testid="input-access-instructions"
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        Provide any special access instructions for the driver
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </TabsContent>
+
+              <TabsContent value="vehicle" className="space-y-4 mt-4">
+                <FormField
+                  control={form.control}
+                  name="vehicleRegistration"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Vehicle Registration</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="e.g. ABC 123 GP"
+                          {...field}
+                          data-testid="input-vehicle-registration"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="equipmentType"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Equipment Type</FormLabel>
+                      <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-equipment-type">
+                            <SelectValue placeholder="Select equipment type" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="generator">Generator</SelectItem>
+                          <SelectItem value="vehicle">Vehicle</SelectItem>
+                          <SelectItem value="machinery">Machinery</SelectItem>
+                          <SelectItem value="storage_tank">Storage Tank</SelectItem>
+                          <SelectItem value="other">Other</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="tankCapacity"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Tank Capacity (Litres)</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          placeholder="e.g. 1000"
+                          {...field}
+                          data-testid="input-tank-capacity"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </TabsContent>
+
+              <TabsContent value="payment" className="space-y-4 mt-4">
+                <FormField
+                  control={form.control}
+                  name="paymentMethodId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Payment Method</FormLabel>
+                      <Select
+                        onValueChange={field.onChange}
+                        defaultValue={field.value}
+                        disabled={loadingPaymentMethods}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-payment-method">
+                            <SelectValue placeholder="Select payment method" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {paymentMethods.length === 0 ? (
+                            <div className="p-2 text-sm text-muted-foreground">
+                              No payment methods saved. Add one in your profile settings.
+                            </div>
+                          ) : (
+                            paymentMethods.map((method) => (
+                              <SelectItem
+                                key={method.id}
+                                value={method.id}
+                                data-testid={`option-payment-${method.id}`}
+                              >
+                                {method.label} ({method.method_type})
+                              </SelectItem>
+                            ))
+                          )}
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        Optional: Select saved payment method or pay later
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <Separator className="my-4" />
+
+                <div className="space-y-4">
+                  <div>
+                    <FormLabel className="flex items-center gap-2 mb-2">
+                      <FileSignature className="h-4 w-4" />
+                      Electronic Signature
+                    </FormLabel>
+                    <div className="border rounded-md p-2 bg-background">
+                      <canvas
+                        ref={canvasRef}
+                        width={600}
+                        height={150}
+                        className="border rounded cursor-crosshair w-full"
+                        onMouseDown={startDrawing}
+                        onMouseMove={draw}
+                        onMouseUp={stopDrawing}
+                        onMouseLeave={stopDrawing}
+                        onTouchStart={startDrawing}
+                        onTouchMove={draw}
+                        onTouchEnd={stopDrawing}
+                        data-testid="canvas-signature"
                       />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={clearSignature}
+                        className="mt-2"
+                        data-testid="button-clear-signature"
+                      >
+                        Clear Signature
+                      </Button>
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Sign above to acknowledge the order details
+                    </p>
+                  </div>
 
-              <FormField
-                control={form.control}
-                name="dropLng"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Longitude</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        step="any"
-                        placeholder="e.g. 28.0473"
-                        {...field}
-                        data-testid="input-longitude"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
+                  <FormField
+                    control={form.control}
+                    name="termsAccepted"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
+                        <FormControl>
+                          <Checkbox
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            data-testid="checkbox-terms"
+                          />
+                        </FormControl>
+                        <div className="space-y-1 leading-none">
+                          <FormLabel>
+                            Accept Terms and Conditions *
+                          </FormLabel>
+                          <FormDescription>
+                            I agree to the terms and conditions of service and confirm the order
+                            details are correct.
+                          </FormDescription>
+                          <FormMessage />
+                        </div>
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </TabsContent>
+            </Tabs>
 
-            <FormField
-              control={form.control}
-              name="timeWindow"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Time Window (Optional)</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder="e.g. 9:00 AM - 5:00 PM"
-                      {...field}
-                      data-testid="input-time-window"
-                    />
-                  </FormControl>
-                  <FormDescription>Preferred delivery time window</FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <div className="flex justify-end gap-3 pt-4">
+            <div className="flex justify-end gap-3 pt-4 border-t">
               <Button
                 type="button"
                 variant="outline"

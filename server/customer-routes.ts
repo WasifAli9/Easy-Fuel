@@ -112,6 +112,157 @@ router.get("/orders/:id", async (req, res) => {
 // Create new order
 router.post("/orders", async (req, res) => {
   const user = (req as any).user;
+  const {
+    fuelTypeId,
+    litres,
+    deliveryAddressId,
+    fromTime,
+    toTime,
+    priorityLevel,
+    accessInstructions,
+    vehicleRegistration,
+    equipmentType,
+    tankCapacity,
+    paymentMethodId,
+    termsAccepted,
+    signatureData,
+    selectedDepotId,
+  } = req.body;
+
+  try {
+    // Validate required inputs
+    if (!fuelTypeId) {
+      return res.status(400).json({ error: "Fuel type is required" });
+    }
+
+    const litresNum = parseFloat(litres);
+    if (isNaN(litresNum) || litresNum <= 0) {
+      return res.status(400).json({ error: "Invalid litres value" });
+    }
+
+    if (!termsAccepted) {
+      return res.status(400).json({ error: "Terms and conditions must be accepted" });
+    }
+
+    // Validate tank capacity if provided
+    if (tankCapacity) {
+      const capacity = parseFloat(tankCapacity);
+      if (isNaN(capacity) || capacity <= 0) {
+        return res.status(400).json({ error: "Tank capacity must be a valid positive number" });
+      }
+    }
+
+    // Get customer ID from user ID
+    const { data: customer, error: customerError } = await supabaseAdmin
+      .from("customers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (customerError) throw customerError;
+    if (!customer) {
+      return res.status(404).json({ error: "Customer profile not found" });
+    }
+
+    // Get delivery address details if provided
+    let lat, lng;
+    if (deliveryAddressId) {
+      const { data: address, error: addressError } = await supabaseAdmin
+        .from("delivery_addresses")
+        .select("lat, lng")
+        .eq("id", deliveryAddressId)
+        .eq("customer_id", customer.id)
+        .single();
+
+      if (addressError || !address) {
+        return res.status(400).json({ error: "Invalid delivery address" });
+      }
+
+      lat = address.lat;
+      lng = address.lng;
+    } else {
+      return res.status(400).json({ error: "Delivery address is required" });
+    }
+
+    // Get fuel type pricing from depot
+    let depotId = selectedDepotId;
+    let priceCents = 2500; // Default price per litre (R25.00)
+
+    if (selectedDepotId) {
+      const { data: depotPrice } = await supabaseAdmin
+        .from("depot_prices")
+        .select("price_cents")
+        .eq("depot_id", selectedDepotId)
+        .eq("fuel_type_id", fuelTypeId)
+        .single();
+
+      if (depotPrice) {
+        priceCents = depotPrice.price_cents;
+      }
+    } else {
+      const { data: depotPrice } = await supabaseAdmin
+        .from("depot_prices")
+        .select("depot_id, price_cents")
+        .eq("fuel_type_id", fuelTypeId)
+        .limit(1)
+        .single();
+
+      if (depotPrice) {
+        depotId = depotPrice.depot_id;
+        priceCents = depotPrice.price_cents;
+      }
+    }
+
+    // Calculate costs
+    const fuelPriceCents = Math.round(litresNum * priceCents);
+    const deliveryFeeCents = 50000; // R500 delivery fee
+    const serviceFeeCents = Math.round(fuelPriceCents * 0.05); // 5% service fee
+    const totalCents = fuelPriceCents + deliveryFeeCents + serviceFeeCents;
+
+    // Create order with all new fields
+    const { data: newOrder, error: orderError } = await supabaseAdmin
+      .from("orders")
+      .insert({
+        customer_id: customer.id,
+        fuel_type_id: fuelTypeId,
+        litres: litresNum.toString(),
+        
+        // Delivery details
+        delivery_address_id: deliveryAddressId,
+        drop_lat: lat,
+        drop_lng: lng,
+        access_instructions: accessInstructions || null,
+        from_time: fromTime || null,
+        to_time: toTime || null,
+        priority_level: priorityLevel || "medium",
+        
+        // Vehicle/Equipment
+        vehicle_registration: vehicleRegistration || null,
+        equipment_type: equipmentType || null,
+        tank_capacity: tankCapacity ? parseFloat(tankCapacity) : null,
+        
+        // Payment and Legal
+        payment_method_id: paymentMethodId || null,
+        terms_accepted: termsAccepted,
+        terms_accepted_at: termsAccepted ? new Date().toISOString() : null,
+        signature_data: signatureData || null,
+        
+        // Pricing
+        fuel_price_cents: fuelPriceCents,
+        delivery_fee_cents: deliveryFeeCents,
+        service_fee_cents: serviceFeeCents,
+        total_cents: totalCents,
+        
+        // Order management
+        selected_depot_id: depotId,
+        state: "created",
+      })
+      .select()
+      .single();
+
+    if (orderError) throw orderError;
+
+    res.status(201).json(newOrder);
   } catch (error: any) {
     console.error("Error creating order:", error);
     res.status(500).json({ error: error.message });
