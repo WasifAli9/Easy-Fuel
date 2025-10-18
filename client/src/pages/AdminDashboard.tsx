@@ -252,21 +252,21 @@ export default function AdminDashboard() {
             icon={Users}
           />
           <StatsCard
-            title="Total Drivers"
-            value={allDrivers?.length || 0}
-            description="Active drivers"
+            title="Pending Driver KYC"
+            value={driverKYC.length}
+            description="Awaiting review"
             icon={Truck}
           />
           <StatsCard
-            title="Total Suppliers"
-            value={allSuppliers?.length || 0}
-            description="Active suppliers"
+            title="Pending Supplier KYC"
+            value={supplierKYC.length}
+            description="Awaiting review"
             icon={Building2}
           />
           <StatsCard
-            title="Pending KYC"
+            title="Total Pending"
             value={driverKYC.length + supplierKYC.length}
-            description="Awaiting review"
+            description="All KYC/KYB reviews"
             icon={UserCheck}
           />
         </div>
