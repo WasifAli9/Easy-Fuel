@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AppHeader } from "@/components/AppHeader";
 import { KYCDocumentCard } from "@/components/KYCDocumentCard";
 import { CustomerCard } from "@/components/CustomerCard";
+import { DriverCard } from "@/components/DriverCard";
+import { SupplierCard } from "@/components/SupplierCard";
 import { StatsCard } from "@/components/StatsCard";
 import { CreateUserDialog } from "@/components/CreateUserDialog";
 import { UserDetailsDialogEnhanced } from "@/components/UserDetailsDialogEnhanced";
@@ -50,14 +52,47 @@ interface Customer {
   };
 }
 
+interface Driver {
+  id: string;
+  user_id: string;
+  kyc_status: string;
+  vehicle_registration?: string;
+  created_at: string;
+  profiles: {
+    id: string;
+    full_name: string;
+    phone?: string;
+    role: string;
+    profile_photo_url?: string;
+  };
+}
+
+interface Supplier {
+  id: string;
+  owner_id: string;
+  name: string;
+  kyb_status: string;
+  cipc_number?: string;
+  created_at: string;
+  profiles: {
+    id: string;
+    full_name: string;
+    phone?: string;
+    role: string;
+    profile_photo_url?: string;
+  };
+}
+
 export default function AdminDashboard() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [userDialogOpen, setUserDialogOpen] = useState(false);
   const [customerSearch, setCustomerSearch] = useState("");
-  const [driverSearch, setDriverSearch] = useState("");
-  const [supplierSearch, setSupplierSearch] = useState("");
+  const [allDriversSearch, setAllDriversSearch] = useState("");
+  const [allSuppliersSearch, setAllSuppliersSearch] = useState("");
+  const [driverKycSearch, setDriverKycSearch] = useState("");
+  const [supplierKycSearch, setSupplierKycSearch] = useState("");
 
   // Fetch pending KYC/KYB applications
   const { data: pendingKYC, isLoading } = useQuery<PendingKYC>({
@@ -69,13 +104,13 @@ export default function AdminDashboard() {
     queryKey: ["/api/admin/customers"],
   });
 
-  // Fetch all suppliers for count
-  const { data: allSuppliers } = useQuery<any[]>({
+  // Fetch all suppliers
+  const { data: allSuppliers, isLoading: suppliersLoading } = useQuery<Supplier[]>({
     queryKey: ["/api/admin/suppliers"],
   });
 
-  // Fetch all drivers for count
-  const { data: allDrivers } = useQuery<any[]>({
+  // Fetch all drivers
+  const { data: allDrivers, isLoading: driversLoading } = useQuery<Driver[]>({
     queryKey: ["/api/admin/drivers"],
   });
 
@@ -210,17 +245,29 @@ export default function AdminDashboard() {
     customer.company_name?.toLowerCase().includes(customerSearch.toLowerCase())
   ) || [];
 
-  // Filter drivers based on search
+  // Filter all drivers based on search
+  const filteredAllDrivers = allDrivers?.filter((driver) =>
+    driver.profiles?.full_name.toLowerCase().includes(allDriversSearch.toLowerCase()) ||
+    driver.vehicle_registration?.toLowerCase().includes(allDriversSearch.toLowerCase())
+  ) || [];
+
+  // Filter all suppliers based on search
+  const filteredAllSuppliers = allSuppliers?.filter((supplier) =>
+    supplier.name.toLowerCase().includes(allSuppliersSearch.toLowerCase()) ||
+    supplier.profiles?.full_name.toLowerCase().includes(allSuppliersSearch.toLowerCase())
+  ) || [];
+
+  // Filter driver KYC based on search
   const filteredDriverKYC = driverKYC.filter((driver) =>
-    driver.applicantName.toLowerCase().includes(driverSearch.toLowerCase())
+    driver.applicantName.toLowerCase().includes(driverKycSearch.toLowerCase())
   );
 
-  // Filter suppliers based on search
+  // Filter supplier KYC based on search
   const filteredSupplierKYC = supplierKYC.filter((supplier) =>
-    supplier.applicantName.toLowerCase().includes(supplierSearch.toLowerCase())
+    supplier.applicantName.toLowerCase().includes(supplierKycSearch.toLowerCase())
   );
 
-  if (isLoading || customersLoading) {
+  if (isLoading || customersLoading || driversLoading || suppliersLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
@@ -276,6 +323,12 @@ export default function AdminDashboard() {
             <TabsTrigger value="customers" data-testid="tab-customers">
               Customers ({customers?.length || 0})
             </TabsTrigger>
+            <TabsTrigger value="drivers" data-testid="tab-drivers">
+              Drivers ({allDrivers?.length || 0})
+            </TabsTrigger>
+            <TabsTrigger value="suppliers" data-testid="tab-suppliers">
+              Suppliers ({allSuppliers?.length || 0})
+            </TabsTrigger>
             <TabsTrigger value="driver-kyc" data-testid="tab-driver-kyc">
               Driver KYC ({driverKYC.length})
             </TabsTrigger>
@@ -323,15 +376,92 @@ export default function AdminDashboard() {
             )}
           </TabsContent>
 
+          <TabsContent value="drivers" className="space-y-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search drivers by name or vehicle..."
+                className="pl-10"
+                value={allDriversSearch}
+                onChange={(e) => setAllDriversSearch(e.target.value)}
+                data-testid="input-search-all-drivers"
+              />
+            </div>
+            {!allDrivers || allDrivers.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <p>No drivers registered yet</p>
+              </div>
+            ) : filteredAllDrivers.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <p>No drivers match your search</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {filteredAllDrivers.map((driver) => (
+                  <DriverCard
+                    key={driver.id}
+                    id={driver.id}
+                    name={driver.profiles?.full_name || 'N/A'}
+                    vehicleRegistration={driver.vehicle_registration}
+                    kycStatus={driver.kyc_status}
+                    phone={driver.profiles?.phone}
+                    registeredDate={new Date(driver.created_at).toLocaleDateString()}
+                    profilePhotoUrl={driver.profiles?.profile_photo_url}
+                    onView={() => handleView(driver.user_id, "driver")}
+                  />
+                ))}
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="suppliers" className="space-y-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search suppliers by name or company..."
+                className="pl-10"
+                value={allSuppliersSearch}
+                onChange={(e) => setAllSuppliersSearch(e.target.value)}
+                data-testid="input-search-all-suppliers"
+              />
+            </div>
+            {!allSuppliers || allSuppliers.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <p>No suppliers registered yet</p>
+              </div>
+            ) : filteredAllSuppliers.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <p>No suppliers match your search</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {filteredAllSuppliers.map((supplier) => (
+                  <SupplierCard
+                    key={supplier.id}
+                    id={supplier.id}
+                    name={supplier.profiles?.full_name || 'N/A'}
+                    companyName={supplier.name}
+                    kybStatus={supplier.kyb_status}
+                    cipcNumber={supplier.cipc_number}
+                    phone={supplier.profiles?.phone}
+                    registeredDate={new Date(supplier.created_at).toLocaleDateString()}
+                    profilePhotoUrl={supplier.profiles?.profile_photo_url}
+                    onView={() => handleView(supplier.owner_id, "supplier")}
+                  />
+                ))}
+              </div>
+            )}
+          </TabsContent>
+
           <TabsContent value="driver-kyc" className="space-y-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Search drivers by name..."
                 className="pl-10"
-                value={driverSearch}
-                onChange={(e) => setDriverSearch(e.target.value)}
-                data-testid="input-search-drivers"
+                value={driverKycSearch}
+                onChange={(e) => setDriverKycSearch(e.target.value)}
+                data-testid="input-search-driver-kyc"
               />
             </div>
             {driverKYC.length === 0 ? (
@@ -363,9 +493,9 @@ export default function AdminDashboard() {
               <Input
                 placeholder="Search suppliers by name..."
                 className="pl-10"
-                value={supplierSearch}
-                onChange={(e) => setSupplierSearch(e.target.value)}
-                data-testid="input-search-suppliers"
+                value={supplierKycSearch}
+                onChange={(e) => setSupplierKycSearch(e.target.value)}
+                data-testid="input-search-supplier-kyc"
               />
             </div>
             {supplierKYC.length === 0 ? (
