@@ -2,11 +2,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Truck, Phone, Calendar, User, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { Truck, Phone, Calendar, User, CheckCircle2, XCircle, Clock, Mail } from "lucide-react";
 
 interface DriverCardProps {
   id: string;
   name: string;
+  email?: string;
   vehicleRegistration?: string;
   kycStatus: string;
   phone?: string;
@@ -17,6 +18,7 @@ interface DriverCardProps {
 
 export function DriverCard({
   name,
+  email,
   vehicleRegistration,
   kycStatus,
   phone,
@@ -62,6 +64,12 @@ export function DriverCard({
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="space-y-2 text-sm">
+          {email && (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Mail className="h-3.5 w-3.5 flex-shrink-0" />
+              <span className="truncate">{email}</span>
+            </div>
+          )}
           {phone && (
             <div className="flex items-center gap-2 text-muted-foreground">
               <Phone className="h-3.5 w-3.5 flex-shrink-0" />

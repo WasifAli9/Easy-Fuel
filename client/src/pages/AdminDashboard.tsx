@@ -402,6 +402,7 @@ export default function AdminDashboard() {
                     key={driver.id}
                     id={driver.id}
                     name={driver.profiles?.full_name || 'N/A'}
+                    email={driver.profiles?.email}
                     vehicleRegistration={driver.vehicle_registration}
                     kycStatus={driver.kyc_status}
                     phone={driver.profiles?.phone}
