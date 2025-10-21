@@ -98,7 +98,11 @@ export function CreateUserDialog() {
       });
     },
     onSuccess: (data: any) => {
+      // Invalidate all admin queries to refresh the UI
       queryClient.invalidateQueries({ queryKey: ["/api/admin/kyc/pending"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/customers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/drivers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/suppliers"] });
       toast({
         title: "Success",
         description: data.message || "User created successfully",
