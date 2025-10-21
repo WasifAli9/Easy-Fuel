@@ -167,3 +167,52 @@ Completed comprehensive admin interface for viewing and managing driver informat
 - Vehicles are linked to drivers via driver_id foreign key
 - Email updates use Supabase Auth admin API for security
 - All changes maintain existing validation and authorization patterns
+
+### Admin Driver List Enhancements ✅
+Fixed driver card display and contact information visibility in the Admin Dashboard:
+
+#### Backend Enhancements (server/admin-routes.ts)
+1. **Enhanced GET /api/admin/drivers**:
+   - Now fetches email from Supabase Auth (admin.auth.getUserById) for each driver
+   - Enriches profiles object with email field for consistent data structure
+   - Handles missing profiles gracefully by returning null
+   - Uses Promise.all for efficient parallel profile/email fetching
+
+2. **New PUT /api/admin/users/:userId/profile-picture**:
+   - Admin-specific endpoint for updating any user's profile picture
+   - Uses ObjectStorageService with proper ACL (target user as owner)
+   - Promotes object from private to public storage
+   - Updates profile photo URL in database
+
+#### Frontend Enhancements
+1. **DriverCard Component** (client/src/components/DriverCard.tsx):
+   - Added email prop to interface
+   - Displays email address with Mail icon alongside phone number
+   - Provides better contact information at a glance
+   - Maintains consistent card layout with other entity cards
+
+2. **AdminDashboard** (client/src/pages/AdminDashboard.tsx):
+   - Updated Driver interface to include email in profiles object
+   - Passes email prop to DriverCard component
+   - **Critical Fix**: Added null-safe guards to all search filters
+     - Changed `driver.profiles?.full_name.toLowerCase()` to `driver.profiles?.full_name?.toLowerCase()`
+     - Applied same fix to customer and supplier filters
+     - Prevents runtime crashes when profiles are missing for some users
+
+3. **UserDetailsDialogEnhanced** (client/src/components/UserDetailsDialogEnhanced.tsx):
+   - Updated profile picture upload to use new admin endpoint
+   - Allows admins to update profile pictures for any user
+   - Maintains proper ACL and ownership
+
+#### Features Implemented
+✅ Driver cards now display full names instead of "N/A"
+✅ Email addresses visible on driver cards with Mail icon
+✅ Phone numbers displayed with Phone icon
+✅ Null-safe search filtering prevents crashes when profiles are missing
+✅ Admin profile picture upload works for all users
+
+#### Technical Notes
+- Email data is stored in Supabase Auth, not in profiles table
+- Profile lookups can fail/return null for some users - all UI handles this gracefully
+- Search filters use optional chaining (`?.`) to prevent toLowerCase() errors
+- Profile picture ACL properly sets target user as owner (not admin)
