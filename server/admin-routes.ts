@@ -430,13 +430,17 @@ router.get("/users/:userId", async (req, res) => {
     // Fetch profile
     const { data: profile, error: profileError } = await supabaseAdmin
       .from("profiles")
-      .select("id, full_name, phone, role")
+      .select("*")
       .eq("id", userId)
       .single();
 
     if (profileError) throw profileError;
 
-    const result: any = { profile };
+    // Fetch email from Supabase Auth
+    const { data: authData } = await supabaseAdmin.auth.admin.getUserById(userId);
+    const email = authData?.user?.email || null;
+
+    const result: any = { profile: { ...profile, email } };
 
     // Fetch role-specific data
     if (profile.role === "customer") {
@@ -452,7 +456,16 @@ router.get("/users/:userId", async (req, res) => {
         .select("*")
         .eq("user_id", userId)
         .single();
+      
+      // Fetch driver's vehicles
+      const { data: vehicles } = await supabaseAdmin
+        .from("vehicles")
+        .select("*")
+        .eq("driver_id", driver?.id)
+        .order("created_at", { ascending: false });
+      
       result.driver = driver;
+      result.vehicles = vehicles || [];
     } else if (profile.role === "supplier") {
       const { data: supplier } = await supabaseAdmin
         .from("suppliers")
@@ -477,6 +490,7 @@ router.patch("/users/:userId", async (req, res) => {
       full_name, 
       phone, 
       phone_country_code,
+      email,
       role, 
       address_street,
       address_city,
@@ -487,6 +501,11 @@ router.patch("/users/:userId", async (req, res) => {
       notes,
       ...roleData 
     } = req.body;
+
+    // Update email if provided
+    if (email !== undefined) {
+      await supabaseAdmin.auth.admin.updateUserById(userId, { email });
+    }
 
     // Update profile with all new fields
     const profileUpdate: any = {};
@@ -502,12 +521,14 @@ router.patch("/users/:userId", async (req, res) => {
     if (is_active !== undefined) profileUpdate.is_active = is_active;
     if (notes !== undefined) profileUpdate.notes = notes;
 
-    const { error: profileError } = await supabaseAdmin
-      .from("profiles")
-      .update(profileUpdate)
-      .eq("id", userId);
+    if (Object.keys(profileUpdate).length > 0) {
+      const { error: profileError } = await supabaseAdmin
+        .from("profiles")
+        .update(profileUpdate)
+        .eq("id", userId);
 
-    if (profileError) throw profileError;
+      if (profileError) throw profileError;
+    }
 
     // Update customer-specific data
     if (role === "customer") {
@@ -546,6 +567,7 @@ router.patch("/users/:userId", async (req, res) => {
       if (roleData.branch_code !== undefined) driverUpdate.branch_code = roleData.branch_code;
       if (roleData.next_of_kin_name !== undefined) driverUpdate.next_of_kin_name = roleData.next_of_kin_name;
       if (roleData.next_of_kin_phone !== undefined) driverUpdate.next_of_kin_phone = roleData.next_of_kin_phone;
+      if (roleData.availability_status !== undefined) driverUpdate.availability_status = roleData.availability_status;
 
       if (Object.keys(driverUpdate).length > 0) {
         const { error } = await supabaseAdmin
