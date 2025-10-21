@@ -10,6 +10,8 @@ import Auth from "@/pages/Auth";
 import ResetPassword from "@/pages/ResetPassword";
 import RoleSetup from "@/pages/RoleSetup";
 import CustomerDashboard from "@/pages/CustomerDashboard";
+import SavedAddresses from "@/pages/SavedAddresses";
+import CustomerProfile from "@/pages/CustomerProfile";
 import DriverDashboard from "@/pages/DriverDashboard";
 import SupplierDashboard from "@/pages/SupplierDashboard";
 import AdminDashboard from "@/pages/AdminDashboard";
@@ -77,6 +79,12 @@ function Router() {
       </Route>
       <Route path="/customer">
         {() => <ProtectedRoute component={CustomerDashboard} role="customer" />}
+      </Route>
+      <Route path="/customer/addresses">
+        {() => <ProtectedRoute component={SavedAddresses} role="customer" />}
+      </Route>
+      <Route path="/customer/profile">
+        {() => <ProtectedRoute component={CustomerProfile} role="customer" />}
       </Route>
       <Route path="/driver">
         {() => <ProtectedRoute component={DriverDashboard} role="driver" />}

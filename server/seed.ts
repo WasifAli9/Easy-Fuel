@@ -203,12 +203,18 @@ async function seed() {
       console.log("Settings already exist or error:", settingsError.message);
     }
 
-    // Insert default fuel types
+    // Insert default fuel types (all available at typical African gas stations)
     const defaultFuelTypes = [
       { code: "diesel", label: "Diesel", active: true },
-      { code: "petrol_95", label: "Petrol 95", active: true },
-      { code: "petrol_93", label: "Petrol 93", active: true },
-      { code: "paraffin", label: "Paraffin", active: true },
+      { code: "diesel_500ppm", label: "Diesel 500ppm", active: true },
+      { code: "diesel_50ppm", label: "Diesel 50ppm (Ultra Low Sulphur)", active: true },
+      { code: "petrol_93", label: "Petrol 93 (Unleaded)", active: true },
+      { code: "petrol_95", label: "Petrol 95 (Unleaded)", active: true },
+      { code: "petrol_97", label: "Petrol 97 (Premium Unleaded)", active: true },
+      { code: "lpg", label: "LPG (Liquefied Petroleum Gas)", active: true },
+      { code: "adblue", label: "AdBlue (Diesel Exhaust Fluid)", active: true },
+      { code: "paraffin", label: "Illuminating Paraffin", active: true },
+      { code: "jet_a1", label: "Jet A1 (Aviation Fuel)", active: false }, // Available but not commonly used
     ];
 
     for (const fuel of defaultFuelTypes) {

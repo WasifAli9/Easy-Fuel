@@ -1,7 +1,7 @@
 import { Logo } from "./Logo";
 import { ThemeToggle } from "./ThemeToggle";
 import { Button } from "@/components/ui/button";
-import { Bell, User, Menu, LogOut } from "lucide-react";
+import { Bell, User, Menu, LogOut, MapPin, UserCircle, Home } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -12,7 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/contexts/AuthContext";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 
 interface AppHeaderProps {
   onMenuClick?: () => void;
@@ -45,6 +45,24 @@ export function AppHeader({ onMenuClick, notificationCount = 0, showMenu = true 
             </Button>
           )}
           <Logo size="sm" />
+          
+          {/* Customer Navigation */}
+          {profile?.role === "customer" && (
+            <nav className="hidden md:flex items-center gap-2 ml-6">
+              <Link href="/customer">
+                <Button variant="ghost" size="sm" data-testid="nav-orders">
+                  <Home className="h-4 w-4 mr-2" />
+                  My Orders
+                </Button>
+              </Link>
+              <Link href="/customer/addresses">
+                <Button variant="ghost" size="sm" data-testid="nav-addresses">
+                  <MapPin className="h-4 w-4 mr-2" />
+                  Saved Addresses
+                </Button>
+              </Link>
+            </nav>
+          )}
         </div>
         
         <div className="flex items-center gap-2">
@@ -85,6 +103,19 @@ export function AppHeader({ onMenuClick, notificationCount = 0, showMenu = true 
                 </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
+              {profile?.role === "customer" && (
+                <>
+                  <DropdownMenuItem onClick={() => setLocation("/customer/profile")} data-testid="menu-profile">
+                    <UserCircle className="h-4 w-4 mr-2" />
+                    My Profile
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setLocation("/customer/addresses")} data-testid="menu-addresses-mobile">
+                    <MapPin className="h-4 w-4 mr-2" />
+                    Saved Addresses
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
               <DropdownMenuItem onClick={handleSignOut} data-testid="menu-signout">
                 <LogOut className="h-4 w-4 mr-2" />
                 Sign Out

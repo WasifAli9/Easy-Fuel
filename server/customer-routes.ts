@@ -801,4 +801,358 @@ router.delete("/payment-methods/:id", async (req, res) => {
   }
 });
 
+// ============== DELIVERY ADDRESSES ==============
+
+// Get all delivery addresses for the authenticated customer
+router.get("/addresses", async (req, res) => {
+  const user = (req as any).user;
+  
+  try {
+    const { data: customer, error: customerError } = await supabaseAdmin
+      .from("customers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (customerError) throw customerError;
+    if (!customer) {
+      return res.status(404).json({ error: "Customer profile not found" });
+    }
+
+    const { data: addresses, error } = await supabaseAdmin
+      .from("delivery_addresses")
+      .select("*")
+      .eq("customer_id", customer.id)
+      .order("is_default", { ascending: false })
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+    res.json(addresses || []);
+  } catch (error: any) {
+    console.error("Error fetching addresses:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get single delivery address
+router.get("/addresses/:id", async (req, res) => {
+  const user = (req as any).user;
+  const addressId = req.params.id;
+  
+  try {
+    const { data: customer, error: customerError } = await supabaseAdmin
+      .from("customers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (customerError) throw customerError;
+    if (!customer) {
+      return res.status(404).json({ error: "Customer profile not found" });
+    }
+
+    const { data: address, error } = await supabaseAdmin
+      .from("delivery_addresses")
+      .select("*")
+      .eq("id", addressId)
+      .eq("customer_id", customer.id)
+      .single();
+
+    if (error) {
+      // PGRST116 = "not found" error from Supabase/PostgREST
+      if (error.code === 'PGRST116') {
+        return res.status(404).json({ error: "Address not found" });
+      }
+      throw error;
+    }
+    if (!address) {
+      return res.status(404).json({ error: "Address not found" });
+    }
+
+    res.json(address);
+  } catch (error: any) {
+    console.error("Error fetching address:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create new delivery address
+router.post("/addresses", async (req, res) => {
+  const user = (req as any).user;
+  const {
+    label,
+    addressStreet,
+    addressCity,
+    addressProvince,
+    addressPostalCode,
+    addressCountry,
+    lat,
+    lng,
+    accessInstructions,
+    isDefault
+  } = req.body;
+  
+  try {
+    const { data: customer, error: customerError } = await supabaseAdmin
+      .from("customers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (customerError) throw customerError;
+    if (!customer) {
+      return res.status(404).json({ error: "Customer profile not found" });
+    }
+
+    // If setting as default, unset other defaults
+    if (isDefault) {
+      await supabaseAdmin
+        .from("delivery_addresses")
+        .update({ is_default: false })
+        .eq("customer_id", customer.id);
+    }
+
+    const { data: newAddress, error } = await supabaseAdmin
+      .from("delivery_addresses")
+      .insert({
+        customer_id: customer.id,
+        label,
+        address_street: addressStreet,
+        address_city: addressCity,
+        address_province: addressProvince,
+        address_postal_code: addressPostalCode,
+        address_country: addressCountry || "South Africa",
+        lat,
+        lng,
+        access_instructions: accessInstructions,
+        is_default: isDefault || false,
+        verification_status: "pending"
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json(newAddress);
+  } catch (error: any) {
+    console.error("Error creating address:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update delivery address
+router.put("/addresses/:id", async (req, res) => {
+  const user = (req as any).user;
+  const addressId = req.params.id;
+  const {
+    label,
+    addressStreet,
+    addressCity,
+    addressProvince,
+    addressPostalCode,
+    addressCountry,
+    lat,
+    lng,
+    accessInstructions,
+    isDefault
+  } = req.body;
+  
+  try {
+    const { data: customer, error: customerError } = await supabaseAdmin
+      .from("customers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (customerError) throw customerError;
+    if (!customer) {
+      return res.status(404).json({ error: "Customer profile not found" });
+    }
+
+    // If setting as default, unset other defaults
+    if (isDefault) {
+      await supabaseAdmin
+        .from("delivery_addresses")
+        .update({ is_default: false })
+        .eq("customer_id", customer.id);
+    }
+
+    const { data: updatedAddress, error } = await supabaseAdmin
+      .from("delivery_addresses")
+      .update({
+        label,
+        address_street: addressStreet,
+        address_city: addressCity,
+        address_province: addressProvince,
+        address_postal_code: addressPostalCode,
+        address_country: addressCountry,
+        lat,
+        lng,
+        access_instructions: accessInstructions,
+        is_default: isDefault,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", addressId)
+      .eq("customer_id", customer.id)
+      .select()
+      .single();
+
+    if (error) {
+      // PGRST116 = "not found" error from Supabase/PostgREST
+      if (error.code === 'PGRST116') {
+        return res.status(404).json({ error: "Address not found" });
+      }
+      throw error;
+    }
+    if (!updatedAddress) {
+      return res.status(404).json({ error: "Address not found" });
+    }
+
+    res.json(updatedAddress);
+  } catch (error: any) {
+    console.error("Error updating address:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete delivery address
+router.delete("/addresses/:id", async (req, res) => {
+  const user = (req as any).user;
+  const addressId = req.params.id;
+  
+  try {
+    const { data: customer, error: customerError } = await supabaseAdmin
+      .from("customers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (customerError) throw customerError;
+    if (!customer) {
+      return res.status(404).json({ error: "Customer profile not found" });
+    }
+
+    // First check if address exists
+    const { data: existingAddress, error: checkError } = await supabaseAdmin
+      .from("delivery_addresses")
+      .select("id")
+      .eq("id", addressId)
+      .eq("customer_id", customer.id)
+      .single();
+
+    if (checkError) {
+      // PGRST116 = "not found" error from Supabase/PostgREST
+      if (checkError.code === 'PGRST116') {
+        return res.status(404).json({ error: "Address not found" });
+      }
+      throw checkError;
+    }
+
+    const { error } = await supabaseAdmin
+      .from("delivery_addresses")
+      .delete()
+      .eq("id", addressId)
+      .eq("customer_id", customer.id);
+
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error("Error deleting address:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============== CUSTOMER PROFILE ==============
+
+// Get customer profile
+router.get("/profile", async (req, res) => {
+  const user = (req as any).user;
+  
+  try {
+    const { data: profile, error: profileError } = await supabaseAdmin
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
+      .single();
+
+    if (profileError) throw profileError;
+
+    const { data: customer, error: customerError } = await supabaseAdmin
+      .from("customers")
+      .select("*")
+      .eq("user_id", user.id)
+      .single();
+
+    if (customerError) throw customerError;
+
+    // Get email from auth
+    const { data: authData } = await supabaseAdmin.auth.admin.getUserById(user.id);
+    const email = authData?.user?.email || null;
+
+    res.json({
+      ...profile,
+      ...customer,
+      email
+    });
+  } catch (error: any) {
+    console.error("Error fetching profile:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update customer profile
+router.put("/profile", async (req, res) => {
+  const user = (req as any).user;
+  const {
+    fullName,
+    phone,
+    companyName,
+    tradingAs,
+    vatNumber,
+    billingAddressStreet,
+    billingAddressCity,
+    billingAddressProvince,
+    billingAddressPostalCode,
+    billingAddressCountry
+  } = req.body;
+  
+  try {
+    // Update profile table
+    const { error: profileError } = await supabaseAdmin
+      .from("profiles")
+      .update({
+        full_name: fullName,
+        phone,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", user.id);
+
+    if (profileError) throw profileError;
+
+    // Update customer table
+    const { data: updatedCustomer, error: customerError } = await supabaseAdmin
+      .from("customers")
+      .update({
+        company_name: companyName,
+        trading_as: tradingAs,
+        vat_number: vatNumber,
+        billing_address_street: billingAddressStreet,
+        billing_address_city: billingAddressCity,
+        billing_address_province: billingAddressProvince,
+        billing_address_postal_code: billingAddressPostalCode,
+        billing_address_country: billingAddressCountry,
+        updated_at: new Date().toISOString()
+      })
+      .eq("user_id", user.id)
+      .select()
+      .single();
+
+    if (customerError) throw customerError;
+
+    res.json({ success: true, customer: updatedCustomer });
+  } catch (error: any) {
+    console.error("Error updating profile:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;
