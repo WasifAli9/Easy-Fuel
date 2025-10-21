@@ -30,7 +30,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { geocodeAddress } from "@/lib/geocoding";
+import { MapPin, Loader2 } from "lucide-react";
 
 const addressSchema = z.object({
   label: z.string().min(1, "Label is required"),
@@ -81,6 +83,7 @@ interface EditAddressDialogProps {
 
 export function EditAddressDialog({ open, onOpenChange, address }: EditAddressDialogProps) {
   const { toast } = useToast();
+  const [isGeocoding, setIsGeocoding] = useState(false);
 
   const form = useForm<AddressFormData>({
     resolver: zodResolver(addressSchema),
@@ -113,6 +116,54 @@ export function EditAddressDialog({ open, onOpenChange, address }: EditAddressDi
       isDefault: address.is_default,
     });
   }, [address, form]);
+
+  const handleGeocode = async () => {
+    const values = form.getValues();
+    
+    // Check if we have enough address info
+    if (!values.addressStreet || !values.addressCity) {
+      toast({
+        title: "Missing Information",
+        description: "Please enter at least the street address and city before geocoding",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsGeocoding(true);
+    try {
+      const result = await geocodeAddress({
+        street: values.addressStreet,
+        city: values.addressCity,
+        province: values.addressProvince,
+        postalCode: values.addressPostalCode,
+        country: values.addressCountry,
+      });
+
+      if (result) {
+        form.setValue("lat", result.lat);
+        form.setValue("lng", result.lng);
+        toast({
+          title: "Success",
+          description: "Coordinates updated based on address",
+        });
+      } else {
+        toast({
+          title: "Not Found",
+          description: "Could not find coordinates for this address. Please enter them manually.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to geocode address. Please enter coordinates manually.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsGeocoding(false);
+    }
+  };
 
   const updateMutation = useMutation({
     mutationFn: async (data: AddressFormData) => {
@@ -249,6 +300,29 @@ export function EditAddressDialog({ open, onOpenChange, address }: EditAddressDi
                 </FormItem>
               )}
             />
+
+            {/* Geocoding Button */}
+            <div className="flex justify-center py-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleGeocode}
+                disabled={isGeocoding}
+                data-testid="button-geocode"
+              >
+                {isGeocoding ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Getting Coordinates...
+                  </>
+                ) : (
+                  <>
+                    <MapPin className="h-4 w-4 mr-2" />
+                    Get Coordinates from Address
+                  </>
+                )}
+              </Button>
+            </div>
 
             <div className="grid grid-cols-2 gap-4">
               <FormField
