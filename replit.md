@@ -28,6 +28,23 @@ The application features a mobile-first, responsive design with full dark mode s
 ### Feature Specifications
 - **User Roles**: Distinct roles for Customers (order fuel), Drivers (accept jobs), Suppliers (manage depots, inventory), and Admins (system management, KYC/KYB).
 - **Database Schema**: A 17-table schema manages profiles, orders, delivery addresses, payment methods, attachments, dispatch offers, fuel types, depots, payments, KYC documents, and driver scores. Schema includes `profile_photo_url` column for user avatars (requires `npm run db:push` to sync).
+- **Fuel Types**: Comprehensive coverage of all typical African gas station fuel types (10 total):
+  - Diesel 500ppm, Diesel 50ppm (Ultra Low Sulphur)
+  - Petrol 93, Petrol 95, Petrol 97 (Premium Unleaded), Unleaded Petrol
+  - LPG (Liquefied Petroleum Gas)
+  - AdBlue (Diesel Exhaust Fluid)
+  - Paraffin, Illuminating Paraffin
+  - Jet A1 (Aviation fuel)
+- **Customer Self-Service Features**:
+  - **Profile Management**: View and edit personal information, company details, and billing address
+  - **Saved Delivery Addresses**: Full CRUD operations with:
+    - Multiple saved addresses per customer
+    - Default address selection
+    - South African provinces dropdown
+    - GPS coordinates (lat/lng) for precise location
+    - Access instructions for delivery drivers
+    - Address verification status tracking
+  - **Navigation**: Desktop and mobile navigation links in AppHeader for easy access to Orders, Saved Addresses, and Profile
 - **User Profile Management**: Allows users to manage their profiles, including initial role selection and profile picture uploads.
 - **Admin Dashboard**: 
   - Card-based interface with user management, search filters, and summary statistics
