@@ -114,7 +114,7 @@ router.get("/drivers", async (req, res) => {
 
     if (error) throw error;
 
-    // Fetch profiles and emails for drivers
+    // Fetch profiles, emails, and vehicles for drivers
     const driversWithProfiles = await Promise.all(
       (drivers || []).map(async (driver) => {
         const { data: profile, error: profileError } = await supabaseAdmin
@@ -136,9 +136,20 @@ router.get("/drivers", async (req, res) => {
           console.error(`Failed to fetch email for driver ${driver.user_id}:`, e);
         }
         
+        // Fetch vehicles for this driver
+        const { data: vehicles, error: vehiclesError } = await supabaseAdmin
+          .from("vehicles")
+          .select("id, registration_number, make, model, capacity_litres, fuel_types")
+          .eq("driver_id", driver.id);
+        
+        if (vehiclesError) {
+          console.error(`Failed to fetch vehicles for driver ${driver.id}:`, vehiclesError);
+        }
+        
         return {
           ...driver,
           profiles: profile ? { ...profile, email } : null,
+          vehicles: vehicles || [],
         };
       })
     );
