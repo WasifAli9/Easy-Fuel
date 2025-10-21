@@ -42,6 +42,7 @@ The application features a mobile-first, responsive design with full dark mode s
     - Default address selection
     - South African provinces dropdown
     - GPS coordinates (lat/lng) for precise location
+    - **Automatic Geocoding**: Uses OpenStreetMap Nominatim API to automatically convert addresses to GPS coordinates
     - Access instructions for delivery drivers
     - Address verification status tracking
   - **Navigation**: Desktop and mobile navigation links in AppHeader for easy access to Orders, Saved Addresses, and Profile
