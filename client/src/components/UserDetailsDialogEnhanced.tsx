@@ -40,6 +40,7 @@ interface UserDetails {
   driver?: any;
   supplier?: any;
   admin?: any;
+  vehicles?: any[];
 }
 
 export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDetailsDialogProps) {
@@ -87,6 +88,7 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
       setFormData({
         // Profile fields
         full_name: userDetails.profile.full_name,
+        email: userDetails.profile.email || "",
         phone: userDetails.profile.phone || "",
         phone_country_code: userDetails.profile.phone_country_code || "+27",
         role: userDetails.profile.role, // CRITICAL: Include role for backend branching
@@ -122,6 +124,7 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
           branch_code: userDetails.driver.branch_code || "",
           next_of_kin_name: userDetails.driver.next_of_kin_name || "",
           next_of_kin_phone: userDetails.driver.next_of_kin_phone || "",
+          availability_status: userDetails.driver.availability_status || "offline",
         }),
         ...(userDetails.supplier && {
           registered_name: userDetails.supplier.registered_name || "",
@@ -247,7 +250,7 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
         </DialogHeader>
 
         <Tabs defaultValue="profile" className="flex-1 overflow-hidden flex flex-col">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className={`grid w-full ${userDetails.driver ? 'grid-cols-5' : 'grid-cols-4'}`}>
             <TabsTrigger value="profile" className="flex items-center gap-1">
               <User className="h-3.5 w-3.5" />
               Profile
@@ -256,6 +259,12 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
               <FileText className="h-3.5 w-3.5" />
               Details
             </TabsTrigger>
+            {userDetails.driver && (
+              <TabsTrigger value="vehicles" className="flex items-center gap-1">
+                <Truck className="h-3.5 w-3.5" />
+                Vehicles
+              </TabsTrigger>
+            )}
             <TabsTrigger value="documents" className="flex items-center gap-1">
               <ShieldCheck className="h-3.5 w-3.5" />
               Documents
@@ -279,6 +288,20 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
                     />
                   ) : (
                     <p className="text-sm mt-1">{userDetails.profile.full_name}</p>
+                  )}
+                </div>
+
+                <div>
+                  <Label>Email Address</Label>
+                  {isEditing ? (
+                    <Input
+                      type="email"
+                      value={formData.email || ""}
+                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                      data-testid="input-email"
+                    />
+                  ) : (
+                    <p className="text-sm mt-1">{userDetails.profile.email || "N/A"}</p>
                   )}
                 </div>
 
@@ -372,6 +395,13 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
                 <SupplierDetails supplier={userDetails.supplier} formData={formData} setFormData={setFormData} isEditing={isEditing} />
               )}
             </TabsContent>
+
+            {/* Vehicles Tab - Driver Only */}
+            {userDetails.driver && (
+              <TabsContent value="vehicles" className="mt-0">
+                <VehiclesTab driverId={userDetails.driver.id} vehicles={userDetails.vehicles || []} />
+              </TabsContent>
+            )}
 
             {/* Documents Tab */}
             <TabsContent value="documents" className="mt-0">
@@ -588,8 +618,24 @@ function DriverDetails({ driver, formData, setFormData, isEditing }: any) {
           )}
         </div>
         <div>
-          <Label>Availability</Label>
-          <p className="text-sm mt-1 capitalize">{driver.availability_status || "offline"}</p>
+          <Label>Availability Status</Label>
+          {isEditing ? (
+            <Select
+              value={formData.availability_status}
+              onValueChange={(value) => setFormData({ ...formData, availability_status: value })}
+            >
+              <SelectTrigger data-testid="select-availability-status">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="offline">Offline</SelectItem>
+                <SelectItem value="online">Online</SelectItem>
+                <SelectItem value="busy">Busy</SelectItem>
+              </SelectContent>
+            </Select>
+          ) : (
+            <p className="text-sm mt-1 capitalize">{driver.availability_status || "offline"}</p>
+          )}
         </div>
       </div>
 
@@ -787,6 +833,97 @@ function SupplierDetails({ supplier, formData, setFormData, isEditing }: any) {
           <p className="text-sm mt-1">{supplier.primary_contact_email || "N/A"}</p>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Vehicles Tab Component - Driver Only
+function VehiclesTab({ driverId, vehicles }: { driverId: string; vehicles: any[] }) {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold text-sm text-muted-foreground">Driver Vehicles</h3>
+        <Badge variant="secondary" data-testid="badge-vehicle-count">
+          {vehicles.length} {vehicles.length === 1 ? 'Vehicle' : 'Vehicles'}
+        </Badge>
+      </div>
+
+      {vehicles.length === 0 ? (
+        <div className="text-center py-12 text-muted-foreground">
+          <Truck className="h-12 w-12 mx-auto mb-3 opacity-50" />
+          <p>No vehicles registered</p>
+          <p className="text-xs mt-1">Driver has not added any vehicles yet</p>
+        </div>
+      ) : (
+        <div className="grid gap-3">
+          {vehicles.map((vehicle) => (
+            <div
+              key={vehicle.id}
+              className="p-4 border rounded-md space-y-3"
+              data-testid={`card-vehicle-${vehicle.id}`}
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <h4 className="font-medium text-sm">
+                    {vehicle.make && vehicle.model ? `${vehicle.make} ${vehicle.model}` : 'Vehicle'}
+                    {vehicle.year && ` (${vehicle.year})`}
+                  </h4>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Registration: {vehicle.registration_number || 'N/A'}
+                  </p>
+                </div>
+                <Badge variant="outline" data-testid={`badge-capacity-${vehicle.id}`}>
+                  {vehicle.capacity_litres ? `${vehicle.capacity_litres}L` : 'N/A'}
+                </Badge>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <Label className="text-xs text-muted-foreground">Fuel Types</Label>
+                  <p className="mt-1">
+                    {vehicle.fuel_types && vehicle.fuel_types.length > 0
+                      ? vehicle.fuel_types.join(', ')
+                      : 'N/A'}
+                  </p>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Tracker</Label>
+                  <p className="mt-1">
+                    {vehicle.tracker_installed ? `Yes - ${vehicle.tracker_provider || 'Unknown'}` : 'No'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4 text-sm pt-2 border-t">
+                <div>
+                  <Label className="text-xs text-muted-foreground">License Disk</Label>
+                  <p className="text-xs mt-1">
+                    {vehicle.license_disk_expiry
+                      ? new Date(vehicle.license_disk_expiry).toLocaleDateString()
+                      : 'N/A'}
+                  </p>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Roadworthy</Label>
+                  <p className="text-xs mt-1">
+                    {vehicle.roadworthy_expiry
+                      ? new Date(vehicle.roadworthy_expiry).toLocaleDateString()
+                      : 'N/A'}
+                  </p>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Insurance</Label>
+                  <p className="text-xs mt-1">
+                    {vehicle.insurance_expiry
+                      ? new Date(vehicle.insurance_expiry).toLocaleDateString()
+                      : 'N/A'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
