@@ -232,7 +232,10 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
             </div>
             <div className="flex-1">
               <DialogTitle className="text-xl">{userDetails.profile.full_name}</DialogTitle>
-              <DialogDescription className="flex items-center gap-2 mt-1">
+              <DialogDescription>
+                User details and management
+              </DialogDescription>
+              <div className="flex items-center gap-2 mt-2">
                 <Badge variant="outline" className="capitalize">{userDetails.profile.role}</Badge>
                 <Badge variant={userDetails.profile.is_active ? "default" : "secondary"}>
                   {userDetails.profile.is_active ? "Active" : "Inactive"}
@@ -244,7 +247,7 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
                 } className="capitalize">
                   {userDetails.profile.approval_status}
                 </Badge>
-              </DialogDescription>
+              </div>
             </div>
           </div>
         </DialogHeader>

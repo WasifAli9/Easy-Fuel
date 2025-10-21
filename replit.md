@@ -111,3 +111,59 @@ Completed comprehensive enhancement of the customer order flow with production-r
 - Ready for order attachment uploads (order_attachments table ready)
 - Signature data stored as base64 for POD (proof of delivery) integration
 - Vehicle/equipment details support fleet management features
+
+### Enhanced Admin Driver Details View ✅
+Completed comprehensive admin interface for viewing and managing driver information:
+
+#### Backend Enhancements (server/admin-routes.ts)
+1. **Enhanced GET /api/admin/users/:userId**:
+   - Now fetches email from Supabase Auth (admin.getUserById)
+   - Fetches driver's vehicles from vehicles table with full details
+   - Returns complete driver profile with vehicles array
+   
+2. **Enhanced PATCH /api/admin/users/:userId**:
+   - Added email update capability via Supabase Auth admin API
+   - Added availability_status update support for drivers
+   - Maintains all existing profile and role-specific field updates
+
+#### Frontend Enhancements (client/src/components/UserDetailsDialogEnhanced.tsx)
+1. **Email Management**:
+   - Added email field to Profile tab with display and edit capability
+   - Email is fetched from Supabase Auth and can be updated by admin
+   - Field includes proper validation and testid attributes
+
+2. **Driver Availability Status**:
+   - Made availability_status editable via dropdown (offline/online/busy)
+   - Located in Details tab under driver information
+   - Allows admin to manually override driver availability
+
+3. **New Vehicles Tab** (Driver-only):
+   - Conditionally displayed 5th tab for drivers
+   - Shows comprehensive vehicle information:
+     - Vehicle count badge
+     - Vehicle cards with make, model, year, registration
+     - Capacity display in liters
+     - Supported fuel types
+     - Tracker installation status and provider
+     - Expiry dates: license disk, roadworthy, insurance
+   - Empty state with appropriate messaging
+   - Fully responsive card layout
+
+4. **Fixed Dialog Accessibility**:
+   - Fixed DialogDescription nesting warnings
+   - Moved badges outside DialogDescription to prevent DOM nesting errors
+   - Added proper DialogDescription text content
+   - Maintains Radix UI accessibility standards
+
+#### Features Implemented
+✅ View and edit driver email addresses
+✅ View all driver vehicles with detailed specifications
+✅ View vehicle capacities for fleet management
+✅ Toggle driver availability status (in-service control)
+✅ Fixed dialog accessibility issues
+
+#### Technical Notes
+- No driver-specific pricing history exists (pricing is depot-based via depot_prices table)
+- Vehicles are linked to drivers via driver_id foreign key
+- Email updates use Supabase Auth admin API for security
+- All changes maintain existing validation and authorization patterns
