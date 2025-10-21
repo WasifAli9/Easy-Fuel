@@ -242,20 +242,20 @@ export default function AdminDashboard() {
 
   // Filter customers based on search
   const filteredCustomers = customers?.filter((customer) =>
-    customer.profiles?.full_name.toLowerCase().includes(customerSearch.toLowerCase()) ||
+    customer.profiles?.full_name?.toLowerCase().includes(customerSearch.toLowerCase()) ||
     customer.company_name?.toLowerCase().includes(customerSearch.toLowerCase())
   ) || [];
 
   // Filter all drivers based on search
   const filteredAllDrivers = allDrivers?.filter((driver) =>
-    driver.profiles?.full_name.toLowerCase().includes(allDriversSearch.toLowerCase()) ||
+    driver.profiles?.full_name?.toLowerCase().includes(allDriversSearch.toLowerCase()) ||
     driver.vehicle_registration?.toLowerCase().includes(allDriversSearch.toLowerCase())
   ) || [];
 
   // Filter all suppliers based on search
   const filteredAllSuppliers = allSuppliers?.filter((supplier) =>
     supplier.name.toLowerCase().includes(allSuppliersSearch.toLowerCase()) ||
-    supplier.profiles?.full_name.toLowerCase().includes(allSuppliersSearch.toLowerCase())
+    supplier.profiles?.full_name?.toLowerCase().includes(allSuppliersSearch.toLowerCase())
   ) || [];
 
   // Filter driver KYC based on search

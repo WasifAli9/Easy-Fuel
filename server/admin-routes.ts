@@ -117,11 +117,15 @@ router.get("/drivers", async (req, res) => {
     // Fetch profiles and emails for drivers
     const driversWithProfiles = await Promise.all(
       (drivers || []).map(async (driver) => {
-        const { data: profile } = await supabaseAdmin
+        const { data: profile, error: profileError } = await supabaseAdmin
           .from("profiles")
           .select("id, full_name, phone, role, profile_photo_url")
           .eq("id", driver.user_id)
           .single();
+        
+        if (profileError) {
+          console.error(`Failed to fetch profile for driver ${driver.user_id}:`, profileError);
+        }
         
         // Fetch email from Supabase Auth
         let email = null;
