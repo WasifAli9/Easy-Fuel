@@ -56,6 +56,7 @@ interface Driver {
   id: string;
   user_id: string;
   kyc_status: string;
+  company_name?: string;
   vehicle_registration?: string;
   created_at: string;
   profiles: {
@@ -65,7 +66,15 @@ interface Driver {
     phone?: string;
     role: string;
     profile_photo_url?: string;
-  };
+  } | null;
+  vehicles: {
+    id: string;
+    registration_number: string;
+    make?: string;
+    model?: string;
+    capacity_litres?: number;
+    fuel_types?: string[];
+  }[];
 }
 
 interface Supplier {
@@ -398,20 +407,30 @@ export default function AdminDashboard() {
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {filteredAllDrivers.map((driver) => (
-                  <DriverCard
-                    key={driver.id}
-                    id={driver.id}
-                    name={driver.profiles?.full_name || 'N/A'}
-                    email={driver.profiles?.email}
-                    vehicleRegistration={driver.vehicle_registration}
-                    kycStatus={driver.kyc_status}
-                    phone={driver.profiles?.phone}
-                    registeredDate={new Date(driver.created_at).toLocaleDateString()}
-                    profilePhotoUrl={driver.profiles?.profile_photo_url}
-                    onView={() => handleView(driver.user_id, "driver")}
-                  />
-                ))}
+                {filteredAllDrivers.map((driver) => {
+                  const primaryVehicle = driver.vehicles?.[0];
+                  const vehicleType = primaryVehicle 
+                    ? `${primaryVehicle.make || ''} ${primaryVehicle.model || ''}`.trim() || primaryVehicle.registration_number
+                    : undefined;
+                  
+                  return (
+                    <DriverCard
+                      key={driver.id}
+                      id={driver.id}
+                      name={driver.profiles?.full_name || 'N/A'}
+                      companyName={driver.company_name}
+                      email={driver.profiles?.email}
+                      vehicleRegistration={driver.vehicle_registration}
+                      vehicleType={vehicleType}
+                      fuelCapacity={primaryVehicle?.capacity_litres}
+                      kycStatus={driver.kyc_status}
+                      phone={driver.profiles?.phone}
+                      registeredDate={new Date(driver.created_at).toLocaleDateString()}
+                      profilePhotoUrl={driver.profiles?.profile_photo_url}
+                      onView={() => handleView(driver.user_id, "driver")}
+                    />
+                  );
+                })}
               </div>
             )}
           </TabsContent>
