@@ -27,9 +27,15 @@ The application features a mobile-first, responsive design with full dark mode s
 
 ### Feature Specifications
 - **User Roles**: Distinct roles for Customers (order fuel), Drivers (accept jobs), Suppliers (manage depots, inventory), and Admins (system management, KYC/KYB).
-- **Database Schema**: A 17-table schema manages profiles, orders, delivery addresses, payment methods, attachments, dispatch offers, fuel types, depots, payments, KYC documents, and driver scores.
-- **User Profile Management**: Allows users to manage their profiles, including initial role selection.
-- **Admin Dashboard**: Provides card-based interface with user management, search filters, and summary statistics.
+- **Database Schema**: A 17-table schema manages profiles, orders, delivery addresses, payment methods, attachments, dispatch offers, fuel types, depots, payments, KYC documents, and driver scores. Schema includes `profile_photo_url` column for user avatars (requires `npm run db:push` to sync).
+- **User Profile Management**: Allows users to manage their profiles, including initial role selection and profile picture uploads.
+- **Admin Dashboard**: 
+  - Card-based interface with user management, search filters, and summary statistics
+  - Consistent card layout across all entity types (Customer/Driver/Supplier)
+  - All cards display: company name as title, contact person name, email, phone, and role-specific fields
+  - Email data fetched from Supabase Auth for accuracy
+  - Profile pictures supported with object storage ACLs and database persistence
+  - Graceful degradation for missing database columns (backwards compatible)
 - **Vehicle Management**: CRUD operations for driver vehicles, including registration, capacity, and compliance.
 
 ## External Dependencies
