@@ -46,10 +46,11 @@ interface Customer {
   profiles: {
     id: string;
     full_name: string;
+    email?: string;
     phone?: string;
     role: string;
     profile_photo_url?: string;
-  };
+  } | null;
 }
 
 interface Driver {
@@ -87,10 +88,11 @@ interface Supplier {
   profiles: {
     id: string;
     full_name: string;
+    email?: string;
     phone?: string;
     role: string;
     profile_photo_url?: string;
-  };
+  } | null;
 }
 
 export default function AdminDashboard() {
@@ -375,6 +377,7 @@ export default function AdminDashboard() {
                     id={customer.id}
                     name={customer.profiles?.full_name || 'N/A'}
                     companyName={customer.company_name}
+                    email={customer.profiles?.email}
                     vatNumber={customer.vat_number}
                     phone={customer.profiles?.phone}
                     registeredDate={new Date(customer.created_at).toLocaleDateString()}
@@ -462,6 +465,7 @@ export default function AdminDashboard() {
                     id={supplier.id}
                     name={supplier.profiles?.full_name || 'N/A'}
                     companyName={supplier.name}
+                    email={supplier.profiles?.email}
                     kybStatus={supplier.kyb_status}
                     cipcNumber={supplier.cipc_number}
                     phone={supplier.profiles?.phone}

@@ -2,12 +2,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Building2, Phone, Calendar, User, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { Building2, Phone, Calendar, User, CheckCircle2, XCircle, Clock, Mail } from "lucide-react";
 
 interface SupplierCardProps {
   id: string;
   name: string;
   companyName: string;
+  email?: string;
   kybStatus: string;
   cipcNumber?: string;
   phone?: string;
@@ -19,6 +20,7 @@ interface SupplierCardProps {
 export function SupplierCard({
   name,
   companyName,
+  email,
   kybStatus,
   cipcNumber,
   phone,
@@ -62,10 +64,10 @@ export function SupplierCard({
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="space-y-2 text-sm">
-          {cipcNumber && (
+          {email && (
             <div className="flex items-center gap-2 text-muted-foreground">
-              <span className="font-medium min-w-20">CIPC:</span>
-              <span>{cipcNumber}</span>
+              <Mail className="h-3.5 w-3.5 flex-shrink-0" />
+              <span className="truncate">{email}</span>
             </div>
           )}
           {phone && (
@@ -74,10 +76,12 @@ export function SupplierCard({
               <span>{phone}</span>
             </div>
           )}
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <Calendar className="h-3.5 w-3.5 flex-shrink-0" />
-            <span>{registeredDate}</span>
-          </div>
+          {cipcNumber && (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Building2 className="h-3.5 w-3.5 flex-shrink-0" />
+              <span className="truncate">CIPC: {cipcNumber}</span>
+            </div>
+          )}
         </div>
         <div className="pt-2">
           <Button 

@@ -66,18 +66,45 @@ router.get("/customers", async (req, res) => {
 
     if (error) throw error;
 
-    // Fetch profiles for customers
+    // Fetch profiles and emails for customers
     const customersWithProfiles = await Promise.all(
       (customers || []).map(async (customer) => {
-        const { data: profile } = await supabaseAdmin
+        // Try to fetch profile with profile_photo_url, fallback to without if column doesn't exist
+        let profile = null;
+        const { data, error } = await supabaseAdmin
           .from("profiles")
-          .select("id, full_name, phone, role")
+          .select("id, full_name, phone, role, profile_photo_url")
           .eq("id", customer.user_id)
           .single();
         
+        if (error) {
+          // If profile_photo_url column doesn't exist, fetch without it
+          if (error.code === '42703') {
+            const { data: profileData } = await supabaseAdmin
+              .from("profiles")
+              .select("id, full_name, phone, role")
+              .eq("id", customer.user_id)
+              .single();
+            profile = profileData;
+          } else {
+            console.error(`Failed to fetch profile for customer ${customer.user_id}:`, error);
+          }
+        } else {
+          profile = data;
+        }
+        
+        // Fetch email from Supabase Auth
+        let email = null;
+        try {
+          const { data: authData } = await supabaseAdmin.auth.admin.getUserById(customer.user_id);
+          email = authData?.user?.email || null;
+        } catch (e) {
+          console.error(`Failed to fetch email for customer ${customer.user_id}:`, e);
+        }
+        
         return {
           ...customer,
-          profiles: profile ? { ...profile, profile_photo_url: null } : null,
+          profiles: profile ? { ...profile, email } : null,
         };
       })
     );
@@ -97,7 +124,51 @@ router.get("/suppliers", async (req, res) => {
       .select("*");
 
     if (error) throw error;
-    res.json(suppliers);
+
+    // Fetch profiles and emails for suppliers
+    const suppliersWithProfiles = await Promise.all(
+      (suppliers || []).map(async (supplier) => {
+        // Try to fetch profile with profile_photo_url, fallback to without if column doesn't exist
+        let profile = null;
+        const { data, error } = await supabaseAdmin
+          .from("profiles")
+          .select("id, full_name, phone, role, profile_photo_url")
+          .eq("id", supplier.owner_id)
+          .single();
+        
+        if (error) {
+          // If profile_photo_url column doesn't exist, fetch without it
+          if (error.code === '42703') {
+            const { data: profileData } = await supabaseAdmin
+              .from("profiles")
+              .select("id, full_name, phone, role")
+              .eq("id", supplier.owner_id)
+              .single();
+            profile = profileData;
+          } else {
+            console.error(`Failed to fetch profile for supplier ${supplier.owner_id}:`, error);
+          }
+        } else {
+          profile = data;
+        }
+        
+        // Fetch email from Supabase Auth
+        let email = null;
+        try {
+          const { data: authData } = await supabaseAdmin.auth.admin.getUserById(supplier.owner_id);
+          email = authData?.user?.email || null;
+        } catch (e) {
+          console.error(`Failed to fetch email for supplier ${supplier.owner_id}:`, e);
+        }
+        
+        return {
+          ...supplier,
+          profiles: profile ? { ...profile, email } : null,
+        };
+      })
+    );
+
+    res.json(suppliersWithProfiles);
   } catch (error: any) {
     console.error("Error fetching suppliers:", error);
     res.status(500).json({ error: error.message });
@@ -117,15 +188,28 @@ router.get("/drivers", async (req, res) => {
     // Fetch profiles, emails, and vehicles for drivers
     const driversWithProfiles = await Promise.all(
       (drivers || []).map(async (driver) => {
-        // Fetch profile - only select columns that exist in current DB schema
-        const { data: profile, error: profileError } = await supabaseAdmin
+        // Try to fetch profile with profile_photo_url, fallback to without if column doesn't exist
+        let profile = null;
+        const { data, error } = await supabaseAdmin
           .from("profiles")
-          .select("id, full_name, phone, role")
+          .select("id, full_name, phone, role, profile_photo_url")
           .eq("id", driver.user_id)
           .single();
         
-        if (profileError) {
-          console.error(`Failed to fetch profile for driver ${driver.user_id}:`, profileError);
+        if (error) {
+          // If profile_photo_url column doesn't exist, fetch without it
+          if (error.code === '42703') {
+            const { data: profileData } = await supabaseAdmin
+              .from("profiles")
+              .select("id, full_name, phone, role")
+              .eq("id", driver.user_id)
+              .single();
+            profile = profileData;
+          } else {
+            console.error(`Failed to fetch profile for driver ${driver.user_id}:`, error);
+          }
+        } else {
+          profile = data;
         }
         
         // Fetch email from Supabase Auth
@@ -139,22 +223,18 @@ router.get("/drivers", async (req, res) => {
         
         // Try to fetch vehicles (table may not exist yet)
         let vehicles: any[] = [];
-        try {
-          const { data: vehiclesData, error: vehiclesError } = await supabaseAdmin
-            .from("vehicles")
-            .select("id, registration_number, make, model, capacity_litres, fuel_types")
-            .eq("driver_id", driver.id);
-          
-          if (!vehiclesError && vehiclesData) {
-            vehicles = vehiclesData;
-          }
-        } catch (e) {
-          // Vehicles table doesn't exist yet - this is expected if schema not synced
+        const { data: vehiclesData, error: vehiclesError } = await supabaseAdmin
+          .from("vehicles")
+          .select("id, registration_number, make, model, capacity_litres, fuel_types")
+          .eq("driver_id", driver.id);
+        
+        if (!vehiclesError && vehiclesData) {
+          vehicles = vehiclesData;
         }
         
         return {
           ...driver,
-          profiles: profile ? { ...profile, email, profile_photo_url: null } : null,
+          profiles: profile ? { ...profile, email } : null,
           vehicles,
         };
       })
@@ -800,6 +880,22 @@ router.put("/users/:userId/profile-picture", async (req, res) => {
         visibility: "public", // Profile pictures are public
       }
     );
+
+    // Update profile_photo_url in database (if column exists)
+    try {
+      const { error: updateError } = await supabaseAdmin
+        .from("profiles")
+        .update({ profile_photo_url: objectPath })
+        .eq("id", userId);
+
+      if (updateError) {
+        console.error(`Failed to update profile_photo_url for user ${userId}:`, updateError);
+        // Don't fail the request if column doesn't exist yet
+      }
+    } catch (e) {
+      console.error(`Database update failed (profile_photo_url column may not exist):`, e);
+      // Continue - ACL was set successfully
+    }
 
     res.json({ objectPath });
   } catch (error: any) {

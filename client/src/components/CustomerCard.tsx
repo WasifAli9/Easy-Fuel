@@ -2,12 +2,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Building2, Phone, Calendar, User } from "lucide-react";
+import { Building2, Phone, Calendar, User, Mail } from "lucide-react";
 
 interface CustomerCardProps {
   id: string;
   name: string;
   companyName?: string;
+  email?: string;
   vatNumber?: string;
   phone?: string;
   registeredDate: string;
@@ -18,6 +19,7 @@ interface CustomerCardProps {
 export function CustomerCard({
   name,
   companyName,
+  email,
   vatNumber,
   phone,
   registeredDate,
@@ -36,13 +38,11 @@ export function CustomerCard({
               </AvatarFallback>
             </Avatar>
             <div className="flex-1 min-w-0">
-              <CardTitle className="text-lg mb-1">{name}</CardTitle>
-              {companyName && (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Building2 className="h-3.5 w-3.5 flex-shrink-0" />
-                  <span className="truncate">{companyName}</span>
-                </div>
-              )}
+              <CardTitle className="text-lg mb-1">{companyName || name}</CardTitle>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <User className="h-3.5 w-3.5 flex-shrink-0" />
+                <span className="truncate">{name}</span>
+              </div>
             </div>
           </div>
           <Badge variant="secondary" className="flex-shrink-0">Customer</Badge>
@@ -50,10 +50,10 @@ export function CustomerCard({
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="space-y-2 text-sm">
-          {vatNumber && (
+          {email && (
             <div className="flex items-center gap-2 text-muted-foreground">
-              <span className="font-medium min-w-20">VAT:</span>
-              <span>{vatNumber}</span>
+              <Mail className="h-3.5 w-3.5 flex-shrink-0" />
+              <span className="truncate">{email}</span>
             </div>
           )}
           {phone && (
@@ -62,10 +62,12 @@ export function CustomerCard({
               <span>{phone}</span>
             </div>
           )}
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <Calendar className="h-3.5 w-3.5 flex-shrink-0" />
-            <span>{registeredDate}</span>
-          </div>
+          {vatNumber && (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Building2 className="h-3.5 w-3.5 flex-shrink-0" />
+              <span className="truncate">VAT: {vatNumber}</span>
+            </div>
+          )}
         </div>
         <div className="pt-2">
           <Button 
