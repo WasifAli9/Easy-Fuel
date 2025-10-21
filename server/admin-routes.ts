@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { supabaseAdmin } from "./supabase";
+import { ObjectStorageService } from "./objectStorage";
 
 const router = Router();
+const objectStorageService = new ObjectStorageService();
 
 // Get all users with their profiles and role-specific data
 router.get("/users", async (req, res) => {
@@ -756,6 +758,32 @@ router.delete("/documents/:documentId", async (req, res) => {
   } catch (error: any) {
     console.error("Error deleting document:", error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Set profile picture for a user (admin endpoint)
+router.put("/users/:userId/profile-picture", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { profilePictureURL } = req.body;
+
+    if (!profilePictureURL) {
+      return res.status(400).json({ error: "profilePictureURL is required" });
+    }
+
+    // Set ACL for the profile picture with the target user as owner
+    const objectPath = await objectStorageService.trySetObjectEntityAclPolicy(
+      profilePictureURL,
+      {
+        owner: userId,
+        visibility: "public", // Profile pictures are public
+      }
+    );
+
+    res.json({ objectPath });
+  } catch (error: any) {
+    console.error("Error setting profile picture ACL:", error);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 

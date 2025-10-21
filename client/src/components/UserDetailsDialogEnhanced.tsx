@@ -162,7 +162,7 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
 
     try {
       const headers = await getAuthHeaders();
-      const response = await fetch("/api/profile-picture", {
+      const response = await fetch(`/api/admin/users/${userId}/profile-picture`, {
         method: "PUT",
         headers,
         body: JSON.stringify({ profilePictureURL: uploadedFile.uploadURL }),
