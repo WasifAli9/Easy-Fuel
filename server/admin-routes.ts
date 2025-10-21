@@ -71,13 +71,13 @@ router.get("/customers", async (req, res) => {
       (customers || []).map(async (customer) => {
         const { data: profile } = await supabaseAdmin
           .from("profiles")
-          .select("id, full_name, phone, role, profile_photo_url")
+          .select("id, full_name, phone, role")
           .eq("id", customer.user_id)
           .single();
         
         return {
           ...customer,
-          profiles: profile,
+          profiles: profile ? { ...profile, profile_photo_url: null } : null,
         };
       })
     );
@@ -117,9 +117,10 @@ router.get("/drivers", async (req, res) => {
     // Fetch profiles, emails, and vehicles for drivers
     const driversWithProfiles = await Promise.all(
       (drivers || []).map(async (driver) => {
+        // Fetch profile - only select columns that exist in current DB schema
         const { data: profile, error: profileError } = await supabaseAdmin
           .from("profiles")
-          .select("id, full_name, phone, role, profile_photo_url")
+          .select("id, full_name, phone, role")
           .eq("id", driver.user_id)
           .single();
         
@@ -136,20 +137,25 @@ router.get("/drivers", async (req, res) => {
           console.error(`Failed to fetch email for driver ${driver.user_id}:`, e);
         }
         
-        // Fetch vehicles for this driver
-        const { data: vehicles, error: vehiclesError } = await supabaseAdmin
-          .from("vehicles")
-          .select("id, registration_number, make, model, capacity_litres, fuel_types")
-          .eq("driver_id", driver.id);
-        
-        if (vehiclesError) {
-          console.error(`Failed to fetch vehicles for driver ${driver.id}:`, vehiclesError);
+        // Try to fetch vehicles (table may not exist yet)
+        let vehicles: any[] = [];
+        try {
+          const { data: vehiclesData, error: vehiclesError } = await supabaseAdmin
+            .from("vehicles")
+            .select("id, registration_number, make, model, capacity_litres, fuel_types")
+            .eq("driver_id", driver.id);
+          
+          if (!vehiclesError && vehiclesData) {
+            vehicles = vehiclesData;
+          }
+        } catch (e) {
+          // Vehicles table doesn't exist yet - this is expected if schema not synced
         }
         
         return {
           ...driver,
-          profiles: profile ? { ...profile, email } : null,
-          vehicles: vehicles || [],
+          profiles: profile ? { ...profile, email, profile_photo_url: null } : null,
+          vehicles,
         };
       })
     );
