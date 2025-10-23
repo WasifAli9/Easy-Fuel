@@ -35,6 +35,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Plus, MapPin, Truck, CreditCard, FileSignature } from "lucide-react";
+import { AddAddressDialog } from "@/components/AddAddressDialog";
 
 const orderFormSchema = z.object({
   fuelTypeId: z.string().min(1, "Please select a fuel type"),
@@ -68,6 +69,7 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
   const [signatureData, setSignatureData] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [showAddAddressDialog, setShowAddAddressDialog] = useState(false);
   const { toast } = useToast();
 
   // Fetch fuel types
@@ -338,7 +340,7 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
                         <SelectContent>
                           {deliveryAddresses.length === 0 ? (
                             <div className="p-2 text-sm text-muted-foreground">
-                              No addresses saved. Add one in your profile settings.
+                              No addresses saved. Add one using the button below.
                             </div>
                           ) : (
                             deliveryAddresses.map((address) => (
@@ -354,6 +356,17 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
                         </SelectContent>
                       </Select>
                       <FormMessage />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="mt-2 w-full"
+                        onClick={() => setShowAddAddressDialog(true)}
+                        data-testid="button-add-address-inline"
+                      >
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add New Address
+                      </Button>
                     </FormItem>
                   )}
                 />
@@ -613,6 +626,11 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
           </form>
         </Form>
       </DialogContent>
+
+      <AddAddressDialog
+        open={showAddAddressDialog}
+        onOpenChange={setShowAddAddressDialog}
+      />
     </Dialog>
   );
 }

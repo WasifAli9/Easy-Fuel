@@ -140,6 +140,7 @@ export function AddAddressDialog({ open, onOpenChange }: AddAddressDialogProps) 
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/addresses"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/customer/delivery-addresses"] });
       toast({
         title: "Success",
         description: "Address added successfully",
