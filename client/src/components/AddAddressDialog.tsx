@@ -64,9 +64,10 @@ const SOUTH_AFRICAN_PROVINCES = [
 interface AddAddressDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSuccess?: (address: any) => void;
 }
 
-export function AddAddressDialog({ open, onOpenChange }: AddAddressDialogProps) {
+export function AddAddressDialog({ open, onOpenChange, onSuccess }: AddAddressDialogProps) {
   const { toast } = useToast();
   const [isGeocoding, setIsGeocoding] = useState(false);
 
@@ -136,15 +137,22 @@ export function AddAddressDialog({ open, onOpenChange }: AddAddressDialogProps) 
 
   const createMutation = useMutation({
     mutationFn: async (data: AddressFormData) => {
-      return apiRequest("POST", "/api/addresses", data);
+      const response = await apiRequest("POST", "/api/addresses", data);
+      return await response.json();
     },
-    onSuccess: () => {
+    onSuccess: (createdAddress) => {
       queryClient.invalidateQueries({ queryKey: ["/api/addresses"] });
       queryClient.invalidateQueries({ queryKey: ["/api/customer/delivery-addresses"] });
       toast({
         title: "Success",
         description: "Address added successfully",
       });
+      
+      // Call the optional onSuccess callback with the created address
+      if (onSuccess && createdAddress) {
+        onSuccess(createdAddress);
+      }
+      
       onOpenChange(false);
       form.reset();
     },

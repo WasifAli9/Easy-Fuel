@@ -329,7 +329,7 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
                       <FormLabel>Delivery Address *</FormLabel>
                       <Select
                         onValueChange={field.onChange}
-                        defaultValue={field.value}
+                        value={field.value}
                         disabled={loadingAddresses}
                       >
                         <FormControl>
@@ -630,6 +630,12 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
       <AddAddressDialog
         open={showAddAddressDialog}
         onOpenChange={setShowAddAddressDialog}
+        onSuccess={(createdAddress) => {
+          // Auto-select the newly created address
+          if (createdAddress?.id) {
+            form.setValue("deliveryAddressId", createdAddress.id);
+          }
+        }}
       />
     </Dialog>
   );

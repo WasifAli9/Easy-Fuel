@@ -45,6 +45,7 @@ The application features a mobile-first, responsive design with full dark mode s
     - **Automatic Geocoding**: Uses OpenStreetMap Nominatim API to automatically convert addresses to GPS coordinates
     - Access instructions for delivery drivers
     - Address verification status tracking
+    - **Inline Address Creation**: Create new delivery addresses directly from the order creation dialog without navigating away - newly created addresses are automatically selected
   - **Navigation**: Desktop and mobile navigation links in AppHeader for easy access to Orders, Saved Addresses, and Profile
 - **User Profile Management**: Allows users to manage their profiles, including initial role selection and profile picture uploads.
 - **Admin Dashboard**: 
