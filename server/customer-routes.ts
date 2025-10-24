@@ -549,8 +549,7 @@ router.post("/delivery-addresses", async (req, res) => {
         lat,
         lng,
         access_instructions: accessInstructions,
-        is_default: isDefault || false,
-        verification_status: "pending"
+        is_default: isDefault || false
       })
       .select()
       .single();
@@ -925,8 +924,7 @@ router.post("/addresses", async (req, res) => {
         lat,
         lng,
         access_instructions: accessInstructions,
-        is_default: isDefault || false,
-        verification_status: "pending"
+        is_default: isDefault || false
       })
       .select()
       .single();
