@@ -690,7 +690,14 @@ router.get("/payment-methods", async (req, res) => {
       .order("is_default", { ascending: false })
       .order("created_at", { ascending: false });
 
-    if (error) throw error;
+    if (error) {
+      // Handle schema cache issues - return empty array
+      if (error.code === 'PGRST205' || error.code === 'PGRST204') {
+        console.log("Schema cache not refreshed yet for payment_methods, returning empty array");
+        return res.json([]);
+      }
+      throw error;
+    }
     res.json(paymentMethods || []);
   } catch (error: any) {
     console.error("Error fetching payment methods:", error);

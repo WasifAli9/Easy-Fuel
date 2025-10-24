@@ -59,7 +59,7 @@ export function DeliveryAddressManager({ compact = false }: DeliveryAddressManag
 
   // Fetch delivery addresses
   const { data: addresses = [], isLoading } = useQuery<any[]>({
-    queryKey: ["/api/customer/delivery-addresses"],
+    queryKey: ["/api/delivery-addresses"],
   });
 
   const form = useForm<AddressFormValues>({
@@ -81,7 +81,7 @@ export function DeliveryAddressManager({ compact = false }: DeliveryAddressManag
   // Create address mutation
   const createAddressMutation = useMutation({
     mutationFn: async (values: AddressFormValues) => {
-      const response = await apiRequest("POST", "/api/customer/delivery-addresses", {
+      const response = await apiRequest("POST", "/api/delivery-addresses", {
         label: values.label,
         addressStreet: values.addressStreet,
         addressCity: values.addressCity,
@@ -96,7 +96,7 @@ export function DeliveryAddressManager({ compact = false }: DeliveryAddressManag
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/customer/delivery-addresses"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/delivery-addresses"] });
       toast({
         title: "Address added",
         description: "Your delivery address has been saved",
@@ -117,7 +117,7 @@ export function DeliveryAddressManager({ compact = false }: DeliveryAddressManag
   // Update address mutation
   const updateAddressMutation = useMutation({
     mutationFn: async ({ id, values }: { id: string; values: AddressFormValues }) => {
-      const response = await apiRequest("PATCH", `/api/customer/delivery-addresses/${id}`, {
+      const response = await apiRequest("PATCH", `/api/delivery-addresses/${id}`, {
         label: values.label,
         addressStreet: values.addressStreet,
         addressCity: values.addressCity,
@@ -132,7 +132,7 @@ export function DeliveryAddressManager({ compact = false }: DeliveryAddressManag
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/customer/delivery-addresses"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/delivery-addresses"] });
       toast({
         title: "Address updated",
         description: "Your delivery address has been updated",
@@ -153,11 +153,11 @@ export function DeliveryAddressManager({ compact = false }: DeliveryAddressManag
   // Delete address mutation
   const deleteAddressMutation = useMutation({
     mutationFn: async (id: string) => {
-      const response = await apiRequest("DELETE", `/api/customer/delivery-addresses/${id}`);
+      const response = await apiRequest("DELETE", `/api/delivery-addresses/${id}`);
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/customer/delivery-addresses"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/delivery-addresses"] });
       toast({
         title: "Address deleted",
         description: "Your delivery address has been removed",

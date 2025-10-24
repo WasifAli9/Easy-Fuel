@@ -79,12 +79,12 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
 
   // Fetch delivery addresses
   const { data: deliveryAddresses = [], isLoading: loadingAddresses } = useQuery<any[]>({
-    queryKey: ["/api/customer/delivery-addresses"],
+    queryKey: ["/api/delivery-addresses"],
   });
 
   // Fetch payment methods
   const { data: paymentMethods = [], isLoading: loadingPaymentMethods } = useQuery<any[]>({
-    queryKey: ["/api/customer/payment-methods"],
+    queryKey: ["/api/payment-methods"],
   });
 
   const form = useForm<OrderFormValues>({
