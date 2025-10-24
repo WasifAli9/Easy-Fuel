@@ -1,7 +1,7 @@
 import { Logo } from "./Logo";
 import { ThemeToggle } from "./ThemeToggle";
 import { Button } from "@/components/ui/button";
-import { Bell, User, Menu, LogOut, MapPin, UserCircle, Home } from "lucide-react";
+import { Bell, User, Menu, LogOut, MapPin, UserCircle, Home, CreditCard } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -61,6 +61,12 @@ export function AppHeader({ onMenuClick, notificationCount = 0, showMenu = true 
                   Saved Addresses
                 </Button>
               </Link>
+              <Link href="/customer/payment-methods">
+                <Button variant="ghost" size="sm" data-testid="nav-payment-methods">
+                  <CreditCard className="h-4 w-4 mr-2" />
+                  Payment Methods
+                </Button>
+              </Link>
             </nav>
           )}
         </div>
@@ -112,6 +118,10 @@ export function AppHeader({ onMenuClick, notificationCount = 0, showMenu = true 
                   <DropdownMenuItem onClick={() => setLocation("/customer/addresses")} data-testid="menu-addresses-mobile">
                     <MapPin className="h-4 w-4 mr-2" />
                     Saved Addresses
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setLocation("/customer/payment-methods")} data-testid="menu-payment-methods-mobile">
+                    <CreditCard className="h-4 w-4 mr-2" />
+                    Payment Methods
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                 </>

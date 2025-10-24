@@ -46,7 +46,13 @@ The application features a mobile-first, responsive design with full dark mode s
     - Access instructions for delivery drivers
     - Address verification status tracking
     - **Inline Address Creation**: Create new delivery addresses directly from the order creation dialog without navigating away - newly created addresses are automatically selected
-  - **Navigation**: Desktop and mobile navigation links in AppHeader for easy access to Orders, Saved Addresses, and Profile
+  - **Payment Methods Management**: Full CRUD operations with:
+    - Support for South African bank accounts (EFT) with account holder name, bank name, account number, branch code, and account type (cheque/savings/transmission)
+    - Support for credit and debit cards with card brand, last 4 digits, and expiry date
+    - Default payment method selection for quick checkout
+    - Secure storage with sensitive data masked in UI
+    - Dedicated page accessible from desktop and mobile navigation
+  - **Navigation**: Desktop and mobile navigation links in AppHeader for easy access to Orders, Saved Addresses, Payment Methods, and Profile
 - **User Profile Management**: Allows users to manage their profiles, including initial role selection and profile picture uploads.
 - **Admin Dashboard**: 
   - Card-based interface with user management, search filters, and summary statistics
