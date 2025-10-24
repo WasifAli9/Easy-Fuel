@@ -46,7 +46,6 @@ const orderFormSchema = z.object({
   fromTime: z.string().optional(),
   toTime: z.string().optional(),
   priorityLevel: z.enum(["low", "medium", "high"]).default("medium"),
-  accessInstructions: z.string().optional(),
   vehicleRegistration: z.string().optional(),
   equipmentType: z.string().optional(),
   tankCapacity: z.string().optional().refine((val) => !val || (!isNaN(Number(val)) && Number(val) > 0), {
@@ -96,7 +95,6 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
       fromTime: "",
       toTime: "",
       priorityLevel: "medium",
-      accessInstructions: "",
       vehicleRegistration: "",
       equipmentType: "",
       tankCapacity: "",
@@ -172,7 +170,6 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
         fromTime: values.fromTime || null,
         toTime: values.toTime || null,
         priorityLevel: values.priorityLevel,
-        accessInstructions: values.accessInstructions || null,
         vehicleRegistration: values.vehicleRegistration || null,
         equipmentType: values.equipmentType || null,
         tankCapacity: values.tankCapacity || null,
@@ -408,27 +405,6 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
                     )}
                   />
                 </div>
-
-                <FormField
-                  control={form.control}
-                  name="accessInstructions"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Access Instructions</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="e.g. Gate code #1234, use side entrance"
-                          {...field}
-                          data-testid="input-access-instructions"
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        Provide any special access instructions for the driver
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
               </TabsContent>
 
               <TabsContent value="vehicle" className="space-y-4 mt-4">
