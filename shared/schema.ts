@@ -442,6 +442,30 @@ export const driverSubscriptions = pgTable("driver_subscriptions", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// Driver Pricing table - drivers set their delivery fees per fuel type
+export const driverPricing = pgTable("driver_pricing", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  driverId: uuid("driver_id").notNull().references(() => drivers.id),
+  fuelTypeId: uuid("fuel_type_id").notNull().references(() => fuelTypes.id),
+  deliveryFeeCents: integer("delivery_fee_cents").notNull(), // Driver's fee for delivering this fuel type
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Pricing History table - journals all pricing changes for drivers and suppliers
+export const pricingHistory = pgTable("pricing_history", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  entityType: text("entity_type").notNull(), // "driver" or "depot"
+  entityId: uuid("entity_id").notNull(), // driver_id or depot_id
+  fuelTypeId: uuid("fuel_type_id").notNull().references(() => fuelTypes.id),
+  oldPriceCents: integer("old_price_cents"),
+  newPriceCents: integer("new_price_cents").notNull(),
+  changedBy: uuid("changed_by").notNull(), // user_id who made the change
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 // Insert Schemas
 export const insertProfileSchema = createInsertSchema(profiles).omit({ 
   id: true, 
@@ -517,6 +541,17 @@ export const insertDriverSubscriptionSchema = createInsertSchema(driverSubscript
   id: true, 
   createdAt: true, 
   updatedAt: true 
+});
+
+export const insertDriverPricingSchema = createInsertSchema(driverPricing).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true 
+});
+
+export const insertPricingHistorySchema = createInsertSchema(pricingHistory).omit({ 
+  id: true, 
+  createdAt: true 
 });
 
 export const insertVehicleSchema = createInsertSchema(vehicles).omit({ 
@@ -611,3 +646,9 @@ export type PaymentMethod = typeof paymentMethods.$inferSelect;
 
 export type InsertOrderAttachment = z.infer<typeof insertOrderAttachmentSchema>;
 export type OrderAttachment = typeof orderAttachments.$inferSelect;
+
+export type InsertDriverPricing = z.infer<typeof insertDriverPricingSchema>;
+export type DriverPricing = typeof driverPricing.$inferSelect;
+
+export type InsertPricingHistory = z.infer<typeof insertPricingHistorySchema>;
+export type PricingHistory = typeof pricingHistory.$inferSelect;
