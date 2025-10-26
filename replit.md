@@ -16,6 +16,13 @@ Easy Fuel ZA is a production-ready fuel delivery marketplace for South Africa, c
 ### Design System and UI/UX
 The application features a mobile-first, responsive design with full dark mode support, utilizing HSL-based color tokens for theming. The UI is built with React, styled using Tailwind CSS and shadcn/ui, and adheres to the Easy Fuel teal brand identity (`#1fbfb8` primary, `#0e6763` primary dark). A custom component library ensures consistency across the platform.
 
+**Mobile Responsiveness**: 
+- All dashboards (Driver, Customer, Supplier, Admin) feature horizontally scrollable tabs on mobile devices
+- Tab scroll pattern: `overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0` wrapper with `min-w-max` on TabsList
+- Edge-to-edge scrolling on mobile, contained layout on desktop (≥640px)
+- Customer dashboard uses responsive flex layout (`flex-col sm:flex-row`) to stack tabs and filter button on mobile
+- AppHeader navigation hidden on mobile, accessible via menu button
+
 ### Technical Implementations
 - **Frontend**: React, TypeScript, Vite, Wouter for routing, and TanStack Query for state management.
 - **Backend**: Express and Node.js for API services.
