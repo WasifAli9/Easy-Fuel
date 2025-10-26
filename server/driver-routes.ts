@@ -573,6 +573,15 @@ router.get("/vehicles", async (req, res) => {
     res.json(camelCaseVehicles);
   } catch (error: any) {
     console.error("Error fetching driver vehicles:", error);
+    
+    // Check for PostgREST schema cache error
+    if (error?.code === 'PGRST205' || error?.message?.includes('schema cache')) {
+      return res.status(500).json({ 
+        error: "Database schema cache needs refresh. Please run 'NOTIFY pgrst, \"reload schema\";' in your Supabase SQL Editor and try again in 10 seconds.",
+        code: 'SCHEMA_CACHE_ERROR'
+      });
+    }
+    
     res.status(500).json({ error: error.message });
   }
 });
@@ -623,6 +632,15 @@ router.post("/vehicles", async (req, res) => {
     res.json(vehicleToCamelCase(vehicle));
   } catch (error: any) {
     console.error("Error adding vehicle:", error);
+    
+    // Check for PostgREST schema cache error
+    if (error?.code === 'PGRST205' || error?.message?.includes('schema cache')) {
+      return res.status(500).json({ 
+        error: "Database schema cache needs refresh. Please run 'NOTIFY pgrst, \"reload schema\";' in your Supabase SQL Editor and try again in 10 seconds.",
+        code: 'SCHEMA_CACHE_ERROR'
+      });
+    }
+    
     res.status(500).json({ error: error.message });
   }
 });
@@ -685,6 +703,15 @@ router.patch("/vehicles/:vehicleId", async (req, res) => {
     res.json(vehicleToCamelCase(vehicle));
   } catch (error: any) {
     console.error("Error updating vehicle:", error);
+    
+    // Check for PostgREST schema cache error
+    if (error?.code === 'PGRST205' || error?.message?.includes('schema cache')) {
+      return res.status(500).json({ 
+        error: "Database schema cache needs refresh. Please run 'NOTIFY pgrst, \"reload schema\";' in your Supabase SQL Editor and try again in 10 seconds.",
+        code: 'SCHEMA_CACHE_ERROR'
+      });
+    }
+    
     res.status(500).json({ error: error.message });
   }
 });
@@ -719,6 +746,15 @@ router.delete("/vehicles/:vehicleId", async (req, res) => {
     res.json({ success: true, message: "Vehicle deleted successfully" });
   } catch (error: any) {
     console.error("Error deleting vehicle:", error);
+    
+    // Check for PostgREST schema cache error
+    if (error?.code === 'PGRST205' || error?.message?.includes('schema cache')) {
+      return res.status(500).json({ 
+        error: "Database schema cache needs refresh. Please run 'NOTIFY pgrst, \"reload schema\";' in your Supabase SQL Editor and try again in 10 seconds.",
+        code: 'SCHEMA_CACHE_ERROR'
+      });
+    }
+    
     res.status(500).json({ error: error.message });
   }
 });
