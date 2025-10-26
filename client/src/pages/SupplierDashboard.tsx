@@ -2,7 +2,9 @@ import { useState } from "react";
 import { AppHeader } from "@/components/AppHeader";
 import { DepotCard } from "@/components/DepotCard";
 import { StatsCard } from "@/components/StatsCard";
+import { SupplierPricingManager } from "@/components/SupplierPricingManager";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, DollarSign, MapPin, TrendingUp } from "lucide-react";
 
 export default function SupplierDashboard() {
@@ -72,15 +74,35 @@ export default function SupplierDashboard() {
           />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {depots.map((depot) => (
-            <DepotCard
-              key={depot.id}
-              {...depot}
-              onEdit={() => console.log("Edit depot", depot.id)}
-            />
-          ))}
-        </div>
+        <Tabs defaultValue="depots" className="space-y-6">
+          <TabsList>
+            <TabsTrigger value="depots" data-testid="tab-depots">Depots</TabsTrigger>
+            <TabsTrigger value="pricing" data-testid="tab-pricing">Pricing</TabsTrigger>
+            <TabsTrigger value="orders" data-testid="tab-orders">Orders</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="depots" className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {depots.map((depot) => (
+                <DepotCard
+                  key={depot.id}
+                  {...depot}
+                  onEdit={() => console.log("Edit depot", depot.id)}
+                />
+              ))}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="pricing" className="space-y-4">
+            <SupplierPricingManager />
+          </TabsContent>
+
+          <TabsContent value="orders" className="space-y-4">
+            <div className="text-center py-12 text-muted-foreground">
+              <p>No orders yet</p>
+            </div>
+          </TabsContent>
+        </Tabs>
       </main>
     </div>
   );
