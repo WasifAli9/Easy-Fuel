@@ -376,6 +376,7 @@ export const orders = pgTable("orders", {
   selectedDepotId: uuid("selected_depot_id").references(() => depots.id),
   state: orderStateEnum("state").notNull().default("created"),
   assignedDriverId: uuid("assigned_driver_id").references(() => drivers.id),
+  confirmedDeliveryTime: timestamp("confirmed_delivery_time"),
   paidAt: timestamp("paid_at"),
   deliveredAt: timestamp("delivered_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),

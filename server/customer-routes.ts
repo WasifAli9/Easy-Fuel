@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { supabaseAdmin } from "./supabase";
+import { createDispatchOffers } from "./dispatch-service";
 
 const router = Router();
 
@@ -259,6 +260,16 @@ router.post("/orders", async (req, res) => {
       .single();
 
     if (orderError) throw orderError;
+
+    // Create dispatch offers for drivers (async, don't wait)
+    createDispatchOffers({
+      orderId: newOrder.id,
+      fuelTypeId: newOrder.fuel_type_id,
+      dropLat: lat,
+      dropLng: lng,
+    }).catch(error => {
+      console.error("Error creating dispatch offers:", error);
+    });
 
     res.status(201).json(newOrder);
   } catch (error: any) {
