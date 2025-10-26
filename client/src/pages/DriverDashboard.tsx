@@ -4,6 +4,7 @@ import { AppHeader } from "@/components/AppHeader";
 import { JobCard } from "@/components/JobCard";
 import { StatsCard } from "@/components/StatsCard";
 import { DriverPricingManager } from "@/components/DriverPricingManager";
+import { DriverVehicleManager } from "@/components/DriverVehicleManager";
 import { DollarSign, TrendingUp, CheckCircle } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AcceptOfferDialog } from "@/components/AcceptOfferDialog";
@@ -89,6 +90,7 @@ export default function DriverDashboard() {
           <TabsList>
             <TabsTrigger value="available" data-testid="tab-available">Available Jobs</TabsTrigger>
             <TabsTrigger value="assigned" data-testid="tab-assigned">My Jobs</TabsTrigger>
+            <TabsTrigger value="vehicles" data-testid="tab-vehicles">Vehicles</TabsTrigger>
             <TabsTrigger value="pricing" data-testid="tab-pricing">Pricing</TabsTrigger>
             <TabsTrigger value="history" data-testid="tab-history">History</TabsTrigger>
           </TabsList>
@@ -138,6 +140,10 @@ export default function DriverDashboard() {
             <div className="text-center py-12 text-muted-foreground">
               <p>No assigned jobs yet</p>
             </div>
+          </TabsContent>
+
+          <TabsContent value="vehicles" className="space-y-4">
+            <DriverVehicleManager />
           </TabsContent>
 
           <TabsContent value="pricing" className="space-y-4">

@@ -104,6 +104,24 @@ The application features a mobile-first, responsive design with full dark mode s
     - All pricing mutations automatically log changes to pricing_history table
     - Currency formatting uses South African Rand (R) convention
 
+- **Driver Vehicle Management**: Complete CRUD functionality for drivers to manage multiple vehicles from their dashboard
+  - **Features**:
+    - "Vehicles" tab on driver dashboard with add/edit/delete operations
+    - Vehicle information: registration number, make, model, year, capacity (litres)
+    - Supported fuel types selection (multi-select from all available fuel types)
+    - Compliance document tracking: license disk expiry, roadworthy expiry, insurance expiry
+    - Tracker information: tracker installed status and provider name
+  - **API Routes**: `/api/driver/vehicles` (GET all, POST create), `/api/driver/vehicles/:vehicleId` (PATCH update, DELETE delete)
+  - **Database**: Uses existing `vehicles` table with driver_id foreign key
+  - **UI Component**: `DriverVehicleManager` component with dialog-based add/edit forms
+  - **Security**: All endpoints verify driver ownership via authenticated user.id → driver.id lookup
+
+## Known Issues
+- **PostgREST Schema Cache**: After creating new tables (`driver_pricing`, `pricing_history`), PostgREST's schema cache may not immediately reflect changes, resulting in "table not found in schema cache" errors
+  - **Temporary Solution**: Wait 5-10 minutes for automatic cache refresh, or manually run `NOTIFY pgrst, 'reload schema';` in database console
+  - **Root Cause**: PostgREST caches database schema for performance; manual NOTIFY commands may not propagate immediately in hosted environments
+  - **Permanent Fix**: Ensure proper migration workflow using `npm run db:push --force` to sync schema changes
+
 ## External Dependencies
 - **Supabase**: Provides PostgreSQL database, authentication services, and object storage.
 - **PayFast**: Payment gateway integration (pending).

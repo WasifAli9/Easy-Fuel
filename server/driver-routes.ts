@@ -5,6 +5,29 @@ import { insertDriverPricingSchema, insertPricingHistorySchema } from "@shared/s
 
 const router = Router();
 
+// Helper function to convert snake_case to camelCase for vehicle objects
+function vehicleToCamelCase(vehicle: any) {
+  if (!vehicle) return null;
+  return {
+    id: vehicle.id,
+    driverId: vehicle.driver_id,
+    registrationNumber: vehicle.registration_number,
+    make: vehicle.make,
+    model: vehicle.model,
+    year: vehicle.year,
+    capacityLitres: vehicle.capacity_litres,
+    fuelTypes: vehicle.fuel_types,
+    licenseDiskExpiry: vehicle.license_disk_expiry,
+    roadworthyExpiry: vehicle.roadworthy_expiry,
+    insuranceExpiry: vehicle.insurance_expiry,
+    trackerInstalled: vehicle.tracker_installed,
+    trackerProvider: vehicle.tracker_provider,
+    vehicleRegistrationCertDocId: vehicle.vehicle_registration_cert_doc_id,
+    createdAt: vehicle.created_at,
+    updatedAt: vehicle.updated_at,
+  };
+}
+
 /**
  * Helper function to send customer notification email when driver accepts order
  */
@@ -513,6 +536,189 @@ router.get("/pricing/history", async (req, res) => {
     res.json(history || []);
   } catch (error: any) {
     console.error("Error fetching pricing history:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ========== VEHICLE MANAGEMENT ROUTES ==========
+
+// Get all vehicles for authenticated driver
+router.get("/vehicles", async (req, res) => {
+  const user = (req as any).user;
+
+  try {
+    // Get driver ID from user ID
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (driverError) throw driverError;
+    if (!driver) {
+      return res.status(404).json({ error: "Driver profile not found" });
+    }
+
+    // Get all vehicles for this driver
+    const { data: vehicles, error: vehiclesError } = await supabaseAdmin
+      .from("vehicles")
+      .select("*")
+      .eq("driver_id", driver.id)
+      .order("created_at", { ascending: false });
+
+    if (vehiclesError) throw vehiclesError;
+
+    // Transform to camelCase for frontend
+    const camelCaseVehicles = (vehicles || []).map(vehicleToCamelCase);
+    res.json(camelCaseVehicles);
+  } catch (error: any) {
+    console.error("Error fetching driver vehicles:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add new vehicle for authenticated driver
+router.post("/vehicles", async (req, res) => {
+  const user = (req as any).user;
+
+  try {
+    // Get driver ID from user ID
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (driverError) throw driverError;
+    if (!driver) {
+      return res.status(404).json({ error: "Driver profile not found" });
+    }
+
+    // Sanitize and validate input - only allow specific fields
+    const vehicleData = {
+      driver_id: driver.id, // Always set to authenticated driver
+      registration_number: req.body.registration_number,
+      make: req.body.make,
+      model: req.body.model,
+      year: req.body.year,
+      capacity_litres: req.body.capacity_litres,
+      fuel_types: req.body.fuel_types,
+      license_disk_expiry: req.body.license_disk_expiry,
+      roadworthy_expiry: req.body.roadworthy_expiry,
+      insurance_expiry: req.body.insurance_expiry,
+      tracker_installed: req.body.tracker_installed,
+      tracker_provider: req.body.tracker_provider,
+    };
+
+    // Insert new vehicle
+    const { data: vehicle, error: vehicleError } = await supabaseAdmin
+      .from("vehicles")
+      .insert(vehicleData)
+      .select()
+      .single();
+
+    if (vehicleError) throw vehicleError;
+
+    // Transform to camelCase for frontend
+    res.json(vehicleToCamelCase(vehicle));
+  } catch (error: any) {
+    console.error("Error adding vehicle:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update vehicle for authenticated driver
+router.patch("/vehicles/:vehicleId", async (req, res) => {
+  const user = (req as any).user;
+  const { vehicleId } = req.params;
+
+  try {
+    // Get driver ID from user ID
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (driverError) throw driverError;
+    if (!driver) {
+      return res.status(404).json({ error: "Driver profile not found" });
+    }
+
+    // Verify vehicle belongs to this driver
+    const { data: existingVehicle, error: checkError } = await supabaseAdmin
+      .from("vehicles")
+      .select("id")
+      .eq("id", vehicleId)
+      .eq("driver_id", driver.id)
+      .single();
+
+    if (checkError || !existingVehicle) {
+      return res.status(404).json({ error: "Vehicle not found or access denied" });
+    }
+
+    // Sanitize update data - only allow specific fields, never allow driver_id override
+    const updateData: any = {};
+    if (req.body.registration_number !== undefined) updateData.registration_number = req.body.registration_number;
+    if (req.body.make !== undefined) updateData.make = req.body.make;
+    if (req.body.model !== undefined) updateData.model = req.body.model;
+    if (req.body.year !== undefined) updateData.year = req.body.year;
+    if (req.body.capacity_litres !== undefined) updateData.capacity_litres = req.body.capacity_litres;
+    if (req.body.fuel_types !== undefined) updateData.fuel_types = req.body.fuel_types;
+    if (req.body.license_disk_expiry !== undefined) updateData.license_disk_expiry = req.body.license_disk_expiry;
+    if (req.body.roadworthy_expiry !== undefined) updateData.roadworthy_expiry = req.body.roadworthy_expiry;
+    if (req.body.insurance_expiry !== undefined) updateData.insurance_expiry = req.body.insurance_expiry;
+    if (req.body.tracker_installed !== undefined) updateData.tracker_installed = req.body.tracker_installed;
+    if (req.body.tracker_provider !== undefined) updateData.tracker_provider = req.body.tracker_provider;
+
+    // Update vehicle
+    const { data: vehicle, error: updateError } = await supabaseAdmin
+      .from("vehicles")
+      .update(updateData)
+      .eq("id", vehicleId)
+      .select()
+      .single();
+
+    if (updateError) throw updateError;
+
+    // Transform to camelCase for frontend
+    res.json(vehicleToCamelCase(vehicle));
+  } catch (error: any) {
+    console.error("Error updating vehicle:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete vehicle for authenticated driver
+router.delete("/vehicles/:vehicleId", async (req, res) => {
+  const user = (req as any).user;
+  const { vehicleId } = req.params;
+
+  try {
+    // Get driver ID from user ID
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (driverError) throw driverError;
+    if (!driver) {
+      return res.status(404).json({ error: "Driver profile not found" });
+    }
+
+    // Verify vehicle belongs to this driver and delete
+    const { error: deleteError } = await supabaseAdmin
+      .from("vehicles")
+      .delete()
+      .eq("id", vehicleId)
+      .eq("driver_id", driver.id);
+
+    if (deleteError) throw deleteError;
+
+    res.json({ success: true, message: "Vehicle deleted successfully" });
+  } catch (error: any) {
+    console.error("Error deleting vehicle:", error);
     res.status(500).json({ error: error.message });
   }
 });
