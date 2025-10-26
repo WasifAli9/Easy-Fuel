@@ -1,47 +1,57 @@
 import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { AppHeader } from "@/components/AppHeader";
 import { JobCard } from "@/components/JobCard";
 import { StatsCard } from "@/components/StatsCard";
 import { DollarSign, TrendingUp, CheckCircle } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AcceptOfferDialog } from "@/components/AcceptOfferDialog";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 
 export default function DriverDashboard() {
-  // TODO: remove mock functionality
-  const [jobs] = useState([
-    {
-      id: "1",
-      fuelType: "Diesel",
-      litres: 500,
-      pickupLocation: "Shell Depot, 45 Industrial Ave",
-      dropLocation: "123 Construction Site, Sandton",
-      distance: 15.2,
-      earnings: 450.00,
-      expiresIn: 120,
-      isPremium: true,
-    },
-    {
-      id: "2",
-      fuelType: "Petrol 95",
-      litres: 200,
-      pickupLocation: "BP Depot, Main Rd",
-      dropLocation: "89 Office Park, Rosebank",
-      distance: 8.5,
-      earnings: 280.00,
-      expiresIn: 90,
-    },
-  ]);
+  const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null);
+  const [acceptDialogOpen, setAcceptDialogOpen] = useState(false);
+  const { toast } = useToast();
 
-  const [assignedJobs] = useState([
-    {
-      id: "3",
-      fuelType: "Paraffin",
-      litres: 100,
-      pickupLocation: "Total Depot, 12 Farm Rd",
-      dropLocation: "456 Residential, Centurion",
-      distance: 22.0,
-      earnings: 320.00,
+  // Fetch available dispatch offers
+  const { data: offers = [], isLoading } = useQuery<any[]>({
+    queryKey: ["/api/driver/offers"],
+    refetchInterval: 30000, // Refresh every 30 seconds
+  });
+
+  // Reject offer mutation
+  const rejectOfferMutation = useMutation({
+    mutationFn: async (offerId: string) => {
+      const response = await apiRequest("POST", `/api/driver/offers/${offerId}/reject`);
+      return response.json();
     },
-  ]);
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/offers"] });
+      toast({
+        title: "Offer rejected",
+        description: "You have declined this delivery offer",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to reject offer",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleAccept = (offerId: string) => {
+    setSelectedOfferId(offerId);
+    setAcceptDialogOpen(true);
+  };
+
+  const handleReject = (offerId: string) => {
+    if (confirm("Are you sure you want to reject this offer?")) {
+      rejectOfferMutation.mutate(offerId);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -82,26 +92,49 @@ export default function DriverDashboard() {
           </TabsList>
 
           <TabsContent value="available" className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {jobs.map((job) => (
-                <JobCard
-                  key={job.id}
-                  {...job}
-                  onAccept={() => console.log("Accept job", job.id)}
-                  onReject={() => console.log("Reject job", job.id)}
-                />
-              ))}
-            </div>
+            {isLoading ? (
+              <div className="text-center py-8 text-muted-foreground">Loading offers...</div>
+            ) : offers.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <p>No available offers at the moment</p>
+                <p className="text-sm mt-2">New delivery requests will appear here</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {offers.map((offer) => {
+                  const order = offer.orders;
+                  const deliveryAddress = order.delivery_addresses 
+                    ? `${order.delivery_addresses.address_street}, ${order.delivery_addresses.address_city}`
+                    : `${order.drop_lat}, ${order.drop_lng}`;
+                  
+                  const expiresInSeconds = Math.floor(
+                    (new Date(offer.expires_at).getTime() - Date.now()) / 1000
+                  );
+
+                  return (
+                    <JobCard
+                      key={offer.id}
+                      id={offer.id}
+                      fuelType={order.fuel_types?.label || "Fuel"}
+                      litres={parseFloat(order.litres)}
+                      pickupLocation="Depot"
+                      dropLocation={deliveryAddress}
+                      distance={0}
+                      earnings={order.total_cents / 100}
+                      expiresIn={expiresInSeconds}
+                      isPremium={false}
+                      onAccept={() => handleAccept(offer.id)}
+                      onReject={() => handleReject(offer.id)}
+                    />
+                  );
+                })}
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="assigned" className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {assignedJobs.map((job) => (
-                <JobCard
-                  key={job.id}
-                  {...job}
-                />
-              ))}
+            <div className="text-center py-12 text-muted-foreground">
+              <p>No assigned jobs yet</p>
             </div>
           </TabsContent>
 
@@ -111,6 +144,17 @@ export default function DriverDashboard() {
             </div>
           </TabsContent>
         </Tabs>
+
+        {selectedOfferId && (
+          <AcceptOfferDialog
+            offerId={selectedOfferId}
+            open={acceptDialogOpen}
+            onOpenChange={(open) => {
+              setAcceptDialogOpen(open);
+              if (!open) setSelectedOfferId(null);
+            }}
+          />
+        )}
       </main>
     </div>
   );

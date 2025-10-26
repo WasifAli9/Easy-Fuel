@@ -103,6 +103,28 @@ router.get("/orders/:id", async (req, res) => {
       return res.status(404).json({ error: "Order not found" });
     }
 
+    // If driver is assigned, fetch driver details
+    if (order.assigned_driver_id) {
+      const { data: driver, error: driverError } = await supabaseAdmin
+        .from("drivers")
+        .select("user_id")
+        .eq("id", order.assigned_driver_id)
+        .single();
+
+      if (!driverError && driver) {
+        // Get driver profile for name and phone
+        const { data: driverProfile } = await supabaseAdmin
+          .from("profiles")
+          .select("full_name, phone")
+          .eq("id", driver.user_id)
+          .single();
+
+        if (driverProfile) {
+          order.driver_details = driverProfile;
+        }
+      }
+    }
+
     res.json(order);
   } catch (error: any) {
     console.error("Error fetching order:", error);

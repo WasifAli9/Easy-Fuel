@@ -9,8 +9,8 @@ interface CreateDispatchOffersParams {
 
 /**
  * Creates dispatch offers for an order
- * Premium drivers receive offers first (5 minute window)
- * If no premium driver accepts, offers go to all available drivers
+ * Premium drivers receive offers first (5 minute exclusive window)
+ * After 5 minutes, if no premium driver accepts, offers go to all drivers
  */
 export async function createDispatchOffers({
   orderId,
@@ -48,7 +48,7 @@ export async function createDispatchOffers({
       `Found ${premiumDrivers.length} premium and ${regularDrivers.length} regular drivers`
     );
 
-    // Create offers for premium drivers first (5 minute window)
+    // Create offers for premium drivers first (5 minute exclusive window)
     if (premiumDrivers.length > 0) {
       const premiumOffers = premiumDrivers.map((driver) => ({
         order_id: orderId,
@@ -65,33 +65,63 @@ export async function createDispatchOffers({
         console.error("Error creating premium offers:", premiumOffersError);
       } else {
         console.log(`Created ${premiumOffers.length} premium dispatch offers`);
+        
+        // Schedule regular driver offers after 5 minutes (premium window)
+        setTimeout(() => {
+          createRegularDriverOffers(orderId, regularDrivers).catch((error) => {
+            console.error("Error creating regular driver offers:", error);
+          });
+        }, 5 * 60 * 1000); // 5 minutes
       }
-    }
-
-    // Create offers for all drivers (15 minute window)
-    // These will be available immediately but premium drivers see them first
-    const allOffers = drivers.map((driver) => ({
-      order_id: orderId,
-      driver_id: driver.id,
-      state: "offered" as const,
-      expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(), // 15 minutes
-    }));
-
-    // Use upsert to avoid duplicates (premium drivers already have offers)
-    const { error: allOffersError } = await supabaseAdmin
-      .from("dispatch_offers")
-      .upsert(allOffers, {
-        onConflict: "order_id,driver_id",
-        ignoreDuplicates: true,
-      });
-
-    if (allOffersError) {
-      console.error("Error creating dispatch offers:", allOffersError);
     } else {
-      console.log(`Created dispatch offers for all ${drivers.length} drivers`);
+      // No premium drivers, send to all regular drivers immediately
+      await createRegularDriverOffers(orderId, regularDrivers);
     }
   } catch (error) {
     console.error("Error in createDispatchOffers:", error);
+  }
+}
+
+/**
+ * Creates offers for regular (non-premium) drivers
+ * Called after premium window expires or if no premium drivers available
+ */
+async function createRegularDriverOffers(
+  orderId: string,
+  regularDrivers: Array<{ id: string }>
+): Promise<void> {
+  if (regularDrivers.length === 0) {
+    console.log(`No regular drivers to offer order ${orderId}`);
+    return;
+  }
+
+  // Check if order was already accepted by a premium driver
+  const { data: order } = await supabaseAdmin
+    .from("orders")
+    .select("state, assigned_driver_id")
+    .eq("id", orderId)
+    .single();
+
+  if (order?.state === "assigned" || order?.assigned_driver_id) {
+    console.log(`Order ${orderId} already assigned, skipping regular driver offers`);
+    return;
+  }
+
+  const regularOffers = regularDrivers.map((driver) => ({
+    order_id: orderId,
+    driver_id: driver.id,
+    state: "offered" as const,
+    expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(), // 15 minutes
+  }));
+
+  const { error: regularOffersError } = await supabaseAdmin
+    .from("dispatch_offers")
+    .insert(regularOffers);
+
+  if (regularOffersError) {
+    console.error("Error creating regular driver offers:", regularOffersError);
+  } else {
+    console.log(`Created ${regularOffers.length} regular driver dispatch offers`);
   }
 }
 

@@ -1,7 +1,106 @@
 import { Router } from "express";
 import { supabaseAdmin } from "./supabase";
+import { sendDriverAcceptanceEmail } from "./email-service";
 
 const router = Router();
+
+/**
+ * Helper function to send customer notification email when driver accepts order
+ */
+async function sendCustomerNotification(
+  orderId: string,
+  driverId: string,
+  confirmedDeliveryTime: string
+): Promise<void> {
+  try {
+    // Get order details with customer info
+    const { data: order, error: orderError } = await supabaseAdmin
+      .from("orders")
+      .select(`
+        *,
+        customers (
+          id,
+          company_name,
+          user_id
+        ),
+        fuel_types (
+          label
+        ),
+        delivery_addresses (
+          address_street,
+          address_city,
+          address_province
+        )
+      `)
+      .eq("id", orderId)
+      .single();
+
+    if (orderError || !order) {
+      throw new Error("Order not found");
+    }
+
+    // Get customer email from Supabase Auth
+    const { data: customerUser, error: customerUserError } = 
+      await supabaseAdmin.auth.admin.getUserById(order.customers.user_id);
+
+    if (customerUserError || !customerUser?.user?.email) {
+      throw new Error("Customer email not found");
+    }
+
+    // Get driver details
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("*")
+      .eq("id", driverId)
+      .single();
+
+    if (driverError || !driver) {
+      throw new Error("Driver not found");
+    }
+
+    // Get driver's profile for name
+    const { data: driverProfile, error: driverProfileError } = 
+      await supabaseAdmin
+        .from("profiles")
+        .select("full_name, phone")
+        .eq("id", driver.user_id)
+        .single();
+
+    if (driverProfileError || !driverProfile) {
+      throw new Error("Driver profile not found");
+    }
+
+    // Format delivery address
+    const deliveryAddress = order.delivery_addresses
+      ? `${order.delivery_addresses.address_street}, ${order.delivery_addresses.address_city}, ${order.delivery_addresses.address_province}`
+      : "Address not specified";
+
+    // Format confirmed delivery time
+    const formattedTime = new Date(confirmedDeliveryTime).toLocaleString("en-ZA", {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: "Africa/Johannesburg",
+    });
+
+    // Send email
+    await sendDriverAcceptanceEmail({
+      customerEmail: customerUser.user.email,
+      customerName: order.customers.company_name || "Customer",
+      orderNumber: order.id.substring(0, 8).toUpperCase(),
+      driverName: driverProfile.full_name || "Driver",
+      driverPhone: driverProfile.phone || "Not available",
+      confirmedDeliveryTime: formattedTime,
+      fuelType: order.fuel_types?.label || "Fuel",
+      litres: order.litres,
+      deliveryAddress,
+    });
+
+    console.log(`Customer notification sent for order ${orderId}`);
+  } catch (error) {
+    console.error("Error sending customer notification:", error);
+    throw error;
+  }
+}
 
 // Get all pending dispatch offers for the authenticated driver
 router.get("/offers", async (req, res) => {
@@ -165,6 +264,12 @@ router.post("/offers/:id/accept", async (req, res) => {
     if (availabilityError) {
       console.error("Error updating driver availability:", availabilityError);
     }
+
+    // 5. Send email notification to customer (async, don't wait)
+    sendCustomerNotification(offer.order_id, driver.id, confirmedDeliveryTime)
+      .catch((error: any) => {
+        console.error("Error sending customer notification:", error);
+      });
 
     res.json({ success: true, message: "Offer accepted successfully" });
   } catch (error: any) {

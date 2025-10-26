@@ -30,8 +30,9 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { MapPin, Calendar, DollarSign, Package } from "lucide-react";
+import { MapPin, Calendar, DollarSign, Package, User, Phone, Clock } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
+import { Badge } from "@/components/ui/badge";
 
 const orderEditSchema = z.object({
   fuelTypeId: z.string().min(1, "Please select a fuel type"),
@@ -220,6 +221,60 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                   <div>
                     <p className="text-sm font-medium">Time Window</p>
                     <p className="text-sm text-muted-foreground">{order.time_window}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Driver Information - Show when driver is assigned */}
+              {order.assigned_driver_id && order.driver_details && (
+                <div className="border-2 border-primary/20 rounded-lg p-4 space-y-3 bg-primary/5">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Badge variant="default" className="bg-primary">
+                      Driver Assigned
+                    </Badge>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3">
+                      <User className="h-4 w-4 text-muted-foreground" />
+                      <div>
+                        <p className="text-sm font-medium">Driver Name</p>
+                        <p className="text-sm" data-testid="text-driver-name">
+                          {order.driver_details.full_name || "Driver"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <Phone className="h-4 w-4 text-muted-foreground" />
+                      <div>
+                        <p className="text-sm font-medium">Driver Phone</p>
+                        <p className="text-sm" data-testid="text-driver-phone">
+                          <a 
+                            href={`tel:${order.driver_details.phone}`}
+                            className="text-primary hover:underline"
+                          >
+                            {order.driver_details.phone || "Not available"}
+                          </a>
+                        </p>
+                      </div>
+                    </div>
+
+                    {order.confirmed_delivery_time && (
+                      <div className="flex items-center gap-3">
+                        <Clock className="h-4 w-4 text-muted-foreground" />
+                        <div>
+                          <p className="text-sm font-medium">Confirmed Delivery Time</p>
+                          <p className="text-sm" data-testid="text-confirmed-delivery-time">
+                            {new Date(order.confirmed_delivery_time).toLocaleString("en-ZA", {
+                              dateStyle: "medium",
+                              timeStyle: "short",
+                              timeZone: "Africa/Johannesburg",
+                            })}
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
