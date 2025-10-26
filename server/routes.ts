@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import adminRoutes from "./admin-routes";
 import customerRoutes from "./customer-routes";
 import driverRoutes from "./driver-routes";
+import supplierRoutes from "./supplier-routes";
 import { supabaseAdmin } from "./supabase";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { ObjectPermission } from "./objectAcl";
@@ -168,6 +169,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Register driver routes (protected with auth middleware)
   app.use("/api/driver", requireAuth, driverRoutes);
+
+  // Register supplier routes (protected with auth middleware)
+  app.use("/api/supplier", requireAuth, supplierRoutes);
 
   // Register admin routes (protected with auth and admin middleware)
   app.use("/api/admin", requireAuth, requireAdmin, adminRoutes);
