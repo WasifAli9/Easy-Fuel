@@ -82,6 +82,27 @@ The application features a mobile-first, responsive design with full dark mode s
     - Driver routes (`server/driver-routes.ts`) provide API endpoints for viewing, accepting, and rejecting offers
     - `confirmed_delivery_time` field added to orders table for driver-confirmed scheduling
   - **Note**: Current implementation uses in-process setTimeout. For production resilience, consider replacing with a durable scheduler/queue system that survives process restarts.
+- **Pricing Management System**:
+  - **Driver Pricing**: Drivers can set delivery fees (in Rands) per fuel type via "Pricing" tab on their dashboard
+    - Real-time pricing updates with inline editing
+    - Optional notes field for documenting price changes
+    - Pricing history with old→new price transitions
+    - API: `/api/driver/pricing` (GET all), `/api/driver/pricing/:fuelTypeId` (PUT), `/api/driver/pricing/history` (GET)
+  - **Supplier Pricing**: Suppliers manage fuel prices (per litre) for each depot via "Pricing" tab on their dashboard
+    - Depot selection dropdown to choose which depot to manage
+    - Real-time pricing updates per fuel type with inline editing
+    - Optional notes field for documenting price changes
+    - Pricing history per depot showing all changes
+    - API: `/api/supplier/depots` (GET all depots), `/api/supplier/depots/:depotId/pricing` (GET), `/api/supplier/depots/:depotId/pricing/:fuelTypeId` (PUT), `/api/supplier/depots/:depotId/pricing/history` (GET)
+  - **Database Tables**:
+    - `driver_pricing`: Stores delivery fees (delivery_fee_cents) per driver per fuel type
+    - `depot_prices`: Stores fuel prices (price_cents) per depot per fuel type (existing table, used for supplier pricing)
+    - `pricing_history`: Audit trail for all pricing changes with entity_type ('driver'/'depot'), old/new prices, timestamps, changed_by user, and optional notes. Note: Supplier pricing uses entity_type='depot' to maintain per-depot audit trails.
+  - **Technical Implementation**:
+    - Backend: Express routes in `server/driver-routes.ts` and `server/supplier-routes.ts` with authentication middleware
+    - Frontend: React components `DriverPricingManager` and `SupplierPricingManager` using TanStack Query
+    - All pricing mutations automatically log changes to pricing_history table
+    - Currency formatting uses South African Rand (R) convention
 
 ## External Dependencies
 - **Supabase**: Provides PostgreSQL database, authentication services, and object storage.

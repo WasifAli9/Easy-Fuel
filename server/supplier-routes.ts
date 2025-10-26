@@ -193,7 +193,7 @@ router.put("/depots/:depotId/pricing/:fuelTypeId", async (req, res) => {
       if (insertError) throw insertError;
     }
 
-    // Log to pricing history
+    // Log to pricing history (using depot as entity for per-depot audit trail)
     const { error: historyError } = await supabaseAdmin
       .from("pricing_history")
       .insert({
@@ -247,7 +247,7 @@ router.get("/depots/:depotId/pricing/history", async (req, res) => {
       return res.status(404).json({ error: "Depot not found" });
     }
 
-    // Get pricing history with fuel type details
+    // Get pricing history with fuel type details (per-depot with explicit type filter)
     const { data: history, error: historyError } = await supabaseAdmin
       .from("pricing_history")
       .select(`
