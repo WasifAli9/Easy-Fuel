@@ -117,10 +117,12 @@ The application features a mobile-first, responsive design with full dark mode s
   - **Security**: All endpoints verify driver ownership via authenticated user.id → driver.id lookup
 
 ## Known Issues
-- **PostgREST Schema Cache**: After creating new tables (`driver_pricing`, `pricing_history`), PostgREST's schema cache may not immediately reflect changes, resulting in "table not found in schema cache" errors
+- **PostgREST Schema Cache**: After creating new tables (`driver_pricing`, `pricing_history`, `vehicles`) or adding columns (`confirmed_delivery_time`, `driver_id` on orders, billing address fields on customers), PostgREST's schema cache may not immediately reflect changes, resulting in "table not found in schema cache" or "column not found" errors
+  - **Symptoms**: Supabase API calls fail with cache errors even though tables/columns exist in database
   - **Temporary Solution**: Wait 5-10 minutes for automatic cache refresh, or manually run `NOTIFY pgrst, 'reload schema';` in database console
   - **Root Cause**: PostgREST caches database schema for performance; manual NOTIFY commands may not propagate immediately in hosted environments
   - **Permanent Fix**: Ensure proper migration workflow using `npm run db:push --force` to sync schema changes
+  - **Workaround for Test Data**: Use the manual SQL script (`server/seed-driver-manual.sql`) in Supabase SQL Editor to bypass the schema cache and create test data directly
 
 ## External Dependencies
 - **Supabase**: Provides PostgreSQL database, authentication services, and object storage.
