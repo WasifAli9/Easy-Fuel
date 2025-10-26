@@ -62,6 +62,26 @@ The application features a mobile-first, responsive design with full dark mode s
   - Profile pictures supported with object storage ACLs and database persistence
   - Graceful degradation for missing database columns (backwards compatible)
 - **Vehicle Management**: CRUD operations for driver vehicles, including registration, capacity, and compliance.
+- **Intelligent Driver Dispatch System**: 
+  - **Premium Driver Prioritization**: Premium drivers (with active subscriptions) receive exclusive 5-minute access to new order offers
+  - **Tiered Dispatch Flow**: 
+    1. Premium drivers receive offers immediately upon order creation (5-minute expiry)
+    2. Regular drivers receive offers only after the 5-minute premium window expires (15-minute expiry)
+    3. Regular offers are only created if the order hasn't been accepted by a premium driver
+  - **Driver Acceptance Workflow**: 
+    1. Driver views pending offers on their dashboard
+    2. Driver accepts offer and inputs confirmed delivery time
+    3. System automatically:
+       - Updates order state to "assigned"
+       - Sets driver availability to "on_delivery"
+       - Sends email to customer via Resend with driver details (name, phone) and confirmed delivery time
+    4. Customer dashboard displays assigned driver information and confirmed delivery time
+  - **Technical Implementation**: 
+    - Dispatch service (`server/dispatch-service.ts`) handles offer creation with setTimeout-based delayed notifications
+    - Email service (`server/email-service.ts`) integrates with Resend for customer notifications
+    - Driver routes (`server/driver-routes.ts`) provide API endpoints for viewing, accepting, and rejecting offers
+    - `confirmed_delivery_time` field added to orders table for driver-confirmed scheduling
+  - **Note**: Current implementation uses in-process setTimeout. For production resilience, consider replacing with a durable scheduler/queue system that survives process restarts.
 
 ## External Dependencies
 - **Supabase**: Provides PostgreSQL database, authentication services, and object storage.
