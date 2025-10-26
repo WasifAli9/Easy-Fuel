@@ -31,13 +31,15 @@ export default function CustomerDashboard() {
         </div>
 
         <Tabs defaultValue="all" className="space-y-6">
-          <div className="flex items-center justify-between">
-            <TabsList>
-              <TabsTrigger value="all" data-testid="tab-all">All Orders</TabsTrigger>
-              <TabsTrigger value="active" data-testid="tab-active">Active</TabsTrigger>
-              <TabsTrigger value="completed" data-testid="tab-completed">Completed</TabsTrigger>
-            </TabsList>
-            <Button variant="outline" size="sm" data-testid="button-filter">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+              <TabsList className="min-w-max">
+                <TabsTrigger value="all" data-testid="tab-all">All Orders</TabsTrigger>
+                <TabsTrigger value="active" data-testid="tab-active">Active</TabsTrigger>
+                <TabsTrigger value="completed" data-testid="tab-completed">Completed</TabsTrigger>
+              </TabsList>
+            </div>
+            <Button variant="outline" size="sm" data-testid="button-filter" className="self-start sm:self-auto">
               <Filter className="h-4 w-4 mr-2" />
               Filter
             </Button>

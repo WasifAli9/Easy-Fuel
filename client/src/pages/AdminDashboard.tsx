@@ -331,24 +331,26 @@ export default function AdminDashboard() {
         </div>
 
         <Tabs defaultValue="customers" className="space-y-6">
-          <TabsList>
-            <TabsTrigger value="customers" data-testid="tab-customers">
-              Customers ({customers?.length || 0})
-            </TabsTrigger>
-            <TabsTrigger value="drivers" data-testid="tab-drivers">
-              Drivers ({allDrivers?.length || 0})
-            </TabsTrigger>
-            <TabsTrigger value="suppliers" data-testid="tab-suppliers">
-              Suppliers ({allSuppliers?.length || 0})
-            </TabsTrigger>
-            <TabsTrigger value="driver-kyc" data-testid="tab-driver-kyc">
-              Driver KYC ({driverKYC.length})
-            </TabsTrigger>
-            <TabsTrigger value="supplier-kyc" data-testid="tab-supplier-kyc">
-              Supplier KYC ({supplierKYC.length})
-            </TabsTrigger>
-            <TabsTrigger value="settings" data-testid="tab-settings">Settings</TabsTrigger>
-          </TabsList>
+          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+            <TabsList className="min-w-max">
+              <TabsTrigger value="customers" data-testid="tab-customers">
+                Customers ({customers?.length || 0})
+              </TabsTrigger>
+              <TabsTrigger value="drivers" data-testid="tab-drivers">
+                Drivers ({allDrivers?.length || 0})
+              </TabsTrigger>
+              <TabsTrigger value="suppliers" data-testid="tab-suppliers">
+                Suppliers ({allSuppliers?.length || 0})
+              </TabsTrigger>
+              <TabsTrigger value="driver-kyc" data-testid="tab-driver-kyc">
+                Driver KYC ({driverKYC.length})
+              </TabsTrigger>
+              <TabsTrigger value="supplier-kyc" data-testid="tab-supplier-kyc">
+                Supplier KYC ({supplierKYC.length})
+              </TabsTrigger>
+              <TabsTrigger value="settings" data-testid="tab-settings">Settings</TabsTrigger>
+            </TabsList>
+          </div>
 
           <TabsContent value="customers" className="space-y-4">
             <div className="relative">

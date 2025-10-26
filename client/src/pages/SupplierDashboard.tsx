@@ -75,11 +75,13 @@ export default function SupplierDashboard() {
         </div>
 
         <Tabs defaultValue="depots" className="space-y-6">
-          <TabsList>
-            <TabsTrigger value="depots" data-testid="tab-depots">Depots</TabsTrigger>
-            <TabsTrigger value="pricing" data-testid="tab-pricing">Pricing</TabsTrigger>
-            <TabsTrigger value="orders" data-testid="tab-orders">Orders</TabsTrigger>
-          </TabsList>
+          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+            <TabsList className="min-w-max">
+              <TabsTrigger value="depots" data-testid="tab-depots">Depots</TabsTrigger>
+              <TabsTrigger value="pricing" data-testid="tab-pricing">Pricing</TabsTrigger>
+              <TabsTrigger value="orders" data-testid="tab-orders">Orders</TabsTrigger>
+            </TabsList>
+          </div>
 
           <TabsContent value="depots" className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

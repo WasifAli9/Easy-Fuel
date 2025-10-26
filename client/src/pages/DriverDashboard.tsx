@@ -87,13 +87,15 @@ export default function DriverDashboard() {
         </div>
 
         <Tabs defaultValue="available" className="space-y-6">
-          <TabsList>
-            <TabsTrigger value="available" data-testid="tab-available">Available Jobs</TabsTrigger>
-            <TabsTrigger value="assigned" data-testid="tab-assigned">My Jobs</TabsTrigger>
-            <TabsTrigger value="vehicles" data-testid="tab-vehicles">Vehicles</TabsTrigger>
-            <TabsTrigger value="pricing" data-testid="tab-pricing">Pricing</TabsTrigger>
-            <TabsTrigger value="history" data-testid="tab-history">History</TabsTrigger>
-          </TabsList>
+          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+            <TabsList className="min-w-max">
+              <TabsTrigger value="available" data-testid="tab-available">Available Jobs</TabsTrigger>
+              <TabsTrigger value="assigned" data-testid="tab-assigned">My Jobs</TabsTrigger>
+              <TabsTrigger value="vehicles" data-testid="tab-vehicles">Vehicles</TabsTrigger>
+              <TabsTrigger value="pricing" data-testid="tab-pricing">Pricing</TabsTrigger>
+              <TabsTrigger value="history" data-testid="tab-history">History</TabsTrigger>
+            </TabsList>
+          </div>
 
           <TabsContent value="available" className="space-y-4">
             {isLoading ? (
