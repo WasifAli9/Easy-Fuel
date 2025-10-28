@@ -224,40 +224,29 @@ router.post("/orders", async (req, res) => {
       return res.status(400).json({ error: "Delivery address is required" });
     }
 
-    // Get fuel type pricing from depot
+    // Get depot ID for order tracking (pricing will be calculated when driver offer is accepted)
     let depotId = selectedDepotId;
-    let priceCents = 2500; // Default price per litre (R25.00)
 
-    if (selectedDepotId) {
+    if (!selectedDepotId) {
+      // Find a depot that has this fuel type
       const { data: depotPrice } = await supabaseAdmin
         .from("depot_prices")
-        .select("price_cents")
-        .eq("depot_id", selectedDepotId)
-        .eq("fuel_type_id", fuelTypeId)
-        .single();
-
-      if (depotPrice) {
-        priceCents = depotPrice.price_cents;
-      }
-    } else {
-      const { data: depotPrice } = await supabaseAdmin
-        .from("depot_prices")
-        .select("depot_id, price_cents")
+        .select("depot_id")
         .eq("fuel_type_id", fuelTypeId)
         .limit(1)
         .single();
 
       if (depotPrice) {
         depotId = depotPrice.depot_id;
-        priceCents = depotPrice.price_cents;
       }
     }
 
-    // Calculate costs
-    const fuelPriceCents = Math.round(litresNum * priceCents);
-    const deliveryFeeCents = 50000; // R500 delivery fee
-    const serviceFeeCents = Math.round(fuelPriceCents * 0.05); // 5% service fee
-    const totalCents = fuelPriceCents + deliveryFeeCents + serviceFeeCents;
+    // Pricing will be calculated when customer accepts a driver's offer
+    // Set to 0 as placeholder (marketplace model - drivers compete with their delivery fees)
+    const fuelPriceCents = 0;
+    const deliveryFeeCents = 0;
+    const serviceFeeCents = 0;
+    const totalCents = 0;
 
     // Convert time strings (HH:MM) to full timestamps (South African timezone SAST = UTC+2)
     // Only create timestamps if we have a delivery date - otherwise leave as null

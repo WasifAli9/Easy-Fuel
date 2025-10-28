@@ -11,7 +11,7 @@ interface OrderCardProps {
   location: string;
   date: string;
   totalAmount: number;
-  status: "awaiting_payment" | "paid" | "assigned" | "picked_up" | "en_route" | "delivered" | "cancelled";
+  status: "created" | "awaiting_payment" | "paid" | "assigned" | "picked_up" | "en_route" | "delivered" | "cancelled" | "refunded";
   onView?: () => void;
 }
 
@@ -47,10 +47,17 @@ export function OrderCard({
           <span className="text-muted-foreground">{date}</span>
         </div>
         <div className="flex items-center justify-between pt-2 border-t">
-          <div className="flex items-center gap-2">
-            <Banknote className="h-4 w-4 text-muted-foreground" />
-            <span className="font-semibold" data-testid={`text-amount-${id}`}>R {totalAmount.toFixed(2)}</span>
-          </div>
+          {totalAmount > 0 ? (
+            <div className="flex items-center gap-2">
+              <Banknote className="h-4 w-4 text-muted-foreground" />
+              <span className="font-semibold" data-testid={`text-amount-${id}`}>R {totalAmount.toFixed(2)}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <Banknote className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground" data-testid={`text-amount-${id}`}>Pending driver offers</span>
+            </div>
+          )}
           <Button 
             variant="ghost" 
             size="sm"
