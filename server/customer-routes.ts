@@ -243,6 +243,31 @@ router.post("/orders", async (req, res) => {
     const serviceFeeCents = Math.round(fuelPriceCents * 0.05); // 5% service fee
     const totalCents = fuelPriceCents + deliveryFeeCents + serviceFeeCents;
 
+    // Convert time strings (HH:MM) to full timestamps (South African timezone SAST = UTC+2)
+    // Only create timestamps if we have a delivery date - otherwise leave as null
+    let fromTimeTimestamp = null;
+    let toTimeTimestamp = null;
+    
+    if (fromTime && deliveryDate) {
+      // Validate HH:MM format
+      if (!/^\d{2}:\d{2}$/.test(fromTime)) {
+        return res.status(400).json({ error: "Invalid from time format. Expected HH:MM" });
+      }
+      // Parse with SAST offset (+02:00) and convert to ISO string for proper round-tripping
+      const fromDateTime = new Date(`${deliveryDate}T${fromTime}:00+02:00`);
+      fromTimeTimestamp = fromDateTime.toISOString();
+    }
+    
+    if (toTime && deliveryDate) {
+      // Validate HH:MM format
+      if (!/^\d{2}:\d{2}$/.test(toTime)) {
+        return res.status(400).json({ error: "Invalid to time format. Expected HH:MM" });
+      }
+      // Parse with SAST offset (+02:00) and convert to ISO string for proper round-tripping
+      const toDateTime = new Date(`${deliveryDate}T${toTime}:00+02:00`);
+      toTimeTimestamp = toDateTime.toISOString();
+    }
+
     // Create order with all new fields
     const { data: newOrder, error: orderError } = await supabaseAdmin
       .from("orders")
@@ -257,8 +282,8 @@ router.post("/orders", async (req, res) => {
         drop_lng: lng,
         access_instructions: accessNotes || null,
         delivery_date: deliveryDate || null,
-        from_time: fromTime || null,
-        to_time: toTime || null,
+        from_time: fromTimeTimestamp,
+        to_time: toTimeTimestamp,
         priority_level: priorityLevel || "medium",
         
         // Vehicle/Equipment
