@@ -47,15 +47,15 @@ export function OrderCard({
           <span className="text-muted-foreground">{date}</span>
         </div>
         <div className="flex items-center justify-between pt-2 border-t">
-          {totalAmount > 0 ? (
+          {status === "created" ? (
             <div className="flex items-center gap-2">
               <Banknote className="h-4 w-4 text-muted-foreground" />
-              <span className="font-semibold" data-testid={`text-amount-${id}`}>R {totalAmount.toFixed(2)}</span>
+              <span className="text-sm text-muted-foreground" data-testid={`text-amount-${id}`}>Pending driver offers</span>
             </div>
           ) : (
             <div className="flex items-center gap-2">
               <Banknote className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground" data-testid={`text-amount-${id}`}>Pending driver offers</span>
+              <span className="font-semibold" data-testid={`text-amount-${id}`}>R {totalAmount.toFixed(2)}</span>
             </div>
           )}
           <Button 

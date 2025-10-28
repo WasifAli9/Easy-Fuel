@@ -383,7 +383,8 @@ router.patch("/orders/:id", async (req, res) => {
       updated_at: new Date().toISOString(),
     };
 
-    // If fuel type or litres changed, recalculate pricing
+    // If fuel type or litres changed, update them but DON'T recalculate pricing
+    // Pricing is calculated only when customer accepts a driver's offer (marketplace model)
     if (fuelTypeId || litres) {
       const newFuelTypeId = fuelTypeId || existingOrder.fuel_type_id;
       const newLitres = parseFloat(litres || existingOrder.litres);
@@ -392,48 +393,15 @@ router.patch("/orders/:id", async (req, res) => {
         return res.status(400).json({ error: "Invalid litres value" });
       }
 
-      // Get fuel type pricing from depot (use existing depot or find new one)
-      let priceCents = 2500; // Default price per litre (R25.00)
-      const depotId = existingOrder.selected_depot_id;
-
-      if (depotId) {
-        const { data: depotPrice } = await supabaseAdmin
-          .from("depot_prices")
-          .select("price_cents")
-          .eq("depot_id", depotId)
-          .eq("fuel_type_id", newFuelTypeId)
-          .single();
-
-        if (depotPrice) {
-          priceCents = depotPrice.price_cents;
-        }
-      } else {
-        // Find a depot with this fuel type
-        const { data: depotPrice } = await supabaseAdmin
-          .from("depot_prices")
-          .select("price_cents")
-          .eq("fuel_type_id", newFuelTypeId)
-          .limit(1)
-          .single();
-
-        if (depotPrice) {
-          priceCents = depotPrice.price_cents;
-        }
-      }
-
-      const fuelPriceCents = Math.round(newLitres * priceCents);
-      const deliveryFeeCents = 50000;
-      const serviceFeeCents = Math.round(fuelPriceCents * 0.05);
-      const totalCents = fuelPriceCents + deliveryFeeCents + serviceFeeCents;
-
       updateData = {
         ...updateData,
         fuel_type_id: newFuelTypeId,
         litres: newLitres.toString(),
-        fuel_price_cents: fuelPriceCents,
-        delivery_fee_cents: deliveryFeeCents,
-        service_fee_cents: serviceFeeCents,
-        total_cents: totalCents,
+        // Keep pricing at 0 until driver offer is accepted
+        fuel_price_cents: 0,
+        delivery_fee_cents: 0,
+        service_fee_cents: 0,
+        total_cents: 0,
       };
     }
 
