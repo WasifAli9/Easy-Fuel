@@ -357,6 +357,7 @@ export const orders = pgTable("orders", {
   dropLat: doublePrecision("drop_lat").notNull(),
   dropLng: doublePrecision("drop_lng").notNull(),
   accessInstructions: text("access_instructions"),
+  deliveryDate: timestamp("delivery_date"),
   fromTime: timestamp("from_time"),
   toTime: timestamp("to_time"),
   priorityLevel: priorityLevelEnum("priority_level").notNull().default("medium"),

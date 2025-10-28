@@ -43,8 +43,10 @@ const orderFormSchema = z.object({
     message: "Litres must be a positive number",
   }),
   deliveryAddressId: z.string().min(1, "Please select a delivery address"),
+  deliveryDate: z.string().optional(),
   fromTime: z.string().optional(),
   toTime: z.string().optional(),
+  accessNotes: z.string().optional(),
   priorityLevel: z.enum(["low", "medium", "high"]).default("medium"),
   vehicleRegistration: z.string().optional(),
   equipmentType: z.string().optional(),
@@ -92,8 +94,10 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
       fuelTypeId: "",
       litres: "",
       deliveryAddressId: "",
+      deliveryDate: "",
       fromTime: "",
       toTime: "",
+      accessNotes: "",
       priorityLevel: "medium",
       vehicleRegistration: "",
       equipmentType: "",
@@ -167,8 +171,10 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
         fuelTypeId: values.fuelTypeId,
         litres: values.litres,
         deliveryAddressId: values.deliveryAddressId,
+        deliveryDate: values.deliveryDate || null,
         fromTime: values.fromTime || null,
         toTime: values.toTime || null,
+        accessNotes: values.accessNotes || null,
         priorityLevel: values.priorityLevel,
         vehicleRegistration: values.vehicleRegistration || null,
         equipmentType: values.equipmentType || null,
@@ -368,6 +374,27 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
                   )}
                 />
 
+                <FormField
+                  control={form.control}
+                  name="deliveryDate"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Delivery Date</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="date"
+                          {...field}
+                          data-testid="input-delivery-date"
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        Select your preferred delivery date
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
                 <div className="grid grid-cols-2 gap-4">
                   <FormField
                     control={form.control}
@@ -405,6 +432,27 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
                     )}
                   />
                 </div>
+
+                <FormField
+                  control={form.control}
+                  name="accessNotes"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Access Notes</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="e.g. Gate code, parking instructions, contact person"
+                          {...field}
+                          data-testid="input-access-notes"
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        Provide any special instructions for the driver to access your location
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </TabsContent>
 
               <TabsContent value="vehicle" className="space-y-4 mt-4">
