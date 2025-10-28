@@ -2,7 +2,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "./StatusBadge";
 import { FuelTypeIcon } from "./FuelTypeIcon";
-import { MapPin, Calendar, DollarSign, Eye } from "lucide-react";
+import { MapPin, Calendar, Banknote, Eye } from "lucide-react";
 
 interface OrderCardProps {
   id: string;
@@ -48,7 +48,7 @@ export function OrderCard({
         </div>
         <div className="flex items-center justify-between pt-2 border-t">
           <div className="flex items-center gap-2">
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
+            <Banknote className="h-4 w-4 text-muted-foreground" />
             <span className="font-semibold" data-testid={`text-amount-${id}`}>R {totalAmount.toFixed(2)}</span>
           </div>
           <Button 

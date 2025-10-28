@@ -17,6 +17,22 @@ export default function CustomerDashboard() {
     queryKey: ["/api/orders"],
   });
 
+  // Helper function to format delivery address
+  const formatAddress = (order: any) => {
+    if (order.delivery_addresses) {
+      const parts = [
+        order.delivery_addresses.address_street,
+        order.delivery_addresses.address_city,
+      ].filter(Boolean); // Remove empty/null/undefined values
+      
+      if (parts.length > 0) {
+        return parts.join(", ");
+      }
+    }
+    // Fallback to GPS coordinates
+    return `${order.drop_lat}, ${order.drop_lng}`;
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <AppHeader notificationCount={2} />
@@ -58,7 +74,7 @@ export default function CustomerDashboard() {
                     id={order.id}
                     fuelType={order.fuel_types?.label || "Unknown"}
                     litres={parseFloat(order.litres)}
-                    location={`${order.drop_lat}, ${order.drop_lng}`}
+                    location={formatAddress(order)}
                     date={new Date(order.created_at).toLocaleString()}
                     totalAmount={order.total_cents / 100}
                     status={order.state}
@@ -85,7 +101,7 @@ export default function CustomerDashboard() {
                       id={order.id}
                       fuelType={order.fuel_types?.label || "Unknown"}
                       litres={parseFloat(order.litres)}
-                      location={`${order.drop_lat}, ${order.drop_lng}`}
+                      location={formatAddress(order)}
                       date={new Date(order.created_at).toLocaleString()}
                       totalAmount={order.total_cents / 100}
                       status={order.state}
@@ -112,7 +128,7 @@ export default function CustomerDashboard() {
                       id={order.id}
                       fuelType={order.fuel_types?.label || "Unknown"}
                       litres={parseFloat(order.litres)}
-                      location={`${order.drop_lat}, ${order.drop_lng}`}
+                      location={formatAddress(order)}
                       date={new Date(order.created_at).toLocaleString()}
                       totalAmount={order.total_cents / 100}
                       status={order.state}

@@ -38,7 +38,7 @@ router.get("/orders", async (req, res) => {
       return res.status(404).json({ error: "Customer profile not found" });
     }
 
-    // Fetch orders with fuel type details
+    // Fetch orders with fuel type and delivery address details
     const { data: orders, error: ordersError } = await supabaseAdmin
       .from("orders")
       .select(`
@@ -47,6 +47,14 @@ router.get("/orders", async (req, res) => {
           id,
           code,
           label
+        ),
+        delivery_addresses (
+          id,
+          label,
+          address_street,
+          address_city,
+          address_province,
+          address_postal_code
         )
       `)
       .eq("customer_id", customer.id)
@@ -92,6 +100,14 @@ router.get("/orders/:id", async (req, res) => {
         depots (
           id,
           name
+        ),
+        delivery_addresses (
+          id,
+          label,
+          address_street,
+          address_city,
+          address_province,
+          address_postal_code
         )
       `)
       .eq("id", orderId)
