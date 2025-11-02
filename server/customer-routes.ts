@@ -1234,11 +1234,20 @@ router.get("/orders/:orderId/driver-location", async (req, res) => {
       .from("drivers")
       .select("current_lat, current_lng, user_id")
       .eq("id", order.assigned_driver_id)
-      .single();
+      .maybeSingle(); // Use maybeSingle() instead of single() to handle zero rows gracefully
 
-    if (driverError) throw driverError;
+    if (driverError) {
+      console.error("Driver query error:", driverError);
+      return res.status(500).json({ error: "Failed to fetch driver information" });
+    }
+    
     if (!driver) {
       return res.status(404).json({ error: "Driver not found" });
+    }
+
+    // Check if driver has set their location
+    if (!driver.current_lat || !driver.current_lng) {
+      return res.status(404).json({ error: "No driver location available" });
     }
 
     // Get driver profile for additional details
@@ -1246,7 +1255,7 @@ router.get("/orders/:orderId/driver-location", async (req, res) => {
       .from("profiles")
       .select("full_name")
       .eq("id", driver.user_id)
-      .single();
+      .maybeSingle();
 
     res.json({
       latitude: driver.current_lat,
