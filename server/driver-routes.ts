@@ -5,6 +5,29 @@ import { insertDriverPricingSchema, insertPricingHistorySchema } from "@shared/s
 
 const router = Router();
 
+// Get driver profile
+router.get("/profile", async (req, res) => {
+  const user = (req as any).user;
+  
+  try {
+    const { data: driver, error } = await supabaseAdmin
+      .from("drivers")
+      .select("*")
+      .eq("user_id", user.id)
+      .single();
+
+    if (error) throw error;
+    if (!driver) {
+      return res.status(404).json({ error: "Driver profile not found" });
+    }
+
+    res.json(driver);
+  } catch (error: any) {
+    console.error("Error fetching driver profile:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Helper function to convert snake_case to camelCase for vehicle objects
 function vehicleToCamelCase(vehicle: any) {
   if (!vehicle) return null;

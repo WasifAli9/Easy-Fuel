@@ -6,6 +6,7 @@ import { StatsCard } from "@/components/StatsCard";
 import { DriverPricingManager } from "@/components/DriverPricingManager";
 import { DriverVehicleManager } from "@/components/DriverVehicleManager";
 import { DriverPreferencesManager } from "@/components/DriverPreferencesManager";
+import { DriverLocationTracker } from "@/components/DriverLocationTracker";
 import { DollarSign, TrendingUp, CheckCircle } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AcceptOfferDialog } from "@/components/AcceptOfferDialog";
@@ -21,6 +22,11 @@ export default function DriverDashboard() {
   const { data: offers = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/driver/offers"],
     refetchInterval: 30000, // Refresh every 30 seconds
+  });
+
+  // Fetch driver profile to check availability status
+  const { data: driverProfile } = useQuery<any>({
+    queryKey: ["/api/driver/profile"],
   });
 
   // Reject offer mutation
@@ -141,8 +147,14 @@ export default function DriverDashboard() {
           </TabsContent>
 
           <TabsContent value="assigned" className="space-y-3 sm:space-y-4">
+            {/* GPS Location Tracker - Only active when on delivery */}
+            <DriverLocationTracker 
+              isOnDelivery={driverProfile?.availability === "on_delivery"}
+            />
+            
             <div className="text-center py-8 sm:py-12 text-muted-foreground">
               <p>No assigned jobs yet</p>
+              <p className="text-sm mt-2">Accepted deliveries will appear here</p>
             </div>
           </TabsContent>
 
