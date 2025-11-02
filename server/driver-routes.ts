@@ -912,4 +912,51 @@ router.get("/pricing/history", async (req, res) => {
   }
 });
 
+// Update driver's current GPS location
+router.put("/location", async (req, res) => {
+  const user = (req as any).user;
+  
+  try {
+    const { latitude, longitude } = req.body;
+
+    if (typeof latitude !== "number" || typeof longitude !== "number") {
+      return res.status(400).json({ error: "Valid latitude and longitude are required" });
+    }
+
+    // Validate coordinates
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+      return res.status(400).json({ error: "Invalid coordinates" });
+    }
+
+    // Get driver ID
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (driverError) throw driverError;
+    if (!driver) {
+      return res.status(404).json({ error: "Driver profile not found" });
+    }
+
+    // Update driver's current location
+    const { error: updateError } = await supabaseAdmin
+      .from("drivers")
+      .update({
+        current_lat: latitude,
+        current_lng: longitude,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", driver.id);
+
+    if (updateError) throw updateError;
+
+    res.json({ success: true, latitude, longitude });
+  } catch (error: any) {
+    console.error("Error updating driver location:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;

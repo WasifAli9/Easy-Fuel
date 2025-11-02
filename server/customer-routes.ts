@@ -1193,4 +1193,71 @@ router.put("/profile", async (req, res) => {
   }
 });
 
+// Get driver's current location for an order
+router.get("/orders/:orderId/driver-location", async (req, res) => {
+  const user = (req as any).user;
+  const { orderId } = req.params;
+
+  try {
+    // Get customer ID
+    const { data: customer, error: customerError } = await supabaseAdmin
+      .from("customers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (customerError) throw customerError;
+    if (!customer) {
+      return res.status(404).json({ error: "Customer profile not found" });
+    }
+
+    // Get order and verify it belongs to customer
+    const { data: order, error: orderError } = await supabaseAdmin
+      .from("orders")
+      .select("id, assigned_driver_id, state")
+      .eq("id", orderId)
+      .eq("customer_id", customer.id)
+      .single();
+
+    if (orderError) throw orderError;
+    if (!order) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    // Check if driver is assigned
+    if (!order.assigned_driver_id) {
+      return res.status(404).json({ error: "No driver assigned to this order" });
+    }
+
+    // Get driver's current location
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("current_lat, current_lng, user_id")
+      .eq("id", order.assigned_driver_id)
+      .single();
+
+    if (driverError) throw driverError;
+    if (!driver) {
+      return res.status(404).json({ error: "Driver not found" });
+    }
+
+    // Get driver profile for additional details
+    const { data: driverProfile } = await supabaseAdmin
+      .from("profiles")
+      .select("full_name")
+      .eq("id", driver.user_id)
+      .single();
+
+    res.json({
+      latitude: driver.current_lat,
+      longitude: driver.current_lng,
+      driverName: driverProfile?.full_name || "Driver",
+      orderState: order.state,
+    });
+  } catch (error: any) {
+    console.error("Error fetching driver location:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;
