@@ -123,6 +123,35 @@ The application features a mobile-first, responsive design with full dark mode s
   - **UI Component**: `DriverVehicleManager` component with dialog-based add/edit forms
   - **Security**: All endpoints verify driver ownership via authenticated user.id → driver.id lookup
 
+- **Real-Time GPS Tracking System**: Production-ready location tracking for customers to see driver locations on interactive maps
+  - **Customer View**: Integrated map in order details dialog showing real-time driver location
+    - Uses Leaflet + OpenStreetMap for map display (no API key required)
+    - Auto-refreshes every 10 seconds while dialog is open
+    - Shows both driver location (truck marker) and delivery location markers
+    - Auto-centers map on driver location when it updates
+    - Graceful handling when no driver assigned or location not yet available
+  - **Driver Location Updates**: Automatic background location tracking while on delivery
+    - DriverLocationTracker component requests browser geolocation permission
+    - Sends location updates to backend every 30 seconds when driver availability = "on_delivery"
+    - Invisible when driver not on delivery (returns null)
+    - Small status badge shows when actively tracking location
+  - **API Endpoints**:
+    - `PUT /api/driver/location` - Driver updates current location (latitude, longitude)
+    - `GET /api/orders/:orderId/driver-location` - Customer fetches driver location for their order
+  - **Database**: Uses `current_lat` and `current_lng` columns in drivers table
+  - **Security**: 
+    - Customer can only view driver location for orders they own (customer_id verification)
+    - Driver location updates validate driver ownership via authenticated session
+  - **Technical Implementation**:
+    - Backend uses `.maybeSingle()` to avoid PGRST116 errors when location not set
+    - Frontend uses TanStack Query with automatic Supabase auth header injection via `getAuthHeaders()`
+    - All authenticated API calls include `Authorization: Bearer <token>` from Supabase session
+    - Error handling: 404 when no driver assigned/no location, proper loading states, graceful degradation
+  - **Components**:
+    - `DriverLocationMap` (client/src/components/DriverLocationMap.tsx) - Customer-facing interactive map
+    - `DriverLocationTracker` (client/src/components/DriverLocationTracker.tsx) - Driver-side location broadcaster
+    - Integration in `ViewOrderDialog` - Conditionally renders map when order has delivery coordinates
+
 ## Known Issues
 - **PostgREST Schema Cache**: After creating new tables (`driver_pricing`, `pricing_history`, `vehicles`) or adding columns (`confirmed_delivery_time`, `driver_id` on orders, billing address fields on customers), PostgREST's schema cache may not immediately reflect changes, resulting in "table not found in schema cache" or "column not found" errors
   - **Symptoms**: Supabase API calls fail with cache errors even though tables/columns exist in database
