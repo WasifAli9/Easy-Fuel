@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import { Icon } from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -48,48 +49,13 @@ export function DriverLocationMap({
   deliveryLng,
   className = "",
 }: DriverLocationMapProps) {
-  const [driverLocation, setDriverLocation] = useState<DriverLocation | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  // Fetch driver location
-  const fetchDriverLocation = async () => {
-    try {
-      const response = await fetch(`/api/customer/orders/${orderId}/driver-location`);
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        
-        // If no driver assigned or not found, don't show error - just no map
-        if (response.status === 404) {
-          setDriverLocation(null);
-          setError(null);
-          return;
-        }
-        
-        throw new Error(errorData.error || "Failed to fetch driver location");
-      }
-
-      const data = await response.json();
-      setDriverLocation(data);
-      setError(null);
-    } catch (err: any) {
-      console.error("Error fetching driver location:", err);
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Initial fetch and polling
-  useEffect(() => {
-    fetchDriverLocation();
-
-    // Poll every 10 seconds for real-time updates
-    const interval = setInterval(fetchDriverLocation, 10000);
-
-    return () => clearInterval(interval);
-  }, [orderId]);
+  // Fetch driver location using TanStack Query with polling
+  const { data: driverLocation, isLoading: loading, error } = useQuery<DriverLocation>({
+    queryKey: ["/api/orders", orderId, "driver-location"],
+    enabled: !!orderId,
+    refetchInterval: 10000, // Poll every 10 seconds
+    retry: false, // Don't retry on 404 (no driver assigned)
+  });
 
   if (loading) {
     return (
@@ -110,21 +76,27 @@ export function DriverLocationMap({
   }
 
   if (error) {
-    return (
-      <Card className={className}>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Truck className="h-5 w-5" />
-            Driver Location
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center justify-center h-64">
-            <p className="text-destructive">{error}</p>
-          </div>
-        </CardContent>
-      </Card>
-    );
+    // If 404 (no driver assigned), don't show error - just no location available
+    const is404 = (error as any)?.message?.includes("404") || (error as any)?.statusCode === 404;
+    if (!is404) {
+      return (
+        <Card className={className}>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Truck className="h-5 w-5" />
+              Driver Location
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-center h-64">
+              <p className="text-destructive">
+                {(error as any)?.message || "Failed to load driver location"}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
   }
 
   // If no driver location available
