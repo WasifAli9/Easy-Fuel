@@ -33,6 +33,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { MapPin, Calendar, DollarSign, Package, User, Phone, Clock } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
 import { Badge } from "@/components/ui/badge";
+import { DriverLocationMap } from "./DriverLocationMap";
 
 const orderEditSchema = z.object({
   fuelTypeId: z.string().min(1, "Please select a fuel type"),
@@ -277,6 +278,15 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                     )}
                   </div>
                 </div>
+              )}
+
+              {/* Live GPS Tracking Map - Show when driver is assigned */}
+              {order.assigned_driver_id && (
+                <DriverLocationMap
+                  orderId={order.id}
+                  deliveryLat={order.drop_lat}
+                  deliveryLng={order.drop_lng}
+                />
               )}
 
               {/* Pricing Breakdown */}
