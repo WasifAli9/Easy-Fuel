@@ -759,4 +759,119 @@ router.delete("/vehicles/:vehicleId", async (req, res) => {
   }
 });
 
+// Get driver preferences (radius and location)
+router.get("/preferences", async (req, res) => {
+  const user = (req as any).user;
+
+  try {
+    // Get driver profile with preferences
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("id, job_radius_preference_miles, current_lat, current_lng")
+      .eq("user_id", user.id)
+      .single();
+
+    if (driverError) throw driverError;
+    if (!driver) {
+      return res.status(404).json({ error: "Driver profile not found" });
+    }
+
+    res.json({
+      jobRadiusPreferenceMiles: driver.job_radius_preference_miles || 20,
+      currentLat: driver.current_lat,
+      currentLng: driver.current_lng,
+    });
+  } catch (error: any) {
+    console.error("Error fetching driver preferences:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update driver preferences (radius and/or location)
+router.patch("/preferences", async (req, res) => {
+  const user = (req as any).user;
+  const { jobRadiusPreferenceMiles, currentLat, currentLng } = req.body;
+
+  try {
+    // Get driver ID from user ID
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (driverError) throw driverError;
+    if (!driver) {
+      return res.status(404).json({ error: "Driver profile not found" });
+    }
+
+    // Build update object with only provided fields
+    const updateData: any = {};
+    
+    if (jobRadiusPreferenceMiles !== undefined) {
+      const radius = parseFloat(jobRadiusPreferenceMiles);
+      if (isNaN(radius) || radius < 1 || radius > 500) {
+        return res.status(400).json({ 
+          error: "Radius must be between 1 and 500 miles" 
+        });
+      }
+      updateData.job_radius_preference_miles = radius;
+    }
+
+    if (currentLat !== undefined && currentLng !== undefined) {
+      const lat = parseFloat(currentLat);
+      const lng = parseFloat(currentLng);
+      
+      if (isNaN(lat) || isNaN(lng)) {
+        return res.status(400).json({ error: "Invalid coordinates" });
+      }
+      
+      if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        return res.status(400).json({ 
+          error: "Coordinates out of range" 
+        });
+      }
+      
+      updateData.current_lat = lat;
+      updateData.current_lng = lng;
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ 
+        error: "No valid fields to update" 
+      });
+    }
+
+    updateData.updated_at = new Date().toISOString();
+
+    // Update driver preferences
+    const { data: updatedDriver, error: updateError } = await supabaseAdmin
+      .from("drivers")
+      .update(updateData)
+      .eq("id", driver.id)
+      .select("id, job_radius_preference_miles, current_lat, current_lng")
+      .single();
+
+    if (updateError) throw updateError;
+
+    res.json({
+      jobRadiusPreferenceMiles: updatedDriver.job_radius_preference_miles,
+      currentLat: updatedDriver.current_lat,
+      currentLng: updatedDriver.current_lng,
+    });
+  } catch (error: any) {
+    console.error("Error updating driver preferences:", error);
+    
+    // Check for PostgREST schema cache error
+    if (error?.code === 'PGRST205' || error?.message?.includes('schema cache')) {
+      return res.status(500).json({ 
+        error: "Database schema cache needs refresh. Please run 'NOTIFY pgrst, \"reload schema\";' in your Supabase SQL Editor and try again in 10 seconds.",
+        code: 'SCHEMA_CACHE_ERROR'
+      });
+    }
+    
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;

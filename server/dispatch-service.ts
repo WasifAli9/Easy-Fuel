@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "./supabase";
+import { calculateDistance } from "./utils/distance";
 
 interface CreateDispatchOffersParams {
   orderId: string;
@@ -7,10 +8,20 @@ interface CreateDispatchOffersParams {
   dropLng: number;
 }
 
+interface DriverWithLocation {
+  id: string;
+  premium_status: string;
+  availability_status: string;
+  current_lat: number | null;
+  current_lng: number | null;
+  job_radius_preference_miles: number;
+}
+
 /**
  * Creates dispatch offers for an order
  * Premium drivers receive offers first (5 minute exclusive window)
  * After 5 minutes, if no premium driver accepts, offers go to all drivers
+ * Only drivers within their radius preference receive offers
  */
 export async function createDispatchOffers({
   orderId,
@@ -19,10 +30,10 @@ export async function createDispatchOffers({
   dropLng,
 }: CreateDispatchOffersParams): Promise<void> {
   try {
-    // Find all available drivers
+    // Find all available drivers with location and radius preferences
     const { data: drivers, error: driversError } = await supabaseAdmin
       .from("drivers")
-      .select("id, premium_status, availability_status")
+      .select("id, premium_status, availability_status, current_lat, current_lng, job_radius_preference_miles")
       .eq("availability_status", "available")
       .eq("kyc_status", "approved");
 
@@ -36,16 +47,46 @@ export async function createDispatchOffers({
       return;
     }
 
+    // Filter drivers by radius preference
+    const driversWithinRadius = (drivers as DriverWithLocation[]).filter((driver) => {
+      // Skip drivers without location set
+      if (!driver.current_lat || !driver.current_lng) {
+        console.log(`Driver ${driver.id} has no location set, skipping`);
+        return false;
+      }
+
+      const distance = calculateDistance(
+        driver.current_lat,
+        driver.current_lng,
+        dropLat,
+        dropLng
+      );
+
+      const radiusPreference = driver.job_radius_preference_miles || 20; // Default 20 miles
+      const withinRadius = distance <= radiusPreference;
+
+      console.log(
+        `Driver ${driver.id}: distance=${distance.toFixed(1)} miles, preference=${radiusPreference} miles, within radius=${withinRadius}`
+      );
+
+      return withinRadius;
+    });
+
+    if (driversWithinRadius.length === 0) {
+      console.log(`No drivers within radius for order ${orderId} (location: ${dropLat}, ${dropLng})`);
+      return;
+    }
+
     // Separate premium and regular drivers
-    const premiumDrivers = drivers.filter(
+    const premiumDrivers = driversWithinRadius.filter(
       (d) => d.premium_status === "active"
     );
-    const regularDrivers = drivers.filter(
+    const regularDrivers = driversWithinRadius.filter(
       (d) => d.premium_status !== "active"
     );
 
     console.log(
-      `Found ${premiumDrivers.length} premium and ${regularDrivers.length} regular drivers`
+      `Found ${premiumDrivers.length} premium and ${regularDrivers.length} regular drivers within radius`
     );
 
     // Create offers for premium drivers first (5 minute exclusive window)

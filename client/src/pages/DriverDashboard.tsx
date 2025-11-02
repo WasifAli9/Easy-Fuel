@@ -5,6 +5,7 @@ import { JobCard } from "@/components/JobCard";
 import { StatsCard } from "@/components/StatsCard";
 import { DriverPricingManager } from "@/components/DriverPricingManager";
 import { DriverVehicleManager } from "@/components/DriverVehicleManager";
+import { DriverPreferencesManager } from "@/components/DriverPreferencesManager";
 import { DollarSign, TrendingUp, CheckCircle } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AcceptOfferDialog } from "@/components/AcceptOfferDialog";
@@ -88,11 +89,12 @@ export default function DriverDashboard() {
 
         <Tabs defaultValue="available" className="space-y-4 sm:space-y-6">
           <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 scrollbar-hide">
-            <TabsList className="min-w-max w-full sm:w-auto grid grid-cols-5 sm:inline-flex">
+            <TabsList className="min-w-max w-full sm:w-auto grid grid-cols-6 sm:inline-flex">
               <TabsTrigger value="available" data-testid="tab-available" className="text-xs sm:text-sm">Available</TabsTrigger>
               <TabsTrigger value="assigned" data-testid="tab-assigned" className="text-xs sm:text-sm">My Jobs</TabsTrigger>
               <TabsTrigger value="vehicles" data-testid="tab-vehicles" className="text-xs sm:text-sm">Vehicles</TabsTrigger>
               <TabsTrigger value="pricing" data-testid="tab-pricing" className="text-xs sm:text-sm">Pricing</TabsTrigger>
+              <TabsTrigger value="settings" data-testid="tab-settings" className="text-xs sm:text-sm">Settings</TabsTrigger>
               <TabsTrigger value="history" data-testid="tab-history" className="text-xs sm:text-sm">History</TabsTrigger>
             </TabsList>
           </div>
@@ -150,6 +152,10 @@ export default function DriverDashboard() {
 
           <TabsContent value="pricing" className="space-y-3 sm:space-y-4">
             <DriverPricingManager />
+          </TabsContent>
+
+          <TabsContent value="settings" className="space-y-3 sm:space-y-4">
+            <DriverPreferencesManager />
           </TabsContent>
 
           <TabsContent value="history" className="space-y-3 sm:space-y-4">

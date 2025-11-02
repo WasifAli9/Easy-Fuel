@@ -207,6 +207,9 @@ export const drivers = pgTable("drivers", {
   vehicleCapacityLitres: integer("vehicle_capacity_litres"),
   insuranceDocUrl: text("insurance_doc_url"),
   premiumStatus: text("premium_status").default("inactive"),
+  jobRadiusPreferenceMiles: doublePrecision("job_radius_preference_miles").default(20),
+  currentLat: doublePrecision("current_lat"),
+  currentLng: doublePrecision("current_lng"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
