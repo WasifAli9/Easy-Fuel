@@ -56,16 +56,16 @@ export default function DriverDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background pb-safe">
       <AppHeader notificationCount={3} />
       
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">Driver Dashboard</h1>
-          <p className="text-muted-foreground">Manage your deliveries and earnings</p>
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
+        <div className="mb-4 sm:mb-8">
+          <h1 className="text-2xl sm:text-3xl font-bold mb-1">Driver Dashboard</h1>
+          <p className="text-sm text-muted-foreground">Manage your deliveries and earnings</p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-4 sm:mb-8">
           <StatsCard
             title="Today's Earnings"
             value="R 1,240"
@@ -86,27 +86,27 @@ export default function DriverDashboard() {
           />
         </div>
 
-        <Tabs defaultValue="available" className="space-y-6">
-          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-            <TabsList className="min-w-max">
-              <TabsTrigger value="available" data-testid="tab-available">Available Jobs</TabsTrigger>
-              <TabsTrigger value="assigned" data-testid="tab-assigned">My Jobs</TabsTrigger>
-              <TabsTrigger value="vehicles" data-testid="tab-vehicles">Vehicles</TabsTrigger>
-              <TabsTrigger value="pricing" data-testid="tab-pricing">Pricing</TabsTrigger>
-              <TabsTrigger value="history" data-testid="tab-history">History</TabsTrigger>
+        <Tabs defaultValue="available" className="space-y-4 sm:space-y-6">
+          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 scrollbar-hide">
+            <TabsList className="min-w-max w-full sm:w-auto grid grid-cols-5 sm:inline-flex">
+              <TabsTrigger value="available" data-testid="tab-available" className="text-xs sm:text-sm">Available</TabsTrigger>
+              <TabsTrigger value="assigned" data-testid="tab-assigned" className="text-xs sm:text-sm">My Jobs</TabsTrigger>
+              <TabsTrigger value="vehicles" data-testid="tab-vehicles" className="text-xs sm:text-sm">Vehicles</TabsTrigger>
+              <TabsTrigger value="pricing" data-testid="tab-pricing" className="text-xs sm:text-sm">Pricing</TabsTrigger>
+              <TabsTrigger value="history" data-testid="tab-history" className="text-xs sm:text-sm">History</TabsTrigger>
             </TabsList>
           </div>
 
-          <TabsContent value="available" className="space-y-4">
+          <TabsContent value="available" className="space-y-3 sm:space-y-4">
             {isLoading ? (
               <div className="text-center py-8 text-muted-foreground">Loading offers...</div>
             ) : offers.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
+              <div className="text-center py-8 sm:py-12 text-muted-foreground">
                 <p>No available offers at the moment</p>
                 <p className="text-sm mt-2">New delivery requests will appear here</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
                 {offers.map((offer) => {
                   const order = offer.orders;
                   const deliveryAddress = order.delivery_addresses 
@@ -138,22 +138,22 @@ export default function DriverDashboard() {
             )}
           </TabsContent>
 
-          <TabsContent value="assigned" className="space-y-4">
-            <div className="text-center py-12 text-muted-foreground">
+          <TabsContent value="assigned" className="space-y-3 sm:space-y-4">
+            <div className="text-center py-8 sm:py-12 text-muted-foreground">
               <p>No assigned jobs yet</p>
             </div>
           </TabsContent>
 
-          <TabsContent value="vehicles" className="space-y-4">
+          <TabsContent value="vehicles" className="space-y-3 sm:space-y-4">
             <DriverVehicleManager />
           </TabsContent>
 
-          <TabsContent value="pricing" className="space-y-4">
+          <TabsContent value="pricing" className="space-y-3 sm:space-y-4">
             <DriverPricingManager />
           </TabsContent>
 
-          <TabsContent value="history" className="space-y-4">
-            <div className="text-center py-12 text-muted-foreground">
+          <TabsContent value="history" className="space-y-3 sm:space-y-4">
+            <div className="text-center py-8 sm:py-12 text-muted-foreground">
               <p>No completed jobs yet</p>
             </div>
           </TabsContent>
