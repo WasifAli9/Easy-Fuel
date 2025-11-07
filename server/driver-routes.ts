@@ -2,6 +2,7 @@ import { Router } from "express";
 import { supabaseAdmin } from "./supabase";
 import { sendDriverAcceptanceEmail } from "./email-service";
 import { insertDriverPricingSchema, insertPricingHistorySchema } from "@shared/schema";
+import { websocketService } from "./websocket";
 
 const router = Router();
 
@@ -264,15 +265,22 @@ router.post("/offers/:id/accept", async (req, res) => {
       });
     }
 
-    // Begin transaction: update offer, reject other offers, update order
+    // Begin atomic updates with state guards to prevent race conditions
     
-    // 1. Accept this offer
-    const { error: acceptError } = await supabaseAdmin
+    // 1. Accept this offer (only if still in "offered" state)
+    const { data: acceptedOffer, error: acceptError } = await supabaseAdmin
       .from("dispatch_offers")
       .update({ state: "accepted", updated_at: new Date().toISOString() })
-      .eq("id", offerId);
+      .eq("id", offerId)
+      .eq("state", "offered")
+      .select()
+      .single();
 
-    if (acceptError) throw acceptError;
+    if (acceptError || !acceptedOffer) {
+      return res.status(409).json({ 
+        error: "Offer is no longer available (may have been accepted by another driver or expired)" 
+      });
+    }
 
     // 2. Reject all other offers for this order
     const { error: rejectError } = await supabaseAdmin
@@ -286,8 +294,8 @@ router.post("/offers/:id/accept", async (req, res) => {
       console.error("Error rejecting other offers:", rejectError);
     }
 
-    // 3. Update order with assigned driver and confirmed delivery time
-    const { error: orderError } = await supabaseAdmin
+    // 3. Update order with assigned driver (only if still in "created" state)
+    const { data: updatedOrder, error: orderError } = await supabaseAdmin
       .from("orders")
       .update({
         state: "assigned",
@@ -295,9 +303,22 @@ router.post("/offers/:id/accept", async (req, res) => {
         confirmed_delivery_time: confirmedDeliveryTime,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", offer.order_id);
+      .eq("id", offer.order_id)
+      .eq("state", "created")
+      .select("*, customers!inner(user_id)")
+      .single();
 
-    if (orderError) throw orderError;
+    if (orderError || !updatedOrder) {
+      // Rollback: un-accept this offer since order update failed
+      await supabaseAdmin
+        .from("dispatch_offers")
+        .update({ state: "offered", updated_at: new Date().toISOString() })
+        .eq("id", offerId);
+      
+      return res.status(409).json({ 
+        error: "Order is no longer available (may have been assigned to another driver)" 
+      });
+    }
 
     // 4. Update driver availability
     const { error: availabilityError } = await supabaseAdmin
@@ -312,7 +333,28 @@ router.post("/offers/:id/accept", async (req, res) => {
       console.error("Error updating driver availability:", availabilityError);
     }
 
-    // 5. Send email notification to customer (async, don't wait)
+    // 5. Send WebSocket notification to customer
+    if (updatedOrder?.customers?.user_id) {
+      const sent = websocketService.sendOrderUpdate(updatedOrder.customers.user_id, {
+        orderId: offer.order_id,
+        state: "assigned",
+        driverId: driver.id,
+        confirmedDeliveryTime,
+      });
+
+      // Fallback to database notification if WebSocket fails
+      if (!sent) {
+        await supabaseAdmin.from("notifications").insert({
+          user_id: updatedOrder.customers.user_id,
+          type: "order_update",
+          title: "Driver Assigned",
+          body: "A driver has been assigned to your order",
+          data: { orderId: offer.order_id, state: "assigned" },
+        });
+      }
+    }
+
+    // 6. Send email notification to customer (async, don't wait)
     sendCustomerNotification(offer.order_id, driver.id, confirmedDeliveryTime)
       .catch((error: any) => {
         console.error("Error sending customer notification:", error);
