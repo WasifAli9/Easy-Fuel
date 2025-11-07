@@ -34,6 +34,7 @@ import { MapPin, Calendar, Package, User, Phone, Clock } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
 import { Badge } from "@/components/ui/badge";
 import { DriverLocationMap } from "./DriverLocationMap";
+import { OrderChat } from "./OrderChat";
 import { useCurrency } from "@/hooks/use-currency";
 
 const orderEditSchema = z.object({
@@ -284,11 +285,19 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
 
               {/* Live GPS Tracking Map - Show when driver is assigned */}
               {order.assigned_driver_id && (
-                <DriverLocationMap
-                  orderId={order.id}
-                  deliveryLat={order.drop_lat}
-                  deliveryLng={order.drop_lng}
-                />
+                <div className="space-y-4">
+                  <DriverLocationMap
+                    orderId={order.id}
+                    deliveryLat={order.drop_lat}
+                    deliveryLng={order.drop_lng}
+                  />
+                  
+                  {/* Chat with driver */}
+                  <OrderChat
+                    orderId={order.id}
+                    currentUserType="customer"
+                  />
+                </div>
               )}
 
               {/* Pricing Breakdown */}

@@ -7,7 +7,12 @@ import { DriverPricingManager } from "@/components/DriverPricingManager";
 import { DriverVehicleManager } from "@/components/DriverVehicleManager";
 import { DriverPreferencesManager } from "@/components/DriverPreferencesManager";
 import { DriverLocationTracker } from "@/components/DriverLocationTracker";
+import { OrderChat } from "@/components/OrderChat";
 import { Wallet, TrendingUp, CheckCircle } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/StatusBadge";
+import { useCurrency } from "@/hooks/use-currency";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AcceptOfferDialog } from "@/components/AcceptOfferDialog";
 import { useToast } from "@/hooks/use-toast";
@@ -28,6 +33,14 @@ export default function DriverDashboard() {
   const { data: driverProfile } = useQuery<any>({
     queryKey: ["/api/driver/profile"],
   });
+
+  // Fetch assigned orders (accepted deliveries)
+  const { data: assignedOrders = [], isLoading: loadingAssigned } = useQuery<any[]>({
+    queryKey: ["/api/driver/assigned-orders"],
+    refetchInterval: 15000, // Refresh every 15 seconds
+  });
+
+  const { currencySymbol, formatCurrency } = useCurrency();
 
   // Reject offer mutation
   const rejectOfferMutation = useMutation({
@@ -152,10 +165,68 @@ export default function DriverDashboard() {
               isOnDelivery={driverProfile?.availability_status === "on_delivery"}
             />
             
-            <div className="text-center py-8 sm:py-12 text-muted-foreground">
-              <p>No assigned jobs yet</p>
-              <p className="text-sm mt-2">Accepted deliveries will appear here</p>
-            </div>
+            {loadingAssigned ? (
+              <div className="text-center py-8 sm:py-12 text-muted-foreground">
+                <p>Loading assigned orders...</p>
+              </div>
+            ) : assignedOrders.length === 0 ? (
+              <div className="text-center py-8 sm:py-12 text-muted-foreground">
+                <p>No assigned jobs yet</p>
+                <p className="text-sm mt-2">Accepted deliveries will appear here</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {assignedOrders.map((order) => (
+                  <Card key={order.id} data-testid={`card-assigned-order-${order.id}`}>
+                    <CardHeader>
+                      <CardTitle className="flex items-center justify-between">
+                        <span className="text-base">
+                          {order.fuel_types?.label || "Fuel"} - {parseFloat(order.litres)}L
+                        </span>
+                        <StatusBadge status={order.state} />
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div>
+                          <p className="text-muted-foreground">Customer</p>
+                          <p className="font-medium">
+                            {order.customers?.profiles?.full_name || 
+                             order.customers?.company_name || 
+                             "Customer"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Amount</p>
+                          <p className="font-medium">
+                            {formatCurrency(order.total_cents / 100)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Delivery Address</p>
+                          <p className="font-medium text-xs">
+                            {order.delivery_addresses?.address_street || 
+                             `${order.drop_lat}, ${order.drop_lng}`}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Contact</p>
+                          <p className="font-medium text-xs">
+                            {order.customers?.profiles?.phone || "N/A"}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Chat with customer */}
+                      <OrderChat
+                        orderId={order.id}
+                        currentUserType="driver"
+                      />
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="vehicles" className="space-y-3 sm:space-y-4">

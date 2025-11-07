@@ -208,6 +208,80 @@ router.get("/offers", async (req, res) => {
   }
 });
 
+// Get driver's assigned orders (accepted deliveries)
+router.get("/assigned-orders", async (req, res) => {
+  const user = (req as any).user;
+
+  try {
+    // Get driver ID from user ID
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (driverError) throw driverError;
+    if (!driver) {
+      return res.status(404).json({ error: "Driver profile not found" });
+    }
+
+    // Fetch orders assigned to this driver
+    const { data: orders, error: ordersError } = await supabaseAdmin
+      .from("orders")
+      .select(`
+        *,
+        fuel_types (
+          id,
+          label,
+          code
+        ),
+        delivery_addresses (
+          id,
+          label,
+          address_street,
+          address_city,
+          address_province
+        ),
+        customers (
+          id,
+          company_name,
+          user_id
+        )
+      `)
+      .eq("assigned_driver_id", driver.id)
+      .in("state", ["assigned", "en_route", "in_progress"])
+      .order("created_at", { ascending: false });
+
+    if (ordersError) throw ordersError;
+
+    // Enrich orders with customer profile data
+    if (orders && orders.length > 0) {
+      const customerUserIds = Array.from(new Set(orders.map((o: any) => o.customers?.user_id).filter(Boolean)));
+      
+      if (customerUserIds.length > 0) {
+        const { data: profiles } = await supabaseAdmin
+          .from("profiles")
+          .select("id, full_name, phone")
+          .in("id", customerUserIds);
+
+        const profileMap = new Map(profiles?.map((p: any) => [p.id, p]) || []);
+
+        // Add customer profile data to orders
+        orders.forEach((order: any) => {
+          if (order.customers?.user_id) {
+            order.customers.profiles = profileMap.get(order.customers.user_id) || null;
+          }
+        });
+      }
+    }
+
+    res.json(orders || []);
+  } catch (error: any) {
+    console.error("Error fetching assigned orders:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Accept a dispatch offer
 router.post("/offers/:id/accept", async (req, res) => {
   const user = (req as any).user;

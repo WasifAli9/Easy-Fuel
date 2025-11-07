@@ -7,6 +7,7 @@ import driverRoutes from "./driver-routes";
 import supplierRoutes from "./supplier-routes";
 import pushRoutes from "./push-routes";
 import locationRoutes from "./location-routes";
+import chatRoutes from "./chat-routes";
 import { supabaseAdmin } from "./supabase";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { ObjectPermission } from "./objectAcl";
@@ -184,6 +185,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Register location tracking routes (protected with auth middleware)
   app.use("/api/location", requireAuth, locationRoutes);
+
+  // Register chat routes (protected with auth middleware)
+  app.use("/api/chat", chatRoutes);
 
   const httpServer = createServer(app);
 
