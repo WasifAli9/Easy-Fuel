@@ -4,6 +4,7 @@ import { z } from "zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -156,6 +157,41 @@ export function DepotManagementDialog({
       });
     },
   });
+
+  // Reset form when depot changes or dialog opens
+  useEffect(() => {
+    if (open) {
+      if (depot) {
+        // Editing existing depot
+        form.reset({
+          name: depot.name || "",
+          address_street: depot.address_street || "",
+          address_city: depot.address_city || "",
+          address_province: depot.address_province || "",
+          address_postal_code: depot.address_postal_code || "",
+          lat: depot.lat || 0,
+          lng: depot.lng || 0,
+          open_hours: typeof depot.open_hours === 'object' ? JSON.stringify(depot.open_hours) : depot.open_hours || "",
+          is_active: depot.is_active ?? true,
+          notes: depot.notes || "",
+        });
+      } else {
+        // Creating new depot
+        form.reset({
+          name: "",
+          address_street: "",
+          address_city: "",
+          address_province: "",
+          address_postal_code: "",
+          lat: 0,
+          lng: 0,
+          open_hours: "",
+          is_active: true,
+          notes: "",
+        });
+      }
+    }
+  }, [open, depot, form]);
 
   const onSubmit = (data: DepotFormData) => {
     if (depot) {
