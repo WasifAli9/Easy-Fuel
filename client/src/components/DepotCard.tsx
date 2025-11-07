@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { MapPin, Clock, Edit, Trash2, DollarSign } from "lucide-react";
+import { MapPin, Clock, Edit, Trash2, Fuel } from "lucide-react";
 import { useCurrency } from "@/hooks/use-currency";
 
 interface FuelPrice {
@@ -84,7 +84,7 @@ export function DepotCard({
         </div>
         <div className="space-y-2 pt-2 border-t">
           <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
-            <DollarSign className="h-4 w-4" />
+            <Fuel className="h-4 w-4" />
             <span className="font-medium">Fuel Prices</span>
           </div>
           {fuelPrices.map((fuel, idx) => (

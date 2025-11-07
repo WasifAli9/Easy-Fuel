@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { DollarSign, History, Loader2, MapPin } from "lucide-react";
+import { Fuel, History, Loader2, MapPin } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -183,7 +183,7 @@ export function SupplierPricingManager() {
           <div className="flex justify-between items-start gap-4">
             <div className="flex-1">
               <CardTitle className="flex items-center gap-2">
-                <DollarSign className="h-5 w-5" />
+                <Fuel className="h-5 w-5" />
                 Fuel Pricing
               </CardTitle>
               <CardDescription>

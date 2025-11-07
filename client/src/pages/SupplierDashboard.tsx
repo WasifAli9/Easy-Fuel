@@ -17,7 +17,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Plus, DollarSign, MapPin, TrendingUp, Loader2 } from "lucide-react";
+import { Plus, Package, MapPin, TrendingUp, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/utils";
 
@@ -96,7 +96,7 @@ export default function SupplierDashboard() {
             title="Total Orders"
             value={orders?.length?.toString() || "0"}
             description="All time"
-            icon={DollarSign}
+            icon={Package}
           />
           <StatsCard
             title="Active Depots"
@@ -233,7 +233,7 @@ export default function SupplierDashboard() {
               </div>
             ) : (
               <div className="text-center py-12 text-muted-foreground">
-                <DollarSign className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <Package className="h-12 w-12 mx-auto mb-4 opacity-50" />
                 <p>No orders yet</p>
                 <p className="text-sm mt-2">
                   Orders from customers will appear here

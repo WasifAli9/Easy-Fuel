@@ -291,16 +291,28 @@ router.post("/depots", async (req, res) => {
       return res.status(404).json({ error: "Supplier profile not found" });
     }
 
-    // Validate request body
-    const depotData = insertDepotSchema.parse({
-      ...req.body,
-      supplier_id: supplier.id,
+    // Validate request body (omitting notes temporarily to bypass PostgREST cache issue)
+    const { notes, ...bodyWithoutNotes } = req.body;
+    const depotData = insertDepotSchema.omit({ notes: true }).parse({
+      ...bodyWithoutNotes,
+      supplierId: supplier.id,
     });
 
-    // Create depot
+    // Create depot without notes field to bypass PostgREST schema cache
     const { data: depot, error: depotError } = await supabaseAdmin
       .from("depots")
-      .insert(depotData)
+      .insert({
+        supplier_id: supplier.id,
+        name: depotData.name,
+        address_street: depotData.addressStreet || null,
+        address_city: depotData.addressCity || null,
+        address_province: depotData.addressProvince || null,
+        address_postal_code: depotData.addressPostalCode || null,
+        lat: depotData.lat,
+        lng: depotData.lng,
+        open_hours: depotData.openHours,
+        is_active: depotData.isActive !== undefined ? depotData.isActive : true,
+      })
       .select()
       .single();
 

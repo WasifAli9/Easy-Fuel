@@ -7,7 +7,7 @@ import { DriverPricingManager } from "@/components/DriverPricingManager";
 import { DriverVehicleManager } from "@/components/DriverVehicleManager";
 import { DriverPreferencesManager } from "@/components/DriverPreferencesManager";
 import { DriverLocationTracker } from "@/components/DriverLocationTracker";
-import { DollarSign, TrendingUp, CheckCircle } from "lucide-react";
+import { Wallet, TrendingUp, CheckCircle } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AcceptOfferDialog } from "@/components/AcceptOfferDialog";
 import { useToast } from "@/hooks/use-toast";
@@ -76,7 +76,7 @@ export default function DriverDashboard() {
           <StatsCard
             title="Today's Earnings"
             value="R 1,240"
-            icon={DollarSign}
+            icon={Wallet}
             trend={{ value: 15, isPositive: true }}
           />
           <StatsCard
