@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader, CardFooter } from "@/components/ui/card"
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { MapPin, Clock, Edit, Trash2, DollarSign } from "lucide-react";
+import { useCurrency } from "@/hooks/use-currency";
 
 interface FuelPrice {
   type: string;
@@ -30,6 +31,8 @@ export function DepotCard({
   onEdit,
   onDelete
 }: DepotCardProps) {
+  const { currencySymbol } = useCurrency();
+  
   return (
     <Card className="hover-elevate" data-testid={`card-depot-${id}`}>
       <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0 pb-3">
@@ -87,7 +90,7 @@ export function DepotCard({
           {fuelPrices.map((fuel, idx) => (
             <div key={idx} className="flex items-center justify-between text-sm" data-testid={`price-${fuel.type}-${id}`}>
               <span className="text-muted-foreground">{fuel.type}</span>
-              <span className="font-semibold">R {fuel.pricePerLitre.toFixed(2)}/L</span>
+              <span className="font-semibold">{currencySymbol} {fuel.pricePerLitre.toFixed(2)}/L</span>
             </div>
           ))}
         </div>

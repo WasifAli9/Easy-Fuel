@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { FuelTypeIcon } from "./FuelTypeIcon";
 import { MapPin, Clock, Navigation, Star } from "lucide-react";
+import { useCurrency } from "@/hooks/use-currency";
 
 interface JobCardProps {
   id: string;
@@ -33,6 +34,7 @@ export function JobCard({
   onReject
 }: JobCardProps) {
   const [timeLeft, setTimeLeft] = useState(expiresIn || 0);
+  const { currencySymbol } = useCurrency();
 
   useEffect(() => {
     if (!expiresIn) return;
@@ -101,7 +103,7 @@ export function JobCard({
           </div>
           <div className="text-right">
             <p className="text-xs text-muted-foreground">Earnings</p>
-            <p className="font-bold text-lg text-primary" data-testid={`text-earnings-${id}`}>R {earnings.toFixed(2)}</p>
+            <p className="font-bold text-lg text-primary" data-testid={`text-earnings-${id}`}>{currencySymbol} {earnings.toFixed(2)}</p>
           </div>
         </div>
       </CardContent>

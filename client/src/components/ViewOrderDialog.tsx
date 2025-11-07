@@ -34,6 +34,7 @@ import { MapPin, Calendar, DollarSign, Package, User, Phone, Clock } from "lucid
 import { StatusBadge } from "./StatusBadge";
 import { Badge } from "@/components/ui/badge";
 import { DriverLocationMap } from "./DriverLocationMap";
+import { useCurrency } from "@/hooks/use-currency";
 
 const orderEditSchema = z.object({
   fuelTypeId: z.string().min(1, "Please select a fuel type"),
@@ -60,6 +61,7 @@ interface ViewOrderDialogProps {
 export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialogProps) {
   const [isEditing, setIsEditing] = useState(false);
   const { toast } = useToast();
+  const { currencySymbol } = useCurrency();
 
   // Fetch order details
   const { data: order, isLoading: loadingOrder } = useQuery<any>({
@@ -293,20 +295,20 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
               <div className="border-t pt-3 space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Fuel Cost</span>
-                  <span data-testid="text-fuel-cost">R {(order.fuel_price_cents / 100).toFixed(2)}</span>
+                  <span data-testid="text-fuel-cost">{currencySymbol} {(order.fuel_price_cents / 100).toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Delivery Fee</span>
-                  <span data-testid="text-delivery-fee">R {(order.delivery_fee_cents / 100).toFixed(2)}</span>
+                  <span data-testid="text-delivery-fee">{currencySymbol} {(order.delivery_fee_cents / 100).toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Service Fee</span>
-                  <span data-testid="text-service-fee">R {(order.service_fee_cents / 100).toFixed(2)}</span>
+                  <span data-testid="text-service-fee">{currencySymbol} {(order.service_fee_cents / 100).toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between font-semibold pt-2 border-t">
                   <span>Total</span>
                   <span className="text-primary" data-testid="text-total">
-                    R {(order.total_cents / 100).toFixed(2)}
+                    {currencySymbol} {(order.total_cents / 100).toFixed(2)}
                   </span>
                 </div>
               </div>
