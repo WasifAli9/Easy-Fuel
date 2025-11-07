@@ -3,6 +3,7 @@ import { supabaseAdmin } from "./supabase";
 import { sendDriverAcceptanceEmail } from "./email-service";
 import { insertDriverPricingSchema, insertPricingHistorySchema } from "@shared/schema";
 import { websocketService } from "./websocket";
+import { pushNotificationService } from "./push-service";
 
 const router = Router();
 
@@ -333,7 +334,7 @@ router.post("/offers/:id/accept", async (req, res) => {
       console.error("Error updating driver availability:", availabilityError);
     }
 
-    // 5. Send WebSocket notification to customer
+    // 5. Send WebSocket and push notifications to customer
     if (updatedOrder?.customers?.user_id) {
       const sent = websocketService.sendOrderUpdate(updatedOrder.customers.user_id, {
         orderId: offer.order_id,
@@ -341,6 +342,19 @@ router.post("/offers/:id/accept", async (req, res) => {
         driverId: driver.id,
         confirmedDeliveryTime,
       });
+
+      // Send push notification (always, regardless of WebSocket status)
+      const driverProfile = await supabaseAdmin
+        .from("profiles")
+        .select("full_name")
+        .eq("id", user.id)
+        .single();
+      
+      pushNotificationService.sendDriverAssignment(
+        updatedOrder.customers.user_id,
+        offer.order_id,
+        driverProfile.data?.full_name || "A driver"
+      ).catch(err => console.error("Error sending push notification:", err));
 
       // Fallback to database notification if WebSocket fails
       if (!sent) {

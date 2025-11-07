@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { NotificationPermissionBanner } from "@/components/NotificationPermissionBanner";
 import Landing from "@/pages/Landing";
 import Auth from "@/pages/Auth";
 import ResetPassword from "@/pages/ResetPassword";
@@ -65,7 +66,9 @@ function Router() {
   const { user, profile } = useAuth();
 
   return (
-    <Switch>
+    <>
+      {user && <NotificationPermissionBanner />}
+      <Switch>
       <Route path="/">
         {user ? (
           profile ? <Redirect to={`/${profile.role}`} /> : <Redirect to="/setup" />
@@ -101,6 +104,7 @@ function Router() {
       </Route>
       <Route component={NotFound} />
     </Switch>
+    </>
   );
 }
 

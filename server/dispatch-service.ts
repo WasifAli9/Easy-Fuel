@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "./supabase";
 import { calculateDistance } from "./utils/distance";
 import { websocketService } from "./websocket";
+import { pushNotificationService } from "./push-service";
 
 interface CreateDispatchOffersParams {
   orderId: string;
@@ -200,6 +201,16 @@ export async function createDispatchOffers({
             isPremium: true,
           });
           
+          // Send push notification (always, regardless of WebSocket status)
+          pushNotificationService.sendNewDispatchOffer(
+            driver.user_id,
+            orderId,
+            fuelTypeId,
+            litres,
+            0,
+            "ZAR"
+          ).catch(err => console.error("Error sending push notification:", err));
+          
           // If WebSocket notification fails, create in-app notification
           if (!sent) {
             await supabaseAdmin.from("notifications").insert({
@@ -214,14 +225,14 @@ export async function createDispatchOffers({
         
         // Schedule regular driver offers after 5 minutes (premium window)
         setTimeout(() => {
-          createRegularDriverOffers(orderId, regularDrivers).catch((error) => {
+          createRegularDriverOffers(orderId, regularDrivers, { fuelTypeId, litres }).catch((error) => {
             console.error("Error creating regular driver offers:", error);
           });
         }, 5 * 60 * 1000); // 5 minutes
       }
     } else {
       // No premium drivers, send to all regular drivers immediately
-      await createRegularDriverOffers(orderId, regularDrivers);
+      await createRegularDriverOffers(orderId, regularDrivers, { fuelTypeId, litres });
     }
   } catch (error) {
     console.error("Error in createDispatchOffers:", error);
@@ -234,7 +245,8 @@ export async function createDispatchOffers({
  */
 async function createRegularDriverOffers(
   orderId: string,
-  regularDrivers: Array<{ id: string; user_id: string }>
+  regularDrivers: Array<{ id: string; user_id: string }>,
+  orderData?: { fuelTypeId: string; litres: number }
 ): Promise<void> {
   if (regularDrivers.length === 0) {
     console.log(`No regular drivers to offer order ${orderId}`);
@@ -244,7 +256,7 @@ async function createRegularDriverOffers(
   // Check if order was already accepted by a premium driver
   const { data: order } = await supabaseAdmin
     .from("orders")
-    .select("state, assigned_driver_id")
+    .select("state, assigned_driver_id, fuel_type_id, litres")
     .eq("id", orderId)
     .single();
 
@@ -276,6 +288,19 @@ async function createRegularDriverOffers(
         expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
         isPremium: false,
       });
+      
+      // Send push notification (always, regardless of WebSocket status)
+      const fuelTypeId = orderData?.fuelTypeId || order?.fuel_type_id || "";
+      const litres = orderData?.litres || order?.litres || 0;
+      
+      pushNotificationService.sendNewDispatchOffer(
+        driver.user_id,
+        orderId,
+        fuelTypeId,
+        litres,
+        0,
+        "ZAR"
+      ).catch(err => console.error("Error sending push notification:", err));
       
       // If WebSocket notification fails, create in-app notification
       if (!sent) {
