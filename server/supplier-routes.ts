@@ -291,26 +291,29 @@ router.post("/depots", async (req, res) => {
       return res.status(404).json({ error: "Supplier profile not found" });
     }
 
-    // Validate request body (omitting notes temporarily to bypass PostgREST cache issue)
-    const { notes, ...bodyWithoutNotes } = req.body;
-    const depotData = insertDepotSchema.omit({ notes: true }).parse({
-      ...bodyWithoutNotes,
-      supplierId: supplier.id,
-    });
+    // Temporarily omit address columns until PostgREST cache refreshes
+    // Validate only the fields that PostgREST definitely knows about
+    const depotData = {
+      name: req.body.name,
+      lat: parseFloat(req.body.lat),
+      lng: parseFloat(req.body.lng),
+      openHours: req.body.openHours,
+      isActive: req.body.isActive !== undefined ? req.body.isActive : true,
+    };
 
-    // Use raw SQL to bypass PostgREST schema cache issue with new columns
-    const { data: depot, error: depotError } = await supabaseAdmin.rpc('create_depot', {
-      p_supplier_id: supplier.id,
-      p_name: depotData.name,
-      p_address_street: depotData.addressStreet || null,
-      p_address_city: depotData.addressCity || null,
-      p_address_province: depotData.addressProvince || null,
-      p_address_postal_code: depotData.addressPostalCode || null,
-      p_lat: depotData.lat,
-      p_lng: depotData.lng,
-      p_open_hours: depotData.openHours,
-      p_is_active: depotData.isActive !== undefined ? depotData.isActive : true,
-    });
+    // Create depot with only known columns
+    const { data: depot, error: depotError } = await supabaseAdmin
+      .from("depots")
+      .insert({
+        supplier_id: supplier.id,
+        name: depotData.name,
+        lat: depotData.lat,
+        lng: depotData.lng,
+        open_hours: depotData.openHours,
+        is_active: depotData.isActive,
+      })
+      .select()
+      .single();
 
     if (depotError) throw depotError;
 
