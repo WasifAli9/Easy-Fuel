@@ -42,6 +42,9 @@ const orderFormSchema = z.object({
   litres: z.string().min(1, "Litres is required").refine((val) => !isNaN(Number(val)) && Number(val) > 0, {
     message: "Litres must be a positive number",
   }),
+  maxBudget: z.string().optional().refine((val) => !val || (!isNaN(Number(val)) && Number(val) > 0), {
+    message: "Budget must be a positive number",
+  }),
   deliveryAddressId: z.string().min(1, "Please select a delivery address"),
   deliveryDate: z.string().optional(),
   fromTime: z.string().optional(),
@@ -93,6 +96,7 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
     defaultValues: {
       fuelTypeId: "",
       litres: "",
+      maxBudget: "",
       deliveryAddressId: "",
       deliveryDate: "",
       fromTime: "",
@@ -170,6 +174,7 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
       const response = await apiRequest("POST", "/api/orders", {
         fuelTypeId: values.fuelTypeId,
         litres: values.litres,
+        maxBudgetCents: values.maxBudget ? Math.round(parseFloat(values.maxBudget) * 100) : null,
         deliveryAddressId: values.deliveryAddressId,
         deliveryDate: values.deliveryDate || null,
         fromTime: values.fromTime || null,
@@ -294,6 +299,27 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
                         />
                       </FormControl>
                       <FormDescription>Enter the amount of fuel in litres</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="maxBudget"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Maximum Budget (optional)</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          placeholder="e.g. 500.00"
+                          {...field}
+                          data-testid="input-max-budget"
+                        />
+                      </FormControl>
+                      <FormDescription>Set your maximum budget to filter driver offers</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}

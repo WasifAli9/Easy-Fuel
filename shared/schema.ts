@@ -381,6 +381,7 @@ export const orders = pgTable("orders", {
   deliveryFeeCents: integer("delivery_fee_cents").notNull(),
   serviceFeeCents: integer("service_fee_cents").notNull(),
   totalCents: integer("total_cents").notNull(),
+  maxBudgetCents: integer("max_budget_cents"), // Customer's maximum budget cap (optional)
   
   // Delivery details
   deliveryAddressId: uuid("delivery_address_id").references(() => deliveryAddresses.id),

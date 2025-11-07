@@ -154,6 +154,7 @@ router.post("/orders", async (req, res) => {
   const {
     fuelTypeId,
     litres,
+    maxBudgetCents,
     deliveryAddressId,
     deliveryDate,
     fromTime,
@@ -307,6 +308,7 @@ router.post("/orders", async (req, res) => {
         delivery_fee_cents: deliveryFeeCents,
         service_fee_cents: serviceFeeCents,
         total_cents: totalCents,
+        max_budget_cents: maxBudgetCents || null,
         
         // Order management
         selected_depot_id: depotId,

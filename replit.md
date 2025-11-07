@@ -27,7 +27,7 @@ The application features a mobile-first, responsive design with full dark mode s
 
 ### Feature Specifications
 - **User Roles**: Distinct roles for Customers, Drivers, Suppliers, and Admins.
-- **Database Schema**: A 17-table schema manages profiles, orders, delivery addresses, payment methods, attachments, dispatch offers, fuel types, depots, payments, KYC documents, and driver scores.
+- **Database Schema**: A 23-table schema manages profiles, orders, delivery addresses, payment methods, attachments, dispatch offers, fuel types, depots, payments, KYC documents, driver scores, driver inventories, driver locations, notifications, push subscriptions, chat threads, and chat messages.
 - **Multi-Currency System**: Supports 14+ African and international currencies (ZAR, USD, EUR, GBP, KES, NGN, GHS, TZS, UGX, EGP, MAD, BWP, MUR, ZMW) with locale-aware formatting and dynamic currency symbols throughout all dashboards and components.
 - **Fuel Types**: Comprehensive coverage of 10 typical African gas station fuel types (e.g., Diesel 500ppm, Petrol 95, LPG, AdBlue).
 - **Customer Self-Service**: Profile management, CRUD for saved delivery addresses (with auto-geocoding via OpenStreetMap Nominatim), and payment methods (South African bank accounts, credit/debit cards).
@@ -39,6 +39,7 @@ The application features a mobile-first, responsive design with full dark mode s
 - **Real-Time GPS Tracking System**: Customers can view real-time driver locations on interactive maps (Leaflet + OpenStreetMap) in order details. Drivers update their location every 30 seconds when on delivery.
 - **Supplier Depot Management System**: Full CRUD functionality for depots, including name, address, GPS coordinates, operating hours, contact details, status tracking, and notes. Suppliers can also view orders associated with their depots.
 - **Currency Management**: Users select their currency during registration (stored in profiles table); all pricing, earnings, and financial displays dynamically adapt using the `useCurrency` hook and locale-aware formatting via `formatCurrency` utility.
+- **Fuel Request & Dispatch System**: Complete infrastructure for customer fuel requests, intelligent driver matching, real-time notifications (in-app and PWA push), GPS tracking, and chat messaging. Database schema includes driver inventories for fuel stock management, location history tracking, notification delivery tracking, and one-to-one chat threads per order.
 
 ## External Dependencies
 - **Supabase**: PostgreSQL database, authentication, and object storage.
