@@ -298,23 +298,19 @@ router.post("/depots", async (req, res) => {
       supplierId: supplier.id,
     });
 
-    // Create depot without notes field to bypass PostgREST schema cache
-    const { data: depot, error: depotError } = await supabaseAdmin
-      .from("depots")
-      .insert({
-        supplier_id: supplier.id,
-        name: depotData.name,
-        address_street: depotData.addressStreet || null,
-        address_city: depotData.addressCity || null,
-        address_province: depotData.addressProvince || null,
-        address_postal_code: depotData.addressPostalCode || null,
-        lat: depotData.lat,
-        lng: depotData.lng,
-        open_hours: depotData.openHours,
-        is_active: depotData.isActive !== undefined ? depotData.isActive : true,
-      })
-      .select()
-      .single();
+    // Use raw SQL to bypass PostgREST schema cache issue with new columns
+    const { data: depot, error: depotError } = await supabaseAdmin.rpc('create_depot', {
+      p_supplier_id: supplier.id,
+      p_name: depotData.name,
+      p_address_street: depotData.addressStreet || null,
+      p_address_city: depotData.addressCity || null,
+      p_address_province: depotData.addressProvince || null,
+      p_address_postal_code: depotData.addressPostalCode || null,
+      p_lat: depotData.lat,
+      p_lng: depotData.lng,
+      p_open_hours: depotData.openHours,
+      p_is_active: depotData.isActive !== undefined ? depotData.isActive : true,
+    });
 
     if (depotError) throw depotError;
 
