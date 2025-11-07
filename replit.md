@@ -1,7 +1,7 @@
 # Easy Fuel ZA - Production Fuel Delivery Marketplace
 
 ## Overview
-Easy Fuel ZA is a production-ready fuel delivery marketplace for South Africa, connecting customers, vetted drivers, and suppliers. The platform offers multi-role authentication, intelligent dispatch with SLA-based driver scoring, KYC/KYB workflows with document verification, PayFast integration, real-time order tracking, and comprehensive admin controls. The project's ambition is to secure a significant share of the South African fuel delivery market through an efficient and robust solution.
+Easy Fuel ZA is a production-ready fuel delivery marketplace for South Africa, connecting customers, vetted drivers, and suppliers. The platform aims to secure a significant share of the South African fuel delivery market by offering multi-role authentication, intelligent dispatch with SLA-based driver scoring, KYC/KYB workflows with document verification, PayFast integration, real-time order tracking, and comprehensive admin controls.
 
 ## User Preferences
 - **Database**: Supabase (not Replit database)
@@ -14,153 +14,31 @@ Easy Fuel ZA is a production-ready fuel delivery marketplace for South Africa, c
 ## System Architecture
 
 ### Design System and UI/UX
-The application features a mobile-first, responsive design with full dark mode support, utilizing HSL-based color tokens for theming. The UI is built with React, styled using Tailwind CSS and shadcn/ui, and adheres to the Easy Fuel teal brand identity (`#1fbfb8` primary, `#0e6763` primary dark). A custom component library ensures consistency across the platform.
-
-**Mobile Responsiveness**: 
-- All dashboards (Driver, Customer, Supplier, Admin) feature horizontally scrollable tabs on mobile devices
-- Tab scroll pattern: `overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0` wrapper with `min-w-max` on TabsList
-- Edge-to-edge scrolling on mobile, contained layout on desktop (≥640px)
-- Customer dashboard uses responsive flex layout (`flex-col sm:flex-row`) to stack tabs and filter button on mobile
-- AppHeader navigation hidden on mobile, accessible via menu button
+The application features a mobile-first, responsive design with full dark mode support, utilizing HSL-based color tokens for theming. The UI is built with React, styled using Tailwind CSS and shadcn/ui, adhering to the Easy Fuel teal brand identity. A custom component library ensures consistency, with specific responsiveness patterns for dashboards.
 
 ### Technical Implementations
 - **Frontend**: React, TypeScript, Vite, Wouter for routing, and TanStack Query for state management.
 - **Backend**: Express and Node.js for API services.
 - **Database**: Supabase (PostgreSQL) with Drizzle as the ORM.
-- **Authentication**: Supabase Auth provides robust role-based access control (Customer, Driver, Supplier, Admin) via Email OTP/Magic Link, securing all routes.
-- **Storage**: Object storage with presigned URLs manages file uploads, supporting both public and private access control lists (ACLs) for various document types.
-- **Order Management**: Features a comprehensive CRUD API supporting depot-based pricing, state-based validation, delivery/payment method management, electronic signature capture, and vehicle/equipment details.
-- **Security**: API endpoints are protected using `requireAuth` and `requireAdmin` middleware to enforce role-based access.
+- **Authentication**: Supabase Auth for robust role-based access control (Customer, Driver, Supplier, Admin) via Email OTP/Magic Link, securing all routes.
+- **Storage**: Object storage with presigned URLs for file uploads, supporting public and private ACLs.
+- **Order Management**: Comprehensive CRUD API supporting depot-based pricing, state-based validation, delivery/payment method management, electronic signature capture, and vehicle/equipment details.
+- **Security**: API endpoints are protected using `requireAuth` and `requireAdmin` middleware.
 
 ### Feature Specifications
-- **User Roles**: Distinct roles for Customers (order fuel), Drivers (accept jobs), Suppliers (manage depots, inventory), and Admins (system management, KYC/KYB).
-- **Database Schema**: A 17-table schema manages profiles, orders, delivery addresses, payment methods, attachments, dispatch offers, fuel types, depots, payments, KYC documents, and driver scores. Schema includes `profile_photo_url` column for user avatars (requires `npm run db:push` to sync).
-- **Fuel Types**: Comprehensive coverage of all typical African gas station fuel types (10 total):
-  - Diesel 500ppm, Diesel 50ppm (Ultra Low Sulphur)
-  - Petrol 93, Petrol 95, Petrol 97 (Premium Unleaded), Unleaded Petrol
-  - LPG (Liquefied Petroleum Gas)
-  - AdBlue (Diesel Exhaust Fluid)
-  - Paraffin, Illuminating Paraffin
-  - Jet A1 (Aviation fuel)
-- **Customer Self-Service Features**:
-  - **Profile Management**: View and edit personal information, company details, and billing address
-  - **Saved Delivery Addresses**: Full CRUD operations with:
-    - Multiple saved addresses per customer
-    - Default address selection
-    - South African provinces dropdown
-    - GPS coordinates (lat/lng) for precise location
-    - **Automatic Geocoding**: Uses OpenStreetMap Nominatim API to automatically convert addresses to GPS coordinates
-    - Access instructions for delivery drivers
-    - Address verification status tracking
-    - **Inline Address Creation**: Create new delivery addresses directly from the order creation dialog without navigating away - newly created addresses are automatically selected
-  - **Payment Methods Management**: Full CRUD operations with:
-    - Support for South African bank accounts (EFT) with account holder name, bank name, account number, branch code, and account type (cheque/savings/transmission)
-    - Support for credit and debit cards with card brand, last 4 digits, and expiry date
-    - Default payment method selection for quick checkout
-    - Secure storage with sensitive data masked in UI
-    - Dedicated page accessible from desktop and mobile navigation
-  - **Navigation**: Desktop and mobile navigation links in AppHeader for easy access to Orders, Saved Addresses, Payment Methods, and Profile
-- **User Profile Management**: Allows users to manage their profiles, including initial role selection and profile picture uploads.
-- **Admin Dashboard**: 
-  - Card-based interface with user management, search filters, and summary statistics
-  - Consistent card layout across all entity types (Customer/Driver/Supplier)
-  - All cards display: company name as title, contact person name, email, phone, and role-specific fields
-  - Email data fetched from Supabase Auth for accuracy
-  - Profile pictures supported with object storage ACLs and database persistence
-  - Graceful degradation for missing database columns (backwards compatible)
-- **Vehicle Management**: CRUD operations for driver vehicles, including registration, capacity, and compliance.
-- **Intelligent Driver Dispatch System**: 
-  - **Premium Driver Prioritization**: Premium drivers (with active subscriptions) receive exclusive 5-minute access to new order offers
-  - **Tiered Dispatch Flow**: 
-    1. Premium drivers receive offers immediately upon order creation (5-minute expiry)
-    2. Regular drivers receive offers only after the 5-minute premium window expires (15-minute expiry)
-    3. Regular offers are only created if the order hasn't been accepted by a premium driver
-  - **Driver Acceptance Workflow**: 
-    1. Driver views pending offers on their dashboard
-    2. Driver accepts offer and inputs confirmed delivery time
-    3. System automatically:
-       - Updates order state to "assigned"
-       - Sets driver availability to "on_delivery"
-       - Sends email to customer via Resend with driver details (name, phone) and confirmed delivery time
-    4. Customer dashboard displays assigned driver information and confirmed delivery time
-  - **Technical Implementation**: 
-    - Dispatch service (`server/dispatch-service.ts`) handles offer creation with setTimeout-based delayed notifications
-    - Email service (`server/email-service.ts`) integrates with Resend for customer notifications
-    - Driver routes (`server/driver-routes.ts`) provide API endpoints for viewing, accepting, and rejecting offers
-    - `confirmed_delivery_time` field added to orders table for driver-confirmed scheduling
-  - **Note**: Current implementation uses in-process setTimeout. For production resilience, consider replacing with a durable scheduler/queue system that survives process restarts.
-- **Pricing Management System**:
-  - **Driver Pricing**: Drivers can set delivery fees (in Rands) per fuel type via "Pricing" tab on their dashboard
-    - Real-time pricing updates with inline editing
-    - Optional notes field for documenting price changes
-    - Pricing history with old→new price transitions
-    - API: `/api/driver/pricing` (GET all), `/api/driver/pricing/:fuelTypeId` (PUT), `/api/driver/pricing/history` (GET)
-  - **Supplier Pricing**: Suppliers manage fuel prices (per litre) for each depot via "Pricing" tab on their dashboard
-    - Depot selection dropdown to choose which depot to manage
-    - Real-time pricing updates per fuel type with inline editing
-    - Optional notes field for documenting price changes
-    - Pricing history per depot showing all changes
-    - API: `/api/supplier/depots` (GET all depots), `/api/supplier/depots/:depotId/pricing` (GET), `/api/supplier/depots/:depotId/pricing/:fuelTypeId` (PUT), `/api/supplier/depots/:depotId/pricing/history` (GET)
-  - **Database Tables**:
-    - `driver_pricing`: Stores delivery fees (delivery_fee_cents) per driver per fuel type
-    - `depot_prices`: Stores fuel prices (price_cents) per depot per fuel type (existing table, used for supplier pricing)
-    - `pricing_history`: Audit trail for all pricing changes with entity_type ('driver'/'depot'), old/new prices, timestamps, changed_by user, and optional notes. Note: Supplier pricing uses entity_type='depot' to maintain per-depot audit trails.
-  - **Technical Implementation**:
-    - Backend: Express routes in `server/driver-routes.ts` and `server/supplier-routes.ts` with authentication middleware
-    - Frontend: React components `DriverPricingManager` and `SupplierPricingManager` using TanStack Query
-    - All pricing mutations automatically log changes to pricing_history table
-    - Currency formatting uses South African Rand (R) convention
-
-- **Driver Vehicle Management**: Complete CRUD functionality for drivers to manage multiple vehicles from their dashboard
-  - **Features**:
-    - "Vehicles" tab on driver dashboard with add/edit/delete operations
-    - Vehicle information: registration number, make, model, year, capacity (litres)
-    - Supported fuel types selection (multi-select from all available fuel types)
-    - Compliance document tracking: license disk expiry, roadworthy expiry, insurance expiry
-    - Tracker information: tracker installed status and provider name
-  - **API Routes**: `/api/driver/vehicles` (GET all, POST create), `/api/driver/vehicles/:vehicleId` (PATCH update, DELETE delete)
-  - **Database**: Uses existing `vehicles` table with driver_id foreign key
-  - **UI Component**: `DriverVehicleManager` component with dialog-based add/edit forms
-  - **Security**: All endpoints verify driver ownership via authenticated user.id → driver.id lookup
-
-- **Real-Time GPS Tracking System**: Production-ready location tracking for customers to see driver locations on interactive maps
-  - **Customer View**: Integrated map in order details dialog showing real-time driver location
-    - Uses Leaflet + OpenStreetMap for map display (no API key required)
-    - Auto-refreshes every 10 seconds while dialog is open
-    - Shows both driver location (truck marker) and delivery location markers
-    - Auto-centers map on driver location when it updates
-    - Graceful handling when no driver assigned or location not yet available
-  - **Driver Location Updates**: Automatic background location tracking while on delivery
-    - DriverLocationTracker component requests browser geolocation permission
-    - Sends location updates to backend every 30 seconds when driver availability = "on_delivery"
-    - Invisible when driver not on delivery (returns null)
-    - Small status badge shows when actively tracking location
-  - **API Endpoints**:
-    - `PUT /api/driver/location` - Driver updates current location (latitude, longitude)
-    - `GET /api/orders/:orderId/driver-location` - Customer fetches driver location for their order
-  - **Database**: Uses `current_lat` and `current_lng` columns in drivers table
-  - **Security**: 
-    - Customer can only view driver location for orders they own (customer_id verification)
-    - Driver location updates validate driver ownership via authenticated session
-  - **Technical Implementation**:
-    - Backend uses `.maybeSingle()` to avoid PGRST116 errors when location not set
-    - Frontend uses TanStack Query with automatic Supabase auth header injection via `getAuthHeaders()`
-    - All authenticated API calls include `Authorization: Bearer <token>` from Supabase session
-    - Error handling: 404 when no driver assigned/no location, proper loading states, graceful degradation
-  - **Components**:
-    - `DriverLocationMap` (client/src/components/DriverLocationMap.tsx) - Customer-facing interactive map
-    - `DriverLocationTracker` (client/src/components/DriverLocationTracker.tsx) - Driver-side location broadcaster
-    - Integration in `ViewOrderDialog` - Conditionally renders map when order has delivery coordinates
-
-## Known Issues
-- **PostgREST Schema Cache**: After creating new tables (`driver_pricing`, `pricing_history`, `vehicles`) or adding columns (`confirmed_delivery_time`, `driver_id` on orders, billing address fields on customers), PostgREST's schema cache may not immediately reflect changes, resulting in "table not found in schema cache" or "column not found" errors
-  - **Symptoms**: Supabase API calls fail with cache errors even though tables/columns exist in database
-  - **Temporary Solution**: Wait 5-10 minutes for automatic cache refresh, or manually run `NOTIFY pgrst, 'reload schema';` in database console
-  - **Root Cause**: PostgREST caches database schema for performance; manual NOTIFY commands may not propagate immediately in hosted environments
-  - **Permanent Fix**: Ensure proper migration workflow using `npm run db:push --force` to sync schema changes
-  - **Workaround for Test Data**: Use the manual SQL script (`server/seed-driver-manual.sql`) in Supabase SQL Editor to bypass the schema cache and create test data directly
+- **User Roles**: Distinct roles for Customers, Drivers, Suppliers, and Admins.
+- **Database Schema**: A 17-table schema manages profiles, orders, delivery addresses, payment methods, attachments, dispatch offers, fuel types, depots, payments, KYC documents, and driver scores.
+- **Fuel Types**: Comprehensive coverage of 10 typical African gas station fuel types (e.g., Diesel 500ppm, Petrol 95, LPG, AdBlue).
+- **Customer Self-Service**: Profile management, CRUD for saved delivery addresses (with auto-geocoding via OpenStreetMap Nominatim), and payment methods (South African bank accounts, credit/debit cards).
+- **User Profile Management**: Allows users to manage profiles, including initial role selection and profile picture uploads.
+- **Admin Dashboard**: Card-based interface for user management, search filters, and summary statistics, displaying company name, contact, email, phone, and role-specific fields.
+- **Vehicle Management**: CRUD operations for driver vehicles (registration, capacity, compliance documents, tracker info).
+- **Intelligent Driver Dispatch System**: Prioritizes premium drivers with exclusive 5-minute access to new offers, followed by regular drivers. Includes a driver acceptance workflow that updates order status, driver availability, and sends customer notifications.
+- **Pricing Management System**: Drivers set delivery fees per fuel type, and Suppliers manage fuel prices per litre for each depot. Both include real-time inline editing, optional notes, and pricing history audit trails.
+- **Real-Time GPS Tracking System**: Customers can view real-time driver locations on interactive maps (Leaflet + OpenStreetMap) in order details. Drivers update their location every 30 seconds when on delivery.
+- **Supplier Depot Management System**: Full CRUD functionality for depots, including name, address, GPS coordinates, operating hours, contact details, status tracking, and notes. Suppliers can also view orders associated with their depots.
 
 ## External Dependencies
-- **Supabase**: Provides PostgreSQL database, authentication services, and object storage.
+- **Supabase**: PostgreSQL database, authentication, and object storage.
 - **PayFast**: Payment gateway integration (pending).
-- **ZeptoMail**: SMTP service used for email communications (e.g., OTP/Magic Link).
+- **ZeptoMail**: SMTP service for email communications.
