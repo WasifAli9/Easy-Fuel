@@ -6,6 +6,8 @@ interface CreateDispatchOffersParams {
   fuelTypeId: string;
   dropLat: number;
   dropLng: number;
+  litres: number;
+  maxBudgetCents?: number | null;
 }
 
 interface DriverWithLocation {
@@ -15,25 +17,31 @@ interface DriverWithLocation {
   current_lat: number | null;
   current_lng: number | null;
   job_radius_preference_miles: number;
+  vehicle_capacity_litres: number | null;
 }
 
 /**
  * Creates dispatch offers for an order
+ * Matches drivers based on:
+ * 1. Fuel inventory (has the fuel type with enough litres)
+ * 2. Vehicle capacity
+ * 3. Proximity (within radius preference)
+ * 4. Pricing (fits customer budget if specified)
  * Premium drivers receive offers first (5 minute exclusive window)
- * After 5 minutes, if no premium driver accepts, offers go to all drivers
- * Only drivers within their radius preference receive offers
  */
 export async function createDispatchOffers({
   orderId,
   fuelTypeId,
   dropLat,
   dropLng,
+  litres,
+  maxBudgetCents,
 }: CreateDispatchOffersParams): Promise<void> {
   try {
-    // Find all available drivers with location and radius preferences
+    // Find all available drivers with location, radius, and capacity
     const { data: drivers, error: driversError } = await supabaseAdmin
       .from("drivers")
-      .select("id, premium_status, availability_status, current_lat, current_lng, job_radius_preference_miles")
+      .select("id, premium_status, availability_status, current_lat, current_lng, job_radius_preference_miles, vehicle_capacity_litres")
       .eq("availability_status", "available")
       .eq("kyc_status", "approved");
 
@@ -77,11 +85,85 @@ export async function createDispatchOffers({
       return;
     }
 
+    // Filter by fuel inventory (driver must have the fuel type with enough stock)
+    const driverIds = driversWithinRadius.map(d => d.id);
+    const { data: inventories } = await supabaseAdmin
+      .from("driver_inventories")
+      .select("driver_id, current_litres")
+      .eq("fuel_type_id", fuelTypeId)
+      .in("driver_id", driverIds)
+      .gte("current_litres", litres);
+
+    const driversWithFuel = driversWithinRadius.filter(driver => {
+      const hasInventory = inventories?.some(inv => inv.driver_id === driver.id);
+      if (!hasInventory) {
+        console.log(`Driver ${driver.id} doesn't have ${litres}L of requested fuel type`);
+      }
+      return hasInventory;
+    });
+
+    if (driversWithFuel.length === 0) {
+      console.log(`No drivers with sufficient fuel inventory for order ${orderId}`);
+      return;
+    }
+
+    // Filter by vehicle capacity
+    const driversWithCapacity = driversWithFuel.filter(driver => {
+      if (!driver.vehicle_capacity_litres) {
+        console.log(`Driver ${driver.id} has no vehicle capacity set, skipping`);
+        return false;
+      }
+      if (driver.vehicle_capacity_litres < litres) {
+        console.log(`Driver ${driver.id} vehicle capacity (${driver.vehicle_capacity_litres}L) < order quantity (${litres}L)`);
+        return false;
+      }
+      return true;
+    });
+
+    if (driversWithCapacity.length === 0) {
+      console.log(`No drivers with sufficient vehicle capacity for order ${orderId}`);
+      return;
+    }
+
+    // Filter by pricing - ALWAYS required, budget check is additional constraint
+    const { data: driverPricing } = await supabaseAdmin
+      .from("driver_pricing")
+      .select("driver_id, delivery_fee_cents")
+      .eq("fuel_type_id", fuelTypeId)
+      .in("driver_id", driversWithCapacity.map(d => d.id));
+
+    const matchedDrivers = driversWithCapacity.filter(driver => {
+      const pricing = driverPricing?.find(p => p.driver_id === driver.id);
+      
+      // Always require pricing - drivers without pricing records cannot receive offers
+      if (!pricing) {
+        console.log(`Driver ${driver.id} has no pricing set for this fuel type - excluding`);
+        return false;
+      }
+
+      // If customer has a budget, enforce it as a hard constraint
+      if (maxBudgetCents && maxBudgetCents > 0) {
+        if (pricing.delivery_fee_cents > maxBudgetCents) {
+          console.log(`Driver ${driver.id} delivery fee (R${(pricing.delivery_fee_cents / 100).toFixed(2)}) exceeds budget (R${(maxBudgetCents / 100).toFixed(2)})`);
+          return false;
+        }
+      }
+
+      return true;
+    });
+
+    if (matchedDrivers.length === 0) {
+      console.log(`No drivers matching all criteria (location, inventory, capacity, pricing) for order ${orderId}`);
+      return;
+    }
+
+    console.log(`Found ${matchedDrivers.length} drivers matching all criteria for order ${orderId}`);
+
     // Separate premium and regular drivers
-    const premiumDrivers = driversWithinRadius.filter(
+    const premiumDrivers = matchedDrivers.filter(
       (d) => d.premium_status === "active"
     );
-    const regularDrivers = driversWithinRadius.filter(
+    const regularDrivers = matchedDrivers.filter(
       (d) => d.premium_status !== "active"
     );
 

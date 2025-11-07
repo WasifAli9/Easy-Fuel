@@ -325,6 +325,8 @@ router.post("/orders", async (req, res) => {
       fuelTypeId: newOrder.fuel_type_id,
       dropLat: lat,
       dropLng: lng,
+      litres: litresNum,
+      maxBudgetCents: maxBudgetCents || null,
     }).catch(error => {
       console.error("Error creating dispatch offers:", error);
     });
