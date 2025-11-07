@@ -32,7 +32,10 @@ export function useCurrency() {
       'TZS': 'TSh',
       'UGX': 'USh',
       'EGP': 'E£',
-      'MAD': 'MAD',
+      'MAD': 'د.م.',
+      'BWP': 'P',
+      'MUR': '₨',
+      'ZMW': 'ZK',
     };
     return symbols[currencyCode] || currencyCode;
   };
