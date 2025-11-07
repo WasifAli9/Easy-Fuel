@@ -75,6 +75,7 @@ export const profiles = pgTable("profiles", {
   fullName: text("full_name").notNull(),
   phone: text("phone"),
   phoneCountryCode: text("phone_country_code").default("+27"),
+  currency: text("currency").notNull().default("ZAR"), // ISO 4217 currency code (ZAR, USD, EUR, etc.)
   profilePhotoUrl: text("profile_photo_url"),
   approvalStatus: approvalStatusEnum("approval_status").notNull().default("pending"),
   approvalReason: text("approval_reason"),
