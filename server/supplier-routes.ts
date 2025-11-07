@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { supabaseAdmin } from "./supabase";
+import { insertDepotSchema } from "../shared/schema";
+import { z } from "zod";
 
 const router = Router();
 
@@ -268,6 +270,242 @@ router.get("/depots/:depotId/pricing/history", async (req, res) => {
     res.json(history || []);
   } catch (error: any) {
     console.error("Error fetching pricing history:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create new depot
+router.post("/depots", async (req, res) => {
+  const user = (req as any).user;
+
+  try {
+    // Get supplier ID from user ID
+    const { data: supplier, error: supplierError } = await supabaseAdmin
+      .from("suppliers")
+      .select("id")
+      .eq("owner_id", user.id)
+      .single();
+
+    if (supplierError) throw supplierError;
+    if (!supplier) {
+      return res.status(404).json({ error: "Supplier profile not found" });
+    }
+
+    // Validate request body
+    const depotData = insertDepotSchema.parse({
+      ...req.body,
+      supplier_id: supplier.id,
+    });
+
+    // Create depot
+    const { data: depot, error: depotError } = await supabaseAdmin
+      .from("depots")
+      .insert(depotData)
+      .select()
+      .single();
+
+    if (depotError) throw depotError;
+
+    res.json(depot);
+  } catch (error: any) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: "Invalid depot data", details: error.errors });
+    }
+    console.error("Error creating depot:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update depot
+router.patch("/depots/:depotId", async (req, res) => {
+  const user = (req as any).user;
+  const depotId = req.params.depotId;
+
+  try {
+    // Get supplier ID and verify depot belongs to this supplier
+    const { data: supplier, error: supplierError } = await supabaseAdmin
+      .from("suppliers")
+      .select("id")
+      .eq("owner_id", user.id)
+      .single();
+
+    if (supplierError) throw supplierError;
+    if (!supplier) {
+      return res.status(404).json({ error: "Supplier profile not found" });
+    }
+
+    // Verify depot belongs to supplier
+    const { data: depot, error: depotError } = await supabaseAdmin
+      .from("depots")
+      .select("id")
+      .eq("id", depotId)
+      .eq("supplier_id", supplier.id)
+      .single();
+
+    if (depotError || !depot) {
+      return res.status(404).json({ error: "Depot not found" });
+    }
+
+    // Update depot
+    const { data: updated, error: updateError } = await supabaseAdmin
+      .from("depots")
+      .update({
+        ...req.body,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", depotId)
+      .select()
+      .single();
+
+    if (updateError) throw updateError;
+
+    res.json(updated);
+  } catch (error: any) {
+    console.error("Error updating depot:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete depot
+router.delete("/depots/:depotId", async (req, res) => {
+  const user = (req as any).user;
+  const depotId = req.params.depotId;
+
+  try {
+    // Get supplier ID and verify depot belongs to this supplier
+    const { data: supplier, error: supplierError } = await supabaseAdmin
+      .from("suppliers")
+      .select("id")
+      .eq("owner_id", user.id)
+      .single();
+
+    if (supplierError) throw supplierError;
+    if (!supplier) {
+      return res.status(404).json({ error: "Supplier profile not found" });
+    }
+
+    // Verify depot belongs to supplier
+    const { data: depot, error: depotError } = await supabaseAdmin
+      .from("depots")
+      .select("id")
+      .eq("id", depotId)
+      .eq("supplier_id", supplier.id)
+      .single();
+
+    if (depotError || !depot) {
+      return res.status(404).json({ error: "Depot not found" });
+    }
+
+    // Check if depot has any active pricing
+    const { data: pricing, error: pricingError } = await supabaseAdmin
+      .from("depot_prices")
+      .select("id")
+      .eq("depot_id", depotId)
+      .limit(1);
+
+    if (pricingError) throw pricingError;
+
+    if (pricing && pricing.length > 0) {
+      return res.status(400).json({ 
+        error: "Cannot delete depot with existing pricing. Please remove all pricing first or set depot to inactive." 
+      });
+    }
+
+    // Delete depot
+    const { error: deleteError } = await supabaseAdmin
+      .from("depots")
+      .delete()
+      .eq("id", depotId);
+
+    if (deleteError) throw deleteError;
+
+    res.json({ success: true, message: "Depot deleted successfully" });
+  } catch (error: any) {
+    console.error("Error deleting depot:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all orders for supplier's depots
+router.get("/orders", async (req, res) => {
+  const user = (req as any).user;
+
+  try {
+    // Get supplier ID from user ID
+    const { data: supplier, error: supplierError } = await supabaseAdmin
+      .from("suppliers")
+      .select("id")
+      .eq("owner_id", user.id)
+      .single();
+
+    if (supplierError) throw supplierError;
+    if (!supplier) {
+      return res.status(404).json({ error: "Supplier profile not found" });
+    }
+
+    // Get all depots for this supplier
+    const { data: depots, error: depotsError } = await supabaseAdmin
+      .from("depots")
+      .select("id")
+      .eq("supplier_id", supplier.id);
+
+    if (depotsError) throw depotsError;
+
+    if (!depots || depots.length === 0) {
+      return res.json([]);
+    }
+
+    const depotIds = depots.map(d => d.id);
+
+    // Get all orders that reference these depots
+    const { data: orders, error: ordersError } = await supabaseAdmin
+      .from("orders")
+      .select(`
+        *,
+        customers!inner (
+          id,
+          name,
+          profiles!inner (
+            id,
+            full_name,
+            phone
+          )
+        ),
+        drivers (
+          id,
+          profiles!inner (
+            id,
+            full_name,
+            phone
+          )
+        ),
+        delivery_addresses (
+          id,
+          address_line1,
+          address_line2,
+          city,
+          province,
+          postal_code
+        ),
+        fuel_types (
+          id,
+          label,
+          code
+        ),
+        depots!inner (
+          id,
+          name,
+          supplier_id
+        )
+      `)
+      .in("depot_id", depotIds)
+      .order("created_at", { ascending: false });
+
+    if (ordersError) throw ordersError;
+
+    res.json(orders || []);
+  } catch (error: any) {
+    console.error("Error fetching supplier orders:", error);
     res.status(500).json({ error: error.message });
   }
 });

@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { MapPin, Clock, Edit, DollarSign } from "lucide-react";
+import { MapPin, Clock, Edit, Trash2, DollarSign } from "lucide-react";
 
 interface FuelPrice {
   type: string;
@@ -17,6 +17,7 @@ interface DepotCardProps {
   fuelPrices: FuelPrice[];
   isActive?: boolean;
   onEdit?: () => void;
+  onDelete?: () => void;
 }
 
 export function DepotCard({
@@ -26,7 +27,8 @@ export function DepotCard({
   openHours,
   fuelPrices,
   isActive = true,
-  onEdit
+  onEdit,
+  onDelete
 }: DepotCardProps) {
   return (
     <Card className="hover-elevate" data-testid={`card-depot-${id}`}>
@@ -49,16 +51,28 @@ export function DepotCard({
             <span data-testid={`text-location-${id}`}>{location}</span>
           </div>
         </div>
-        {onEdit && (
-          <Button 
-            variant="ghost" 
-            size="icon"
-            onClick={onEdit}
-            data-testid={`button-edit-${id}`}
-          >
-            <Edit className="h-4 w-4" />
-          </Button>
-        )}
+        <div className="flex gap-1">
+          {onEdit && (
+            <Button 
+              variant="ghost" 
+              size="icon"
+              onClick={onEdit}
+              data-testid={`button-edit-${id}`}
+            >
+              <Edit className="h-4 w-4" />
+            </Button>
+          )}
+          {onDelete && (
+            <Button 
+              variant="ghost" 
+              size="icon"
+              onClick={onDelete}
+              data-testid={`button-delete-${id}`}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex items-center gap-2 text-sm">
