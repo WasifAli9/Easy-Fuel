@@ -149,7 +149,7 @@ export default function DriverDashboard() {
           <TabsContent value="assigned" className="space-y-3 sm:space-y-4">
             {/* GPS Location Tracker - Only active when on delivery */}
             <DriverLocationTracker 
-              isOnDelivery={driverProfile?.availability === "on_delivery"}
+              isOnDelivery={driverProfile?.availability_status === "on_delivery"}
             />
             
             <div className="text-center py-8 sm:py-12 text-muted-foreground">
