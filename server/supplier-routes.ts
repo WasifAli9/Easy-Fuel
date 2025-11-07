@@ -291,17 +291,15 @@ router.post("/depots", async (req, res) => {
       return res.status(404).json({ error: "Supplier profile not found" });
     }
 
-    // Temporarily omit address columns until PostgREST cache refreshes
-    // Validate only the fields that PostgREST definitely knows about
+    // Validate only core required fields - omit all optional columns due to PostgREST cache
     const depotData = {
       name: req.body.name,
       lat: parseFloat(req.body.lat),
       lng: parseFloat(req.body.lng),
-      openHours: req.body.openHours,
-      isActive: req.body.isActive !== undefined ? req.body.isActive : true,
+      openHours: req.body.openHours || {},
     };
 
-    // Create depot with only known columns
+    // Create depot with only original core columns (omitting is_active and address fields)
     const { data: depot, error: depotError } = await supabaseAdmin
       .from("depots")
       .insert({
@@ -310,7 +308,6 @@ router.post("/depots", async (req, res) => {
         lat: depotData.lat,
         lng: depotData.lng,
         open_hours: depotData.openHours,
-        is_active: depotData.isActive,
       })
       .select()
       .single();
