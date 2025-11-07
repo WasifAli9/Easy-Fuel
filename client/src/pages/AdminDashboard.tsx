@@ -9,7 +9,7 @@ import { StatsCard } from "@/components/StatsCard";
 import { CreateUserDialog } from "@/components/CreateUserDialog";
 import { UserDetailsDialogEnhanced } from "@/components/UserDetailsDialogEnhanced";
 import { Input } from "@/components/ui/input";
-import { DollarSign, Users, Truck, TrendingUp, Building2, UserCheck, Search } from "lucide-react";
+import { Users, Truck, TrendingUp, Building2, UserCheck, Search } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";

@@ -1,5 +1,5 @@
 import { StatsCard } from "../StatsCard";
-import { DollarSign, Users, TrendingUp, Truck } from "lucide-react";
+import { Coins, Users, TrendingUp, Truck } from "lucide-react";
 
 export default function StatsCardExample() {
   return (
@@ -8,7 +8,7 @@ export default function StatsCardExample() {
         title="Total Revenue"
         value="R 125,430"
         description="Last 30 days"
-        icon={DollarSign}
+        icon={Coins}
         trend={{ value: 12.5, isPositive: true }}
       />
       <StatsCard

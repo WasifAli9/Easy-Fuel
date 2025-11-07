@@ -30,7 +30,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { MapPin, Calendar, DollarSign, Package, User, Phone, Clock } from "lucide-react";
+import { MapPin, Calendar, Package, User, Phone, Clock } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
 import { Badge } from "@/components/ui/badge";
 import { DriverLocationMap } from "./DriverLocationMap";
