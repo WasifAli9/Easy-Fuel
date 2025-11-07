@@ -8,6 +8,7 @@ import supplierRoutes from "./supplier-routes";
 import { supabaseAdmin } from "./supabase";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { ObjectPermission } from "./objectAcl";
+import { websocketService } from "./websocket";
 
 // Middleware to extract Supabase user from JWT
 export async function getSupabaseUser(req: Request) {
@@ -177,6 +178,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/admin", requireAuth, requireAdmin, adminRoutes);
 
   const httpServer = createServer(app);
+
+  // Initialize WebSocket server
+  websocketService.initialize(httpServer);
 
   return httpServer;
 }

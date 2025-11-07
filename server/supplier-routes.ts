@@ -472,20 +472,11 @@ router.get("/orders", async (req, res) => {
         *,
         customers!inner (
           id,
-          name,
-          profiles!inner (
-            id,
-            full_name,
-            phone
-          )
+          user_id
         ),
         drivers (
           id,
-          profiles!inner (
-            id,
-            full_name,
-            phone
-          )
+          user_id
         ),
         delivery_addresses (
           id,
@@ -510,6 +501,32 @@ router.get("/orders", async (req, res) => {
       .order("created_at", { ascending: false });
 
     if (ordersError) throw ordersError;
+
+    // Enrich orders with profile data
+    if (orders && orders.length > 0) {
+      const customerUserIds = Array.from(new Set(orders.map((o: any) => o.customers?.user_id).filter(Boolean)));
+      const driverOwnerIds = Array.from(new Set(orders.map((o: any) => o.drivers?.user_id).filter(Boolean)));
+      const allUserIds = [...customerUserIds, ...driverOwnerIds];
+
+      if (allUserIds.length > 0) {
+        const { data: profiles } = await supabaseAdmin
+          .from("profiles")
+          .select("id, full_name, phone")
+          .in("id", allUserIds);
+
+        const profileMap = new Map(profiles?.map(p => [p.id, p]) || []);
+
+        // Enrich orders with profile data
+        orders.forEach((order: any) => {
+          if (order.customers?.user_id) {
+            order.customers.profiles = profileMap.get(order.customers.user_id) || null;
+          }
+          if (order.drivers?.user_id) {
+            order.drivers.profiles = profileMap.get(order.drivers.user_id) || null;
+          }
+        });
+      }
+    }
 
     res.json(orders || []);
   } catch (error: any) {
