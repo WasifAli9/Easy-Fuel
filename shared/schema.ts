@@ -11,7 +11,9 @@ import {
   doublePrecision,
   smallint,
   pgEnum,
-  point
+  point,
+  unique,
+  index
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -67,6 +69,24 @@ export const ownerTypeEnum = pgEnum("owner_type", ["customer", "driver", "suppli
 export const priorityLevelEnum = pgEnum("priority_level", ["low", "medium", "high", "urgent"]);
 export const paymentMethodTypeEnum = pgEnum("payment_method_type", ["bank_account", "credit_card", "debit_card"]);
 export const addressVerificationStatusEnum = pgEnum("address_verification_status", ["pending", "verified", "rejected"]);
+export const notificationTypeEnum = pgEnum("notification_type", [
+  "order_created",
+  "dispatch_offer_received",
+  "offer_accepted",
+  "offer_rejected",
+  "driver_assigned",
+  "driver_en_route",
+  "delivery_complete",
+  "payment_received",
+  "payment_failed",
+  "order_cancelled",
+  "driver_reassigned",
+  "new_message",
+  "system_alert"
+]);
+export const messageTypeEnum = pgEnum("message_type", ["text", "image", "location"]);
+export const locationSourceEnum = pgEnum("location_source", ["gps", "network", "manual"]);
+export const senderTypeEnum = pgEnum("sender_type", ["customer", "driver"]);
 
 // Profiles table - id references Supabase auth.users(id)
 export const profiles = pgTable("profiles", {
@@ -477,6 +497,103 @@ export const pricingHistory = pgTable("pricing_history", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// Driver Inventories table - tracks current fuel stock for each driver
+export const driverInventories = pgTable("driver_inventories", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  driverId: uuid("driver_id").notNull().references(() => drivers.id),
+  fuelTypeId: uuid("fuel_type_id").notNull().references(() => fuelTypes.id),
+  currentLitres: numeric("current_litres", { precision: 10, scale: 2 }).notNull().default("0"),
+  maxCapacityLitres: numeric("max_capacity_litres", { precision: 10, scale: 2 }).notNull(),
+  lastRestockedAt: timestamp("last_restocked_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => ({
+  uniqueDriverFuel: unique("unique_driver_fuel").on(table.driverId, table.fuelTypeId),
+}));
+
+// Driver Locations table - GPS tracking history
+export const driverLocations = pgTable("driver_locations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  driverId: uuid("driver_id").notNull().references(() => drivers.id),
+  orderId: uuid("order_id").references(() => orders.id), // Optional - track which order driver was on
+  lat: doublePrecision("lat").notNull(),
+  lng: doublePrecision("lng").notNull(),
+  accuracy: doublePrecision("accuracy"), // GPS accuracy in meters
+  heading: doublePrecision("heading"), // Direction of travel in degrees
+  speed: doublePrecision("speed"), // Speed in km/h
+  source: locationSourceEnum("source").notNull().default("gps"),
+  isCurrent: boolean("is_current").notNull().default(true), // Flag for latest location
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  driverIdIdx: index("driver_locations_driver_id_idx").on(table.driverId),
+  orderIdIdx: index("driver_locations_order_id_idx").on(table.orderId),
+  createdAtIdx: index("driver_locations_created_at_idx").on(table.createdAt),
+}));
+
+// Notifications table
+export const notifications = pgTable("notifications", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull(), // References auth.users(id) - ideally foreign key but Supabase auth is separate schema
+  type: notificationTypeEnum("type").notNull(),
+  title: text("title").notNull(),
+  message: text("message").notNull(),
+  data: jsonb("data"), // Additional data (order_id, driver_id, etc.)
+  read: boolean("read").notNull().default(false),
+  readAt: timestamp("read_at"),
+  deliveryStatus: text("delivery_status").default("pending"), // pending, sent, failed
+  deliveredAt: timestamp("delivered_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  userIdIdx: index("notifications_user_id_idx").on(table.userId),
+  readIdx: index("notifications_read_idx").on(table.read),
+  userReadIdx: index("notifications_user_read_idx").on(table.userId, table.read),
+}));
+
+// Push Subscriptions table - for PWA push notifications
+export const pushSubscriptions = pgTable("push_subscriptions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull(), // References auth.users(id) - ideally foreign key but Supabase auth is separate schema
+  endpoint: text("endpoint").notNull().unique(),
+  p256dh: text("p256dh").notNull(),
+  auth: text("auth").notNull(),
+  userAgent: text("user_agent"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  userIdIdx: index("push_subscriptions_user_id_idx").on(table.userId),
+}));
+
+// Chat Threads table - conversation between customer and driver for an order
+export const chatThreads = pgTable("chat_threads", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orderId: uuid("order_id").notNull().references(() => orders.id),
+  customerId: uuid("customer_id").notNull().references(() => customers.id),
+  driverId: uuid("driver_id").notNull().references(() => drivers.id),
+  lastMessageAt: timestamp("last_message_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  orderIdUnique: unique("chat_threads_order_id_unique").on(table.orderId),
+  orderIdIdx: index("chat_threads_order_id_idx").on(table.orderId),
+  customerIdIdx: index("chat_threads_customer_id_idx").on(table.customerId),
+  driverIdIdx: index("chat_threads_driver_id_idx").on(table.driverId),
+}));
+
+// Chat Messages table
+export const chatMessages = pgTable("chat_messages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  threadId: uuid("thread_id").notNull().references(() => chatThreads.id),
+  senderId: uuid("sender_id").notNull(), // References auth.users(id) - could be customer or driver
+  senderType: senderTypeEnum("sender_type").notNull(), // Explicitly track if sender is customer or driver
+  messageType: messageTypeEnum("message_type").notNull().default("text"),
+  message: text("message").notNull(),
+  attachmentUrl: text("attachment_url"), // For image/file messages
+  read: boolean("read").notNull().default(false),
+  readAt: timestamp("read_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  threadIdIdx: index("chat_messages_thread_id_idx").on(table.threadId),
+  threadCreatedIdx: index("chat_messages_thread_created_idx").on(table.threadId, table.createdAt),
+}));
+
 // Insert Schemas
 export const insertProfileSchema = createInsertSchema(profiles).omit({ 
   id: true, 
@@ -561,6 +678,37 @@ export const insertDriverPricingSchema = createInsertSchema(driverPricing).omit(
 });
 
 export const insertPricingHistorySchema = createInsertSchema(pricingHistory).omit({ 
+  id: true, 
+  createdAt: true 
+});
+
+export const insertDriverInventorySchema = createInsertSchema(driverInventories).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true 
+});
+
+export const insertDriverLocationSchema = createInsertSchema(driverLocations).omit({ 
+  id: true, 
+  createdAt: true 
+});
+
+export const insertNotificationSchema = createInsertSchema(notifications).omit({ 
+  id: true, 
+  createdAt: true 
+});
+
+export const insertPushSubscriptionSchema = createInsertSchema(pushSubscriptions).omit({ 
+  id: true, 
+  createdAt: true 
+});
+
+export const insertChatThreadSchema = createInsertSchema(chatThreads).omit({ 
+  id: true, 
+  createdAt: true 
+});
+
+export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ 
   id: true, 
   createdAt: true 
 });
@@ -663,3 +811,21 @@ export type DriverPricing = typeof driverPricing.$inferSelect;
 
 export type InsertPricingHistory = z.infer<typeof insertPricingHistorySchema>;
 export type PricingHistory = typeof pricingHistory.$inferSelect;
+
+export type InsertDriverInventory = z.infer<typeof insertDriverInventorySchema>;
+export type DriverInventory = typeof driverInventories.$inferSelect;
+
+export type InsertDriverLocation = z.infer<typeof insertDriverLocationSchema>;
+export type DriverLocation = typeof driverLocations.$inferSelect;
+
+export type InsertNotification = z.infer<typeof insertNotificationSchema>;
+export type Notification = typeof notifications.$inferSelect;
+
+export type InsertPushSubscription = z.infer<typeof insertPushSubscriptionSchema>;
+export type PushSubscription = typeof pushSubscriptions.$inferSelect;
+
+export type InsertChatThread = z.infer<typeof insertChatThreadSchema>;
+export type ChatThread = typeof chatThreads.$inferSelect;
+
+export type InsertChatMessage = z.infer<typeof insertChatMessageSchema>;
+export type ChatMessage = typeof chatMessages.$inferSelect;
