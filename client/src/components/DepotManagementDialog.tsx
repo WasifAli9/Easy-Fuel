@@ -90,9 +90,18 @@ export function DepotManagementDialog({
 
   const createDepotMutation = useMutation({
     mutationFn: async (data: DepotFormData) => {
+      let openHours = {};
+      if (data.open_hours) {
+        try {
+          openHours = JSON.parse(data.open_hours);
+        } catch (e) {
+          // If not valid JSON, store as simple string description
+          openHours = { description: data.open_hours };
+        }
+      }
       const payload = {
         ...data,
-        open_hours: data.open_hours ? JSON.parse(data.open_hours) : {},
+        open_hours: openHours,
       };
       return apiRequest("POST", "/api/supplier/depots", payload);
     },
@@ -116,9 +125,18 @@ export function DepotManagementDialog({
 
   const updateDepotMutation = useMutation({
     mutationFn: async (data: DepotFormData) => {
+      let openHours = {};
+      if (data.open_hours) {
+        try {
+          openHours = JSON.parse(data.open_hours);
+        } catch (e) {
+          // If not valid JSON, store as simple string description
+          openHours = { description: data.open_hours };
+        }
+      }
       const payload = {
         ...data,
-        open_hours: data.open_hours ? JSON.parse(data.open_hours) : {},
+        open_hours: openHours,
       };
       return apiRequest("PATCH", `/api/supplier/depots/${depot.id}`, payload);
     },
@@ -308,14 +326,17 @@ export function DepotManagementDialog({
               name="open_hours"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Operating Hours (JSON format)</FormLabel>
+                  <FormLabel>Operating Hours</FormLabel>
                   <FormControl>
                     <Input
                       data-testid="input-depot-hours"
-                      placeholder='{"monday": "6AM-6PM", "tuesday": "6AM-6PM"}'
+                      placeholder='Mon-Fri: 6AM-6PM, Sat: 8AM-2PM or {"monday": "6AM-6PM"}'
                       {...field}
                     />
                   </FormControl>
+                  <p className="text-sm text-muted-foreground">
+                    Enter plain text (e.g., "Mon-Fri: 8AM-5PM") or JSON format
+                  </p>
                   <FormMessage />
                 </FormItem>
               )}
