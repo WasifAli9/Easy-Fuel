@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS public.pricing_history (
   fuel_type_id uuid NOT NULL REFERENCES public.fuel_types(id) ON DELETE CASCADE,
   old_price_cents integer,
   new_price_cents integer NOT NULL,
+  changed_by uuid NOT NULL,
   notes text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -29,6 +30,12 @@ CREATE TABLE IF NOT EXISTS public.pricing_history (
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.driver_pricing TO anon, authenticated;
 GRANT SELECT, INSERT ON TABLE public.pricing_history TO anon, authenticated;
+
+-- Add INSERT policy for pricing_history
+CREATE POLICY "Allow authenticated users to insert pricing history" 
+  ON public.pricing_history FOR INSERT 
+  TO authenticated 
+  WITH CHECK (true);
 
 -- Create indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_driver_pricing_driver_id ON public.driver_pricing(driver_id);
