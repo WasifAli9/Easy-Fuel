@@ -12,18 +12,37 @@ router.get("/profile", async (req, res) => {
   const user = (req as any).user;
   
   try {
-    const { data: driver, error } = await supabaseAdmin
+    // Get profile data (includes currency)
+    const { data: profile, error: profileError } = await supabaseAdmin
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
+      .single();
+
+    if (profileError) throw profileError;
+
+    // Get driver-specific data
+    const { data: driver, error: driverError } = await supabaseAdmin
       .from("drivers")
       .select("*")
       .eq("user_id", user.id)
       .single();
 
-    if (error) throw error;
+    if (driverError) throw driverError;
     if (!driver) {
       return res.status(404).json({ error: "Driver profile not found" });
     }
 
-    res.json(driver);
+    // Get email from auth
+    const { data: authData } = await supabaseAdmin.auth.admin.getUserById(user.id);
+    const email = authData?.user?.email || null;
+
+    // Combine profile, driver, and email data
+    res.json({
+      ...profile,
+      ...driver,
+      email
+    });
   } catch (error: any) {
     console.error("Error fetching driver profile:", error);
     res.status(500).json({ error: error.message });
