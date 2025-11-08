@@ -249,7 +249,7 @@ router.get("/assigned-orders", async (req, res) => {
         )
       `)
       .eq("assigned_driver_id", driver.id)
-      .in("state", ["assigned", "en_route", "in_progress"])
+      .in("state", ["assigned", "en_route", "picked_up"])
       .order("created_at", { ascending: false });
 
     if (ordersError) throw ordersError;

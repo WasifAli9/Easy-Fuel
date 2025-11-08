@@ -10,6 +10,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Coins, History, Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useCurrency } from "@/hooks/use-currency";
+import { formatCurrency } from "@/lib/utils";
 
 interface FuelTypeWithPricing {
   id: string;
@@ -37,6 +39,7 @@ interface PricingHistoryItem {
 
 export function DriverPricingManager() {
   const { toast } = useToast();
+  const { currency, currencySymbol } = useCurrency();
   const [showHistory, setShowHistory] = useState(false);
   const [editingPrices, setEditingPrices] = useState<Record<string, string>>({});
   const [editingNotes, setEditingNotes] = useState<Record<string, string>>({});
@@ -141,8 +144,10 @@ export function DriverPricingManager() {
     return "";
   };
 
-  const formatCurrency = (cents: number) => {
-    return `R ${(cents / 100).toFixed(2)}`;
+  const formatPrice = (cents: number) => {
+    // Convert cents to whole currency units before formatting
+    const amount = cents / 100;
+    return formatCurrency(amount, currency);
   };
 
   const formatDate = (dateStr: string) => {
@@ -205,7 +210,7 @@ export function DriverPricingManager() {
                   {fuelType.pricing && !editingPrices[fuelType.id] && (
                     <div className="text-right">
                       <p className="text-2xl font-bold">
-                        {formatCurrency(fuelType.pricing.delivery_fee_cents)}
+                        {formatPrice(fuelType.pricing.delivery_fee_cents)}
                       </p>
                       <p className="text-xs text-muted-foreground">per delivery</p>
                     </div>
@@ -215,11 +220,11 @@ export function DriverPricingManager() {
                 <div className="grid gap-4">
                   <div>
                     <Label htmlFor={`price-${fuelType.id}`}>
-                      Delivery Fee (Rands)
+                      Delivery Fee ({currency})
                     </Label>
                     <div className="flex gap-2 mt-1.5">
                       <div className="relative flex-1">
-                        <span className="absolute left-3 top-3 text-muted-foreground">R</span>
+                        <span className="absolute left-3 top-3 text-muted-foreground">{currencySymbol}</span>
                         <Input
                           id={`price-${fuelType.id}`}
                           type="number"
@@ -300,13 +305,13 @@ export function DriverPricingManager() {
                           {item.old_price_cents !== null && (
                             <>
                               <span className="text-sm text-muted-foreground line-through">
-                                {formatCurrency(item.old_price_cents)}
+                                {formatPrice(item.old_price_cents)}
                               </span>
                               <span className="text-sm text-muted-foreground">→</span>
                             </>
                           )}
                           <span className="font-medium">
-                            {formatCurrency(item.new_price_cents)}
+                            {formatPrice(item.new_price_cents)}
                           </span>
                         </div>
                       </div>
