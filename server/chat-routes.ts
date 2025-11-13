@@ -1,19 +1,92 @@
 import { Router } from "express";
-import { db } from "./db";
-import { 
-  chatThreads, 
-  chatMessages,
-  orders,
-  customers,
-  drivers,
-  profiles
-} from "@shared/schema";
-import { eq, and, or, desc, sql } from "drizzle-orm";
 import { requireAuth } from "./routes";
+import { supabaseAdmin } from "./supabase";
 import { websocketService } from "./websocket";
 
 const router = Router();
 router.use(requireAuth);
+
+function isSchemaCacheError(error: any): boolean {
+  if (!error) return false;
+  return (
+    error?.code === "PGRST205" ||
+    error?.message?.includes("schema cache") ||
+    error?.message?.includes("Could not find the table 'public.chat_") // matches chat_tables missing
+  );
+}
+
+function respondSchemaCacheIssue(res: any) {
+  return res.status(503).json({
+    error: "Supabase schema cache is out of date for chat tables.",
+    resolution:
+      "In Supabase SQL editor run `NOTIFY pgrst, 'reload schema';` then wait ~10 seconds. If the chat tables do not exist, run the migration that creates `chat_threads` and `chat_messages`.",
+    code: "SCHEMA_CACHE_CHAT",
+  });
+}
+
+function mapThread(record: any) {
+  if (!record) return null;
+  return {
+    id: record.id,
+    orderId: record.order_id,
+    customerId: record.customer_id,
+    driverId: record.driver_id,
+    lastMessageAt: record.last_message_at,
+    createdAt: record.created_at,
+  };
+}
+
+function mapMessage(record: any, senderProfile?: any) {
+  return {
+    id: record.id,
+    threadId: record.thread_id,
+    senderId: record.sender_id,
+    senderType: record.sender_type,
+    messageType: record.message_type,
+    message: record.message,
+    attachmentUrl: record.attachment_url,
+    read: record.read,
+    readAt: record.read_at,
+    createdAt: record.created_at,
+    senderName: senderProfile?.full_name || "Unknown",
+    senderAvatar: senderProfile?.profile_photo_url || null,
+  };
+}
+
+async function fetchOrderWithParticipants(orderId: string) {
+  const { data: order, error: orderError } = await supabaseAdmin
+    .from("orders")
+    .select("id, customer_id, assigned_driver_id")
+    .eq("id", orderId)
+    .maybeSingle();
+
+  if (orderError) throw orderError;
+
+  if (!order) {
+    return { order: null };
+  }
+
+  const [{ data: customer, error: customerError }, { data: driver, error: driverError }] =
+    await Promise.all([
+      supabaseAdmin
+        .from("customers")
+        .select("id, user_id")
+        .eq("id", order.customer_id)
+        .maybeSingle(),
+      order.assigned_driver_id
+        ? supabaseAdmin
+            .from("drivers")
+            .select("id, user_id")
+            .eq("id", order.assigned_driver_id)
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+    ]);
+
+  if (customerError) throw customerError;
+  if (driverError) throw driverError;
+
+  return { order, customer, driver };
+}
 
 // Get or create chat thread for an order
 router.get("/thread/:orderId", async (req, res) => {
@@ -21,57 +94,64 @@ router.get("/thread/:orderId", async (req, res) => {
   const { orderId } = req.params;
 
   try {
-    // Get order first
-    const order = await db.query.orders.findFirst({
-      where: eq(orders.id, orderId),
-    });
+    const { order, customer, driver } = await fetchOrderWithParticipants(orderId);
 
     if (!order) {
       return res.status(404).json({ error: "Order not found" });
     }
-
-    // Get customer and driver to verify access
-    const customer = await db.query.customers.findFirst({
-      where: eq(customers.id, order.customerId),
-    });
-    const driver = order.assignedDriverId ? await db.query.drivers.findFirst({
-      where: eq(drivers.id, order.assignedDriverId),
-    }) : null;
-
     if (!customer) {
-      return res.status(500).json({ error: "Customer not found" });
+      return res.status(500).json({ error: "Customer record not found" });
     }
 
-    // Verify user is involved in this order (compare auth user IDs, not domain entity IDs)
-    const isCustomer = customer.userId === user.id;
-    const isDriver = driver?.userId === user.id;
+    const isCustomer = customer.user_id === user.id;
+    const isDriver = driver?.user_id === user.id;
 
     if (!isCustomer && !isDriver) {
       return res.status(403).json({ error: "Not authorized to access this chat" });
     }
 
     // Check if thread exists
-    let thread = await db.query.chatThreads.findFirst({
-      where: eq(chatThreads.orderId, orderId),
-    });
+    const { data: existingThread, error: threadError } = await supabaseAdmin
+      .from("chat_threads")
+      .select("*")
+      .eq("order_id", orderId)
+      .maybeSingle();
 
-    // Create thread if it doesn't exist and order has a driver
-    if (!thread && order.assignedDriverId) {
-      const [newThread] = await db.insert(chatThreads).values({
-        orderId: orderId,
-        customerId: order.customerId,
-        driverId: order.assignedDriverId,
-      }).returning();
-      thread = newThread;
+    if (threadError) {
+      if (isSchemaCacheError(threadError)) return respondSchemaCacheIssue(res);
+      throw threadError;
     }
 
-    if (!thread) {
+    // Create thread if it doesn't exist and order has a driver
+    if (!existingThread && !order.assigned_driver_id) {
       return res.status(400).json({ error: "Cannot create chat thread - no driver assigned" });
     }
 
-    res.json(thread);
+    let threadRecord = existingThread;
+
+    if (!threadRecord) {
+      const { data: newThread, error: insertError } = await supabaseAdmin
+        .from("chat_threads")
+        .insert({
+          order_id: orderId,
+          customer_id: order.customer_id,
+          driver_id: order.assigned_driver_id,
+        })
+        .select()
+        .single();
+
+      if (insertError) {
+        if (isSchemaCacheError(insertError)) return respondSchemaCacheIssue(res);
+        throw insertError;
+      }
+
+      threadRecord = newThread;
+    }
+
+    res.json(mapThread(threadRecord));
   } catch (error: any) {
     console.error("Error getting chat thread:", error);
+    if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
     res.status(500).json({ error: error.message });
   }
 });
@@ -84,68 +164,89 @@ router.get("/messages/:threadId", async (req, res) => {
   const before = req.query.before as string | undefined; // For pagination
 
   try {
-    // Get thread to verify access
-    const thread = await db.query.chatThreads.findFirst({
-      where: eq(chatThreads.id, threadId),
-    });
+    const { data: thread, error: threadError } = await supabaseAdmin
+      .from("chat_threads")
+      .select("*")
+      .eq("id", threadId)
+      .maybeSingle();
+
+    if (threadError) {
+      if (isSchemaCacheError(threadError)) return respondSchemaCacheIssue(res);
+      throw threadError;
+    }
 
     if (!thread) {
       return res.status(404).json({ error: "Thread not found" });
     }
 
-    // Get customer and driver to verify access
-    const customer = await db.query.customers.findFirst({
-      where: eq(customers.id, thread.customerId),
-    });
-    const driver = await db.query.drivers.findFirst({
-      where: eq(drivers.id, thread.driverId),
-    });
+    const [{ data: customer, error: customerError }, { data: driver, error: driverError }] =
+      await Promise.all([
+        supabaseAdmin
+          .from("customers")
+          .select("id, user_id")
+          .eq("id", thread.customer_id)
+          .maybeSingle(),
+        supabaseAdmin
+          .from("drivers")
+          .select("id, user_id")
+          .eq("id", thread.driver_id)
+          .maybeSingle(),
+      ]);
+
+    if (customerError) throw customerError;
+    if (driverError) throw driverError;
 
     if (!customer || !driver) {
       return res.status(500).json({ error: "Failed to fetch thread participants" });
     }
 
-    // Verify user is involved in this thread
-    const isCustomer = customer.userId === user.id;
-    const isDriver = driver.userId === user.id;
+    const isCustomer = customer.user_id === user.id;
+    const isDriver = driver.user_id === user.id;
 
     if (!isCustomer && !isDriver) {
       return res.status(403).json({ error: "Not authorized to access this chat" });
     }
 
-    // Get messages
-    const messages = await db.query.chatMessages.findMany({
-      where: before
-        ? and(
-            eq(chatMessages.threadId, threadId),
-            // Pagination: get messages created before the given message ID
-          )
-        : eq(chatMessages.threadId, threadId),
-      orderBy: [desc(chatMessages.createdAt)],
-      limit,
-    });
+    let query = supabaseAdmin
+      .from("chat_messages")
+      .select("*")
+      .eq("thread_id", threadId)
+      .order("created_at", { ascending: false })
+      .limit(limit);
 
-    // Get sender profiles for display names/avatars (if messages exist)
-    let messagesWithSenders = messages;
-    if (messages.length > 0) {
-      const senderIds = Array.from(new Set(messages.map(m => m.senderId)));
-      const senderProfiles = await db.query.profiles.findMany({
-        where: or(...senderIds.map(id => eq(profiles.id, id))),
-      });
-
-      const profileMap = new Map(senderProfiles.map(p => [p.id, p]));
-
-      // Add sender info to messages
-      messagesWithSenders = messages.map(msg => ({
-        ...msg,
-        senderName: profileMap.get(msg.senderId)?.fullName || "Unknown",
-        senderAvatar: profileMap.get(msg.senderId)?.profilePhotoUrl,
-      }));
+    if (before) {
+      query = query.lt("created_at", before);
     }
 
-    res.json(messagesWithSenders.reverse()); // Return in chronological order
+    const { data: messages, error: messagesError } = await query;
+
+    if (messagesError) {
+      if (isSchemaCacheError(messagesError)) return respondSchemaCacheIssue(res);
+      throw messagesError;
+    }
+
+    if (!messages || messages.length === 0) {
+      return res.json([]);
+    }
+
+    const senderIds = Array.from(new Set(messages.map((m) => m.sender_id)));
+    const { data: senderProfiles, error: profileError } = await supabaseAdmin
+      .from("profiles")
+      .select("id, full_name, profile_photo_url")
+      .in("id", senderIds);
+
+    if (profileError) throw profileError;
+
+    const profileMap = new Map((senderProfiles || []).map((p) => [p.id, p]));
+
+    const mapped = messages
+      .map((msg) => mapMessage(msg, profileMap.get(msg.sender_id)))
+      .reverse();
+
+    res.json(mapped);
   } catch (error: any) {
     console.error("Error getting messages:", error);
+    if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
     res.status(500).json({ error: error.message });
   }
 });
@@ -160,76 +261,93 @@ router.post("/messages", async (req, res) => {
       return res.status(400).json({ error: "Thread ID and message are required" });
     }
 
-    // Get thread to verify access and determine sender type
-    const thread = await db.query.chatThreads.findFirst({
-      where: eq(chatThreads.id, threadId),
-      with: {
-        orders: true,
-      },
-    });
+    const { data: thread, error: threadError } = await supabaseAdmin
+      .from("chat_threads")
+      .select("*, orders!inner(id, customer_id, assigned_driver_id)")
+      .eq("id", threadId)
+      .maybeSingle();
+
+    if (threadError) {
+      if (isSchemaCacheError(threadError)) return respondSchemaCacheIssue(res);
+      throw threadError;
+    }
 
     if (!thread) {
       return res.status(404).json({ error: "Thread not found" });
     }
 
-    // Get customer and driver user IDs for this thread
-    const customer = await db.query.customers.findFirst({
-      where: eq(customers.id, thread.customerId),
-    });
-    const driver = await db.query.drivers.findFirst({
-      where: eq(drivers.id, thread.driverId),
-    });
+    const [{ data: customer, error: customerError }, { data: driver, error: driverError }] =
+      await Promise.all([
+        supabaseAdmin
+          .from("customers")
+          .select("id, user_id")
+          .eq("id", thread.customer_id)
+          .maybeSingle(),
+        supabaseAdmin
+          .from("drivers")
+          .select("id, user_id")
+          .eq("id", thread.driver_id)
+          .maybeSingle(),
+      ]);
+
+    if (customerError) throw customerError;
+    if (driverError) throw driverError;
 
     if (!customer || !driver) {
       return res.status(500).json({ error: "Failed to fetch thread participants" });
     }
 
-    // Determine sender type and recipient ID (using auth user IDs)
     let senderType: "customer" | "driver";
     let recipientId: string;
 
-    if (customer.userId === user.id) {
+    if (customer.user_id === user.id) {
       senderType = "customer";
-      recipientId = driver.userId; // Send to driver's auth user ID
-    } else if (driver.userId === user.id) {
+      recipientId = driver.user_id;
+    } else if (driver.user_id === user.id) {
       senderType = "driver";
-      recipientId = customer.userId; // Send to customer's auth user ID
+      recipientId = customer.user_id;
     } else {
       return res.status(403).json({ error: "Not authorized to send messages in this chat" });
     }
 
-    // Create message
-    const [newMessage] = await db.insert(chatMessages).values({
-      threadId,
-      senderId: user.id,
-      senderType,
-      messageType,
-      message,
-      attachmentUrl,
-    }).returning();
+    const { data: insertedMessage, error: insertError } = await supabaseAdmin
+      .from("chat_messages")
+      .insert({
+        thread_id: threadId,
+        sender_id: user.id,
+        sender_type: senderType,
+        message_type: messageType,
+        message,
+        attachment_url: attachmentUrl || null,
+      })
+      .select()
+      .single();
 
-    // Update thread last message time
-    await db.update(chatThreads)
-      .set({ lastMessageAt: new Date() })
-      .where(eq(chatThreads.id, threadId));
+    if (insertError) {
+      if (isSchemaCacheError(insertError)) return respondSchemaCacheIssue(res);
+      throw insertError;
+    }
 
-    // Get sender profile for display
-    const senderProfile = await db.query.profiles.findFirst({
-      where: eq(profiles.id, user.id),
-    });
+    await supabaseAdmin
+      .from("chat_threads")
+      .update({ last_message_at: new Date().toISOString() })
+      .eq("id", threadId);
 
-    const messageWithSender = {
-      ...newMessage,
-      senderName: senderProfile?.fullName || "Unknown",
-      senderAvatar: senderProfile?.profilePhotoUrl,
-    };
+    const { data: senderProfile, error: profileError } = await supabaseAdmin
+      .from("profiles")
+      .select("id, full_name, profile_photo_url")
+      .eq("id", user.id)
+      .maybeSingle();
 
-    // Send real-time notification via WebSocket
+    if (profileError) throw profileError;
+
+    const messageWithSender = mapMessage(insertedMessage, senderProfile);
+
     websocketService.sendToUser(recipientId, {
-      type: "new_message",
+      type: "chat_message",
       payload: {
         threadId,
-        orderId: thread.orderId,
+        orderId: thread.orders?.id || thread.order_id,
         message: messageWithSender,
       },
     });
@@ -237,6 +355,7 @@ router.post("/messages", async (req, res) => {
     res.json(messageWithSender);
   } catch (error: any) {
     console.error("Error sending message:", error);
+    if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
     res.status(500).json({ error: error.message });
   }
 });
@@ -251,63 +370,70 @@ router.post("/messages/read", async (req, res) => {
       return res.status(400).json({ error: "Thread ID is required" });
     }
 
-    // Get thread to verify access
-    const thread = await db.query.chatThreads.findFirst({
-      where: eq(chatThreads.id, threadId),
-    });
+    const { data: thread, error: threadError } = await supabaseAdmin
+      .from("chat_threads")
+      .select("*")
+      .eq("id", threadId)
+      .maybeSingle();
+
+    if (threadError) {
+      if (isSchemaCacheError(threadError)) return respondSchemaCacheIssue(res);
+      throw threadError;
+    }
 
     if (!thread) {
       return res.status(404).json({ error: "Thread not found" });
     }
 
-    // Get customer and driver to verify access
-    const customer = await db.query.customers.findFirst({
-      where: eq(customers.id, thread.customerId),
-    });
-    const driver = await db.query.drivers.findFirst({
-      where: eq(drivers.id, thread.driverId),
-    });
+    const [{ data: customer, error: customerError }, { data: driver, error: driverError }] =
+      await Promise.all([
+        supabaseAdmin
+          .from("customers")
+          .select("id, user_id")
+          .eq("id", thread.customer_id)
+          .maybeSingle(),
+        supabaseAdmin
+          .from("drivers")
+          .select("id, user_id")
+          .eq("id", thread.driver_id)
+          .maybeSingle(),
+      ]);
+
+    if (customerError) throw customerError;
+    if (driverError) throw driverError;
 
     if (!customer || !driver) {
       return res.status(500).json({ error: "Failed to fetch thread participants" });
     }
 
-    // Verify user is involved in this thread
-    const isCustomer = customer.userId === user.id;
-    const isDriver = driver.userId === user.id;
+    const isCustomer = customer.user_id === user.id;
+    const isDriver = driver.user_id === user.id;
 
     if (!isCustomer && !isDriver) {
       return res.status(403).json({ error: "Not authorized to access this chat" });
     }
 
-    // Mark all messages in this thread that were NOT sent by current user as read
-    // Note: senderId is auth user ID, so we need to filter by sender != current user
-    await db.update(chatMessages)
-      .set({ 
+    const senderToMatch = isCustomer ? driver.user_id : customer.user_id;
+
+    const { error: updateError } = await supabaseAdmin
+      .from("chat_messages")
+      .update({
         read: true,
-        readAt: new Date(),
+        read_at: new Date().toISOString(),
       })
-      .where(
-        and(
-          eq(chatMessages.threadId, threadId),
-          eq(chatMessages.read, false),
-          // Mark messages not sent by current user (using auth user ID)
-          or(
-            and(
-              eq(chatMessages.senderType, "customer"),
-              isDriver ? eq(chatMessages.senderId, customer.userId) : sql`false`
-            ),
-            and(
-              eq(chatMessages.senderType, "driver"),
-              isCustomer ? eq(chatMessages.senderId, driver.userId) : sql`false`
-            )
-          )
-        )
-      );
+      .eq("thread_id", threadId)
+      .eq("read", false)
+      .eq("sender_id", senderToMatch);
+
+    if (updateError) {
+      if (isSchemaCacheError(updateError)) return respondSchemaCacheIssue(res);
+      throw updateError;
+    }
 
     res.json({ success: true });
   } catch (error: any) {
     console.error("Error marking messages as read:", error);
+    if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
     res.status(500).json({ error: error.message });
   }
 });
@@ -318,58 +444,67 @@ router.get("/unread/:threadId", async (req, res) => {
   const { threadId } = req.params;
 
   try {
-    // Get thread to verify access
-    const thread = await db.query.chatThreads.findFirst({
-      where: eq(chatThreads.id, threadId),
-    });
+    const { data: thread, error: threadError } = await supabaseAdmin
+      .from("chat_threads")
+      .select("*")
+      .eq("id", threadId)
+      .maybeSingle();
+
+    if (threadError) {
+      if (isSchemaCacheError(threadError)) return respondSchemaCacheIssue(res);
+      throw threadError;
+    }
 
     if (!thread) {
       return res.status(404).json({ error: "Thread not found" });
     }
 
-    // Get customer and driver to verify access
-    const customer = await db.query.customers.findFirst({
-      where: eq(customers.id, thread.customerId),
-    });
-    const driver = await db.query.drivers.findFirst({
-      where: eq(drivers.id, thread.driverId),
-    });
+    const [{ data: customer, error: customerError }, { data: driver, error: driverError }] =
+      await Promise.all([
+        supabaseAdmin
+          .from("customers")
+          .select("id, user_id")
+          .eq("id", thread.customer_id)
+          .maybeSingle(),
+        supabaseAdmin
+          .from("drivers")
+          .select("id, user_id")
+          .eq("id", thread.driver_id)
+          .maybeSingle(),
+      ]);
+
+    if (customerError) throw customerError;
+    if (driverError) throw driverError;
 
     if (!customer || !driver) {
       return res.status(500).json({ error: "Failed to fetch thread participants" });
     }
 
-    // Verify user is involved in this thread
-    const isCustomer = customer.userId === user.id;
-    const isDriver = driver.userId === user.id;
+    const isCustomer = customer.user_id === user.id;
+    const isDriver = driver.user_id === user.id;
 
     if (!isCustomer && !isDriver) {
       return res.status(403).json({ error: "Not authorized to access this chat" });
     }
 
-    // Count unread messages not sent by current user
-    // Note: senderId is auth user ID, so compare against current user's ID
-    const unreadMessages = await db.query.chatMessages.findMany({
-      where: and(
-        eq(chatMessages.threadId, threadId),
-        eq(chatMessages.read, false),
-        // Count messages NOT sent by current user (using auth user ID)
-        or(
-          and(
-            eq(chatMessages.senderType, "customer"),
-            isDriver ? eq(chatMessages.senderId, customer.userId) : sql`false`
-          ),
-          and(
-            eq(chatMessages.senderType, "driver"),
-            isCustomer ? eq(chatMessages.senderId, driver.userId) : sql`false`
-          )
-        )
-      ),
-    });
+    const senderToMatch = isCustomer ? driver.user_id : customer.user_id;
 
-    res.json({ count: unreadMessages.length });
+    const { count, error: countError } = await supabaseAdmin
+      .from("chat_messages")
+      .select("*", { count: "exact", head: true })
+      .eq("thread_id", threadId)
+      .eq("read", false)
+      .eq("sender_id", senderToMatch);
+
+    if (countError) {
+      if (isSchemaCacheError(countError)) return respondSchemaCacheIssue(res);
+      throw countError;
+    }
+
+    res.json({ count: count || 0 });
   } catch (error: any) {
     console.error("Error getting unread count:", error);
+    if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
     res.status(500).json({ error: error.message });
   }
 });

@@ -21,6 +21,10 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { useLocation, Link } from "wouter";
 import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import { formatDistanceToNow } from "date-fns";
+import { Check, CheckCheck } from "lucide-react";
 
 interface AppHeaderProps {
   onMenuClick?: () => void;
@@ -28,15 +32,91 @@ interface AppHeaderProps {
   showMenu?: boolean;
 }
 
-export function AppHeader({ onMenuClick, notificationCount = 0, showMenu = true }: AppHeaderProps) {
+export function AppHeader({ onMenuClick, notificationCount: propNotificationCount, showMenu = true }: AppHeaderProps) {
   const { profile, signOut } = useAuth();
   const [, setLocation] = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const queryClient = useQueryClient();
+
+  // Fetch notifications
+  const { data: notifications = [], refetch: refetchNotifications } = useQuery<any[]>({
+    queryKey: ["/api/notifications"],
+    enabled: !!profile, // Only fetch if user is logged in
+    refetchInterval: 30000, // Refetch every 30 seconds
+  });
+
+  // Fetch unread count
+  const { data: unreadData } = useQuery<{ count: number }>({
+    queryKey: ["/api/notifications/unread-count"],
+    enabled: !!profile,
+    refetchInterval: 30000,
+  });
+
+  const notificationCount = propNotificationCount ?? (unreadData?.count || 0);
+
+  // Mark notification as read mutation
+  const markAsReadMutation = useMutation({
+    mutationFn: async (notificationId: string) => {
+      const response = await apiRequest("PATCH", `/api/notifications/${notificationId}/read`);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
+    },
+  });
+
+  // Mark all as read mutation
+  const markAllAsReadMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("PATCH", "/api/notifications/read-all");
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
+    },
+  });
 
   async function handleSignOut() {
     await signOut();
     setLocation("/");
+  }
+
+  function handleNotificationClick(notification: any) {
+    if (!notification.read) {
+      markAsReadMutation.mutate(notification.id);
+    }
+    
+    // Navigate based on notification type
+    if (notification.data?.orderId) {
+      if (profile?.role === "driver") {
+        setLocation("/driver");
+      } else if (profile?.role === "customer") {
+        setLocation(`/customer/orders/${notification.data.orderId}`);
+      }
+      setNotificationsOpen(false);
+    }
+  }
+
+  function getNotificationIcon(type: string) {
+    switch (type) {
+      case "dispatch_offer_received":
+        return "🎯";
+      case "offer_accepted":
+        return "✅";
+      case "driver_assigned":
+        return "🚗";
+      case "delivery_complete":
+        return "🎉";
+      case "new_message":
+        return "💬";
+      case "system_alert":
+        return "ℹ️";
+      default:
+        return "🔔";
+    }
   }
 
   return (
@@ -213,24 +293,65 @@ export function AppHeader({ onMenuClick, notificationCount = 0, showMenu = true 
 
       {/* Notifications Sheet */}
       <Sheet open={notificationsOpen} onOpenChange={setNotificationsOpen}>
-        <SheetContent side="right" className="w-[300px] sm:w-[400px]">
+        <SheetContent side="right" className="w-[300px] sm:w-[400px] flex flex-col">
           <SheetHeader>
-            <SheetTitle>Notifications</SheetTitle>
+            <div className="flex items-center justify-between">
+              <SheetTitle>Notifications</SheetTitle>
+              {notificationCount > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => markAllAsReadMutation.mutate()}
+                  disabled={markAllAsReadMutation.isPending}
+                  className="text-xs"
+                >
+                  <CheckCheck className="h-3 w-3 mr-1" />
+                  Mark all read
+                </Button>
+              )}
+            </div>
           </SheetHeader>
-          <div className="mt-6">
-            {notificationCount === 0 ? (
+          <div className="mt-6 flex-1 overflow-y-auto">
+            {notifications.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 <Bell className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p>No new notifications</p>
+                <p>No notifications</p>
               </div>
             ) : (
-              <div className="space-y-4">
-                <div className="p-4 border rounded-lg">
-                  <p className="text-sm font-medium">Sample Notification</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Notification system coming soon...
-                  </p>
-                </div>
+              <div className="space-y-2">
+                {notifications.map((notification) => (
+                  <div
+                    key={notification.id}
+                    className={`p-4 border rounded-lg cursor-pointer transition-colors ${
+                      !notification.read
+                        ? "bg-primary/5 border-primary/20 hover:bg-primary/10"
+                        : "hover:bg-muted/50"
+                    }`}
+                    onClick={() => handleNotificationClick(notification)}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="text-2xl flex-shrink-0">
+                        {getNotificationIcon(notification.type)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className={`text-sm font-medium ${!notification.read ? "font-semibold" : ""}`}>
+                            {notification.title}
+                          </p>
+                          {!notification.read && (
+                            <div className="h-2 w-2 rounded-full bg-primary flex-shrink-0 mt-1.5" />
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                          {notification.message}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          {formatDistanceToNow(new Date(notification.created_at), { addSuffix: true })}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>

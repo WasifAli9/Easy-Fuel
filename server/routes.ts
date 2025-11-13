@@ -8,26 +8,84 @@ import supplierRoutes from "./supplier-routes";
 import pushRoutes from "./push-routes";
 import locationRoutes from "./location-routes";
 import chatRoutes from "./chat-routes";
-import { supabaseAdmin } from "./supabase";
+import notificationRoutes from "./notification-routes";
+import { supabaseAdmin, supabaseAuth } from "./supabase";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { ObjectPermission } from "./objectAcl";
 import { websocketService } from "./websocket";
 
+// Helper function to parse cookies
+function parseCookies(cookieHeader: string | undefined): Record<string, string> {
+  const cookies: Record<string, string> = {};
+  if (!cookieHeader) return cookies;
+  
+  cookieHeader.split(';').forEach(cookie => {
+    const [name, ...rest] = cookie.trim().split('=');
+    if (name && rest.length > 0) {
+      cookies[name] = decodeURIComponent(rest.join('='));
+    }
+  });
+  
+  return cookies;
+}
+
 // Middleware to extract Supabase user from JWT
 export async function getSupabaseUser(req: Request) {
+  // Try to get token from Authorization header first
+  let token: string | null = null;
   const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) {
-    return null;
-  }
-
-  const token = authHeader.substring(7);
-  const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
   
-  if (error || !user) {
-    return null;
+  if (authHeader?.startsWith("Bearer ")) {
+    token = authHeader.substring(7);
+  } else {
+    // Fallback: try to get token from cookies
+    // Supabase stores session in cookies with key pattern: sb-<project-ref>-auth-token
+    const cookieHeader = req.headers.cookie;
+    
+    if (cookieHeader) {
+      const cookies = parseCookies(cookieHeader);
+      
+      // Look for Supabase auth token cookie (pattern: sb-*-auth-token)
+      for (const [key, value] of Object.entries(cookies)) {
+        if (key.startsWith('sb-') && key.endsWith('-auth-token')) {
+          try {
+            // The cookie value is a JSON string containing the session
+            const sessionData = JSON.parse(value);
+            token = sessionData?.access_token || null;
+            if (token) break;
+          } catch (e) {
+            // Cookie exists but not in expected JSON format, skip it
+            continue;
+          }
+        }
+      }
+    }
   }
 
-  return user;
+  if (!token) {
+    return null;
+  }
+  
+  try {
+    // Validate token with Supabase
+    // Use auth client with anon key for token validation
+    const { data: { user }, error } = await supabaseAuth.auth.getUser(token);
+    
+    if (error || !user) {
+      return null;
+    }
+
+    return user;
+  } catch (error: any) {
+    // Handle connection timeouts and network errors gracefully
+    if (error?.code === 'UND_ERR_CONNECT_TIMEOUT' || error?.message?.includes('timeout')) {
+      console.error("Supabase connection timeout:", error.message);
+      return null;
+    }
+    // Log other errors but don't expose them
+    console.error("Error validating user token:", error?.message || error);
+    return null;
+  }
 }
 
 // Auth middleware for protected routes
@@ -168,6 +226,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Public route: Get all fuel types (no auth required)
+  app.get("/api/fuel-types", async (req, res) => {
+    try {
+      const { data: fuelTypes, error } = await supabaseAdmin
+        .from("fuel_types")
+        .select("*")
+        .eq("active", true)
+        .order("label", { ascending: true });
+
+      if (error) throw error;
+      res.json(fuelTypes || []);
+    } catch (error: any) {
+      console.error("Error fetching fuel types:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Register customer routes (protected with auth middleware)
   app.use("/api", requireAuth, customerRoutes);
 
@@ -188,6 +263,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Register chat routes (protected with auth middleware)
   app.use("/api/chat", chatRoutes);
+
+  // Register notification routes (protected with auth middleware)
+  app.use("/api/notifications", requireAuth, notificationRoutes);
 
   const httpServer = createServer(app);
 

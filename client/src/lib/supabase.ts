@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { CookieStorage } from "./cookie-storage";
 
 // For Replit, environment variables need to be accessed from window if not available in import.meta.env
 const getEnvVar = (key: string): string => {
@@ -29,4 +30,16 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error("Missing Supabase environment variables");
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Create custom cookie storage instance
+const cookieStorage = new CookieStorage();
+
+// Create Supabase client with cookie storage instead of localStorage
+// This stores the JWT token in cookies so the server can access it
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    storage: cookieStorage,
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: true,
+  },
+});

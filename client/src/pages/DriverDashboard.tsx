@@ -10,28 +10,61 @@ import { DriverLocationTracker } from "@/components/DriverLocationTracker";
 import { OrderChat } from "@/components/OrderChat";
 import { Wallet, TrendingUp, CheckCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useCurrency } from "@/hooks/use-currency";
+import { formatCurrency } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AcceptOfferDialog } from "@/components/AcceptOfferDialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { Button } from "@/components/ui/button";
+import { CompleteDeliveryDialog } from "@/components/CompleteDeliveryDialog";
 
 export default function DriverDashboard() {
   const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null);
   const [acceptDialogOpen, setAcceptDialogOpen] = useState(false);
+  const [dismissedPendingOfferOrderIds, setDismissedPendingOfferOrderIds] = useState<string[]>([]);
+  const [orderToComplete, setOrderToComplete] = useState<any | null>(null);
+  const [completeDialogOpen, setCompleteDialogOpen] = useState(false);
   const { toast } = useToast();
 
   // Fetch available dispatch offers
-  const { data: offers = [], isLoading } = useQuery<any[]>({
+  const { data: offersData, isLoading, error: offersError } = useQuery<any>({
     queryKey: ["/api/driver/offers"],
     refetchInterval: 30000, // Refresh every 30 seconds
+  });
+
+  // Handle both array response (offers) and object response (with eligibility info)
+  const offers = Array.isArray(offersData) ? offersData : (offersData?.offers || []);
+  const eligibilityIssues = offersData?.eligibilityIssues || [];
+  const driverStatus = offersData?.driverStatus;
+
+  const filteredOffers = offers.filter((offer: any) => {
+    if (offer.isPendingOffer && dismissedPendingOfferOrderIds.includes(offer.order_id)) {
+      return false;
+    }
+    if (offer.isPendingOffer && offer.id?.startsWith("pending-")) {
+      const baseId = offer.id.replace("pending-", "");
+      if (dismissedPendingOfferOrderIds.includes(baseId)) {
+        return false;
+      }
+    }
+    return true;
   });
 
   // Fetch driver profile to check availability status
   const { data: driverProfile } = useQuery<any>({
     queryKey: ["/api/driver/profile"],
+  });
+
+  const { data: statsData, isLoading: statsLoading } = useQuery<{
+    activeJobs: number;
+    todayEarningsCents: number;
+    completedThisWeek: number;
+    totalEarningsCents: number;
+    totalDeliveries: number;
+  }>({
+    queryKey: ["/api/driver/stats"],
   });
 
   // Fetch assigned orders (accepted deliveries)
@@ -40,7 +73,17 @@ export default function DriverDashboard() {
     refetchInterval: 15000, // Refresh every 15 seconds
   });
 
-  const { currencySymbol, formatCurrency } = useCurrency();
+  const { currency } = useCurrency();
+  
+  // Helper function to format currency using the user's preferred currency
+  const formatCurrencyAmount = (amount: number) => formatCurrency(amount, currency);
+
+  const todayEarningsDisplay = statsLoading
+    ? "..."
+    : formatCurrencyAmount((statsData?.todayEarningsCents || 0) / 100);
+
+  const activeJobsDisplay = statsLoading ? "..." : (statsData?.activeJobs || 0);
+  const completedThisWeekDisplay = statsLoading ? "..." : (statsData?.completedThisWeek || 0);
 
   // Reject offer mutation
   const rejectOfferMutation = useMutation({
@@ -64,6 +107,64 @@ export default function DriverDashboard() {
     },
   });
 
+  const startDeliveryMutation = useMutation({
+    mutationFn: async (orderId: string) => {
+      const response = await apiRequest("POST", `/api/driver/orders/${orderId}/start`);
+      return response.json();
+    },
+    onSuccess: (_data, orderId) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/assigned-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
+      toast({
+        title: "Delivery started",
+        description: `You are now en route for order ${orderId.substring(0, 8).toUpperCase()}`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to start delivery",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const pickupDeliveryMutation = useMutation({
+    mutationFn: async (orderId: string) => {
+      const response = await apiRequest("POST", `/api/driver/orders/${orderId}/pickup`);
+      return response.json();
+    },
+    onSuccess: (_data, orderId) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/assigned-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/stats"] });
+      toast({
+        title: "Fuel collected",
+        description: `Marked order ${orderId.substring(0, 8).toUpperCase()} as picked up`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to mark fuel as picked up",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleStartDelivery = (orderId: string) => {
+    startDeliveryMutation.mutate(orderId);
+  };
+
+  const handlePickupDelivery = (orderId: string) => {
+    pickupDeliveryMutation.mutate(orderId);
+  };
+
+  const handleCompleteDelivery = (order: any) => {
+    setOrderToComplete(order);
+    setCompleteDialogOpen(true);
+  };
+
   const handleAccept = (offerId: string) => {
     setSelectedOfferId(offerId);
     setAcceptDialogOpen(true);
@@ -71,13 +172,23 @@ export default function DriverDashboard() {
 
   const handleReject = (offerId: string) => {
     if (confirm("Are you sure you want to reject this offer?")) {
+      if (offerId.startsWith("pending-")) {
+        const orderId = offerId.replace("pending-", "");
+        setDismissedPendingOfferOrderIds((prev) => Array.from(new Set([...prev, orderId])));
+        toast({
+          title: "Offer dismissed",
+          description: "This request will be hidden until a formal offer is created.",
+        });
+        return;
+      }
+
       rejectOfferMutation.mutate(offerId);
     }
   };
 
   return (
     <div className="min-h-screen bg-background pb-safe">
-      <AppHeader notificationCount={3} />
+      <AppHeader />
       
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
         <div className="mb-4 sm:mb-8">
@@ -88,19 +199,18 @@ export default function DriverDashboard() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-4 sm:mb-8">
           <StatsCard
             title="Today's Earnings"
-            value="R 1,240"
+            value={todayEarningsDisplay}
             icon={Wallet}
-            trend={{ value: 15, isPositive: true }}
           />
           <StatsCard
             title="Active Jobs"
-            value="2"
+            value={activeJobsDisplay}
             description="In progress"
             icon={TrendingUp}
           />
           <StatsCard
             title="Completed"
-            value="8"
+            value={completedThisWeekDisplay}
             description="This week"
             icon={CheckCircle}
           />
@@ -121,22 +231,50 @@ export default function DriverDashboard() {
           <TabsContent value="available" className="space-y-3 sm:space-y-4">
             {isLoading ? (
               <div className="text-center py-8 text-muted-foreground">Loading offers...</div>
-            ) : offers.length === 0 ? (
+            ) : offersError ? (
+              <div className="text-center py-8 sm:py-12">
+                <p className="text-destructive mb-2">Error loading offers</p>
+                <p className="text-sm text-muted-foreground">{offersError.message || "Please try again later"}</p>
+              </div>
+            ) : eligibilityIssues.length > 0 ? (
+              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4 sm:p-6">
+                <h3 className="font-semibold mb-2 text-yellow-900 dark:text-yellow-100">Account Setup Required</h3>
+                <p className="text-sm text-yellow-800 dark:text-yellow-200 mb-3">
+                  To receive delivery offers, please complete the following:
+                </p>
+                <ul className="list-disc list-inside space-y-1 text-sm text-yellow-800 dark:text-yellow-200 mb-4">
+                  {eligibilityIssues.map((issue: string, index: number) => (
+                    <li key={index}>{issue}</li>
+                  ))}
+                </ul>
+                <div className="text-xs text-yellow-700 dark:text-yellow-300 mt-4 p-3 bg-yellow-100 dark:bg-yellow-900/30 rounded">
+                  <p className="font-medium mb-1">Current Status:</p>
+                  {driverStatus && (
+                    <ul className="space-y-1">
+                      <li>Location Set: <span className="font-mono">{driverStatus.hasLocation ? "Yes" : "No"}</span></li>
+                    </ul>
+                  )}
+                </div>
+              </div>
+            ) : filteredOffers.length === 0 ? (
               <div className="text-center py-8 sm:py-12 text-muted-foreground">
                 <p>No available offers at the moment</p>
                 <p className="text-sm mt-2">New delivery requests will appear here</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
-                {offers.map((offer) => {
+                {filteredOffers.map((offer) => {
                   const order = offer.orders;
                   const deliveryAddress = order.delivery_addresses 
                     ? `${order.delivery_addresses.address_street}, ${order.delivery_addresses.address_city}`
                     : `${order.drop_lat}, ${order.drop_lng}`;
                   
-                  const expiresInSeconds = Math.floor(
-                    (new Date(offer.expires_at).getTime() - Date.now()) / 1000
-                  );
+                  // Calculate expires in seconds (for pending offers, use a default long expiry)
+                  const expiresInSeconds = offer.expires_at 
+                    ? Math.floor((new Date(offer.expires_at).getTime() - Date.now()) / 1000)
+                    : 24 * 60 * 60; // 24 hours default for pending offers
+
+                  const isPendingOffer = offer.isPendingOffer || offer.state === "pending";
 
                   return (
                     <JobCard
@@ -176,8 +314,16 @@ export default function DriverDashboard() {
               </div>
             ) : (
               <div className="space-y-4">
-                {assignedOrders.map((order) => (
-                  <Card key={order.id} data-testid={`card-assigned-order-${order.id}`}>
+                {assignedOrders.map((order) => {
+                  const isStarting =
+                    startDeliveryMutation.isPending &&
+                    startDeliveryMutation.variables === order.id;
+                  const isPickingUp =
+                    pickupDeliveryMutation.isPending &&
+                    pickupDeliveryMutation.variables === order.id;
+
+                  return (
+                    <Card key={order.id} data-testid={`card-assigned-order-${order.id}`}>
                     <CardHeader>
                       <CardTitle className="flex items-center justify-between">
                         <span className="text-base">
@@ -187,6 +333,35 @@ export default function DriverDashboard() {
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
+                      <div className="flex flex-wrap gap-2">
+                        {order.state === "assigned" && (
+                          <Button
+                            onClick={() => handleStartDelivery(order.id)}
+                            disabled={isStarting}
+                            variant="outline"
+                          >
+                            {isStarting ? "Starting..." : "Start Delivery"}
+                          </Button>
+                        )}
+                        {order.state === "en_route" && (
+                          <Button
+                            onClick={() => handlePickupDelivery(order.id)}
+                            disabled={isPickingUp}
+                            variant="secondary"
+                          >
+                            {isPickingUp ? "Updating..." : "Mark Picked Up"}
+                          </Button>
+                        )}
+                        {["en_route", "picked_up"].includes(order.state) && (
+                          <Button
+                            onClick={() => handleCompleteDelivery(order)}
+                            variant="default"
+                          >
+                            Complete Delivery
+                          </Button>
+                        )}
+                      </div>
+
                       <div className="grid grid-cols-2 gap-3 text-sm">
                         <div>
                           <p className="text-muted-foreground">Customer</p>
@@ -199,7 +374,7 @@ export default function DriverDashboard() {
                         <div>
                           <p className="text-muted-foreground">Amount</p>
                           <p className="font-medium">
-                            {formatCurrency(order.total_cents / 100)}
+                            {formatCurrencyAmount(order.total_cents / 100)}
                           </p>
                         </div>
                         <div>
@@ -223,8 +398,9 @@ export default function DriverDashboard() {
                         currentUserType="driver"
                       />
                     </CardContent>
-                  </Card>
-                ))}
+                    </Card>
+                  );
+                })}
               </div>
             )}
           </TabsContent>
@@ -258,6 +434,16 @@ export default function DriverDashboard() {
             }}
           />
         )}
+        <CompleteDeliveryDialog
+          order={orderToComplete}
+          open={completeDialogOpen}
+          onOpenChange={(open) => {
+            setCompleteDialogOpen(open);
+            if (!open) {
+              setOrderToComplete(null);
+            }
+          }}
+        />
       </main>
     </div>
   );

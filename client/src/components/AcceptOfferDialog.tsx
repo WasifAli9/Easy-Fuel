@@ -62,7 +62,10 @@ export function AcceptOfferDialog({
       return response.json();
     },
     onSuccess: () => {
+      // Invalidate both offers and assigned orders queries
       queryClient.invalidateQueries({ queryKey: ["/api/driver/offers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/assigned-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/stats"] });
       toast({
         title: "Offer accepted!",
         description: "You have accepted this delivery. The customer has been notified.",

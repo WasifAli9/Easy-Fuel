@@ -19,7 +19,7 @@ export async function apiRequest(
     const authHeaders = await getAuthHeaders();
     headers = { ...headers, ...authHeaders };
   } catch (error) {
-    // Not authenticated - continue without auth headers
+    // Not authenticated - continue without auth headers (will result in 401 from server)
   }
 
   const res = await fetch(url, {
@@ -45,7 +45,7 @@ export const getQueryFn: <T>(options: {
       const authHeaders = await getAuthHeaders();
       headers = authHeaders;
     } catch (error) {
-      // Not authenticated - continue without auth headers
+      // Not authenticated - continue without auth headers (will result in 401 from server)
     }
 
     const res = await fetch(queryKey.join("/") as string, {

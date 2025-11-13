@@ -308,7 +308,7 @@ router.post("/orders", async (req, res) => {
         delivery_fee_cents: deliveryFeeCents,
         service_fee_cents: serviceFeeCents,
         total_cents: totalCents,
-        max_budget_cents: maxBudgetCents || null,
+        // Note: max_budget_cents column doesn't exist in database, removed from insert
         
         // Order management
         selected_depot_id: depotId,
@@ -320,6 +320,7 @@ router.post("/orders", async (req, res) => {
     if (orderError) throw orderError;
 
     // Create dispatch offers for drivers (async, don't wait)
+    console.log(`[Order Created] Order ${newOrder.id} created, creating dispatch offers...`);
     createDispatchOffers({
       orderId: newOrder.id,
       fuelTypeId: newOrder.fuel_type_id,
@@ -327,8 +328,12 @@ router.post("/orders", async (req, res) => {
       dropLng: lng,
       litres: litresNum,
       maxBudgetCents: maxBudgetCents || null,
-    }).catch(error => {
-      console.error("Error creating dispatch offers:", error);
+    })
+    .then(() => {
+      console.log(`[Order Created] Dispatch offers creation completed for order ${newOrder.id}`);
+    })
+    .catch(error => {
+      console.error(`[Order Created] Error creating dispatch offers for order ${newOrder.id}:`, error);
     });
 
     res.status(201).json(newOrder);
@@ -1114,28 +1119,82 @@ router.get("/profile", async (req, res) => {
       .from("profiles")
       .select("*")
       .eq("id", user.id)
-      .single();
+      .maybeSingle();
 
-    if (profileError) throw profileError;
+    if (profileError) {
+      // If it's an API key error, it means the key is invalid
+      if (profileError.message?.includes("Invalid API key")) {
+        console.error("Supabase API key error - check your SUPABASE_ANON_KEY or SUPABASE_SERVICE_ROLE_KEY");
+        throw profileError;
+      }
+      throw profileError;
+    }
+    
+    // If no profile, user needs to complete setup
+    if (!profile) {
+      return res.status(404).json({ 
+        error: "Profile not found",
+        code: "PROFILE_SETUP_REQUIRED",
+        message: "Please complete your profile setup"
+      });
+    }
 
     const { data: customer, error: customerError } = await supabaseAdmin
       .from("customers")
       .select("*")
       .eq("user_id", user.id)
-      .single();
+      .maybeSingle();
 
     if (customerError) throw customerError;
+    
+    // If no customer record but profile exists, create it
+    if (!customer) {
+      const { data: newCustomer, error: createError } = await supabaseAdmin
+        .from("customers")
+        .insert({ user_id: user.id })
+        .select()
+        .single();
+      
+      if (createError) {
+        // If RLS error, check if customer was created by another process
+        if (createError.message?.includes("row-level security")) {
+          const { data: existingCustomer } = await supabaseAdmin
+            .from("customers")
+            .select("*")
+            .eq("user_id", user.id)
+            .maybeSingle();
+          
+          if (existingCustomer) {
+            return res.json({
+              ...profile,
+              ...existingCustomer,
+              email: user.email || null
+            });
+          }
+        }
+        throw createError;
+      }
 
-    // Get email from auth
-    const { data: authData } = await supabaseAdmin.auth.admin.getUserById(user.id);
-    const email = authData?.user?.email || null;
+      return res.json({
+        ...profile,
+        ...newCustomer,
+        email: user.email || null
+      });
+    }
 
     res.json({
       ...profile,
       ...customer,
-      email
+      email: user.email || null
     });
   } catch (error: any) {
+    // Handle PGRST116 error (no rows found) gracefully
+    if (error?.code === 'PGRST116') {
+      return res.status(404).json({ 
+        error: "Profile not found",
+        code: "PROFILE_SETUP_REQUIRED"
+      });
+    }
     console.error("Error fetching profile:", error);
     res.status(500).json({ error: error.message });
   }

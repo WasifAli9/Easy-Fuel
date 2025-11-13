@@ -1,6 +1,6 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
-import { supabaseAdmin } from "./supabase";
+import { supabaseAuth } from "./supabase";
 import type { IncomingMessage } from "http";
 import { parse } from "url";
 
@@ -35,7 +35,7 @@ class WebSocketService {
       }
 
       // Verify token with Supabase
-      const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+      const { data: { user }, error } = await supabaseAuth.auth.getUser(token);
 
       if (error || !user) {
         console.log("WebSocket connection rejected: Invalid token");

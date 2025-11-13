@@ -411,6 +411,9 @@ export const orders = pgTable("orders", {
   confirmedDeliveryTime: timestamp("confirmed_delivery_time"),
   paidAt: timestamp("paid_at"),
   deliveredAt: timestamp("delivered_at"),
+  deliverySignatureData: text("delivery_signature_data"),
+  deliverySignatureName: text("delivery_signature_name"),
+  deliverySignedAt: timestamp("delivery_signed_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

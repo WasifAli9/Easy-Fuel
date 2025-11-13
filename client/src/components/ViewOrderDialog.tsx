@@ -36,6 +36,7 @@ import { Badge } from "@/components/ui/badge";
 import { DriverLocationMap } from "./DriverLocationMap";
 import { OrderChat } from "./OrderChat";
 import { useCurrency } from "@/hooks/use-currency";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 const orderEditSchema = z.object({
   fuelTypeId: z.string().min(1, "Please select a fuel type"),
@@ -182,7 +183,7 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px]" data-testid="dialog-view-order">
+      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-hidden" data-testid="dialog-view-order">
         <DialogHeader>
           <div className="flex items-center justify-between">
             <DialogTitle>Order Details</DialogTitle>
@@ -194,7 +195,8 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
         </DialogHeader>
 
         {!isEditing ? (
-          <div className="space-y-4">
+          <ScrollArea className="max-h-[65vh] pr-4">
+            <div className="space-y-4">
             {/* Order Summary */}
             <div className="space-y-3">
               <div className="flex items-center gap-3 p-3 bg-muted rounded-lg">
@@ -344,7 +346,8 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                 </Button>
               )}
             </div>
-          </div>
+            </div>
+          </ScrollArea>
         ) : (
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">

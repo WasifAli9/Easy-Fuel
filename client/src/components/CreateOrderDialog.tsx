@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -36,6 +36,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Plus, MapPin, Truck, CreditCard, FileSignature } from "lucide-react";
 import { AddAddressDialog } from "@/components/AddAddressDialog";
+import { SignaturePad } from "@/components/SignaturePad";
 
 const orderFormSchema = z.object({
   fuelTypeId: z.string().min(1, "Please select a fuel type"),
@@ -71,8 +72,6 @@ interface CreateOrderDialogProps {
 export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
   const [open, setOpen] = useState(false);
   const [signatureData, setSignatureData] = useState<string | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [isDrawing, setIsDrawing] = useState(false);
   const [showAddAddressDialog, setShowAddAddressDialog] = useState(false);
   const { toast } = useToast();
 
@@ -111,64 +110,6 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
     },
   });
 
-  // Signature canvas handlers
-  const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const x = "touches" in e ? e.touches[0].clientX - rect.left : e.clientX - rect.left;
-    const y = "touches" in e ? e.touches[0].clientY - rect.top : e.clientY - rect.top;
-
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    setIsDrawing(true);
-  };
-
-  const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    if (!isDrawing) return;
-
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const x = "touches" in e ? e.touches[0].clientX - rect.left : e.clientX - rect.left;
-    const y = "touches" in e ? e.touches[0].clientY - rect.top : e.clientY - rect.top;
-
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = "#000";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-  };
-
-  const stopDrawing = () => {
-    if (isDrawing) {
-      const canvas = canvasRef.current;
-      if (canvas) {
-        setSignatureData(canvas.toDataURL());
-      }
-      setIsDrawing(false);
-    }
-  };
-
-  const clearSignature = () => {
-    const canvas = canvasRef.current;
-    if (canvas) {
-      const ctx = canvas.getContext("2d");
-      if (ctx) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-      }
-    }
-    setSignatureData(null);
-  };
-
   const createOrderMutation = useMutation({
     mutationFn: async (values: OrderFormValues) => {
       const response = await apiRequest("POST", "/api/orders", {
@@ -192,24 +133,27 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/offers"] }); // Refresh driver offers
       toast({
         title: "Order created",
-        description: "Your order has been placed successfully",
+        description: "Your order has been placed successfully and is now available for drivers",
       });
       form.reset();
-      clearSignature();
+      setSignatureData(null);
       setOpen(false);
     },
     onError: (error: any) => {
+      console.error("Order creation error:", error);
       toast({
         title: "Error",
-        description: error.message || "Failed to create order",
+        description: error.message || "Failed to create order. Please check the console for details.",
         variant: "destructive",
       });
     },
   });
 
   const onSubmit = (values: OrderFormValues) => {
+    console.log("Form submitted with values:", values);
     createOrderMutation.mutate(values);
   };
 
@@ -596,32 +540,12 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
                       <FileSignature className="h-4 w-4" />
                       Electronic Signature
                     </FormLabel>
-                    <div className="border rounded-md p-2 bg-background">
-                      <canvas
-                        ref={canvasRef}
-                        width={600}
-                        height={150}
-                        className="border rounded cursor-crosshair w-full"
-                        onMouseDown={startDrawing}
-                        onMouseMove={draw}
-                        onMouseUp={stopDrawing}
-                        onMouseLeave={stopDrawing}
-                        onTouchStart={startDrawing}
-                        onTouchMove={draw}
-                        onTouchEnd={stopDrawing}
-                        data-testid="canvas-signature"
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={clearSignature}
-                        className="mt-2"
-                        data-testid="button-clear-signature"
-                      >
-                        Clear Signature
-                      </Button>
-                    </div>
+                    <SignaturePad
+                      value={signatureData}
+                      onChange={setSignatureData}
+                      className="border rounded-md p-2 bg-background"
+                      canvasProps={{ "data-testid": "canvas-signature" }}
+                    />
                     <p className="text-sm text-muted-foreground mt-1">
                       Sign above to acknowledge the order details
                     </p>
