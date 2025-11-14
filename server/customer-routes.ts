@@ -1,6 +1,10 @@
 import { Router } from "express";
 import { supabaseAdmin } from "./supabase";
 import { createDispatchOffers } from "./dispatch-service";
+import { sendDriverAcceptanceEmail } from "./email-service";
+import { websocketService } from "./websocket";
+import { pushNotificationService } from "./push-service";
+import { ensureChatThreadForAssignment } from "./chat-service";
 
 const router = Router();
 
@@ -145,6 +149,540 @@ router.get("/orders/:id", async (req, res) => {
   } catch (error: any) {
     console.error("Error fetching order:", error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Get dispatch offers (driver quotes) for an order
+router.get("/orders/:id/offers", async (req, res) => {
+  const user = (req as any).user;
+  const orderId = req.params.id;
+
+  try {
+    const { data: customer, error: customerError } = await supabaseAdmin
+      .from("customers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (customerError) throw customerError;
+    if (!customer) {
+      return res.status(404).json({ error: "Customer profile not found" });
+    }
+
+    // Ensure order belongs to customer
+    const { data: orderCheck, error: orderCheckError } = await supabaseAdmin
+      .from("orders")
+      .select("id")
+      .eq("id", orderId)
+      .eq("customer_id", customer.id)
+      .maybeSingle();
+
+    if (orderCheckError) throw orderCheckError;
+    if (!orderCheck) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    const { data: offers, error: offersError } = await supabaseAdmin
+      .from("dispatch_offers")
+      .select("id, driver_id, state, proposed_delivery_time, proposed_price_per_km_cents, proposed_notes, created_at, updated_at, customer_response_at")
+      .eq("order_id", orderId)
+      .in("state", ["pending_customer", "customer_accepted", "customer_declined"])
+      .not("proposed_price_per_km_cents", "is", null)
+      .order("created_at", { ascending: false });
+
+    if (offersError) throw offersError;
+
+    if (!offers || offers.length === 0) {
+      return res.json([]);
+    }
+
+    const driverIds = Array.from(new Set(offers.map((offer: any) => offer.driver_id)));
+    const { data: drivers, error: driversError } = await supabaseAdmin
+      .from("drivers")
+      .select("id, user_id, vehicle_capacity_litres, premium_status")
+      .in("id", driverIds);
+
+    if (driversError) throw driversError;
+
+    const driverUserIds = Array.from(new Set(drivers?.map((driver: any) => driver.user_id) || []));
+    const { data: profiles, error: profilesError } = await supabaseAdmin
+      .from("profiles")
+      .select("id, full_name, phone")
+      .in("id", driverUserIds.length > 0 ? driverUserIds : ["00000000-0000-0000-0000-000000000000"]);
+
+    if (profilesError) throw profilesError;
+
+    // Get order to fetch fuel_type_id for driver pricing lookup
+    const { data: orderForPricing } = await supabaseAdmin
+      .from("orders")
+      .select("fuel_type_id, selected_depot_id, drop_lat, drop_lng, litres")
+      .eq("id", orderId)
+      .single();
+
+    // Fetch driver pricing for all drivers and the order's fuel type
+    let driverPricingMap = new Map();
+    if (orderForPricing?.fuel_type_id && driverIds.length > 0) {
+      const { data: driverPricing } = await supabaseAdmin
+        .from("driver_pricing")
+        .select("driver_id, fuel_price_per_liter_cents")
+        .eq("fuel_type_id", orderForPricing.fuel_type_id)
+        .in("driver_id", driverIds)
+        .eq("active", true);
+
+      if (driverPricing) {
+        driverPricingMap = new Map(
+          driverPricing.map((p: any) => [p.driver_id, p.fuel_price_per_liter_cents])
+        );
+      }
+    }
+
+    // Calculate distance if depot is available
+    let distanceKm = 0;
+    if (orderForPricing?.selected_depot_id && orderForPricing?.drop_lat && orderForPricing?.drop_lng) {
+      const { data: depot } = await supabaseAdmin
+        .from("depots")
+        .select("lat, lng")
+        .eq("id", orderForPricing.selected_depot_id)
+        .single();
+
+      if (depot) {
+        const { calculateDistance, milesToKm } = await import("./utils/distance");
+        const distanceMiles = calculateDistance(
+          depot.lat,
+          depot.lng,
+          orderForPricing.drop_lat,
+          orderForPricing.drop_lng
+        );
+        distanceKm = milesToKm(distanceMiles);
+      }
+    }
+
+    const driverMap = new Map((drivers || []).map((driver: any) => [driver.id, driver]));
+    const profileMap = new Map((profiles || []).map((profile: any) => [profile.id, profile]));
+
+    const formattedOffers = offers.map((offer: any) => {
+      const driver = driverMap.get(offer.driver_id);
+      const profile = driver ? profileMap.get(driver.user_id) : null;
+      const fuelPricePerLiterCents = driverPricingMap.get(offer.driver_id) || 0;
+
+      // Calculate estimated pricing for this quote
+      const litres = parseFloat(orderForPricing?.litres || 0);
+      const fuelCost = (fuelPricePerLiterCents / 100) * litres;
+      const pricePerKmRands = (offer.proposed_price_per_km_cents || 0) / 100;
+      const deliveryFee = pricePerKmRands * distanceKm;
+      const total = fuelCost + deliveryFee;
+
+      return {
+        ...offer,
+        driver: driver
+          ? {
+              id: driver.id,
+              premiumStatus: driver.premium_status,
+              vehicleCapacityLitres: driver.vehicle_capacity_litres,
+              profile: profile
+                ? {
+                    fullName: profile.full_name,
+                    phone: profile.phone,
+                  }
+                : null,
+            }
+          : null,
+        estimatedPricing: {
+          fuelPricePerLiterCents,
+          fuelCost,
+          deliveryFee,
+          distanceKm,
+          total,
+        },
+      };
+    });
+
+    res.json(formattedOffers);
+  } catch (error: any) {
+    console.error("Error fetching order offers:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Customer accepts a driver quote
+router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
+  const user = (req as any).user;
+  const orderId = req.params.id;
+  const offerId = req.params.offerId;
+
+  try {
+    const { data: customer, error: customerError } = await supabaseAdmin
+      .from("customers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (customerError) throw customerError;
+    if (!customer) {
+      return res.status(404).json({ error: "Customer profile not found" });
+    }
+
+    const { data: order, error: orderError } = await supabaseAdmin
+      .from("orders")
+      .select("*")
+      .eq("id", orderId)
+      .eq("customer_id", customer.id)
+      .single();
+
+    if (orderError) throw orderError;
+    if (!order) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    if (order.state !== "created" && order.state !== "awaiting_payment") {
+      return res.status(409).json({ error: "Order can no longer accept driver quotes" });
+    }
+
+    const { data: offer, error: offerError } = await supabaseAdmin
+      .from("dispatch_offers")
+      .select("*")
+      .eq("id", offerId)
+      .eq("order_id", orderId)
+      .single();
+
+    if (offerError) throw offerError;
+    if (!offer) {
+      return res.status(404).json({ error: "Offer not found" });
+    }
+
+    if (offer.state !== "pending_customer") {
+      return res.status(409).json({ error: "This offer has already been actioned" });
+    }
+
+    const nowIso = new Date().toISOString();
+    
+    // Get driver's fuel price per liter for this fuel type
+    const { data: driverPricing, error: pricingError } = await supabaseAdmin
+      .from("driver_pricing")
+      .select("fuel_price_per_liter_cents")
+      .eq("driver_id", offer.driver_id)
+      .eq("fuel_type_id", order.fuel_type_id)
+      .eq("active", true)
+      .maybeSingle();
+
+    if (pricingError) throw pricingError;
+    
+    const fuelPricePerLiterCents = driverPricing?.fuel_price_per_liter_cents || 0;
+    const pricePerKmCents = Number(offer.proposed_price_per_km_cents) || 0;
+    const litres = Number(order.litres) || 0;
+    
+    // Calculate distance from depot to drop location
+    let distanceKm = 0;
+    if (order.selected_depot_id) {
+      const { data: depot, error: depotError } = await supabaseAdmin
+        .from("depots")
+        .select("lat, lng")
+        .eq("id", order.selected_depot_id)
+        .single();
+      
+      if (!depotError && depot) {
+        const { calculateDistance, milesToKm } = await import("./utils/distance");
+        const distanceMiles = calculateDistance(
+          depot.lat,
+          depot.lng,
+          order.drop_lat,
+          order.drop_lng
+        );
+        distanceKm = milesToKm(distanceMiles);
+      }
+    }
+    
+    // Calculate total: (fuel_price_per_liter * litres) + (price_per_km * distance_km)
+    const fuelCostCents = Math.round(fuelPricePerLiterCents * litres);
+    const deliveryFeeCents = Math.round(pricePerKmCents * distanceKm);
+    const serviceFee = Number(order.service_fee_cents) || 0;
+    const totalCents = fuelCostCents + deliveryFeeCents + serviceFee;
+
+    const { data: updatedOrder, error: updateOrderError } = await supabaseAdmin
+      .from("orders")
+      .update({
+        state: "assigned",
+        assigned_driver_id: offer.driver_id,
+        confirmed_delivery_time: offer.proposed_delivery_time,
+        fuel_price_cents: fuelPricePerLiterCents,
+        delivery_fee_cents: deliveryFeeCents,
+        total_cents: totalCents,
+        updated_at: nowIso,
+      })
+      .eq("id", orderId)
+      .eq("customer_id", customer.id)
+      .in("state", ["created", "awaiting_payment"])
+      .select(`
+        *,
+        customers (
+          user_id,
+          company_name
+        ),
+        fuel_types (
+          label
+        ),
+        delivery_addresses (
+          address_street,
+          address_city,
+          address_province
+        )
+      `)
+      .single();
+
+    if (updateOrderError || !updatedOrder) {
+      return res.status(409).json({ error: "Failed to assign driver. Please refresh and try again." });
+    }
+
+    const { error: selectedOfferError } = await supabaseAdmin
+      .from("dispatch_offers")
+      .update({
+        state: "customer_accepted",
+        customer_response_at: nowIso,
+        updated_at: nowIso,
+      })
+      .eq("id", offerId);
+
+    if (selectedOfferError) {
+      console.error("Error updating selected offer:", selectedOfferError);
+    }
+
+    // Get all other offers that will be declined
+    const { data: otherOffers } = await supabaseAdmin
+      .from("dispatch_offers")
+      .select("driver_id")
+      .eq("order_id", orderId)
+      .neq("id", offerId)
+      .in("state", ["pending_customer", "offered"]);
+
+    const { error: otherOffersError } = await supabaseAdmin
+      .from("dispatch_offers")
+      .update({
+        state: "customer_declined",
+        customer_response_at: nowIso,
+        updated_at: nowIso,
+      })
+      .eq("order_id", orderId)
+      .neq("id", offerId)
+      .in("state", ["pending_customer", "offered"]);
+
+    if (otherOffersError) {
+      console.error("Error updating other offers:", otherOffersError);
+    }
+
+    // Notify drivers whose quotes were declined
+    if (otherOffers && otherOffers.length > 0) {
+      const declinedDriverIds = otherOffers.map((o: any) => o.driver_id);
+      const { data: declinedDrivers } = await supabaseAdmin
+        .from("drivers")
+        .select("id, user_id")
+        .in("id", declinedDriverIds);
+
+      for (const driver of declinedDrivers || []) {
+        if (driver.user_id) {
+          try {
+            const { data: notification } = await supabaseAdmin.from("notifications").insert({
+              user_id: driver.user_id,
+              type: "offer_declined",
+              title: "Quote Declined",
+              message: `Customer selected another driver for order ${orderId.substring(0, 8).toUpperCase()}.`,
+              data: { orderId, state: "customer_declined" },
+            }).select().single();
+            
+            // Send real-time notification via WebSocket
+            if (notification) {
+              websocketService.sendNotification(driver.user_id, notification);
+            }
+
+            pushNotificationService
+              .sendOrderUpdate(
+                driver.user_id,
+                orderId,
+                "Quote Declined",
+                "Customer selected another driver for this order.",
+                { action: "view_offers", state: "customer_declined" }
+              )
+              .catch((err) => console.error("Error sending declined push notification:", err));
+          } catch (err: any) {
+            console.error("Error creating declined notification:", err);
+          }
+        }
+      }
+    }
+
+    // Fetch driver profile for notifications
+    const { data: driverRecord, error: driverLookupError } = await supabaseAdmin
+      .from("drivers")
+      .select("id, user_id")
+      .eq("id", offer.driver_id)
+      .single();
+
+    if (driverLookupError) throw driverLookupError;
+
+    const driverUserId = driverRecord?.user_id;
+    let driverProfileName = "Driver";
+
+    let driverProfilePhone: string | null = null;
+    if (driverUserId) {
+      const { data: driverProfile } = await supabaseAdmin
+        .from("profiles")
+        .select("full_name, phone")
+        .eq("id", driverUserId)
+        .maybeSingle();
+      if (driverProfile?.full_name) {
+        driverProfileName = driverProfile.full_name;
+      }
+      if (driverProfile?.phone) {
+        driverProfilePhone = driverProfile.phone;
+      }
+    }
+
+    const customerUserId = updatedOrder.customers?.user_id || user.id;
+    let customerEmail: string | null = null;
+    let customerName =
+      updatedOrder.customers?.company_name ||
+      updatedOrder.customers?.full_name ||
+      "Customer";
+
+    if (customerUserId) {
+      const { data: customerProfile } = await supabaseAdmin
+        .from("profiles")
+        .select("email, full_name")
+        .eq("id", customerUserId)
+        .maybeSingle();
+      if (customerProfile?.email) {
+        customerEmail = customerProfile.email;
+      }
+      if (customerProfile?.full_name) {
+        customerName = customerProfile.full_name;
+      }
+    }
+
+    const chatThread = await ensureChatThreadForAssignment({
+      orderId,
+      customerId: updatedOrder.customer_id,
+      driverId: offer.driver_id,
+      customerUserId,
+      driverUserId,
+    });
+
+    // Notify driver
+    if (driverUserId) {
+      const driverPayload = {
+        orderId,
+        state: "assigned",
+        driverId: offer.driver_id,
+        confirmedDeliveryTime: offer.proposed_delivery_time,
+      };
+
+      // Create notification first
+      let notification = null;
+      try {
+        const { data: notificationData, error: notifError } = await supabaseAdmin.from("notifications").insert({
+          user_id: driverUserId,
+          type: "offer_accepted",
+          title: "Quote Accepted",
+          message: `Customer accepted your quote for order ${orderId.substring(0, 8).toUpperCase()}.`,
+          data: driverPayload,
+        }).select().single();
+        
+        if (notifError) {
+          console.error("[Customer Accept Quote] Error creating notification:", notifError);
+        } else {
+          notification = notificationData;
+        }
+      } catch (err: any) {
+        console.error("[Customer Accept Quote] Error inserting driver notification:", err);
+      }
+
+      // Send WebSocket notifications
+      if (notification) {
+        websocketService.sendNotification(driverUserId, notification);
+      }
+      
+      // Also send order update (for dashboard refresh)
+      websocketService.sendOrderUpdate(driverUserId, driverPayload);
+
+      // Send push notification
+      pushNotificationService
+        .sendOrderUpdate(
+          driverUserId,
+          orderId,
+          "Quote Accepted",
+          "Customer accepted your quote. Get ready for delivery.",
+          { action: "view_order", state: "assigned" }
+        )
+        .catch((err) => console.error("Error sending driver quote accepted push notification:", err));
+    } else {
+      console.warn(`[Customer Accept Quote] No driverUserId found for driver ${offer.driver_id}`);
+    }
+
+    // Notify customer devices
+    const customerPayload = {
+      orderId,
+      state: "assigned",
+      driverId: offer.driver_id,
+      confirmedDeliveryTime: offer.proposed_delivery_time,
+    };
+
+    websocketService.sendOrderUpdate(customerUserId, customerPayload);
+
+    pushNotificationService
+      .sendDriverAssignment(
+        customerUserId,
+        orderId,
+        driverProfileName
+      )
+      .catch((err) => console.error("Error sending customer assignment notification:", err));
+
+    try {
+      await supabaseAdmin.from("notifications").insert({
+        user_id: customerUserId,
+        type: "driver_assigned",
+        title: "Driver Assigned",
+        message: `${driverProfileName} has been assigned to your order.`,
+        data: customerPayload,
+      });
+    } catch (err: any) {
+      console.error("Error inserting customer assignment notification:", err);
+    }
+
+    // Send confirmation email to customer
+    if (customerEmail) {
+      const deliveryAddress = updatedOrder.delivery_addresses
+        ? `${updatedOrder.delivery_addresses.address_street}, ${updatedOrder.delivery_addresses.address_city}, ${updatedOrder.delivery_addresses.address_province}`
+        : `${updatedOrder.drop_lat}, ${updatedOrder.drop_lng}`;
+
+      const confirmedTime = offer.proposed_delivery_time
+        ? new Date(offer.proposed_delivery_time).toLocaleString("en-ZA", {
+            dateStyle: "medium",
+            timeStyle: "short",
+            timeZone: "Africa/Johannesburg",
+          })
+        : "Not specified";
+
+      sendDriverAcceptanceEmail({
+        customerEmail,
+        customerName,
+        orderNumber: updatedOrder.id.substring(0, 8).toUpperCase(),
+        driverName: driverProfileName,
+        driverPhone: driverProfilePhone || "Not available",
+        confirmedDeliveryTime: confirmedTime,
+        fuelType: updatedOrder.fuel_types?.label || "Fuel",
+        litres: String(updatedOrder.litres),
+        deliveryAddress,
+      }).catch((error: any) => {
+        console.error("Error sending driver acceptance email:", error);
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Driver assigned successfully",
+      orderId,
+    });
+  } catch (error: any) {
+    console.error("Error accepting driver offer:", error);
+    res.status(500).json({ error: error.message || "Failed to accept driver offer" });
   }
 });
 
@@ -320,7 +858,6 @@ router.post("/orders", async (req, res) => {
     if (orderError) throw orderError;
 
     // Create dispatch offers for drivers (async, don't wait)
-    console.log(`[Order Created] Order ${newOrder.id} created, creating dispatch offers...`);
     createDispatchOffers({
       orderId: newOrder.id,
       fuelTypeId: newOrder.fuel_type_id,
@@ -328,9 +865,6 @@ router.post("/orders", async (req, res) => {
       dropLng: lng,
       litres: litresNum,
       maxBudgetCents: maxBudgetCents || null,
-    })
-    .then(() => {
-      console.log(`[Order Created] Dispatch offers creation completed for order ${newOrder.id}`);
     })
     .catch(error => {
       console.error(`[Order Created] Error creating dispatch offers for order ${newOrder.id}:`, error);

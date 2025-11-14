@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -30,13 +30,14 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { MapPin, Calendar, Package, User, Phone, Clock } from "lucide-react";
+import { MapPin, Calendar, Package, User, Phone, Clock, Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
 import { Badge } from "@/components/ui/badge";
 import { DriverLocationMap } from "./DriverLocationMap";
 import { OrderChat } from "./OrderChat";
 import { useCurrency } from "@/hooks/use-currency";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { formatCurrency } from "@/lib/utils";
 
 const orderEditSchema = z.object({
   fuelTypeId: z.string().min(1, "Please select a fuel type"),
@@ -63,13 +64,75 @@ interface ViewOrderDialogProps {
 export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialogProps) {
   const [isEditing, setIsEditing] = useState(false);
   const { toast } = useToast();
-  const { currencySymbol } = useCurrency();
+  const { currencySymbol, currency } = useCurrency();
 
   // Fetch order details
   const { data: order, isLoading: loadingOrder } = useQuery<any>({
     queryKey: ["/api/orders", orderId],
     enabled: open && !!orderId,
   });
+
+  const { data: driverQuotes = [], isLoading: loadingQuotes } = useQuery<any[]>({
+    queryKey: ["/api/orders", orderId, "offers"],
+    enabled: open && !!orderId,
+  });
+
+  // Get accepted or pending quote for pricing calculation
+  const activeQuote = driverQuotes.find(
+    (q: any) => q.state === "customer_accepted" || q.state === "pending_customer"
+  ) || (order?.assigned_driver_id && driverQuotes.find((q: any) => q.driver?.id === order.assigned_driver_id));
+
+  // Calculate distance from depot to drop location
+  const calculateDistanceKm = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371; // Earth's radius in kilometers
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLon = ((lon2 - lon1) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((lat1 * Math.PI) / 180) *
+        Math.cos((lat2 * Math.PI) / 180) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return Math.round(R * c * 10) / 10;
+  };
+
+  // Calculate pricing breakdown
+  const pricingBreakdown = useMemo(() => {
+    if (!order) {
+      return {
+        fuelCost: 0,
+        deliveryFee: 0,
+        serviceFee: 0,
+        total: 0,
+      };
+    }
+
+    // If we have an active quote with estimated pricing, use that
+    if (activeQuote?.estimatedPricing) {
+      return {
+        fuelCost: activeQuote.estimatedPricing.fuelCost,
+        deliveryFee: activeQuote.estimatedPricing.deliveryFee,
+        serviceFee: 0,
+        total: activeQuote.estimatedPricing.total,
+      };
+    }
+
+    // If order is already accepted, use stored values
+    const litres = parseFloat(order.litres || 0);
+    const fuelPricePerLiterCents = order.fuel_price_cents || 0;
+    const fuelCost = (fuelPricePerLiterCents / 100) * litres;
+    const deliveryFee = (order.delivery_fee_cents || 0) / 100;
+    const serviceFee = 0;
+    const total = fuelCost + deliveryFee + serviceFee;
+
+    return {
+      fuelCost,
+      deliveryFee,
+      serviceFee,
+      total,
+    };
+  }, [order, activeQuote]);
 
   // Fetch fuel types for editing
   const { data: fuelTypes = [], isLoading: loadingFuelTypes } = useQuery<any[]>({
@@ -152,6 +215,30 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
     },
   });
 
+  const acceptDriverOfferMutation = useMutation({
+    mutationFn: async (driverOfferId: string) => {
+      const response = await apiRequest("POST", `/api/orders/${orderId}/offers/${driverOfferId}/accept`);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId, "offers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/chat/thread", orderId] });
+      toast({
+        title: "Driver assigned",
+        description: "You accepted the driver’s quote. They have been notified.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to accept driver quote",
+        variant: "destructive",
+      });
+    },
+  });
+
   const onSubmit = (values: OrderEditValues) => {
     updateOrderMutation.mutate(values);
   };
@@ -160,6 +247,10 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
     if (confirm("Are you sure you want to cancel this order?")) {
       cancelOrderMutation.mutate();
     }
+  };
+
+  const handleAcceptDriverQuote = (driverOfferId: string) => {
+    acceptDriverOfferMutation.mutate(driverOfferId);
   };
 
   if (loadingOrder) {
@@ -180,6 +271,10 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
 
   const canEdit = ["created", "awaiting_payment"].includes(order.state);
   const canCancel = !["delivered", "cancelled", "picked_up", "en_route"].includes(order.state);
+  const canUseChat =
+    order.assigned_driver_id &&
+    ["assigned", "en_route", "picked_up"].includes(order.state) &&
+    order.chat_enabled !== false;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -228,6 +323,150 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                     <p className="text-sm font-medium">Time Window</p>
                     <p className="text-sm text-muted-foreground">{order.time_window}</p>
                   </div>
+                </div>
+              )}
+
+              {(loadingQuotes || driverQuotes.length > 0) && (
+                <div className="space-y-3 border border-border/60 rounded-lg p-3 bg-background/60">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium">Driver Quotes</p>
+                    {loadingQuotes && (
+                      <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Loading…
+                      </span>
+                    )}
+                  </div>
+
+                    {!loadingQuotes && driverQuotes.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">
+                        No driver quotes yet. We’ll notify you as soon as a driver responds.
+                      </p>
+                    ) : (
+                      <div className="space-y-3">
+                        {driverQuotes.map((quote: any) => {
+                          const pricePerKm = (Number(quote.proposed_price_per_km_cents) || 0) / 100;
+                          // Calculate estimated total (will be finalized when accepted)
+                          const litres = parseFloat(order.litres || 0);
+                          const fuelPricePerLiter = (order.fuel_price_cents || 0) / 100;
+                          const estimatedFuelCost = fuelPricePerLiter * litres;
+                          // Note: Delivery fee will be calculated as price_per_km * distance_km when accepted
+                          const proposedTime = quote.proposed_delivery_time
+                            ? new Date(quote.proposed_delivery_time).toLocaleString("en-ZA", {
+                                dateStyle: "medium",
+                                timeStyle: "short",
+                                timeZone: "Africa/Johannesburg",
+                              })
+                            : "Not specified";
+                          const driverName = quote.driver?.profile?.fullName || "Driver";
+                          const isPendingDecision = !order.assigned_driver_id && quote.state === "pending_customer";
+                          const isAccepted = quote.state === "customer_accepted";
+                          const isDeclined = quote.state === "customer_declined";
+                          const isResponded = quote.state === "customer_accepted" || quote.state === "customer_declined";
+                          const isProcessing =
+                            acceptDriverOfferMutation.isPending &&
+                            acceptDriverOfferMutation.variables === quote.id;
+
+                          return (
+                            <div key={quote.id} className="border border-border rounded-lg p-3 space-y-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="text-sm font-semibold">{driverName}</p>
+                                  {quote.driver?.profile?.phone && (
+                                    <p className="text-xs text-muted-foreground">
+                                      <a
+                                        href={`tel:${quote.driver.profile.phone}`}
+                                        className="text-primary hover:underline"
+                                      >
+                                        {quote.driver.profile.phone}
+                                      </a>
+                                    </p>
+                                  )}
+                                  {quote.driver?.premiumStatus === "active" && (
+                                    <Badge variant="outline" className="mt-1 text-xs">
+                                      Premium Driver
+                                    </Badge>
+                                  )}
+                                </div>
+                                <div className="text-right">
+                                  <p className="text-sm font-semibold text-primary">
+                                    {formatCurrency(pricePerKm, currency)}/km
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">Price per km</p>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                <Calendar className="h-3.5 w-3.5" />
+                                <span>{proposedTime}</span>
+                              </div>
+
+                              {quote.proposed_notes && (
+                                <div className="rounded-md bg-muted/60 p-2 text-xs text-muted-foreground border border-border/70">
+                                  {quote.proposed_notes}
+                                </div>
+                              )}
+
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  {isAccepted && (
+                                    <Badge className="bg-green-600 text-white gap-1">
+                                      <CheckCircle2 className="h-3 w-3" />
+                                      Accepted
+                                    </Badge>
+                                  )}
+                                  {isDeclined && (
+                                    <Badge variant="outline" className="text-xs gap-1 text-muted-foreground">
+                                      <XCircle className="h-3 w-3" />
+                                      Declined
+                                    </Badge>
+                                  )}
+                                  {quote.state === "pending_customer" && (
+                                    <Badge variant="outline" className="text-xs text-primary">
+                                      Awaiting your decision
+                                    </Badge>
+                                  )}
+                                </div>
+
+                                {isPendingDecision && (
+                                  <Button
+                                    size="sm"
+                                    onClick={() => handleAcceptDriverQuote(quote.id)}
+                                    disabled={isProcessing}
+                                    data-testid={`button-accept-driver-quote-${quote.id}`}
+                                  >
+                                    {isProcessing ? (
+                                      <>
+                                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                        Accepting…
+                                      </>
+                                    ) : (
+                                      "Accept Quote"
+                                    )}
+                                  </Button>
+                                )}
+
+                                {isResponded && !isPendingDecision && (
+                                  <p className="text-xs text-muted-foreground">
+                                    Updated {quote.customer_response_at
+                                      ? new Date(quote.customer_response_at).toLocaleString("en-ZA", {
+                                          dateStyle: "medium",
+                                          timeStyle: "short",
+                                          timeZone: "Africa/Johannesburg",
+                                        })
+                                      : new Date(quote.updated_at).toLocaleString("en-ZA", {
+                                          dateStyle: "medium",
+                                          timeStyle: "short",
+                                          timeZone: "Africa/Johannesburg",
+                                        })}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                 </div>
               )}
 
@@ -294,11 +533,16 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                     deliveryLng={order.drop_lng}
                   />
                   
-                  {/* Chat with driver */}
-                  <OrderChat
-                    orderId={order.id}
-                    currentUserType="customer"
-                  />
+                  {canUseChat ? (
+                    <OrderChat
+                      orderId={order.id}
+                      currentUserType="customer"
+                    />
+                  ) : (
+                    <div className="border border-border/60 rounded-lg p-4 text-sm text-muted-foreground">
+                      Chat is no longer available for this order.
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -306,20 +550,26 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
               <div className="border-t pt-3 space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Fuel Cost</span>
-                  <span data-testid="text-fuel-cost">{currencySymbol} {(order.fuel_price_cents / 100).toFixed(2)}</span>
+                  <span data-testid="text-fuel-cost">
+                    {currencySymbol} {pricingBreakdown.fuelCost.toFixed(2)}
+                  </span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Delivery Fee</span>
-                  <span data-testid="text-delivery-fee">{currencySymbol} {(order.delivery_fee_cents / 100).toFixed(2)}</span>
+                  <span data-testid="text-delivery-fee">
+                    {currencySymbol} {pricingBreakdown.deliveryFee.toFixed(2)}
+                  </span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Service Fee</span>
-                  <span data-testid="text-service-fee">{currencySymbol} {(order.service_fee_cents / 100).toFixed(2)}</span>
+                  <span data-testid="text-service-fee">
+                    {currencySymbol} {pricingBreakdown.serviceFee.toFixed(2)}
+                  </span>
                 </div>
                 <div className="flex justify-between font-semibold pt-2 border-t">
                   <span>Total</span>
                   <span className="text-primary" data-testid="text-total">
-                    {currencySymbol} {(order.total_cents / 100).toFixed(2)}
+                    {currencySymbol} {pricingBreakdown.total.toFixed(2)}
                   </span>
                 </div>
               </div>

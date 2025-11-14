@@ -20,7 +20,7 @@ interface FuelTypeWithPricing {
   active: boolean;
   pricing: {
     id: string;
-    delivery_fee_cents: number;
+    fuel_price_per_liter_cents: number;
     active: boolean;
   } | null;
 }
@@ -57,15 +57,15 @@ export function DriverPricingManager() {
 
   // Update pricing mutation
   const updatePricingMutation = useMutation({
-    mutationFn: async ({ fuelTypeId, deliveryFeeCents, notes }: { 
+    mutationFn: async ({ fuelTypeId, fuelPricePerLiterCents, notes }: { 
       fuelTypeId: string; 
-      deliveryFeeCents: number;
+      fuelPricePerLiterCents: number;
       notes?: string;
     }) => {
       const response = await apiRequest(
         "PUT",
         `/api/driver/pricing/${fuelTypeId}`,
-        { deliveryFeeCents, notes }
+        { fuelPricePerLiterCents, notes }
       );
       return response.json();
     },
@@ -74,7 +74,7 @@ export function DriverPricingManager() {
       queryClient.invalidateQueries({ queryKey: ["/api/driver/pricing/history"] });
       toast({
         title: "Pricing updated",
-        description: "Your delivery fee has been updated successfully.",
+        description: "Your fuel price per liter has been updated successfully.",
       });
       // Clear the editing state for this fuel type
       setEditingPrices((prev) => {
@@ -116,9 +116,9 @@ export function DriverPricingManager() {
       return;
     }
 
-    const deliveryFeeCents = Math.round(parseFloat(rands) * 100);
+    const fuelPricePerLiterCents = Math.round(parseFloat(rands) * 100);
     
-    if (isNaN(deliveryFeeCents) || deliveryFeeCents < 0) {
+    if (isNaN(fuelPricePerLiterCents) || fuelPricePerLiterCents < 0) {
       toast({
         title: "Error",
         description: "Please enter a valid price",
@@ -129,7 +129,7 @@ export function DriverPricingManager() {
 
     updatePricingMutation.mutate({
       fuelTypeId,
-      deliveryFeeCents,
+      fuelPricePerLiterCents,
       notes: editingNotes[fuelTypeId],
     });
   };
@@ -139,7 +139,7 @@ export function DriverPricingManager() {
       return editingPrices[fuelType.id];
     }
     if (fuelType.pricing) {
-      return (fuelType.pricing.delivery_fee_cents / 100).toFixed(2);
+      return (fuelType.pricing.fuel_price_per_liter_cents / 100).toFixed(2);
     }
     return "";
   };
@@ -178,7 +178,7 @@ export function DriverPricingManager() {
                 Delivery Pricing
               </CardTitle>
               <CardDescription>
-                Set your delivery fees for different fuel types. These are the amounts you'll earn per delivery.
+                Set your fuel prices per liter for different fuel types. This is the price you charge customers for fuel.
               </CardDescription>
             </div>
             <Button
@@ -210,9 +210,9 @@ export function DriverPricingManager() {
                   {fuelType.pricing && !editingPrices[fuelType.id] && (
                     <div className="text-right">
                       <p className="text-2xl font-bold">
-                        {formatPrice(fuelType.pricing.delivery_fee_cents)}
+                        {formatPrice(fuelType.pricing.fuel_price_per_liter_cents)}
                       </p>
-                      <p className="text-xs text-muted-foreground">per delivery</p>
+                      <p className="text-xs text-muted-foreground">per liter</p>
                     </div>
                   )}
                 </div>
@@ -220,7 +220,7 @@ export function DriverPricingManager() {
                 <div className="grid gap-4">
                   <div>
                     <Label htmlFor={`price-${fuelType.id}`}>
-                      Delivery Fee ({currency})
+                      Fuel Price per Liter ({currency})
                     </Label>
                     <div className="flex gap-2 mt-1.5">
                       <div className="relative flex-1">

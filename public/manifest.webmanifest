@@ -1,0 +1,64 @@
+{
+  "name": "Easy Fuel ZA",
+  "short_name": "Easy Fuel",
+  "description": "South Africa's trusted fuel delivery marketplace. Order diesel, petrol, or paraffin delivered directly to your site by vetted drivers from approved suppliers.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#081c1f",
+  "theme_color": "#0ce6db",
+  "lang": "en",
+  "categories": [
+    "business",
+    "productivity",
+    "navigation"
+  ],
+  "icons": [
+    {
+      "src": "/badge-72.png",
+      "sizes": "72x72",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Driver Dashboard",
+      "short_name": "Driver",
+      "url": "/driver",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Customer Dashboard",
+      "short_name": "Customer",
+      "url": "/customer",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ]
+}
+

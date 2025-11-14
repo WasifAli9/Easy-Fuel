@@ -22,14 +22,12 @@ class WebSocketService {
     this.wss = new WebSocketServer({ server, path: "/ws" });
 
     this.wss.on("connection", async (ws: AuthenticatedWebSocket, req: IncomingMessage) => {
-      console.log("New WebSocket connection attempt");
 
       // Extract token from query params
       const { query } = parse(req.url || "", true);
       const token = query.token as string;
 
       if (!token) {
-        console.log("WebSocket connection rejected: No token provided");
         ws.close(1008, "Authentication required");
         return;
       }
@@ -38,7 +36,6 @@ class WebSocketService {
       const { data: { user }, error } = await supabaseAuth.auth.getUser(token);
 
       if (error || !user) {
-        console.log("WebSocket connection rejected: Invalid token");
         ws.close(1008, "Invalid authentication token");
         return;
       }
@@ -53,7 +50,6 @@ class WebSocketService {
       }
       this.clients.get(user.id)!.add(ws);
 
-      console.log(`WebSocket authenticated for user ${user.id}`);
 
       // Handle ping/pong for connection health
       ws.on("pong", () => {
@@ -80,7 +76,6 @@ class WebSocketService {
               this.clients.delete(ws.userId);
             }
           }
-          console.log(`WebSocket disconnected for user ${ws.userId}`);
         }
       });
 
@@ -107,11 +102,9 @@ class WebSocketService {
       clearInterval(heartbeatInterval);
     });
 
-    console.log("WebSocket server initialized on path /ws");
   }
 
   private handleMessage(ws: AuthenticatedWebSocket, message: WebSocketMessage) {
-    console.log(`Received message from user ${ws.userId}:`, message.type);
 
     switch (message.type) {
       case "ping":
@@ -128,7 +121,6 @@ class WebSocketService {
         break;
 
       default:
-        console.log(`Unknown message type: ${message.type}`);
     }
   }
 
@@ -144,10 +136,8 @@ class WebSocketService {
       userClients.forEach((ws) => {
         this.sendToSocket(ws, message);
       });
-      console.log(`Sent ${message.type} to user ${userId} (${userClients.size} connections)`);
       return true;
     } else {
-      console.log(`User ${userId} not connected via WebSocket`);
       return false;
     }
   }
@@ -177,6 +167,13 @@ class WebSocketService {
     return this.sendToUser(userId, {
       type: "location_update",
       payload: location,
+    });
+  }
+
+  sendNotification(userId: string, notification: any) {
+    return this.sendToUser(userId, {
+      type: "notification",
+      payload: notification,
     });
   }
 

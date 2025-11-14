@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { NotificationPermissionBanner } from "@/components/NotificationPermissionBanner";
+import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import Landing from "@/pages/Landing";
 import Auth from "@/pages/Auth";
 import ResetPassword from "@/pages/ResetPassword";
@@ -67,6 +68,7 @@ function Router() {
 
   return (
     <>
+      <PwaInstallPrompt />
       {user && <NotificationPermissionBanner />}
       <Switch>
       <Route path="/">

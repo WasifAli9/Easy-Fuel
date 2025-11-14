@@ -20,11 +20,13 @@ import {
 } from "@/components/ui/sheet";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLocation, Link } from "wouter";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { formatDistanceToNow } from "date-fns";
 import { Check, CheckCheck } from "lucide-react";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import { useToast } from "@/hooks/use-toast";
 
 interface AppHeaderProps {
   onMenuClick?: () => void;
@@ -38,22 +40,78 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const queryClient = useQueryClient();
+  const { toast } = useToast();
 
   // Fetch notifications
   const { data: notifications = [], refetch: refetchNotifications } = useQuery<any[]>({
     queryKey: ["/api/notifications"],
     enabled: !!profile, // Only fetch if user is logged in
-    refetchInterval: 30000, // Refetch every 30 seconds
+    refetchInterval: 60000, // Refetch every 60 seconds (WebSocket handles real-time)
+    staleTime: 0, // Always consider data stale to allow immediate refetch
   });
 
   // Fetch unread count
-  const { data: unreadData } = useQuery<{ count: number }>({
+  const { data: unreadData, refetch: refetchUnreadCount } = useQuery<{ count: number }>({
     queryKey: ["/api/notifications/unread-count"],
     enabled: !!profile,
-    refetchInterval: 30000,
+    refetchInterval: 60000, // Refetch every 60 seconds (WebSocket handles real-time)
   });
 
   const notificationCount = propNotificationCount ?? (unreadData?.count || 0);
+
+  // Set up WebSocket for real-time notifications
+  useWebSocket((message) => {
+    if (message.type === "notification") {
+      // New notification received via WebSocket
+      queryClient.setQueryData<any[]>(["/api/notifications"], (old = []) => {
+        // Check if notification already exists (avoid duplicates)
+        const exists = old?.some((n: any) => n.id === message.payload?.id);
+        if (exists) {
+          return old;
+        }
+        // Add new notification to the beginning of the list
+        return [message.payload, ...(old || [])];
+      });
+      
+      // Update unread count
+      refetchUnreadCount();
+      
+      // Show toast notification
+      if (message.payload?.title) {
+        toast({
+          title: message.payload.title,
+          description: message.payload.message,
+          duration: 5000,
+        });
+      }
+    } else if (message.type === "order_update") {
+      // When order is updated (e.g., assigned), refresh notifications
+      // This ensures we get the latest notification from the database
+      if (message.payload?.state === "assigned" && profile?.role === "driver") {
+        // Driver got assigned to an order - refresh notifications immediately
+        refetchNotifications();
+        refetchUnreadCount();
+      } else {
+        refetchNotifications();
+        refetchUnreadCount();
+      }
+    } else if (message.type === "dispatch_offer") {
+      // New dispatch offer - refresh notifications immediately
+      // Immediately refetch to get the new notification from database
+      // Use a small delay to ensure the notification is in the database
+      setTimeout(() => {
+        refetchNotifications();
+        refetchUnreadCount();
+      }, 500);
+      
+      // Also show a toast notification
+      toast({
+        title: "New Delivery Request",
+        description: "You have a new fuel delivery request available",
+        duration: 5000,
+      });
+    }
+  });
 
   // Mark notification as read mutation
   const markAsReadMutation = useMutation({
@@ -106,6 +164,8 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
         return "🎯";
       case "offer_accepted":
         return "✅";
+      case "offer_declined":
+        return "❌";
       case "driver_assigned":
         return "🚗";
       case "delivery_complete":

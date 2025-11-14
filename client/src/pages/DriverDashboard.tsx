@@ -19,6 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { CompleteDeliveryDialog } from "@/components/CompleteDeliveryDialog";
+import { useWebSocket } from "@/hooks/useWebSocket";
 
 export default function DriverDashboard() {
   const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null);
@@ -29,9 +30,9 @@ export default function DriverDashboard() {
   const { toast } = useToast();
 
   // Fetch available dispatch offers
-  const { data: offersData, isLoading, error: offersError } = useQuery<any>({
+  const { data: offersData, isLoading, error: offersError, refetch: refetchOffers } = useQuery<any>({
     queryKey: ["/api/driver/offers"],
-    refetchInterval: 30000, // Refresh every 30 seconds
+    refetchInterval: 60000, // Refresh every 60 seconds (WebSocket handles real-time)
   });
 
   // Handle both array response (offers) and object response (with eligibility info)
@@ -73,7 +74,21 @@ export default function DriverDashboard() {
     refetchInterval: 15000, // Refresh every 15 seconds
   });
 
+  // Fetch completed orders (last week)
+  const { data: completedOrders = [], isLoading: loadingCompleted } = useQuery<any[]>({
+    queryKey: ["/api/driver/completed-orders"],
+    refetchInterval: 60000, // Refresh every 60 seconds
+  });
+
   const { currency } = useCurrency();
+
+  // Set up WebSocket to refresh offers when new orders arrive
+  useWebSocket((message) => {
+    if (message.type === "dispatch_offer" || message.type === "notification") {
+      // Refresh offers when new dispatch offers arrive
+      refetchOffers();
+    }
+  });
   
   // Helper function to format currency using the user's preferred currency
   const formatCurrencyAmount = (amount: number) => formatCurrency(amount, currency);
@@ -418,9 +433,78 @@ export default function DriverDashboard() {
           </TabsContent>
 
           <TabsContent value="history" className="space-y-3 sm:space-y-4">
-            <div className="text-center py-8 sm:py-12 text-muted-foreground">
-              <p>No completed jobs yet</p>
-            </div>
+            {loadingCompleted ? (
+              <div className="text-center py-8 sm:py-12 text-muted-foreground">
+                <p>Loading completed jobs...</p>
+              </div>
+            ) : completedOrders.length === 0 ? (
+              <div className="text-center py-8 sm:py-12 text-muted-foreground">
+                <p>No completed jobs in the last week</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4">
+                {completedOrders.map((order) => {
+                  const customerName = 
+                    order.customers?.profiles?.full_name || 
+                    order.customers?.company_name || 
+                    "Customer";
+                  
+                  const fuelName = order.fuel_types?.label || "Fuel";
+                  
+                  const deliveryAddress = order.delivery_addresses
+                    ? [
+                        order.delivery_addresses.address_street,
+                        order.delivery_addresses.address_city,
+                        order.delivery_addresses.address_province
+                      ].filter(Boolean).join(", ") || "Address not specified"
+                    : order.drop_lat && order.drop_lng
+                    ? `${order.drop_lat}, ${order.drop_lng}`
+                    : "Address not specified";
+                  
+                  const earnings = order.total_cents ? order.total_cents / 100 : 0;
+                  const deliveredDate = order.delivered_at 
+                    ? new Date(order.delivered_at).toLocaleDateString("en-ZA", {
+                        year: "numeric",
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit"
+                      })
+                    : "Date not available";
+
+                  return (
+                    <Card key={order.id}>
+                      <CardHeader>
+                        <CardTitle className="flex items-center justify-between text-base">
+                          <span>{fuelName} - {parseFloat(order.litres)}L</span>
+                          <span className="text-sm font-normal text-muted-foreground">
+                            {deliveredDate}
+                          </span>
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <p className="text-muted-foreground">Customer</p>
+                            <p className="font-medium">{customerName}</p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground">Earnings</p>
+                            <p className="font-medium text-green-600 dark:text-green-400">
+                              {formatCurrencyAmount(earnings)}
+                            </p>
+                          </div>
+                          <div className="sm:col-span-2">
+                            <p className="text-muted-foreground">Delivery Address</p>
+                            <p className="font-medium text-xs sm:text-sm">{deliveryAddress}</p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
           </TabsContent>
         </Tabs>
 

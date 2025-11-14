@@ -1,28 +1,30 @@
-const CACHE_NAME = 'easy-fuel-v1';
+const CACHE_NAME = "easy-fuel-v2";
+const OFFLINE_FALLBACK_PAGE = "/";
+const STATIC_ASSETS = [
+  "/",
+  "/index.html",
+  "/manifest.webmanifest",
+  "/icon-192.png",
+  "/icon-512.png",
+  "/badge-72.png",
+];
 
-self.addEventListener('install', (event) => {
+self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll([
-        '/',
-        '/icon-192.png',
-        '/icon-512.png',
-        '/badge-72.png',
-      ]);
-    })
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
   );
   self.skipWaiting();
 });
 
-self.addEventListener('activate', (event) => {
+self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
+    caches.keys().then((cacheNames) =>
+      Promise.all(
         cacheNames
           .filter((name) => name !== CACHE_NAME)
           .map((name) => caches.delete(name))
-      );
-    })
+      )
+    )
   );
   self.clients.claim();
 });
@@ -67,14 +69,77 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
-self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET') {
+self.addEventListener("fetch", (event) => {
+  if (event.request.method !== "GET") {
     return;
   }
 
-  event.respondWith(
-    caches.match(event.request).then((response) => {
-      return response || fetch(event.request);
-    })
-  );
+  const request = event.request;
+  const url = new URL(request.url);
+
+  if (request.mode === "navigate") {
+    event.respondWith(networkFirst(request));
+    return;
+  }
+
+  if (isStaticAsset(request, url)) {
+    event.respondWith(cacheFirst(request));
+    return;
+  }
+
+  event.respondWith(staleWhileRevalidate(request));
 });
+
+function isStaticAsset(request, url) {
+  const destination = request.destination;
+  if (["style", "script", "worker", "font", "image"].includes(destination)) {
+    return true;
+  }
+
+  const extension = url.pathname.split(".").pop();
+  return ["js", "css", "png", "jpg", "jpeg", "svg", "webp", "woff", "woff2"].includes(
+    extension || ""
+  );
+}
+
+async function cacheFirst(request) {
+  const cache = await caches.open(CACHE_NAME);
+  const cachedResponse = await cache.match(request);
+  if (cachedResponse) {
+    return cachedResponse;
+  }
+
+  const networkResponse = await fetch(request);
+  cache.put(request, networkResponse.clone());
+  return networkResponse;
+}
+
+async function networkFirst(request) {
+  const cache = await caches.open(CACHE_NAME);
+  try {
+    const networkResponse = await fetch(request);
+    cache.put(request, networkResponse.clone());
+    return networkResponse;
+  } catch (error) {
+    const cachedResponse = await cache.match(request);
+    if (cachedResponse) {
+      return cachedResponse;
+    }
+
+    return cache.match(OFFLINE_FALLBACK_PAGE);
+  }
+}
+
+async function staleWhileRevalidate(request) {
+  const cache = await caches.open(CACHE_NAME);
+  const cachedResponse = await cache.match(request);
+
+  const fetchPromise = fetch(request)
+    .then((networkResponse) => {
+      cache.put(request, networkResponse.clone());
+      return networkResponse;
+    })
+    .catch(() => cachedResponse);
+
+  return cachedResponse || fetchPromise;
+}

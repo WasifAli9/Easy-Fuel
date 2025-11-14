@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireAuth } from "./routes";
 import { supabaseAdmin } from "./supabase";
 import { websocketService } from "./websocket";
+import { isFinalOrderState } from "./chat-service";
 
 const router = Router();
 router.use(requireAuth);
@@ -49,14 +50,13 @@ function mapMessage(record: any, senderProfile?: any) {
     readAt: record.read_at,
     createdAt: record.created_at,
     senderName: senderProfile?.full_name || "Unknown",
-    senderAvatar: senderProfile?.profile_photo_url || null,
   };
 }
 
 async function fetchOrderWithParticipants(orderId: string) {
   const { data: order, error: orderError } = await supabaseAdmin
     .from("orders")
-    .select("id, customer_id, assigned_driver_id")
+    .select("id, customer_id, assigned_driver_id, state")
     .eq("id", orderId)
     .maybeSingle();
 
@@ -110,7 +110,6 @@ router.get("/thread/:orderId", async (req, res) => {
       return res.status(403).json({ error: "Not authorized to access this chat" });
     }
 
-    // Check if thread exists
     const { data: existingThread, error: threadError } = await supabaseAdmin
       .from("chat_threads")
       .select("*")
@@ -122,7 +121,10 @@ router.get("/thread/:orderId", async (req, res) => {
       throw threadError;
     }
 
-    // Create thread if it doesn't exist and order has a driver
+    if (isFinalOrderState(order.state)) {
+      return res.status(410).json({ error: "Chat not available for completed order" });
+    }
+
     if (!existingThread && !order.assigned_driver_id) {
       return res.status(400).json({ error: "Cannot create chat thread - no driver assigned" });
     }
@@ -232,7 +234,7 @@ router.get("/messages/:threadId", async (req, res) => {
     const senderIds = Array.from(new Set(messages.map((m) => m.sender_id)));
     const { data: senderProfiles, error: profileError } = await supabaseAdmin
       .from("profiles")
-      .select("id, full_name, profile_photo_url")
+      .select("id, full_name")
       .in("id", senderIds);
 
     if (profileError) throw profileError;
@@ -335,7 +337,7 @@ router.post("/messages", async (req, res) => {
 
     const { data: senderProfile, error: profileError } = await supabaseAdmin
       .from("profiles")
-      .select("id, full_name, profile_photo_url")
+      .select("id, full_name")
       .eq("id", user.id)
       .maybeSingle();
 

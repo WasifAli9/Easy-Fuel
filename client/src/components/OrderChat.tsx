@@ -21,7 +21,6 @@ interface Message {
   readAt: Date | null;
   createdAt: Date;
   senderName: string;
-  senderAvatar: string | null;
 }
 
 interface ChatThread {
@@ -44,7 +43,11 @@ export function OrderChat({ orderId, currentUserType }: OrderChatProps) {
   const { toast } = useToast();
 
   // Get or create chat thread
-  const { data: thread, isLoading: threadLoading } = useQuery<ChatThread>({
+  const {
+    data: thread,
+    isLoading: threadLoading,
+    isError: threadError,
+  } = useQuery<ChatThread>({
     queryKey: ["/api/chat/thread", orderId],
     refetchInterval: 10000, // Poll every 10 seconds
   });
@@ -134,7 +137,7 @@ export function OrderChat({ orderId, currentUserType }: OrderChatProps) {
     );
   }
 
-  if (!thread) {
+  if (threadError || !thread) {
     return (
       <Card>
         <CardContent className="p-6 text-center text-muted-foreground">
@@ -175,10 +178,9 @@ export function OrderChat({ orderId, currentUserType }: OrderChatProps) {
                     className={`flex gap-3 ${isOwnMessage ? 'flex-row-reverse' : 'flex-row'}`}
                     data-testid={`message-${msg.id}`}
                   >
-                    <Avatar className="h-8 w-8">
-                      <AvatarImage src={msg.senderAvatar || undefined} />
-                      <AvatarFallback>
-                        {msg.senderName?.charAt(0).toUpperCase() || '?'}
+                    <Avatar className="h-8 w-8 bg-primary/10 text-primary uppercase">
+                      <AvatarFallback className="font-semibold">
+                        {msg.senderType === "driver" ? "D" : "C"}
                       </AvatarFallback>
                     </Avatar>
                     <div className={`flex flex-col gap-1 max-w-[70%] ${isOwnMessage ? 'items-end' : 'items-start'}`}>

@@ -4,6 +4,7 @@ import { sendDriverAcceptanceEmail, sendDeliveryCompletionEmail } from "./email-
 import { insertDriverPricingSchema, insertPricingHistorySchema } from "@shared/schema";
 import { websocketService } from "./websocket";
 import { pushNotificationService } from "./push-service";
+import { cleanupChatForOrder, ensureChatThreadForAssignment } from "./chat-service";
 import { z } from "zod";
 import dotenv from "dotenv";
 dotenv.config();
@@ -273,7 +274,6 @@ async function sendCustomerNotification(
       deliveryAddress,
     });
 
-    console.log(`Customer notification sent for order ${orderId}`);
   } catch (error) {
     console.error("Error sending customer notification:", error);
     throw error;
@@ -330,8 +330,6 @@ router.get("/offers", async (req, res) => {
   const user = (req as any).user;
 
   try {
-    console.log(`[Driver Offers] Fetching offers for user ${user.id}`);
-    
     // Get driver ID and status from user ID
     // Note: availability_status column may not exist in all databases, so we'll check for it
     let { data: driver, error: driverError } = await supabaseAdmin
@@ -344,7 +342,6 @@ router.get("/offers", async (req, res) => {
     
     // If no driver record, create it automatically
     if (!driver) {
-      console.log(`[Driver Offers] No driver record found for user ${user.id}, creating one...`);
       const { data: newDriver, error: createError } = await supabaseAdmin
         .from("drivers")
         .insert({ 
@@ -356,10 +353,7 @@ router.get("/offers", async (req, res) => {
       
       if (createError) throw createError;
       driver = newDriver;
-      console.log(`[Driver Offers] Created driver record with ID ${driver.id}`);
     }
-
-    console.log(`[Driver Offers] Driver ID: ${driver.id}, user_id: ${user.id}`);
 
     // Check driver eligibility for offers
     const eligibilityIssues: string[] = [];
@@ -370,7 +364,6 @@ router.get("/offers", async (req, res) => {
     }
 
     const now = new Date().toISOString();
-    console.log(`[Driver Offers] Querying offers for driver_id=${driver.id}, state='offered', expires_at > ${now}`);
 
     // 1. Fetch existing dispatch offers with order and customer details
     const { data: offers, error: offersError } = await supabaseAdmin
@@ -407,8 +400,6 @@ router.get("/offers", async (req, res) => {
       console.error(`[Driver Offers] Error fetching offers:`, offersError);
       throw offersError;
     }
-
-    console.log(`[Driver Offers] Found ${offers?.length || 0} existing offers for driver ${driver.id}`);
 
     // 2. Fetch orders in "created" state that have NO dispatch offers yet (show to ALL drivers)
     // These are orders waiting for dispatch offers to be created
@@ -464,8 +455,6 @@ router.get("/offers", async (req, res) => {
       (order: any) => !orderIdsWithAnyOffers.has(order.id)
     );
 
-    console.log(`[Driver Offers] Found ${pendingOrders.length} orders without dispatch offers (pending)`);
-
     // 3. Convert pending orders to offer-like objects for consistent frontend display
     const pendingOffers = pendingOrders.map((order: any) => ({
       id: `pending-${order.id}`, // Synthetic ID for pending offers
@@ -489,11 +478,8 @@ router.get("/offers", async (req, res) => {
       return bTime - aTime;
     });
 
-    console.log(`[Driver Offers] Total offers (existing + pending): ${allOffersList.length}`);
-
     // Return offers with eligibility info if no offers found
     if (allOffersList.length === 0 && eligibilityIssues.length > 0) {
-      console.log(`[Driver Offers] No offers found, returning eligibility issues`);
       return res.json({
         offers: [],
         eligibilityIssues,
@@ -503,7 +489,6 @@ router.get("/offers", async (req, res) => {
       });
     }
 
-    console.log(`[Driver Offers] Returning ${allOffersList.length} offers (${offers?.length || 0} existing + ${pendingOffers.length} pending)`);
     res.json(allOffersList);
   } catch (error: any) {
     // Handle PGRST116 error (no rows found) gracefully
@@ -712,6 +697,93 @@ router.get("/assigned-orders", async (req, res) => {
   }
 });
 
+// Get completed orders (last week)
+router.get("/completed-orders", async (req, res) => {
+  const user = (req as any).user;
+
+  try {
+    // Get driver ID from user ID
+    let { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (driverError) throw driverError;
+    
+    // If no driver record, return empty array
+    if (!driver) {
+      return res.json([]);
+    }
+
+    // Calculate date 7 days ago
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    const oneWeekAgoISO = oneWeekAgo.toISOString();
+
+    // Fetch completed orders from the last week
+    const { data: orders, error: ordersError } = await supabaseAdmin
+      .from("orders")
+      .select(`
+        *,
+        fuel_types (
+          id,
+          label,
+          code
+        ),
+        delivery_addresses (
+          id,
+          label,
+          address_street,
+          address_city,
+          address_province,
+          address_postal_code
+        ),
+        customers (
+          id,
+          company_name,
+          user_id
+        )
+      `)
+      .eq("assigned_driver_id", driver.id)
+      .eq("state", "delivered")
+      .gte("delivered_at", oneWeekAgoISO)
+      .order("delivered_at", { ascending: false });
+
+    if (ordersError) throw ordersError;
+
+    // Enrich orders with customer profile data (for customer name)
+    if (orders && orders.length > 0) {
+      const customerUserIds = Array.from(new Set(orders.map((o: any) => o.customers?.user_id).filter(Boolean)));
+      
+      if (customerUserIds.length > 0) {
+        const { data: profiles } = await supabaseAdmin
+          .from("profiles")
+          .select("id, full_name, phone")
+          .in("id", customerUserIds);
+
+        const profileMap = new Map(profiles?.map((p: any) => [p.id, p]) || []);
+
+        // Add customer profile data to orders
+        orders.forEach((order: any) => {
+          if (order.customers?.user_id) {
+            order.customers.profiles = profileMap.get(order.customers.user_id) || null;
+          }
+        });
+      }
+    }
+
+    res.json(orders || []);
+  } catch (error: any) {
+    // Handle PGRST116 error (no rows found) gracefully
+    if (error?.code === 'PGRST116') {
+      return res.json([]);
+    }
+    console.error("Error fetching completed orders:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Mark order as en route (driver started delivery)
 router.post("/orders/:orderId/start", async (req, res) => {
   const user = (req as any).user;
@@ -753,6 +825,14 @@ router.post("/orders/:orderId/start", async (req, res) => {
 
     if (updateError) throw updateError;
 
+    await ensureChatThreadForAssignment({
+      orderId,
+      customerId: order.customer_id,
+      driverId: driver.id,
+      customerUserId: order.customers?.user_id,
+      driverUserId: driver.user_id,
+    });
+
     try {
       await supabaseAdmin
         .from("drivers")
@@ -761,6 +841,14 @@ router.post("/orders/:orderId/start", async (req, res) => {
     } catch (availabilityError) {
       console.warn("Error updating driver availability:", availabilityError);
     }
+
+    await ensureChatThreadForAssignment({
+      orderId,
+      customerId: order.customer_id,
+      driverId: driver.id,
+      customerUserId: order.customers?.user_id,
+      driverUserId: driver.user_id,
+    });
 
     const customerUserId = order.customers?.user_id;
 
@@ -796,7 +884,6 @@ router.post("/orders/:orderId/start", async (req, res) => {
       }
 
       if (!sent) {
-        console.log(`Customer ${customerUserId} not connected via WebSocket for order ${orderId}`);
       }
     }
 
@@ -881,7 +968,6 @@ router.post("/orders/:orderId/pickup", async (req, res) => {
       }
 
       if (!sent) {
-        console.log(`Customer ${customerUserId} not connected via WebSocket for order ${orderId}`);
       }
     }
 
@@ -1025,7 +1111,6 @@ router.post("/orders/:orderId/complete", async (req, res) => {
       }
 
       if (!sent) {
-        console.log(`Customer ${customerUserId} not connected via WebSocket for order ${orderId}`);
       }
     }
 
@@ -1113,6 +1198,8 @@ router.post("/orders/:orderId/complete", async (req, res) => {
       await Promise.all(emailPromises);
     }
 
+    await cleanupChatForOrder(updatedOrder.id);
+
     res.json({ success: true, state: "delivered" });
   } catch (error: any) {
     console.error("[Driver Complete Delivery] Error completing delivery:", error);
@@ -1121,18 +1208,44 @@ router.post("/orders/:orderId/complete", async (req, res) => {
 });
 
 // Accept a dispatch offer
+const driverOfferAcceptanceSchema = z.object({
+  proposedDeliveryTime: z
+    .string({
+      required_error: "Proposed delivery time is required",
+      invalid_type_error: "Proposed delivery time must be a string",
+    })
+    .min(1, "Proposed delivery time is required"),
+  pricePerKmCents: z
+    .number({
+      required_error: "Price per km is required",
+      invalid_type_error: "Price per km must be a number",
+    })
+    .int("Price per km must be a whole number")
+    .min(0, "Price per km must be positive"),
+  notes: z
+    .string()
+    .max(500, "Notes must be 500 characters or less")
+    .optional()
+    .or(z.literal(""))
+    .nullable(),
+});
+
 router.post("/offers/:id/accept", async (req, res) => {
   const user = (req as any).user;
   const offerId = req.params.id;
-  const { confirmedDeliveryTime } = req.body;
+
+  const parseResult = driverOfferAcceptanceSchema.safeParse({
+    proposedDeliveryTime: req.body?.proposedDeliveryTime,
+    pricePerKmCents: Number(req.body?.pricePerKmCents),
+    notes: req.body?.notes,
+  });
 
   try {
-    // Validate confirmed delivery time
-    if (!confirmedDeliveryTime) {
-      return res.status(400).json({ 
-        error: "Confirmed delivery time is required" 
-      });
+    if (!parseResult.success) {
+      const message = parseResult.error.errors[0]?.message || "Invalid request body";
+      return res.status(400).json({ error: message });
     }
+    const { proposedDeliveryTime, pricePerKmCents, notes } = parseResult.data;
 
     // Get driver ID from user ID
     const { data: driver, error: driverError } = await supabaseAdmin
@@ -1153,7 +1266,6 @@ router.post("/offers/:id/accept", async (req, res) => {
     if (offerId.startsWith("pending-")) {
       // This is a pending offer - extract order ID
       orderId = offerId.replace("pending-", "");
-      console.log(`[Accept Offer] Handling pending offer for order ${orderId}`);
       
       // Fetch the order directly
       const { data: order, error: orderError } = await supabaseAdmin
@@ -1168,14 +1280,14 @@ router.post("/offers/:id/accept", async (req, res) => {
         return res.status(404).json({ error: "Order not found or no longer available" });
       }
 
-      // Create a synthetic offer object for pending offers
+      // Create a synthetic object we will use to create a dispatch offer proposal
       offer = {
-        id: offerId,
+        id: null,
         order_id: orderId,
         driver_id: driver.id,
         state: "pending",
         orders: order,
-      };
+      } as any;
     } else {
       // This is a regular dispatch offer
       const { data: fetchedOffer, error: offerCheckError } = await supabaseAdmin
@@ -1199,169 +1311,161 @@ router.post("/offers/:id/accept", async (req, res) => {
       return res.status(400).json({ error: "Offer has expired" });
     }
 
-    // Check if offer is still in offered or pending state
-    if (offer.state !== "offered" && offer.state !== "pending") {
-      return res.status(400).json({ 
-        error: `Offer is already ${offer.state}` 
+    // Check if order is still open for offers
+    if (offer.orders.state !== "created" && offer.orders.state !== "awaiting_payment") {
+      return res.status(409).json({
+        error: "Order is no longer available to accept. Another driver may have been selected.",
       });
     }
 
-    // Check if order is still in created state
-    if (offer.orders.state !== "created") {
-      return res.status(400).json({ 
-        error: "Order is no longer available" 
-      });
-    }
+    const nowIso = new Date().toISOString();
+    let updatedOfferRecord: any = null;
 
-    // Begin atomic updates with state guards to prevent race conditions
-    
-    // For pending offers, we skip the dispatch_offers update since it doesn't exist yet
-    if (!offerId.startsWith("pending-")) {
-      // 1. Accept this offer (only if still in "offered" state)
-      const { data: acceptedOffer, error: acceptError } = await supabaseAdmin
+    if (offerId.startsWith("pending-")) {
+      // Create a new dispatch offer record representing this proposal
+      const { data: insertedOffer, error: insertError } = await supabaseAdmin
         .from("dispatch_offers")
-        .update({ state: "accepted", updated_at: new Date().toISOString() })
+        .insert({
+          order_id: offer.order_id,
+          driver_id: driver.id,
+          state: "pending_customer",
+          proposed_delivery_time: proposedDeliveryTime,
+          proposed_price_per_km_cents: pricePerKmCents,
+          proposed_notes: notes || null,
+          expires_at: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+        })
+        .select("*, orders(*)")
+        .single();
+
+      if (insertError || !insertedOffer) {
+        console.error("[Accept Offer] Error inserting new dispatch offer:", insertError);
+        return res.status(500).json({ error: "Failed to submit offer. Please try again." });
+      }
+
+      updatedOfferRecord = insertedOffer;
+    } else {
+      // Update existing dispatch offer to pending customer review
+      const { data: updatedOffer, error: updateOfferError } = await supabaseAdmin
+        .from("dispatch_offers")
+        .update({
+          state: "pending_customer",
+          proposed_delivery_time: proposedDeliveryTime,
+          proposed_price_per_km_cents: pricePerKmCents,
+          proposed_notes: notes || null,
+          updated_at: nowIso,
+        })
         .eq("id", offerId)
         .eq("state", "offered")
-        .select()
+        .select("*, orders(*)")
         .single();
 
-      if (acceptError || !acceptedOffer) {
-        return res.status(409).json({ 
-          error: "Offer is no longer available (may have been accepted by another driver or expired)" 
+      if (updateOfferError || !updatedOffer) {
+        return res.status(409).json({
+          error: "Offer is no longer available (may have been accepted by another driver or expired)",
         });
       }
 
-      // 2. Reject all other offers for this order
-      const { error: rejectError } = await supabaseAdmin
-        .from("dispatch_offers")
-        .update({ state: "rejected", updated_at: new Date().toISOString() })
-        .eq("order_id", offer.order_id)
-        .neq("id", offerId)
-        .eq("state", "offered");
-
-      if (rejectError) {
-        console.error("Error rejecting other offers:", rejectError);
-      }
+      updatedOfferRecord = updatedOffer;
     }
 
-    // 3. Update order with assigned driver (only if still in "created" state)
-    const { data: updatedOrder, error: orderError } = await supabaseAdmin
+    // Touch the order updated_at so it floats to the top for the customer
+    await supabaseAdmin
       .from("orders")
-      .update({
-        state: "assigned",
-        assigned_driver_id: driver.id,
-        confirmed_delivery_time: confirmedDeliveryTime,
-        updated_at: new Date().toISOString(),
-      })
+      .update({ updated_at: nowIso })
       .eq("id", offer.order_id)
-      .eq("state", "created")
-      .select(`
-        *,
-        customers (
-          user_id
-        )
-      `)
-      .single();
+      .eq("state", offer.orders.state);
 
-    if (orderError || !updatedOrder) {
-      console.error(`[Accept Offer] Order update failed for order ${offer.order_id}:`, orderError);
-      // Rollback: un-accept this offer since order update failed (only for regular offers)
-      if (!offerId.startsWith("pending-")) {
-        await supabaseAdmin
-          .from("dispatch_offers")
-          .update({ state: "offered", updated_at: new Date().toISOString() })
-          .eq("id", offerId);
-      }
-      
-      return res.status(409).json({ 
-        error: "Order is no longer available (may have been assigned to another driver)" 
-      });
-    }
-
-    console.log(`[Accept Offer] Successfully assigned order ${offer.order_id} to driver ${driver.id}`);
-
-    // 4. Update driver updated_at timestamp
-    // Note: availability_status column may not exist in all databases
-    const { error: updateError } = await supabaseAdmin
-      .from("drivers")
-      .update({ 
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", driver.id);
-
-    if (updateError) {
-      console.error("Error updating driver:", updateError);
-    }
-
-    // 5. Send WebSocket and push notifications to customer
-    // Get customer user_id from the order (may need to fetch if not in response)
-    let customerUserId = updatedOrder?.customers?.user_id;
-    
-    if (!customerUserId && updatedOrder?.customer_id) {
-      // Fetch customer to get user_id if not included in response
-      const { data: customer } = await supabaseAdmin
+    // Fetch customer user id for notifications
+    let customerUserId: string | null = null;
+    if (updatedOfferRecord.orders?.customer_id) {
+      const { data: customerLookup } = await supabaseAdmin
         .from("customers")
-        .select("user_id")
-        .eq("id", updatedOrder.customer_id)
+        .select("user_id, company_name")
+        .eq("id", updatedOfferRecord.orders.customer_id)
         .single();
-      customerUserId = customer?.user_id;
+      customerUserId = customerLookup?.user_id || null;
     }
-    
+
+    // Fetch driver profile for names (for notifications)
+    const { data: driverProfile } = await supabaseAdmin
+      .from("profiles")
+      .select("full_name")
+      .eq("id", user.id)
+      .maybeSingle();
+
     if (customerUserId) {
-      const sent = websocketService.sendOrderUpdate(customerUserId, {
-        orderId: offer.order_id,
-        state: "assigned",
+      const payload = {
+        orderId: updatedOfferRecord.order_id,
+        state: "pending_customer_quote",
         driverId: driver.id,
-        confirmedDeliveryTime,
-      });
+        offerId: updatedOfferRecord.id,
+        proposedDeliveryTime,
+        proposedPricePerKmCents: pricePerKmCents,
+      };
 
-      // Send push notification (always, regardless of WebSocket status)
-      const driverProfile = await supabaseAdmin
-        .from("profiles")
-        .select("full_name")
-        .eq("id", user.id)
-        .single();
-      
-      pushNotificationService.sendDriverAssignment(
-        customerUserId,
-        offer.order_id,
-        driverProfile.data?.full_name || "A driver"
-      ).catch(err => console.error("Error sending push notification:", err));
+      const sent = websocketService.sendOrderUpdate(customerUserId, payload);
 
-      // Fallback to database notification if WebSocket fails
-      if (!sent) {
-        await supabaseAdmin.from("notifications").insert({
+      pushNotificationService
+        .sendOrderUpdate(
+          customerUserId,
+          updatedOfferRecord.order_id,
+          "Driver Quote Submitted",
+          `${driverProfile?.full_name || "A driver"} proposed a delivery for your order`,
+          { action: "view_order", state: "pending_customer_quote" }
+        )
+        .catch((err) => console.error("Error sending offer push notification:", err));
+
+      try {
+        const { data: notification } = await supabaseAdmin.from("notifications").insert({
           user_id: customerUserId,
-          type: "driver_assigned",
-          title: "Driver Assigned",
-          message: "A driver has been assigned to your order",
-          data: { orderId: offer.order_id, state: "assigned" },
-        });
+          type: "dispatch_offer_received",
+          title: "Driver Submitted a Quote",
+          message: `${driverProfile?.full_name || "A driver"} submitted a quote for your order`,
+          data: payload,
+        }).select().single();
+        
+        // Send real-time notification via WebSocket
+        if (notification) {
+          websocketService.sendNotification(customerUserId, notification);
+        }
+      } catch (err: any) {
+        console.error("Error inserting customer notification:", err);
+      }
+
+      if (!sent) {
+        console.log(`Customer ${customerUserId} not connected via WebSocket for order ${updatedOfferRecord.order_id}`);
       }
     }
 
-    // Create notification for driver that they accepted the offer
+    // Notify driver for confirmation
     try {
-      await supabaseAdmin.from("notifications").insert({
+      const { data: notification } = await supabaseAdmin.from("notifications").insert({
         user_id: user.id,
         type: "offer_accepted",
-        title: "Offer Accepted",
-        message: `You have accepted the delivery offer for order ${offer.order_id.substring(0, 8).toUpperCase()}`,
-        data: { orderId: offer.order_id, offerId: offerId },
-      });
+        title: "Quote Submitted",
+        message: `Your quote for order ${updatedOfferRecord.order_id.substring(0, 8).toUpperCase()} was sent to the customer.`,
+        data: {
+          orderId: updatedOfferRecord.order_id,
+          offerId: updatedOfferRecord.id,
+          state: "pending_customer_quote",
+        },
+      }).select().single();
+      
+      // Send real-time notification via WebSocket
+      if (notification) {
+        websocketService.sendNotification(user.id, notification);
+      }
     } catch (err: any) {
-      console.error("Error creating driver notification:", err);
+      console.error("Error creating driver quote notification:", err);
     }
 
-    // 6. Send email notification to customer (async, don't wait)
-    sendCustomerNotification(offer.order_id, driver.id, confirmedDeliveryTime)
-      .catch((error: any) => {
-        console.error("Error sending customer notification:", error);
-      });
-
-    console.log(`[Accept Offer] Offer ${offerId} accepted successfully for order ${offer.order_id}`);
-    res.json({ success: true, message: "Offer accepted successfully", orderId: offer.order_id });
+    res.json({
+      success: true,
+      message: "Quote submitted to customer",
+      orderId: updatedOfferRecord.order_id,
+      offerId: updatedOfferRecord.id,
+      state: "pending_customer",
+    });
   } catch (error: any) {
     console.error(`[Accept Offer] Error accepting offer ${offerId}:`, error);
     res.status(500).json({ error: error.message || "Failed to accept offer" });
@@ -1818,7 +1922,7 @@ router.get("/pricing", async (req, res) => {
     // Get all pricing for this driver
     const { data: driverPricingList, error: pricingError } = await supabaseAdmin
       .from("driver_pricing")
-      .select("id, fuel_type_id, delivery_fee_cents, active")
+      .select("id, fuel_type_id, fuel_price_per_liter_cents, active")
       .eq("driver_id", driver.id);
 
     if (pricingError) throw pricingError;
@@ -1856,7 +1960,7 @@ router.get("/pricing", async (req, res) => {
 router.put("/pricing/:fuelTypeId", async (req, res) => {
   const user = (req as any).user;
   const { fuelTypeId } = req.params;
-  const { deliveryFeeCents, notes } = req.body;
+  const { fuelPricePerLiterCents, notes } = req.body;
 
   try {
     // Get driver ID
@@ -1871,9 +1975,9 @@ router.put("/pricing/:fuelTypeId", async (req, res) => {
       return res.status(404).json({ error: "Driver profile not found" });
     }
 
-    // Validate delivery fee
-    if (deliveryFeeCents === undefined || deliveryFeeCents < 0) {
-      return res.status(400).json({ error: "Invalid delivery fee" });
+    // Validate fuel price per liter
+    if (fuelPricePerLiterCents === undefined || fuelPricePerLiterCents < 0) {
+      return res.status(400).json({ error: "Invalid fuel price per liter" });
     }
 
     // Check if pricing already exists
@@ -1893,7 +1997,7 @@ router.put("/pricing/:fuelTypeId", async (req, res) => {
       const { data, error: updateError } = await supabaseAdmin
         .from("driver_pricing")
         .update({
-          delivery_fee_cents: deliveryFeeCents,
+          fuel_price_per_liter_cents: fuelPricePerLiterCents,
           updated_at: new Date().toISOString(),
         })
         .eq("id", existingPricing.id)
@@ -1908,8 +2012,8 @@ router.put("/pricing/:fuelTypeId", async (req, res) => {
         entity_type: "driver",
         entity_id: driver.id,
         fuel_type_id: fuelTypeId,
-        old_price_cents: existingPricing.delivery_fee_cents,
-        new_price_cents: deliveryFeeCents,
+        old_price_cents: existingPricing.fuel_price_per_liter_cents,
+        new_price_cents: fuelPricePerLiterCents,
         changed_by: user.id,
         notes: notes || null,
       });
@@ -1920,7 +2024,7 @@ router.put("/pricing/:fuelTypeId", async (req, res) => {
         .insert({
           driver_id: driver.id,
           fuel_type_id: fuelTypeId,
-          delivery_fee_cents: deliveryFeeCents,
+          fuel_price_per_liter_cents: fuelPricePerLiterCents,
           active: true,
         })
         .select()
@@ -1935,7 +2039,7 @@ router.put("/pricing/:fuelTypeId", async (req, res) => {
         entity_id: driver.id,
         fuel_type_id: fuelTypeId,
         old_price_cents: null,
-        new_price_cents: deliveryFeeCents,
+        new_price_cents: fuelPricePerLiterCents,
         changed_by: user.id,
         notes: notes || null,
       });

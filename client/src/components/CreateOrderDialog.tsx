@@ -153,7 +153,6 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
   });
 
   const onSubmit = (values: OrderFormValues) => {
-    console.log("Form submitted with values:", values);
     createOrderMutation.mutate(values);
   };
 

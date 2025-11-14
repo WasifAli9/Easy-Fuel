@@ -35,6 +35,9 @@ export const orderStateEnum = pgEnum("order_state", [
 ]);
 export const dispatchOfferStateEnum = pgEnum("dispatch_offer_state", [
   "offered",
+  "pending_customer",
+  "customer_accepted",
+  "customer_declined",
   "accepted",
   "rejected",
   "timeout"
@@ -424,6 +427,10 @@ export const dispatchOffers = pgTable("dispatch_offers", {
   orderId: uuid("order_id").notNull().references(() => orders.id),
   driverId: uuid("driver_id").notNull().references(() => drivers.id),
   state: dispatchOfferStateEnum("state").notNull().default("offered"),
+  proposedDeliveryTime: timestamp("proposed_delivery_time"),
+  proposedPricePerKmCents: integer("proposed_price_per_km_cents"), // Driver's price per km in cents
+  proposedNotes: text("proposed_notes"),
+  customerResponseAt: timestamp("customer_response_at"),
   expiresAt: timestamp("expires_at").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -477,12 +484,12 @@ export const driverSubscriptions = pgTable("driver_subscriptions", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-// Driver Pricing table - drivers set their delivery fees per fuel type
+// Driver Pricing table - drivers set their fuel price per liter per fuel type
 export const driverPricing = pgTable("driver_pricing", {
   id: uuid("id").primaryKey().defaultRandom(),
   driverId: uuid("driver_id").notNull().references(() => drivers.id),
   fuelTypeId: uuid("fuel_type_id").notNull().references(() => fuelTypes.id),
-  deliveryFeeCents: integer("delivery_fee_cents").notNull(), // Driver's fee for delivering this fuel type
+  fuelPricePerLiterCents: integer("fuel_price_per_liter_cents").notNull(), // Driver's fuel price per liter in cents
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
