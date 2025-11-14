@@ -5,6 +5,7 @@ import { sendDriverAcceptanceEmail } from "./email-service";
 import { websocketService } from "./websocket";
 import { pushNotificationService } from "./push-service";
 import { ensureChatThreadForAssignment } from "./chat-service";
+import { orderNotifications, offerNotifications } from "./notification-helpers";
 
 const router = Router();
 
@@ -479,32 +480,7 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
 
       for (const driver of declinedDrivers || []) {
         if (driver.user_id) {
-          try {
-            const { data: notification } = await supabaseAdmin.from("notifications").insert({
-              user_id: driver.user_id,
-              type: "offer_declined",
-              title: "Quote Declined",
-              message: `Customer selected another driver for order ${orderId.substring(0, 8).toUpperCase()}.`,
-              data: { orderId, state: "customer_declined" },
-            }).select().single();
-            
-            // Send real-time notification via WebSocket
-            if (notification) {
-              websocketService.sendNotification(driver.user_id, notification);
-            }
-
-            pushNotificationService
-              .sendOrderUpdate(
-                driver.user_id,
-                orderId,
-                "Quote Declined",
-                "Customer selected another driver for this order.",
-                { action: "view_offers", state: "customer_declined" }
-              )
-              .catch((err) => console.error("Error sending declined push notification:", err));
-          } catch (err: any) {
-            console.error("Error creating declined notification:", err);
-          }
+          await offerNotifications.onCustomerDeclined(driver.user_id, offerId);
         }
       }
     }
@@ -565,85 +541,17 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
       driverUserId,
     });
 
-    // Notify driver
+    // Notify both driver and customer using helper functions
     if (driverUserId) {
-      const driverPayload = {
+      await orderNotifications.onDriverAssigned(
+        customerUserId,
+        driverUserId,
         orderId,
-        state: "assigned",
-        driverId: offer.driver_id,
-        confirmedDeliveryTime: offer.proposed_delivery_time,
-      };
-
-      // Create notification first
-      let notification = null;
-      try {
-        const { data: notificationData, error: notifError } = await supabaseAdmin.from("notifications").insert({
-          user_id: driverUserId,
-          type: "offer_accepted",
-          title: "Quote Accepted",
-          message: `Customer accepted your quote for order ${orderId.substring(0, 8).toUpperCase()}.`,
-          data: driverPayload,
-        }).select().single();
-        
-        if (notifError) {
-          console.error("[Customer Accept Quote] Error creating notification:", notifError);
-        } else {
-          notification = notificationData;
-        }
-      } catch (err: any) {
-        console.error("[Customer Accept Quote] Error inserting driver notification:", err);
-      }
-
-      // Send WebSocket notifications
-      if (notification) {
-        websocketService.sendNotification(driverUserId, notification);
-      }
-      
-      // Also send order update (for dashboard refresh)
-      websocketService.sendOrderUpdate(driverUserId, driverPayload);
-
-      // Send push notification
-      pushNotificationService
-        .sendOrderUpdate(
-          driverUserId,
-          orderId,
-          "Quote Accepted",
-          "Customer accepted your quote. Get ready for delivery.",
-          { action: "view_order", state: "assigned" }
-        )
-        .catch((err) => console.error("Error sending driver quote accepted push notification:", err));
+        driverProfileName,
+        driverProfilePhone || "Not available"
+      );
     } else {
       console.warn(`[Customer Accept Quote] No driverUserId found for driver ${offer.driver_id}`);
-    }
-
-    // Notify customer devices
-    const customerPayload = {
-      orderId,
-      state: "assigned",
-      driverId: offer.driver_id,
-      confirmedDeliveryTime: offer.proposed_delivery_time,
-    };
-
-    websocketService.sendOrderUpdate(customerUserId, customerPayload);
-
-    pushNotificationService
-      .sendDriverAssignment(
-        customerUserId,
-        orderId,
-        driverProfileName
-      )
-      .catch((err) => console.error("Error sending customer assignment notification:", err));
-
-    try {
-      await supabaseAdmin.from("notifications").insert({
-        user_id: customerUserId,
-        type: "driver_assigned",
-        title: "Driver Assigned",
-        message: `${driverProfileName} has been assigned to your order.`,
-        data: customerPayload,
-      });
-    } catch (err: any) {
-      console.error("Error inserting customer assignment notification:", err);
     }
 
     // Send confirmation email to customer

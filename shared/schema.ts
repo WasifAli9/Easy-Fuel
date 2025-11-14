@@ -73,19 +73,70 @@ export const priorityLevelEnum = pgEnum("priority_level", ["low", "medium", "hig
 export const paymentMethodTypeEnum = pgEnum("payment_method_type", ["bank_account", "credit_card", "debit_card"]);
 export const addressVerificationStatusEnum = pgEnum("address_verification_status", ["pending", "verified", "rejected"]);
 export const notificationTypeEnum = pgEnum("notification_type", [
+  // Order lifecycle - Customer
   "order_created",
-  "dispatch_offer_received",
-  "offer_accepted",
-  "offer_rejected",
+  "order_awaiting_payment",
+  "order_paid",
   "driver_assigned",
   "driver_en_route",
+  "driver_arrived",
+  "delivery_started",
   "delivery_complete",
+  "order_cancelled",
+  "order_refunded",
+  
+  // Dispatch & Offers - Driver
+  "dispatch_offer_received",
+  "offer_timeout_warning",
+  "offer_expired",
+  "customer_accepted_offer",
+  "customer_declined_offer",
+  
+  // Order updates - Driver
+  "order_accepted_by_customer",
+  "pickup_ready",
+  "delivery_instructions_updated",
+  
+  // Chat - Both Customer & Driver
+  "new_message",
+  "unread_messages_reminder",
+  
+  // Payment - All roles
   "payment_received",
   "payment_failed",
-  "order_cancelled",
-  "driver_reassigned",
-  "new_message",
-  "system_alert"
+  "payment_processing",
+  "payout_scheduled",
+  "payout_completed",
+  "payout_failed",
+  
+  // Supplier specific
+  "new_order_for_supplier",
+  "stock_low",
+  "stock_critical",
+  "order_fulfilled",
+  "order_ready_for_pickup",
+  "supplier_rating_received",
+  
+  // Driver specific
+  "driver_rating_received",
+  "shift_reminder",
+  "document_expiring",
+  "vehicle_inspection_due",
+  
+  // Customer specific
+  "delivery_eta_update",
+  "driver_location_shared",
+  "price_estimate_available",
+  "favorite_driver_available",
+  
+  // System & Admin
+  "system_alert",
+  "account_verification_required",
+  "account_approved",
+  "account_rejected",
+  "account_suspended",
+  "terms_updated",
+  "maintenance_scheduled"
 ]);
 export const messageTypeEnum = pgEnum("message_type", ["text", "image", "location"]);
 export const locationSourceEnum = pgEnum("location_source", ["gps", "network", "manual"]);

@@ -3,6 +3,7 @@ import { requireAuth } from "./routes";
 import { supabaseAdmin } from "./supabase";
 import { websocketService } from "./websocket";
 import { isFinalOrderState } from "./chat-service";
+import { chatNotifications } from "./notification-helpers";
 
 const router = Router();
 router.use(requireAuth);
@@ -353,6 +354,16 @@ router.post("/messages", async (req, res) => {
         message: messageWithSender,
       },
     });
+
+    await chatNotifications.onNewMessage(
+      recipientId,
+      user.id,
+      senderProfile?.full_name || "User",
+      senderType,
+      message,
+      thread.orders?.id || thread.order_id,
+      threadId
+    );
 
     res.json(messageWithSender);
   } catch (error: any) {

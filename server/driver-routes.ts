@@ -5,6 +5,7 @@ import { insertDriverPricingSchema, insertPricingHistorySchema } from "@shared/s
 import { websocketService } from "./websocket";
 import { pushNotificationService } from "./push-service";
 import { cleanupChatForOrder, ensureChatThreadForAssignment } from "./chat-service";
+import { offerNotifications, orderNotifications } from "./notification-helpers";
 import { z } from "zod";
 import dotenv from "dotenv";
 dotenv.config();
@@ -1389,74 +1390,25 @@ router.post("/offers/:id/accept", async (req, res) => {
     // Fetch driver profile for names (for notifications)
     const { data: driverProfile } = await supabaseAdmin
       .from("profiles")
-      .select("full_name")
+      .select("full_name, currency")
       .eq("id", user.id)
       .maybeSingle();
 
     if (customerUserId) {
-      const payload = {
-        orderId: updatedOfferRecord.order_id,
-        state: "pending_customer_quote",
-        driverId: driver.id,
-        offerId: updatedOfferRecord.id,
-        proposedDeliveryTime,
-        proposedPricePerKmCents: pricePerKmCents,
-      };
+      // Calculate estimated price based on distance (simplified for now)
+      const estimatedPrice = (pricePerKmCents * 10) / 100; // Assuming 10km average
+      const currency = driverProfile?.currency || "ZAR";
 
-      const sent = websocketService.sendOrderUpdate(customerUserId, payload);
-
-      pushNotificationService
-        .sendOrderUpdate(
-          customerUserId,
-          updatedOfferRecord.order_id,
-          "Driver Quote Submitted",
-          `${driverProfile?.full_name || "A driver"} proposed a delivery for your order`,
-          { action: "view_order", state: "pending_customer_quote" }
-        )
-        .catch((err) => console.error("Error sending offer push notification:", err));
-
-      try {
-        const { data: notification } = await supabaseAdmin.from("notifications").insert({
-          user_id: customerUserId,
-          type: "dispatch_offer_received",
-          title: "Driver Submitted a Quote",
-          message: `${driverProfile?.full_name || "A driver"} submitted a quote for your order`,
-          data: payload,
-        }).select().single();
-        
-        // Send real-time notification via WebSocket
-        if (notification) {
-          websocketService.sendNotification(customerUserId, notification);
-        }
-      } catch (err: any) {
-        console.error("Error inserting customer notification:", err);
-      }
-
-      if (!sent) {
-        console.log(`Customer ${customerUserId} not connected via WebSocket for order ${updatedOfferRecord.order_id}`);
-      }
-    }
-
-    // Notify driver for confirmation
-    try {
-      const { data: notification } = await supabaseAdmin.from("notifications").insert({
-        user_id: user.id,
-        type: "offer_accepted",
-        title: "Quote Submitted",
-        message: `Your quote for order ${updatedOfferRecord.order_id.substring(0, 8).toUpperCase()} was sent to the customer.`,
-        data: {
-          orderId: updatedOfferRecord.order_id,
-          offerId: updatedOfferRecord.id,
-          state: "pending_customer_quote",
-        },
-      }).select().single();
-      
-      // Send real-time notification via WebSocket
-      if (notification) {
-        websocketService.sendNotification(user.id, notification);
-      }
-    } catch (err: any) {
-      console.error("Error creating driver quote notification:", err);
+      // Notify customer about driver's offer
+      await offerNotifications.onDriverOffer(
+        customerUserId,
+        updatedOfferRecord.id,
+        updatedOfferRecord.order_id,
+        driverProfile?.full_name || "A driver",
+        estimatedPrice,
+        currency,
+        proposedDeliveryTime
+      );
     }
 
     res.json({
