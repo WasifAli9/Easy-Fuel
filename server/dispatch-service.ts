@@ -2,6 +2,7 @@ import { supabaseAdmin } from "./supabase";
 import { calculateDistance } from "./utils/distance";
 import { websocketService } from "./websocket";
 import { pushNotificationService } from "./push-service";
+import { offerNotifications } from "./notification-helpers";
 
 interface CreateDispatchOffersParams {
   orderId: string;
@@ -159,51 +160,52 @@ export async function createDispatchOffers({
         expires_at: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(), // 12 hours
       }));
 
-      const { error: premiumOffersError } = await supabaseAdmin
+      const { data: insertedOffers, error: premiumOffersError } = await supabaseAdmin
         .from("dispatch_offers")
-        .insert(premiumOffers);
+        .insert(premiumOffers)
+        .select("id, driver_id");
 
       if (premiumOffersError) {
         console.error("Error creating premium offers:", premiumOffersError);
       } else {
+        // Fetch fuel type label once for all drivers
+        const { data: fuelType } = await supabaseAdmin
+          .from("fuel_types")
+          .select("label")
+          .eq("id", fuelTypeId)
+          .single();
+        
+        const fuelLabel = fuelType?.label || "Fuel";
+        
+        // Create a map of driver_id to offer_id
+        const offerMap = new Map(insertedOffers?.map(o => [o.driver_id, o.id]) || []);
+        
         // Send real-time notifications to premium drivers
         for (const driver of premiumDrivers) {
-          // Send dispatch offer message (for dashboard refresh)
+          const realOfferId = offerMap.get(driver.id);
+          
+          // Send dispatch offer WebSocket message for dashboard refresh
           websocketService.sendDispatchOffer(driver.user_id, {
             orderId,
+            offerId: realOfferId,
             fuelTypeId,
-            expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+            expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
             isPremium: true,
           });
           
-          // Send push notification (always, regardless of WebSocket status)
-          pushNotificationService.sendNewDispatchOffer(
-            driver.user_id,
-            orderId,
-            fuelTypeId,
-            litres,
-            0,
-            "ZAR"
-          ).catch(err => console.error(`[createDispatchOffers] Error sending push notification to driver ${driver.user_id}:`, err));
-          
-          // Always create in-app notification (for persistence and offline access)
-          try {
-            const { data: notification, error: notifError } = await supabaseAdmin.from("notifications").insert({
-              user_id: driver.user_id,
-              type: "dispatch_offer_received",
-              title: "New Fuel Delivery Request",
-              message: `You have a new premium fuel delivery request for ${litres}L`,
-              data: { orderId, isPremium: true, fuelTypeId, litres },
-            }).select().single();
-            
-            if (notifError) {
-              console.error(`[createDispatchOffers] Error creating notification for driver ${driver.user_id}:`, notifError);
-            } else if (notification) {
-              // Send real-time notification via WebSocket
-              websocketService.sendNotification(driver.user_id, notification);
-            }
-          } catch (err: any) {
-            console.error(`[createDispatchOffers] Exception creating notification for driver ${driver.user_id}:`, err);
+          // Send notification using helper if we have a real offer ID
+          if (realOfferId) {
+            await offerNotifications.onOfferReceived(
+              driver.user_id,
+              realOfferId,
+              orderId,
+              fuelLabel,
+              litres,
+              0, // Earnings calculation can be added later
+              "ZAR",
+              "Supplier location",
+              "Customer location"
+            );
           }
         }
         
@@ -262,46 +264,47 @@ async function createRegularDriverOffers(
   if (regularOffersError) {
     console.error(`[createRegularDriverOffers] Error creating regular driver offers for order ${orderId}:`, regularOffersError);
   } else {
+    // Get fuel type info once for all drivers
+    const fuelTypeId = orderData?.fuelTypeId || order?.fuel_type_id || "";
+    const litres = orderData?.litres || order?.litres || 0;
+    
+    const { data: fuelType } = await supabaseAdmin
+      .from("fuel_types")
+      .select("label")
+      .eq("id", fuelTypeId)
+      .single();
+    
+    const fuelLabel = fuelType?.label || "Fuel";
+    
+    // Create a map of driver_id to offer_id
+    const offerMap = new Map(insertedOffers?.map(o => [o.driver_id, o.id]) || []);
+    
     // Send real-time notifications to regular drivers
     for (const driver of regularDrivers) {
-      // Send dispatch offer message (for dashboard refresh)
+      const realOfferId = offerMap.get(driver.id);
+      
+      // Send dispatch offer WebSocket message for dashboard refresh
       websocketService.sendDispatchOffer(driver.user_id, {
         orderId,
-        expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(), // 12 hours
+        offerId: realOfferId,
+        fuelTypeId,
+        expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
         isPremium: false,
       });
       
-      // Send push notification (always, regardless of WebSocket status)
-      const fuelTypeId = orderData?.fuelTypeId || order?.fuel_type_id || "";
-      const litres = orderData?.litres || order?.litres || 0;
-      
-      pushNotificationService.sendNewDispatchOffer(
-        driver.user_id,
-        orderId,
-        fuelTypeId,
-        litres,
-        0,
-        "ZAR"
-      ).catch(err => console.error(`[createRegularDriverOffers] Error sending push notification to driver ${driver.user_id}:`, err));
-      
-      // Always create in-app notification (for persistence and offline access)
-      try {
-        const { data: notification, error: notifError } = await supabaseAdmin.from("notifications").insert({
-          user_id: driver.user_id,
-          type: "dispatch_offer_received",
-          title: "New Fuel Delivery Request",
-          message: `You have a new fuel delivery request for ${litres}L`,
-          data: { orderId, isPremium: false, fuelTypeId, litres },
-        }).select().single();
-        
-        if (notifError) {
-          console.error(`[createRegularDriverOffers] Error creating notification for driver ${driver.user_id}:`, notifError);
-        } else if (notification) {
-          // Send real-time notification via WebSocket
-          websocketService.sendNotification(driver.user_id, notification);
-        }
-      } catch (err: any) {
-        console.error(`[createRegularDriverOffers] Exception creating notification for driver ${driver.user_id}:`, err);
+      // Send notification using helper if we have a real offer ID
+      if (realOfferId) {
+        await offerNotifications.onOfferReceived(
+          driver.user_id,
+          realOfferId,
+          orderId,
+          fuelLabel,
+          litres,
+          0,
+          "ZAR",
+          "Supplier location",
+          "Customer location"
+        );
       }
     }
   }

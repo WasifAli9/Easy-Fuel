@@ -854,38 +854,21 @@ router.post("/orders/:orderId/start", async (req, res) => {
     const customerUserId = order.customers?.user_id;
 
     if (customerUserId) {
-      const payload = {
-        orderId,
-        state: "en_route",
-        driverId: driver.id,
-        confirmedDeliveryTime: order.confirmed_delivery_time,
-      };
-      const sent = websocketService.sendOrderUpdate(customerUserId, payload);
+      const { data: driverProfile } = await supabaseAdmin
+        .from("profiles")
+        .select("full_name")
+        .eq("id", user.id)
+        .maybeSingle();
+      
+      const driverName = driverProfile?.full_name || "Your driver";
+      const estimatedETA = order.confirmed_delivery_time 
+        ? new Date(order.confirmed_delivery_time).toLocaleTimeString("en-ZA", { 
+            hour: "2-digit", 
+            minute: "2-digit" 
+          })
+        : "Soon";
 
-      pushNotificationService
-        .sendOrderUpdate(
-          customerUserId,
-          orderId,
-          "Driver En Route",
-          "Your driver is on the way with your fuel",
-          { action: "view_order", state: "en_route" }
-        )
-        .catch((err) => console.error("Error sending en route push notification:", err));
-
-      try {
-        await supabaseAdmin.from("notifications").insert({
-          user_id: customerUserId,
-          type: "driver_en_route",
-          title: "Driver En Route",
-          message: "Your driver is on the way.",
-          data: { orderId, state: "en_route" },
-        });
-      } catch (notifError) {
-        console.error("Error inserting driver_en_route notification:", notifError);
-      }
-
-      if (!sent) {
-      }
+      await orderNotifications.onDriverEnRoute(customerUserId, orderId, driverName, estimatedETA);
     }
 
     res.json({ success: true, state: "en_route" });
@@ -1081,60 +1064,12 @@ router.post("/orders/:orderId/complete", async (req, res) => {
     const driverName = driverProfile?.full_name || "Driver";
 
     if (customerUserId) {
-      const payload = {
+      await orderNotifications.onDeliveryComplete(
+        customerUserId,
         orderId,
-        state: "delivered",
-        driverId: driver.id,
-        deliveredAt: nowIso,
-      };
-      const sent = websocketService.sendOrderUpdate(customerUserId, payload);
-
-      pushNotificationService
-        .sendOrderUpdate(
-          customerUserId,
-          orderId,
-          "Delivery Complete",
-          "Your fuel has been delivered successfully",
-          { action: "view_order", state: "delivered" }
-        )
-        .catch((err) => console.error("Error sending delivery complete push notification:", err));
-
-      try {
-        await supabaseAdmin.from("notifications").insert({
-          user_id: customerUserId,
-          type: "delivery_complete",
-          title: "Delivery Complete",
-          message: `Order ${orderShortId} has been delivered.`,
-          data: { orderId, state: "delivered" },
-        });
-      } catch (notifError) {
-        console.error("Error inserting delivery_complete notification for customer:", notifError);
-      }
-
-      if (!sent) {
-      }
-    }
-
-    pushNotificationService
-      .sendOrderUpdate(
-        user.id,
-        orderId,
-        "Delivery Complete",
-        `Order ${orderShortId} marked as delivered`,
-        { action: "view_history", state: "delivered" }
-      )
-      .catch((err) => console.error("Error sending delivery complete push notification to driver:", err));
-
-    try {
-      await supabaseAdmin.from("notifications").insert({
-        user_id: user.id,
-        type: "delivery_complete",
-        title: "Delivery Complete",
-        message: `Order ${orderShortId} has been marked as delivered.`,
-        data: { orderId, state: "delivered" },
-      });
-    } catch (notifError) {
-      console.error("Error inserting delivery_complete notification for driver:", notifError);
+        Number(litresDisplay) || 0,
+        fuelTypeLabel
+      );
     }
 
     let customerEmail = customerUserId
