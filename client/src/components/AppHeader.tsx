@@ -43,72 +43,213 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
   const { toast } = useToast();
 
   // Fetch notifications
-  const { data: notifications = [], refetch: refetchNotifications } = useQuery<any[]>({
+  const { data: notifications = [], refetch: refetchNotifications, error: notificationsError } = useQuery<any[]>({
     queryKey: ["/api/notifications"],
     enabled: !!profile, // Only fetch if user is logged in
     refetchInterval: 60000, // Refetch every 60 seconds (WebSocket handles real-time)
     staleTime: 0, // Always consider data stale to allow immediate refetch
+    onError: (error) => {
+      console.error("[AppHeader] Error fetching notifications:", error);
+      console.error("[AppHeader] Error details:", {
+        error,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+    },
   });
 
   // Fetch unread count
-  const { data: unreadData, refetch: refetchUnreadCount } = useQuery<{ count: number }>({
+  const { data: unreadData, refetch: refetchUnreadCount, error: unreadCountError } = useQuery<{ count: number }>({
     queryKey: ["/api/notifications/unread-count"],
     enabled: !!profile,
     refetchInterval: 60000, // Refetch every 60 seconds (WebSocket handles real-time)
+    onError: (error) => {
+      console.error("[AppHeader] Error fetching unread count:", error);
+      console.error("[AppHeader] Error details:", {
+        error,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+    },
   });
 
   const notificationCount = propNotificationCount ?? (unreadData?.count || 0);
 
   // Set up WebSocket for real-time notifications
   useWebSocket((message) => {
-    if (message.type === "notification") {
-      // New notification received via WebSocket
-      queryClient.setQueryData<any[]>(["/api/notifications"], (old = []) => {
-        // Check if notification already exists (avoid duplicates)
-        const exists = old?.some((n: any) => n.id === message.payload?.id);
-        if (exists) {
-          return old;
+    try {
+      if (message.type === "notification") {
+        try {
+          // New notification received via WebSocket
+          queryClient.setQueryData<any[]>(["/api/notifications"], (old = []) => {
+            try {
+              // Check if notification already exists (avoid duplicates)
+              const exists = old?.some((n: any) => n.id === message.payload?.id);
+              if (exists) {
+                return old;
+              }
+              // Add new notification to the beginning of the list
+              return [message.payload, ...(old || [])];
+            } catch (error) {
+              console.error("[AppHeader] Error updating notifications query data:", error);
+              console.error("[AppHeader] Error details:", {
+                error,
+                message: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined,
+                payload: message.payload,
+                oldData: old,
+              });
+              // Return old data on error to prevent blank screen
+              return old || [];
+            }
+          });
+          
+          // Update unread count
+          refetchUnreadCount().catch((error) => {
+            console.error("[AppHeader] Error refetching unread count:", error);
+            console.error("[AppHeader] Error details:", {
+              error,
+              message: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? error.stack : undefined,
+            });
+          });
+          
+          // Show toast notification
+          if (message.payload?.title) {
+            try {
+              toast({
+                title: message.payload.title,
+                description: message.payload.message,
+                duration: 5000,
+              });
+            } catch (error) {
+              console.error("[AppHeader] Error showing toast notification:", error);
+              console.error("[AppHeader] Error details:", {
+                error,
+                message: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined,
+                payload: message.payload,
+              });
+            }
+          }
+        } catch (error) {
+          console.error("[AppHeader] Error handling notification message:", error);
+          console.error("[AppHeader] Error details:", {
+            error,
+            message: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+            messageType: message.type,
+            payload: message.payload,
+          });
         }
-        // Add new notification to the beginning of the list
-        return [message.payload, ...(old || [])];
-      });
-      
-      // Update unread count
-      refetchUnreadCount();
-      
-      // Show toast notification
-      if (message.payload?.title) {
-        toast({
-          title: message.payload.title,
-          description: message.payload.message,
-          duration: 5000,
-        });
+      } else if (message.type === "order_update") {
+        try {
+          // When order is updated (e.g., assigned), refresh notifications
+          // This ensures we get the latest notification from the database
+          if (message.payload?.state === "assigned" && profile?.role === "driver") {
+            // Driver got assigned to an order - refresh notifications immediately
+            refetchNotifications().catch((error) => {
+              console.error("[AppHeader] Error refetching notifications (driver assigned):", error);
+              console.error("[AppHeader] Error details:", {
+                error,
+                message: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined,
+              });
+            });
+            refetchUnreadCount().catch((error) => {
+              console.error("[AppHeader] Error refetching unread count (driver assigned):", error);
+              console.error("[AppHeader] Error details:", {
+                error,
+                message: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined,
+              });
+            });
+          } else {
+            refetchNotifications().catch((error) => {
+              console.error("[AppHeader] Error refetching notifications (order update):", error);
+              console.error("[AppHeader] Error details:", {
+                error,
+                message: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined,
+              });
+            });
+            refetchUnreadCount().catch((error) => {
+              console.error("[AppHeader] Error refetching unread count (order update):", error);
+              console.error("[AppHeader] Error details:", {
+                error,
+                message: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined,
+              });
+            });
+          }
+        } catch (error) {
+          console.error("[AppHeader] Error handling order_update message:", error);
+          console.error("[AppHeader] Error details:", {
+            error,
+            message: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+            messageType: message.type,
+            payload: message.payload,
+          });
+        }
+      } else if (message.type === "dispatch_offer") {
+        try {
+          // New dispatch offer - refresh notifications immediately
+          // Immediately refetch to get the new notification from database
+          // Use a small delay to ensure the notification is in the database
+          setTimeout(() => {
+            refetchNotifications().catch((error) => {
+              console.error("[AppHeader] Error refetching notifications (dispatch offer):", error);
+              console.error("[AppHeader] Error details:", {
+                error,
+                message: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined,
+              });
+            });
+            refetchUnreadCount().catch((error) => {
+              console.error("[AppHeader] Error refetching unread count (dispatch offer):", error);
+              console.error("[AppHeader] Error details:", {
+                error,
+                message: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined,
+              });
+            });
+          }, 500);
+          
+          // Also show a toast notification
+          try {
+            toast({
+              title: "New Delivery Request",
+              description: "You have a new fuel delivery request available",
+              duration: 5000,
+            });
+          } catch (error) {
+            console.error("[AppHeader] Error showing dispatch offer toast:", error);
+            console.error("[AppHeader] Error details:", {
+              error,
+              message: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? error.stack : undefined,
+            });
+          }
+        } catch (error) {
+          console.error("[AppHeader] Error handling dispatch_offer message:", error);
+          console.error("[AppHeader] Error details:", {
+            error,
+            message: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+            messageType: message.type,
+            payload: message.payload,
+          });
+        }
       }
-    } else if (message.type === "order_update") {
-      // When order is updated (e.g., assigned), refresh notifications
-      // This ensures we get the latest notification from the database
-      if (message.payload?.state === "assigned" && profile?.role === "driver") {
-        // Driver got assigned to an order - refresh notifications immediately
-        refetchNotifications();
-        refetchUnreadCount();
-      } else {
-        refetchNotifications();
-        refetchUnreadCount();
-      }
-    } else if (message.type === "dispatch_offer") {
-      // New dispatch offer - refresh notifications immediately
-      // Immediately refetch to get the new notification from database
-      // Use a small delay to ensure the notification is in the database
-      setTimeout(() => {
-        refetchNotifications();
-        refetchUnreadCount();
-      }, 500);
-      
-      // Also show a toast notification
-      toast({
-        title: "New Delivery Request",
-        description: "You have a new fuel delivery request available",
-        duration: 5000,
+    } catch (error) {
+      console.error("[AppHeader] Unexpected error in WebSocket message handler:", error);
+      console.error("[AppHeader] Error details:", {
+        error,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        messageType: message?.type,
+        payload: message?.payload,
       });
     }
   });
@@ -116,24 +257,79 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
   // Mark notification as read mutation
   const markAsReadMutation = useMutation({
     mutationFn: async (notificationId: string) => {
-      const response = await apiRequest("PATCH", `/api/notifications/${notificationId}/read`);
-      return response.json();
+      try {
+        const response = await apiRequest("PATCH", `/api/notifications/${notificationId}/read`);
+        return response.json();
+      } catch (error) {
+        console.error("[AppHeader] Error marking notification as read:", error);
+        console.error("[AppHeader] Error details:", {
+          error,
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          notificationId,
+        });
+        throw error;
+      }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
+      try {
+        queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
+      } catch (error) {
+        console.error("[AppHeader] Error invalidating queries after mark as read:", error);
+        console.error("[AppHeader] Error details:", {
+          error,
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+      }
+    },
+    onError: (error) => {
+      console.error("[AppHeader] Mutation error marking notification as read:", error);
+      console.error("[AppHeader] Error details:", {
+        error,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
     },
   });
 
   // Mark all as read mutation
   const markAllAsReadMutation = useMutation({
     mutationFn: async () => {
-      const response = await apiRequest("PATCH", "/api/notifications/read-all");
-      return response.json();
+      try {
+        const response = await apiRequest("PATCH", "/api/notifications/read-all");
+        return response.json();
+      } catch (error) {
+        console.error("[AppHeader] Error marking all notifications as read:", error);
+        console.error("[AppHeader] Error details:", {
+          error,
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+        throw error;
+      }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
+      try {
+        queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
+      } catch (error) {
+        console.error("[AppHeader] Error invalidating queries after mark all as read:", error);
+        console.error("[AppHeader] Error details:", {
+          error,
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+      }
+    },
+    onError: (error) => {
+      console.error("[AppHeader] Mutation error marking all notifications as read:", error);
+      console.error("[AppHeader] Error details:", {
+        error,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
     },
   });
 
@@ -143,18 +339,28 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
   }
 
   function handleNotificationClick(notification: any) {
-    if (!notification.read) {
-      markAsReadMutation.mutate(notification.id);
-    }
-    
-    // Navigate based on notification type
-    if (notification.data?.orderId) {
-      if (profile?.role === "driver") {
-        setLocation("/driver");
-      } else if (profile?.role === "customer") {
-        setLocation(`/customer/orders/${notification.data.orderId}`);
+    try {
+      if (!notification.read) {
+        markAsReadMutation.mutate(notification.id);
       }
-      setNotificationsOpen(false);
+      
+      // Navigate based on notification type
+      if (notification.data?.orderId) {
+        if (profile?.role === "driver") {
+          setLocation("/driver");
+        } else if (profile?.role === "customer") {
+          setLocation(`/customer/orders/${notification.data.orderId}`);
+        }
+        setNotificationsOpen(false);
+      }
+    } catch (error) {
+      console.error("[AppHeader] Error handling notification click:", error);
+      console.error("[AppHeader] Error details:", {
+        error,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        notification,
+      });
     }
   }
 
@@ -379,39 +585,74 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
               </div>
             ) : (
               <div className="space-y-2">
-                {notifications.map((notification) => (
-                  <div
-                    key={notification.id}
-                    className={`p-4 border rounded-lg cursor-pointer transition-colors ${
-                      !notification.read
-                        ? "bg-primary/5 border-primary/20 hover:bg-primary/10"
-                        : "hover:bg-muted/50"
-                    }`}
-                    onClick={() => handleNotificationClick(notification)}
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className="text-2xl flex-shrink-0">
-                        {getNotificationIcon(notification.type)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-2">
-                          <p className={`text-sm font-medium ${!notification.read ? "font-semibold" : ""}`}>
-                            {notification.title}
-                          </p>
-                          {!notification.read && (
-                            <div className="h-2 w-2 rounded-full bg-primary flex-shrink-0 mt-1.5" />
-                          )}
+                {notifications
+                  .filter((notification) => notification && notification.id) // Filter out invalid notifications
+                  .map((notification) => {
+                    try {
+                      const notificationId = notification.id || `unknown-${Math.random()}`;
+                      const notificationType = notification.type || "unknown";
+                      const notificationTitle = notification.title || "Notification";
+                      const notificationMessage = notification.message || "";
+                      const createdAt = notification.created_at || notification.createdAt || new Date().toISOString();
+                      
+                      let timeAgo = "Just now";
+                      try {
+                        timeAgo = formatDistanceToNow(new Date(createdAt), { addSuffix: true });
+                      } catch (error) {
+                        console.error("[AppHeader] Error formatting notification date:", error);
+                        console.error("[AppHeader] Error details:", {
+                          error,
+                          createdAt,
+                          notificationId,
+                        });
+                      }
+                      
+                      return (
+                        <div
+                          key={notificationId}
+                          className={`p-4 border rounded-lg cursor-pointer transition-colors ${
+                            !notification.read
+                              ? "bg-primary/5 border-primary/20 hover:bg-primary/10"
+                              : "hover:bg-muted/50"
+                          }`}
+                          onClick={() => handleNotificationClick(notification)}
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="text-2xl flex-shrink-0">
+                              {getNotificationIcon(notificationType)}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-start justify-between gap-2">
+                                <p className={`text-sm font-medium ${!notification.read ? "font-semibold" : ""}`}>
+                                  {notificationTitle}
+                                </p>
+                                {!notification.read && (
+                                  <div className="h-2 w-2 rounded-full bg-primary flex-shrink-0 mt-1.5" />
+                                )}
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                                {notificationMessage}
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-2">
+                                {timeAgo}
+                              </p>
+                            </div>
+                          </div>
                         </div>
-                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                          {notification.message}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-2">
-                          {formatDistanceToNow(new Date(notification.created_at), { addSuffix: true })}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                      );
+                    } catch (error) {
+                      console.error("[AppHeader] Error rendering notification:", error);
+                      console.error("[AppHeader] Error details:", {
+                        error,
+                        message: error instanceof Error ? error.message : String(error),
+                        stack: error instanceof Error ? error.stack : undefined,
+                        notification,
+                      });
+                      return null; // Don't render invalid notifications
+                    }
+                  })
+                  .filter(Boolean) // Remove null entries
+                }
               </div>
             )}
           </div>

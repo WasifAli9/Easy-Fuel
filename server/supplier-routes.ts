@@ -47,7 +47,6 @@ router.get("/depots", async (req, res) => {
 
     res.json(depots || []);
   } catch (error: any) {
-    console.error("Error fetching supplier depots:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -113,7 +112,6 @@ router.get("/depots/:depotId/pricing", async (req, res) => {
 
     res.json(result);
   } catch (error: any) {
-    console.error("Error fetching depot pricing:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -209,12 +207,10 @@ router.put("/depots/:depotId/pricing/:fuelTypeId", async (req, res) => {
       });
 
     if (historyError) {
-      console.error("Error logging pricing history:", historyError);
     }
 
     res.json({ success: true, message: "Pricing updated successfully" });
   } catch (error: any) {
-    console.error("Error updating depot pricing:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -269,7 +265,6 @@ router.get("/depots/:depotId/pricing/history", async (req, res) => {
 
     res.json(history || []);
   } catch (error: any) {
-    console.error("Error fetching pricing history:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -319,7 +314,6 @@ router.post("/depots", async (req, res) => {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: "Invalid depot data", details: error.errors });
     }
-    console.error("Error creating depot:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -369,7 +363,6 @@ router.patch("/depots/:depotId", async (req, res) => {
 
     res.json(updated);
   } catch (error: any) {
-    console.error("Error updating depot:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -429,7 +422,6 @@ router.delete("/depots/:depotId", async (req, res) => {
 
     res.json({ success: true, message: "Depot deleted successfully" });
   } catch (error: any) {
-    console.error("Error deleting depot:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -530,7 +522,6 @@ router.get("/orders", async (req, res) => {
 
     res.json(orders || []);
   } catch (error: any) {
-    console.error("Error fetching supplier orders:", error);
     res.status(500).json({ error: error.message });
   }
 });

@@ -158,7 +158,7 @@ export function OrderChat({ orderId, currentUserType }: OrderChatProps) {
         </CardTitle>
       </CardHeader>
       <CardContent className="p-0">
-        <ScrollArea ref={scrollAreaRef} className="h-[400px] px-4">
+        <ScrollArea ref={scrollAreaRef} className="h-[300px] px-4">
           {messagesLoading ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />

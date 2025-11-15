@@ -316,6 +316,7 @@ export default function DriverDashboard() {
             {/* GPS Location Tracker - Only active when on delivery */}
             <DriverLocationTracker 
               isOnDelivery={driverProfile?.availability_status === "on_delivery"}
+              activeOrderId={assignedOrders.find((o: any) => o.state === "en_route")?.id || null}
             />
             
             {loadingAssigned ? (

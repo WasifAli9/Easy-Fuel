@@ -27,7 +27,6 @@ router.get("/profile", async (req, res) => {
     if (profileError) {
       // If it's an API key error, it means the key is invalid
       if (profileError.message?.includes("Invalid API key")) {
-        console.error("Supabase API key error - check your SUPABASE_ANON_KEY or SUPABASE_SERVICE_ROLE_KEY");
         throw profileError;
       }
       throw profileError;
@@ -52,7 +51,6 @@ router.get("/profile", async (req, res) => {
     if (driverError) {
       // If it's an API key error, it means the key is invalid
       if (driverError.message?.includes("Invalid API key")) {
-        console.error("Supabase API key error - check your SUPABASE_ANON_KEY or SUPABASE_SERVICE_ROLE_KEY");
         throw driverError;
       }
       throw driverError;
@@ -226,7 +224,6 @@ async function sendCustomerNotification(
       }
     } catch (e) {
       // If we can't get email, continue without it
-      console.warn("Could not fetch customer email:", e);
     }
 
     if (!customerEmail) {
@@ -276,7 +273,6 @@ async function sendCustomerNotification(
     });
 
   } catch (error) {
-    console.error("Error sending customer notification:", error);
     throw error;
   }
 }
@@ -321,7 +317,6 @@ async function getUserEmail(userId: string | null | undefined) {
     if (error || !data?.user) return null;
     return data.user.email || null;
   } catch (error) {
-    console.error("Error fetching user email:", error);
     return null;
   }
 }
@@ -398,7 +393,6 @@ router.get("/offers", async (req, res) => {
       .order("created_at", { ascending: false });
 
     if (offersError) {
-      console.error(`[Driver Offers] Error fetching offers:`, offersError);
       throw offersError;
     }
 
@@ -431,7 +425,6 @@ router.get("/offers", async (req, res) => {
       .order("created_at", { ascending: false });
 
     if (ordersError) {
-      console.error(`[Driver Offers] Error fetching orders without offers:`, ordersError);
       throw ordersError;
     }
 
@@ -496,7 +489,6 @@ router.get("/offers", async (req, res) => {
     if (error?.code === 'PGRST116') {
       return res.json([]);
     }
-    console.error("Error fetching driver offers:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -603,7 +595,6 @@ router.get("/stats", async (req, res) => {
       totalDeliveries,
     });
   } catch (error: any) {
-    console.error("[Driver Stats] Error fetching driver stats:", error);
     res.status(500).json({ error: error.message || "Failed to fetch stats" });
   }
 });
@@ -693,7 +684,6 @@ router.get("/assigned-orders", async (req, res) => {
     if (error?.code === 'PGRST116') {
       return res.json([]);
     }
-    console.error("Error fetching assigned orders:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -780,7 +770,6 @@ router.get("/completed-orders", async (req, res) => {
     if (error?.code === 'PGRST116') {
       return res.json([]);
     }
-    console.error("Error fetching completed orders:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -840,7 +829,6 @@ router.post("/orders/:orderId/start", async (req, res) => {
         .update({ availability_status: "on_delivery", updated_at: nowIso })
         .eq("id", driver.id);
     } catch (availabilityError) {
-      console.warn("Error updating driver availability:", availabilityError);
     }
 
     await ensureChatThreadForAssignment({
@@ -873,7 +861,6 @@ router.post("/orders/:orderId/start", async (req, res) => {
 
     res.json({ success: true, state: "en_route" });
   } catch (error: any) {
-    console.error("[Driver Start Delivery] Error starting delivery:", error);
     res.status(500).json({ error: error.message || "Failed to start delivery" });
   }
 });
@@ -937,7 +924,7 @@ router.post("/orders/:orderId/pickup", async (req, res) => {
           "Your driver has collected the fuel and is heading to you",
           { action: "view_order", state: "picked_up" }
         )
-        .catch((err) => console.error("Error sending pickup push notification:", err));
+        .catch(() => {});
 
       try {
         await supabaseAdmin.from("notifications").insert({
@@ -948,7 +935,6 @@ router.post("/orders/:orderId/pickup", async (req, res) => {
           data: { orderId, state: "picked_up" },
         });
       } catch (notifError) {
-        console.error("Error inserting pickup notification:", notifError);
       }
 
       if (!sent) {
@@ -957,7 +943,6 @@ router.post("/orders/:orderId/pickup", async (req, res) => {
 
     res.json({ success: true, state: "picked_up" });
   } catch (error: any) {
-    console.error("[Driver Pickup Delivery] Error marking pickup:", error);
     res.status(500).json({ error: error.message || "Failed to mark pickup" });
   }
 });
@@ -1029,7 +1014,6 @@ router.post("/orders/:orderId/complete", async (req, res) => {
         .update({ availability_status: "available", updated_at: nowIso })
         .eq("id", driver.id);
     } catch (availabilityError) {
-      console.warn("Error updating driver availability after completion:", availabilityError);
     }
 
     const orderShortId = updatedOrder.id.substring(0, 8).toUpperCase();
@@ -1108,7 +1092,7 @@ router.post("/orders/:orderId/complete", async (req, res) => {
           driverName,
           customerName,
           signatureName: normalizedSignatureName,
-        }).catch((err) => console.error("Error sending delivery completion email to customer:", err))
+        }).catch(() => {})
       );
     }
 
@@ -1126,7 +1110,7 @@ router.post("/orders/:orderId/complete", async (req, res) => {
           driverName,
           customerName,
           signatureName: normalizedSignatureName,
-        }).catch((err) => console.error("Error sending delivery completion email to driver:", err))
+        }).catch(() => {})
       );
     }
 
@@ -1138,7 +1122,6 @@ router.post("/orders/:orderId/complete", async (req, res) => {
 
     res.json({ success: true, state: "delivered" });
   } catch (error: any) {
-    console.error("[Driver Complete Delivery] Error completing delivery:", error);
     res.status(500).json({ error: error.message || "Failed to complete delivery" });
   }
 });
@@ -1274,7 +1257,6 @@ router.post("/offers/:id/accept", async (req, res) => {
         .single();
 
       if (insertError || !insertedOffer) {
-        console.error("[Accept Offer] Error inserting new dispatch offer:", insertError);
         return res.status(500).json({ error: "Failed to submit offer. Please try again." });
       }
 
@@ -1354,7 +1336,6 @@ router.post("/offers/:id/accept", async (req, res) => {
       state: "pending_customer",
     });
   } catch (error: any) {
-    console.error(`[Accept Offer] Error accepting offer ${offerId}:`, error);
     res.status(500).json({ error: error.message || "Failed to accept offer" });
   }
 });
@@ -1407,7 +1388,6 @@ router.post("/offers/:id/reject", async (req, res) => {
 
     res.json({ success: true, message: "Offer rejected successfully" });
   } catch (error: any) {
-    console.error("Error rejecting offer:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1444,7 +1424,6 @@ router.get("/vehicles", async (req, res) => {
     const camelCaseVehicles = (vehicles || []).map(vehicleToCamelCase);
     res.json(camelCaseVehicles);
   } catch (error: any) {
-    console.error("Error fetching driver vehicles:", error);
     
     // Check for PostgREST schema cache error
     if (error?.code === 'PGRST205' || error?.message?.includes('schema cache')) {
@@ -1510,15 +1489,12 @@ router.post("/vehicles", async (req, res) => {
         message: `Vehicle ${vehicleDisplayName} has been successfully added to your account`,
         data: { vehicleId: vehicle.id, registrationNumber: vehicle.registration_number },
       });
-      if (notifError) console.error("Error creating vehicle add notification:", notifError);
     } catch (err: any) {
-      console.error("Error creating vehicle add notification:", err);
     }
 
     // Transform to camelCase for frontend
     res.json(vehicleToCamelCase(vehicle));
   } catch (error: any) {
-    console.error("Error adding vehicle:", error);
     
     // Check for PostgREST schema cache error
     if (error?.code === 'PGRST205' || error?.message?.includes('schema cache')) {
@@ -1596,15 +1572,12 @@ router.patch("/vehicles/:vehicleId", async (req, res) => {
         message: `Vehicle ${vehicleDisplayName} details have been successfully updated`,
         data: { vehicleId: vehicle.id, registrationNumber: vehicle.registration_number },
       });
-      if (notifError) console.error("Error creating vehicle update notification:", notifError);
     } catch (err: any) {
-      console.error("Error creating vehicle update notification:", err);
     }
 
     // Transform to camelCase for frontend
     res.json(vehicleToCamelCase(vehicle));
   } catch (error: any) {
-    console.error("Error updating vehicle:", error);
     
     // Check for PostgREST schema cache error
     if (error?.code === 'PGRST205' || error?.message?.includes('schema cache')) {
@@ -1647,7 +1620,6 @@ router.delete("/vehicles/:vehicleId", async (req, res) => {
 
     res.json({ success: true, message: "Vehicle deleted successfully" });
   } catch (error: any) {
-    console.error("Error deleting vehicle:", error);
     
     // Check for PostgREST schema cache error
     if (error?.code === 'PGRST205' || error?.message?.includes('schema cache')) {
@@ -1684,7 +1656,6 @@ router.get("/preferences", async (req, res) => {
       currentLng: driver.current_lng,
     });
   } catch (error: any) {
-    console.error("Error fetching driver preferences:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1762,7 +1733,6 @@ router.patch("/preferences", async (req, res) => {
       currentLng: updatedDriver.current_lng,
     });
   } catch (error: any) {
-    console.error("Error updating driver preferences:", error);
     
     // Check for PostgREST schema cache error
     if (error?.code === 'PGRST205' || error?.message?.includes('schema cache')) {
@@ -1830,7 +1800,6 @@ router.get("/pricing", async (req, res) => {
 
     res.json(result);
   } catch (error: any) {
-    console.error("Error fetching driver pricing:", error);
     
     if (error?.code === 'PGRST205' || error?.message?.includes('schema cache')) {
       return res.status(500).json({ 
@@ -1934,7 +1903,6 @@ router.put("/pricing/:fuelTypeId", async (req, res) => {
 
     res.json(updatedPricing);
   } catch (error: any) {
-    console.error("Error updating driver pricing:", error);
     
     if (error?.code === 'PGRST205' || error?.message?.includes('schema cache')) {
       return res.status(500).json({ 
@@ -1986,7 +1954,6 @@ router.get("/pricing/history", async (req, res) => {
 
     res.json(history || []);
   } catch (error: any) {
-    console.error("Error fetching pricing history:", error);
     
     if (error?.code === 'PGRST205' || error?.message?.includes('schema cache')) {
       return res.status(500).json({ 
@@ -2004,7 +1971,7 @@ router.put("/location", async (req, res) => {
   const user = (req as any).user;
   
   try {
-    const { latitude, longitude } = req.body;
+    const { latitude, longitude, orderId } = req.body;
 
     if (typeof latitude !== "number" || typeof longitude !== "number") {
       return res.status(400).json({ error: "Valid latitude and longitude are required" });
@@ -2027,21 +1994,76 @@ router.put("/location", async (req, res) => {
       return res.status(404).json({ error: "Driver profile not found" });
     }
 
+    // If orderId is provided, verify the driver is assigned to this order and it's en_route
+    let activeOrderId: string | null = null;
+    if (orderId) {
+      const { data: order } = await supabaseAdmin
+        .from("orders")
+        .select("id, state")
+        .eq("id", orderId)
+        .eq("assigned_driver_id", driver.id)
+        .eq("state", "en_route")
+        .maybeSingle();
+      
+      if (order) {
+        activeOrderId = order.id;
+      }
+    } else {
+      // If no orderId provided, check if driver has any en_route orders
+      const { data: activeOrder } = await supabaseAdmin
+        .from("orders")
+        .select("id")
+        .eq("assigned_driver_id", driver.id)
+        .eq("state", "en_route")
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      
+      if (activeOrder) {
+        activeOrderId = activeOrder.id;
+      }
+    }
+
     // Update driver's current location
+    const nowIso = new Date().toISOString();
     const { error: updateError } = await supabaseAdmin
       .from("drivers")
       .update({
         current_lat: latitude,
         current_lng: longitude,
-        updated_at: new Date().toISOString(),
+        last_location_update: nowIso,
+        updated_at: nowIso,
       })
       .eq("id", driver.id);
 
     if (updateError) throw updateError;
 
+    // Also save to driver_locations table for history and real-time tracking
+    // First, mark all previous locations as not current
+    await supabaseAdmin
+      .from("driver_locations")
+      .update({ is_current: false })
+      .eq("driver_id", driver.id)
+      .eq("is_current", true);
+
+    // Then insert the new location as current
+    const { error: historyError } = await supabaseAdmin
+      .from("driver_locations")
+      .insert({
+        driver_id: driver.id,
+        order_id: activeOrderId || null,
+        lat: latitude,
+        lng: longitude,
+        is_current: true,
+        created_at: nowIso,
+      });
+
+    if (historyError) {
+      console.error("Error saving location history:", historyError);
+    }
+
     res.json({ success: true, latitude, longitude });
   } catch (error: any) {
-    console.error("Error updating driver location:", error);
     res.status(500).json({ error: error.message });
   }
 });

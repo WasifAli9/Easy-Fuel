@@ -62,7 +62,7 @@ class WebSocketService {
           const message: WebSocketMessage = JSON.parse(data.toString());
           this.handleMessage(ws, message);
         } catch (error) {
-          console.error("Error parsing WebSocket message:", error);
+          // Invalid message format, ignore
         }
       });
 

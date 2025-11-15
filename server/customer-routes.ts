@@ -21,7 +21,6 @@ router.get("/fuel-types", async (req, res) => {
     if (error) throw error;
     res.json(fuelTypes || []);
   } catch (error: any) {
-    console.error("Error fetching fuel types:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -69,7 +68,6 @@ router.get("/orders", async (req, res) => {
 
     res.json(orders || []);
   } catch (error: any) {
-    console.error("Error fetching orders:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -148,7 +146,6 @@ router.get("/orders/:id", async (req, res) => {
 
     res.json(order);
   } catch (error: any) {
-    console.error("Error fetching order:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -300,7 +297,6 @@ router.get("/orders/:id/offers", async (req, res) => {
 
     res.json(formattedOffers);
   } catch (error: any) {
-    console.error("Error fetching order offers:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -444,7 +440,7 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
       .eq("id", offerId);
 
     if (selectedOfferError) {
-      console.error("Error updating selected offer:", selectedOfferError);
+      // Error updating selected offer
     }
 
     // Get all other offers that will be declined
@@ -467,7 +463,7 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
       .in("state", ["pending_customer", "offered"]);
 
     if (otherOffersError) {
-      console.error("Error updating other offers:", otherOffersError);
+      // Error updating other offers
     }
 
     // Notify drivers whose quotes were declined
@@ -550,8 +546,6 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
         driverProfileName,
         driverProfilePhone || "Not available"
       );
-    } else {
-      console.warn(`[Customer Accept Quote] No driverUserId found for driver ${offer.driver_id}`);
     }
 
     // Send confirmation email to customer
@@ -578,8 +572,8 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
         fuelType: updatedOrder.fuel_types?.label || "Fuel",
         litres: String(updatedOrder.litres),
         deliveryAddress,
-      }).catch((error: any) => {
-        console.error("Error sending driver acceptance email:", error);
+      }).catch(() => {
+        // Email send failed
       });
     }
 
@@ -589,7 +583,6 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
       orderId,
     });
   } catch (error: any) {
-    console.error("Error accepting driver offer:", error);
     res.status(500).json({ error: error.message || "Failed to accept driver offer" });
   }
 });
@@ -774,13 +767,12 @@ router.post("/orders", async (req, res) => {
       litres: litresNum,
       maxBudgetCents: maxBudgetCents || null,
     })
-    .catch(error => {
-      console.error(`[Order Created] Error creating dispatch offers for order ${newOrder.id}:`, error);
+    .catch(() => {
+      // Dispatch offers creation failed
     });
 
     res.status(201).json(newOrder);
   } catch (error: any) {
-    console.error("Error creating order:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -886,7 +878,6 @@ router.patch("/orders/:id", async (req, res) => {
 
     res.json(updatedOrder);
   } catch (error: any) {
-    console.error("Error updating order:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -945,7 +936,6 @@ router.delete("/orders/:id", async (req, res) => {
 
     res.json(cancelledOrder);
   } catch (error: any) {
-    console.error("Error cancelling order:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -978,7 +968,6 @@ router.get("/delivery-addresses", async (req, res) => {
     if (error) throw error;
     res.json(addresses || []);
   } catch (error: any) {
-    console.error("Error fetching delivery addresses:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1041,7 +1030,6 @@ router.post("/delivery-addresses", async (req, res) => {
     if (error) throw error;
     res.json(newAddress);
   } catch (error: any) {
-    console.error("Error creating delivery address:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1112,7 +1100,6 @@ router.patch("/delivery-addresses/:id", async (req, res) => {
 
     res.json(updatedAddress);
   } catch (error: any) {
-    console.error("Error updating delivery address:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1143,7 +1130,6 @@ router.delete("/delivery-addresses/:id", async (req, res) => {
     if (error) throw error;
     res.json({ success: true });
   } catch (error: any) {
-    console.error("Error deleting delivery address:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1177,14 +1163,12 @@ router.get("/payment-methods", async (req, res) => {
     if (error) {
       // Handle schema cache issues - return empty array
       if (error.code === 'PGRST205' || error.code === 'PGRST204') {
-        console.log("Schema cache not refreshed yet for payment_methods, returning empty array");
         return res.json([]);
       }
       throw error;
     }
     res.json(paymentMethods || []);
   } catch (error: any) {
-    console.error("Error fetching payment methods:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1254,7 +1238,6 @@ router.post("/payment-methods", async (req, res) => {
     if (error) throw error;
     res.json(newPaymentMethod);
   } catch (error: any) {
-    console.error("Error creating payment method:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1286,7 +1269,6 @@ router.delete("/payment-methods/:id", async (req, res) => {
     if (error) throw error;
     res.json({ success: true });
   } catch (error: any) {
-    console.error("Error deleting payment method:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1319,7 +1301,6 @@ router.get("/addresses", async (req, res) => {
     if (error) throw error;
     res.json(addresses || []);
   } catch (error: any) {
-    console.error("Error fetching addresses:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1361,7 +1342,6 @@ router.get("/addresses/:id", async (req, res) => {
 
     res.json(address);
   } catch (error: any) {
-    console.error("Error fetching address:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1423,7 +1403,6 @@ router.post("/addresses", async (req, res) => {
     if (error) throw error;
     res.json(newAddress);
   } catch (error: any) {
-    console.error("Error creating address:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1498,7 +1477,6 @@ router.put("/addresses/:id", async (req, res) => {
 
     res.json(updatedAddress);
   } catch (error: any) {
-    console.error("Error updating address:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1545,7 +1523,6 @@ router.delete("/addresses/:id", async (req, res) => {
     if (error) throw error;
     res.json({ success: true });
   } catch (error: any) {
-    console.error("Error deleting address:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1566,7 +1543,6 @@ router.get("/profile", async (req, res) => {
     if (profileError) {
       // If it's an API key error, it means the key is invalid
       if (profileError.message?.includes("Invalid API key")) {
-        console.error("Supabase API key error - check your SUPABASE_ANON_KEY or SUPABASE_SERVICE_ROLE_KEY");
         throw profileError;
       }
       throw profileError;
@@ -1637,7 +1613,6 @@ router.get("/profile", async (req, res) => {
         code: "PROFILE_SETUP_REQUIRED"
       });
     }
-    console.error("Error fetching profile:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1693,7 +1668,6 @@ router.put("/profile", async (req, res) => {
 
     res.json({ success: true, customer: updatedCustomer });
   } catch (error: any) {
-    console.error("Error updating profile:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1734,15 +1708,14 @@ router.get("/orders/:orderId/driver-location", async (req, res) => {
       return res.status(404).json({ error: "No driver assigned to this order" });
     }
 
-    // Get driver's current location
+    // Get driver info
     const { data: driver, error: driverError } = await supabaseAdmin
       .from("drivers")
-      .select("current_lat, current_lng, user_id")
+      .select("id, user_id, current_lat, current_lng")
       .eq("id", order.assigned_driver_id)
-      .maybeSingle(); // Use maybeSingle() instead of single() to handle zero rows gracefully
+      .maybeSingle();
 
     if (driverError) {
-      console.error("Driver query error:", driverError);
       return res.status(500).json({ error: "Failed to fetch driver information" });
     }
     
@@ -1750,9 +1723,57 @@ router.get("/orders/:orderId/driver-location", async (req, res) => {
       return res.status(404).json({ error: "Driver not found" });
     }
 
-    // Check if driver has set their location
-    if (!driver.current_lat || !driver.current_lng) {
-      return res.status(404).json({ error: "No driver location available" });
+    // For en_route orders, get the most recent location from driver_locations table
+    let latitude: number | null = null;
+    let longitude: number | null = null;
+    let lastUpdate: string | null = null;
+
+    if (order.state === "en_route") {
+      // Get the most recent location from driver_locations table for this specific order
+      // Prioritize locations from the last 5 minutes to ensure we get fresh GPS data
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      
+      const { data: recentLocation, error: locationError } = await supabaseAdmin
+        .from("driver_locations")
+        .select("lat, lng, created_at")
+        .eq("driver_id", driver.id)
+        .eq("order_id", orderId)
+        .gte("created_at", fiveMinutesAgo) // Only get locations from last 5 minutes
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      // If no recent location found for this specific order, try to get any recent location from this driver
+      if (locationError || !recentLocation || !recentLocation.lat || !recentLocation.lng) {
+        const { data: fallbackLocation } = await supabaseAdmin
+          .from("driver_locations")
+          .select("lat, lng, created_at")
+          .eq("driver_id", driver.id)
+          .gte("created_at", fiveMinutesAgo) // Only get locations from last 5 minutes
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        
+        if (fallbackLocation && fallbackLocation.lat && fallbackLocation.lng) {
+          latitude = fallbackLocation.lat;
+          longitude = fallbackLocation.lng;
+          lastUpdate = fallbackLocation.created_at;
+        }
+      } else {
+        latitude = recentLocation.lat;
+        longitude = recentLocation.lng;
+        lastUpdate = recentLocation.created_at;
+      }
+    }
+
+    // Fallback to current_lat/current_lng if no recent location found
+    if (!latitude || !longitude) {
+      if (driver.current_lat && driver.current_lng) {
+        latitude = driver.current_lat;
+        longitude = driver.current_lng;
+      } else {
+        return res.status(404).json({ error: "No driver location available" });
+      }
     }
 
     // Get driver profile for additional details
@@ -1763,13 +1784,13 @@ router.get("/orders/:orderId/driver-location", async (req, res) => {
       .maybeSingle();
 
     res.json({
-      latitude: driver.current_lat,
-      longitude: driver.current_lng,
+      latitude,
+      longitude,
       driverName: driverProfile?.full_name || "Driver",
       orderState: order.state,
+      lastUpdate: lastUpdate || null,
     });
   } catch (error: any) {
-    console.error("Error fetching driver location:", error);
     res.status(500).json({ error: error.message });
   }
 });

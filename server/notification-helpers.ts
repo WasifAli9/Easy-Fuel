@@ -11,10 +11,7 @@ export async function notifySafely(
   try {
     await notificationFn();
   } catch (error) {
-    console.error(`[Notification Failed] ${context.operation}`, {
-      ...context,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    // Notification failed silently
   }
 }
 
@@ -26,14 +23,8 @@ export async function notifyMultipleSafely(
   notifications: Array<{ fn: () => Promise<string | null>; context: Record<string, any> }>
 ): Promise<{ successful: number; failed: number }> {
   const results = await Promise.allSettled(
-    notifications.map(({ fn, context }) => 
-      fn().catch(error => {
-        console.error(`[Notification Failed]`, {
-          ...context,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return null;
-      })
+    notifications.map(({ fn }) => 
+      fn().catch(() => null)
     )
   );
 

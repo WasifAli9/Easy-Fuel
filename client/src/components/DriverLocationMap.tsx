@@ -32,6 +32,7 @@ interface DriverLocation {
   longitude: number | null;
   driverName: string;
   orderState: string;
+  lastUpdate?: string | null;
 }
 
 // Component to recenter map when location updates
@@ -53,7 +54,7 @@ export function DriverLocationMap({
   const { data: driverLocation, isLoading: loading, error } = useQuery<DriverLocation>({
     queryKey: ["/api/orders", orderId, "driver-location"],
     enabled: !!orderId,
-    refetchInterval: 10000, // Poll every 10 seconds
+    refetchInterval: 30000, // Poll every 30 seconds
     retry: false, // Don't retry on 404 (no driver assigned)
   });
 
@@ -123,9 +124,21 @@ export function DriverLocationMap({
   const driverLat = driverLocation.latitude;
   const driverLng = driverLocation.longitude;
 
-  // Use driver location as center, or delivery location if available
+  // Always use driver's GPS location as center (not delivery address)
   const centerLat = driverLat;
   const centerLng = driverLng;
+
+  // Debug: Log the coordinates being used (only in development)
+  if (process.env.NODE_ENV === 'development') {
+    console.log("Driver Location Map - Using coordinates:", {
+      driverLat,
+      driverLng,
+      deliveryLat,
+      deliveryLng,
+      driverName: driverLocation.driverName,
+      lastUpdate: driverLocation.lastUpdate,
+    });
+  }
 
   return (
     <Card className={className}>
@@ -144,7 +157,7 @@ export function DriverLocationMap({
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <MapPin className="h-4 w-4" />
-            <span>Updates every 10 seconds</span>
+            <span>Updates every 30 seconds</span>
           </div>
 
           <div className="rounded-lg overflow-hidden border" style={{ height: "400px" }}>
@@ -186,11 +199,19 @@ export function DriverLocationMap({
             </MapContainer>
           </div>
 
-          <div className="text-sm text-muted-foreground pt-2">
+          <div className="text-sm text-muted-foreground pt-2 space-y-1">
             <p className="font-medium text-foreground">
               Driver: {driverLocation.driverName}
             </p>
             <p>Status: {driverLocation.orderState}</p>
+            <p className="text-xs">
+              GPS Coordinates: {driverLat.toFixed(6)}, {driverLng.toFixed(6)}
+            </p>
+            {driverLocation.lastUpdate && (
+              <p className="text-xs">
+                Last Update: {new Date(driverLocation.lastUpdate).toLocaleTimeString()}
+              </p>
+            )}
           </div>
         </div>
       </CardContent>

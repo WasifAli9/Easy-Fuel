@@ -95,7 +95,9 @@ class NotificationService {
         .single();
 
       if (error) {
-        console.error("Error creating notification:", error);
+        if (error.code === 'PGRST205' || error.message?.includes('Could not find the table')) {
+          console.error("Notifications table missing. Run server/create-notifications-table.sql");
+        }
         return null;
       }
 
@@ -146,7 +148,6 @@ class NotificationService {
 
       return notification.id;
     } catch (error) {
-      console.error("Error in createAndSend:", error);
       return null;
     }
   }

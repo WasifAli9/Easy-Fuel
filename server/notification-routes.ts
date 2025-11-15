@@ -34,15 +34,30 @@ router.get("/", async (req, res) => {
       .limit(50);
 
     if (error) {
+      console.error("[notification-routes] Error fetching notifications:", error);
+      console.error("[notification-routes] Error details:", {
+        error,
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        userId: user.id,
+      });
       if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
       throw error;
     }
 
     res.json(notifications || []);
   } catch (error: any) {
-    console.error("Error fetching notifications:", error);
+    console.error("[notification-routes] Exception fetching notifications:", error);
+    console.error("[notification-routes] Exception details:", {
+      error,
+      message: error?.message,
+      stack: error?.stack,
+      userId: user?.id,
+    });
     if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message || "Internal server error" });
   }
 });
 
@@ -58,15 +73,30 @@ router.get("/unread-count", async (req, res) => {
       .eq("read", false);
 
     if (error) {
+      console.error("[notification-routes] Error fetching unread count:", error);
+      console.error("[notification-routes] Error details:", {
+        error,
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        userId: user.id,
+      });
       if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
       throw error;
     }
 
     res.json({ count: count || 0 });
   } catch (error: any) {
-    console.error("Error fetching unread count:", error);
+    console.error("[notification-routes] Exception fetching unread count:", error);
+    console.error("[notification-routes] Exception details:", {
+      error,
+      message: error?.message,
+      stack: error?.stack,
+      userId: user?.id,
+    });
     if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message || "Internal server error" });
   }
 });
 
@@ -85,11 +115,22 @@ router.patch("/:id/read", async (req, res) => {
       .single();
 
     if (checkError) {
+      console.error("[notification-routes] Error checking notification:", checkError);
+      console.error("[notification-routes] Error details:", {
+        error: checkError,
+        code: checkError.code,
+        message: checkError.message,
+        details: checkError.details,
+        hint: checkError.hint,
+        userId: user.id,
+        notificationId,
+      });
       if (isSchemaCacheError(checkError)) return respondSchemaCacheIssue(res);
       throw checkError;
     }
 
     if (!notification) {
+      console.warn("[notification-routes] Notification not found:", { userId: user.id, notificationId });
       return res.status(404).json({ error: "Notification not found" });
     }
 
@@ -104,15 +145,32 @@ router.patch("/:id/read", async (req, res) => {
       .eq("user_id", user.id);
 
     if (error) {
+      console.error("[notification-routes] Error marking notification as read:", error);
+      console.error("[notification-routes] Error details:", {
+        error,
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        userId: user.id,
+        notificationId,
+      });
       if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
       throw error;
     }
 
     res.json({ success: true });
   } catch (error: any) {
-    console.error("Error marking notification as read:", error);
+    console.error("[notification-routes] Exception marking notification as read:", error);
+    console.error("[notification-routes] Exception details:", {
+      error,
+      message: error?.message,
+      stack: error?.stack,
+      userId: user?.id,
+      notificationId,
+    });
     if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message || "Internal server error" });
   }
 });
 
@@ -131,15 +189,30 @@ router.patch("/read-all", async (req, res) => {
       .eq("read", false);
 
     if (error) {
+      console.error("[notification-routes] Error marking all notifications as read:", error);
+      console.error("[notification-routes] Error details:", {
+        error,
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        userId: user.id,
+      });
       if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
       throw error;
     }
 
     res.json({ success: true });
   } catch (error: any) {
-    console.error("Error marking all notifications as read:", error);
+    console.error("[notification-routes] Exception marking all notifications as read:", error);
+    console.error("[notification-routes] Exception details:", {
+      error,
+      message: error?.message,
+      stack: error?.stack,
+      userId: user?.id,
+    });
     if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message || "Internal server error" });
   }
 });
 

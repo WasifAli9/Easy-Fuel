@@ -524,8 +524,8 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                 </div>
               )}
 
-              {/* Live GPS Tracking Map - Show when driver is assigned */}
-              {order.assigned_driver_id && (
+              {/* Live GPS Tracking Map - Show when driver is en_route */}
+              {order.assigned_driver_id && order.state === "en_route" && (
                 <div className="space-y-4">
                   <DriverLocationMap
                     orderId={order.id}

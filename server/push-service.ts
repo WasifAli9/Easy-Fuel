@@ -4,9 +4,7 @@ import { supabaseAdmin } from "./supabase";
 const vapidPublicKey = process.env.VAPID_PUBLIC_KEY!;
 const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY!;
 
-if (!vapidPublicKey || !vapidPrivateKey) {
-  console.warn("VAPID keys not configured. Push notifications will not work.");
-} else {
+if (vapidPublicKey && vapidPrivateKey) {
   webpush.setVapidDetails(
     "mailto:support@easyfuel.za",
     vapidPublicKey,
@@ -33,7 +31,6 @@ class PushNotificationService {
         .eq("user_id", userId);
 
       if (error) {
-        console.error("Error fetching push subscriptions:", error);
         return 0;
       }
 
@@ -60,8 +57,6 @@ class PushNotificationService {
           );
           sentCount++;
         } catch (error: any) {
-          console.error("Error sending push notification:", error);
-          
           if (error.statusCode === 404 || error.statusCode === 410) {
             failedSubscriptions.push(subscription.id);
           }
@@ -77,7 +72,6 @@ class PushNotificationService {
 
       return sentCount;
     } catch (error) {
-      console.error("Error in sendToUser:", error);
       return 0;
     }
   }

@@ -5,16 +5,36 @@ import { OrderCard } from "@/components/OrderCard";
 import { CreateOrderDialog } from "@/components/CreateOrderDialog";
 import { ViewOrderDialog } from "@/components/ViewOrderDialog";
 import { Button } from "@/components/ui/button";
-import { Filter, Plus } from "lucide-react";
+import { Filter, X } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 
 export default function CustomerDashboard() {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
+  const [selectedFuelTypeId, setSelectedFuelTypeId] = useState<string | null>(null);
+  const [filterOpen, setFilterOpen] = useState(false);
 
   // Fetch orders from API
   const { data: orders = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/orders"],
+  });
+
+  // Fetch fuel types for filter
+  const { data: fuelTypes = [] } = useQuery<any[]>({
+    queryKey: ["/api/fuel-types"],
   });
 
   // Helper function to format delivery address
@@ -33,9 +53,74 @@ export default function CustomerDashboard() {
     return `${order.drop_lat}, ${order.drop_lng}`;
   };
 
+  // Helper function to filter out old orders
+  const filterOutOldOrders = (ordersToFilter: any[]) => {
+    const twoDaysAgo = new Date();
+    twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+    
+    const oneDayAgo = new Date();
+    oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+    
+    return ordersToFilter.filter((order) => {
+      // Filter out cancelled orders older than 1 day
+      if (order.state === "cancelled") {
+        const cancelledAt = order.updated_at ? new Date(order.updated_at) : null;
+        const createdAt = order.created_at ? new Date(order.created_at) : null;
+        
+        // Use updated_at if available (when order was cancelled), otherwise use created_at
+        const orderDate = cancelledAt || createdAt;
+        
+        if (!orderDate) {
+          return true; // Keep if we can't determine the date
+        }
+        
+        // Remove if cancelled/created more than 1 day ago
+        return orderDate > oneDayAgo;
+      }
+      
+      // Filter out delivered orders older than 2 days
+      if (order.state === "delivered") {
+        const deliveredAt = order.delivered_at ? new Date(order.delivered_at) : null;
+        
+        // If no delivered_at timestamp, use created_at as fallback
+        if (!deliveredAt) {
+          const createdAt = order.created_at ? new Date(order.created_at) : null;
+          if (!createdAt) {
+            return true; // Keep if we can't determine the date
+          }
+          // Only remove if created more than 2 days ago
+          return createdAt > twoDaysAgo;
+        }
+        
+        // Remove if delivered more than 2 days ago
+        return deliveredAt > twoDaysAgo;
+      }
+      
+      // Keep all other orders (active, en_route, picked_up, etc.)
+      return true;
+    });
+  };
+
+  // Helper function to filter orders by fuel type
+  const filterOrdersByFuelType = (ordersToFilter: any[]) => {
+    if (!selectedFuelTypeId) {
+      return ordersToFilter;
+    }
+    return ordersToFilter.filter((order) => {
+      // Check both the relationship object and direct field
+      const fuelTypeId = order.fuel_types?.id || order.fuel_type_id;
+      return fuelTypeId === selectedFuelTypeId;
+    });
+  };
+
+  // Get selected fuel type label for display
+  const selectedFuelTypeLabel = selectedFuelTypeId
+    ? fuelTypes.find((ft) => ft.id === selectedFuelTypeId)?.label || null
+    : null;
+
   return (
     <div className="min-h-screen bg-background">
-      <AppHeader notificationCount={2} />
+      <AppHeader />
       
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex items-center justify-between mb-8">
@@ -55,47 +140,127 @@ export default function CustomerDashboard() {
                 <TabsTrigger value="completed" data-testid="tab-completed">Completed</TabsTrigger>
               </TabsList>
             </div>
-            <Button variant="outline" size="sm" data-testid="button-filter" className="self-start sm:self-auto">
-              <Filter className="h-4 w-4 mr-2" />
-              Filter
-            </Button>
+            <Popover open={filterOpen} onOpenChange={setFilterOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="sm" data-testid="button-filter" className="self-start sm:self-auto">
+                  <Filter className="h-4 w-4 mr-2" />
+                  Filter
+                  {selectedFuelTypeLabel && (
+                    <span className="ml-2 text-xs bg-primary/10 text-primary px-2 py-0.5 rounded">
+                      {selectedFuelTypeLabel}
+                    </span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80" align="end">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-base font-semibold">Filter by Fuel Type</Label>
+                    {selectedFuelTypeId && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedFuelTypeId(null);
+                          setFilterOpen(false);
+                        }}
+                        className="h-6 px-2 text-xs"
+                      >
+                        <X className="h-3 w-3 mr-1" />
+                        Clear
+                      </Button>
+                    )}
+                  </div>
+                  <Select
+                    value={selectedFuelTypeId ? selectedFuelTypeId : "all"}
+                    onValueChange={(value) => {
+                      if (value === "all") {
+                        setSelectedFuelTypeId(null);
+                      } else {
+                        setSelectedFuelTypeId(value);
+                      }
+                      // Close popover after selection
+                      setTimeout(() => setFilterOpen(false), 150);
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select fuel type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Fuel Types</SelectItem>
+                      {fuelTypes.map((fuelType) => (
+                        <SelectItem key={fuelType.id} value={fuelType.id}>
+                          {fuelType.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
 
           <TabsContent value="all" className="space-y-4">
             {isLoading ? (
               <div className="text-center py-8 text-muted-foreground">Loading orders...</div>
-            ) : orders.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">No orders found. Create your first order!</div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {orders.map((order) => (
-                  <OrderCard
-                    key={order.id}
-                    id={order.id}
-                    fuelType={order.fuel_types?.label || "Unknown"}
-                    litres={parseFloat(order.litres)}
-                    location={formatAddress(order)}
-                    date={new Date(order.created_at).toLocaleString()}
-                    totalAmount={order.total_cents / 100}
-                    status={order.state}
-                    onView={() => {
-                      setSelectedOrderId(order.id);
-                      setViewDialogOpen(true);
-                    }}
-                  />
-                ))}
-              </div>
-            )}
+            ) : (() => {
+              const recentOrders = filterOutOldOrders(orders);
+              const filteredOrders = filterOrdersByFuelType(recentOrders);
+              return filteredOrders.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  {selectedFuelTypeId ? "No orders found for the selected fuel type." : "No orders found. Create your first order!"}
+                </div>
+              ) : (
+                <>
+                  {(selectedFuelTypeId || recentOrders.length !== orders.length) && (
+                    <div className="text-sm text-muted-foreground mb-2">
+                      Showing {filteredOrders.length} of {recentOrders.length} orders
+                      {selectedFuelTypeLabel && ` (filtered by ${selectedFuelTypeLabel})`}
+                      {recentOrders.length !== orders.length && (
+                        <span>
+                          {" "}
+                          (completed orders older than 2 days and cancelled orders older than 1 day are hidden)
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {filteredOrders.map((order) => (
+                    <OrderCard
+                      key={order.id}
+                      id={order.id}
+                      fuelType={order.fuel_types?.label || "Unknown"}
+                      litres={parseFloat(order.litres)}
+                      location={formatAddress(order)}
+                      date={new Date(order.created_at).toLocaleString()}
+                      totalAmount={order.total_cents / 100}
+                      status={order.state}
+                      onView={() => {
+                        setSelectedOrderId(order.id);
+                        setViewDialogOpen(true);
+                      }}
+                    />
+                  ))}
+                  </div>
+                </>
+              );
+            })()}
           </TabsContent>
 
           <TabsContent value="active" className="space-y-4">
             {isLoading ? (
               <div className="text-center py-8 text-muted-foreground">Loading orders...</div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {orders
-                  .filter(o => !["delivered", "cancelled"].includes(o.state))
-                  .map((order) => (
+            ) : (() => {
+              const activeOrders = orders.filter(o => !["delivered", "cancelled"].includes(o.state));
+              const recentActiveOrders = filterOutOldOrders(activeOrders);
+              const filteredOrders = filterOrdersByFuelType(recentActiveOrders);
+              return filteredOrders.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  {selectedFuelTypeId ? "No active orders found for the selected fuel type." : "No active orders found."}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {filteredOrders.map((order) => (
                     <OrderCard
                       key={order.id}
                       id={order.id}
@@ -111,18 +276,25 @@ export default function CustomerDashboard() {
                       }}
                     />
                   ))}
-              </div>
-            )}
+                </div>
+              );
+            })()}
           </TabsContent>
 
           <TabsContent value="completed" className="space-y-4">
             {isLoading ? (
               <div className="text-center py-8 text-muted-foreground">Loading orders...</div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {orders
-                  .filter(o => o.state === "delivered")
-                  .map((order) => (
+            ) : (() => {
+              const completedOrders = orders.filter(o => o.state === "delivered");
+              const recentCompletedOrders = filterOutOldOrders(completedOrders);
+              const filteredOrders = filterOrdersByFuelType(recentCompletedOrders);
+              return filteredOrders.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  {selectedFuelTypeId ? "No completed orders found for the selected fuel type." : "No completed orders found."}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {filteredOrders.map((order) => (
                     <OrderCard
                       key={order.id}
                       id={order.id}
@@ -138,8 +310,9 @@ export default function CustomerDashboard() {
                       }}
                     />
                   ))}
-              </div>
-            )}
+                </div>
+              );
+            })()}
           </TabsContent>
         </Tabs>
       </main>

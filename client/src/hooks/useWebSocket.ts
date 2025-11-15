@@ -60,10 +60,27 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
             
             // Call the message handler using ref to avoid stale closures
             if (onMessageRef.current) {
-              onMessageRef.current(message);
+              try {
+                onMessageRef.current(message);
+              } catch (error) {
+                console.error("[useWebSocket] Error in message handler callback:", error);
+                console.error("[useWebSocket] Error details:", {
+                  error,
+                  message: error instanceof Error ? error.message : String(error),
+                  stack: error instanceof Error ? error.stack : undefined,
+                  messageType: message.type,
+                  payload: message.payload,
+                });
+              }
             }
           } catch (error) {
-            console.error("Error parsing WebSocket message:", error);
+            console.error("[useWebSocket] Error parsing WebSocket message:", error);
+            console.error("[useWebSocket] Error details:", {
+              error,
+              message: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? error.stack : undefined,
+              rawData: event.data,
+            });
           }
         };
 

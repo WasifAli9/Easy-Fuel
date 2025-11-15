@@ -7,9 +7,10 @@ import { Badge } from "@/components/ui/badge";
 
 interface DriverLocationTrackerProps {
   isOnDelivery: boolean; // Driver is currently on delivery
+  activeOrderId?: string | null; // Active en_route order ID
 }
 
-export function DriverLocationTracker({ isOnDelivery }: DriverLocationTrackerProps) {
+export function DriverLocationTracker({ isOnDelivery, activeOrderId }: DriverLocationTrackerProps) {
   const [isTracking, setIsTracking] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
@@ -17,10 +18,17 @@ export function DriverLocationTracker({ isOnDelivery }: DriverLocationTrackerPro
 
   const updateLocation = async (latitude: number, longitude: number) => {
     try {
-      await apiRequest("PUT", "/api/driver/location", { latitude, longitude });
+      // Include orderId if available so the location is associated with the order
+      const payload: any = { latitude, longitude };
+      if (activeOrderId) {
+        payload.orderId = activeOrderId;
+      }
+      
+      await apiRequest("PUT", "/api/driver/location", payload);
       
       setLastUpdate(new Date());
       setLocationError(null);
+      console.log("Location updated:", { latitude, longitude, orderId: activeOrderId });
     } catch (error: any) {
       console.error("Error updating location:", error);
       setLocationError(error.message || "Failed to update location");

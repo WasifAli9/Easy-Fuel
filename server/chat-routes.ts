@@ -153,7 +153,6 @@ router.get("/thread/:orderId", async (req, res) => {
 
     res.json(mapThread(threadRecord));
   } catch (error: any) {
-    console.error("Error getting chat thread:", error);
     if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
     res.status(500).json({ error: error.message });
   }
@@ -248,7 +247,6 @@ router.get("/messages/:threadId", async (req, res) => {
 
     res.json(mapped);
   } catch (error: any) {
-    console.error("Error getting messages:", error);
     if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
     res.status(500).json({ error: error.message });
   }
@@ -367,7 +365,6 @@ router.post("/messages", async (req, res) => {
 
     res.json(messageWithSender);
   } catch (error: any) {
-    console.error("Error sending message:", error);
     if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
     res.status(500).json({ error: error.message });
   }
@@ -445,7 +442,6 @@ router.post("/messages/read", async (req, res) => {
 
     res.json({ success: true });
   } catch (error: any) {
-    console.error("Error marking messages as read:", error);
     if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
     res.status(500).json({ error: error.message });
   }
@@ -516,7 +512,6 @@ router.get("/unread/:threadId", async (req, res) => {
 
     res.json({ count: count || 0 });
   } catch (error: any) {
-    console.error("Error getting unread count:", error);
     if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
     res.status(500).json({ error: error.message });
   }

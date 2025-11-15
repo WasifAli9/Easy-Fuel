@@ -27,6 +27,14 @@ export function useNotifications() {
     queryKey: ["/api/notifications"],
     enabled: !!session,
     refetchInterval: 30000, // Refetch every 30 seconds as fallback
+    onError: (error) => {
+      console.error("[useNotifications] Error fetching notifications:", error);
+      console.error("[useNotifications] Error details:", {
+        error,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+    },
   });
 
   // Fetch unread count
@@ -34,6 +42,14 @@ export function useNotifications() {
     queryKey: ["/api/notifications/unread-count"],
     enabled: !!session,
     refetchInterval: 30000, // Refetch every 30 seconds as fallback
+    onError: (error) => {
+      console.error("[useNotifications] Error fetching unread count:", error);
+      console.error("[useNotifications] Error details:", {
+        error,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+    },
   });
 
   // Mark notification as read mutation
@@ -66,13 +82,54 @@ export function useNotifications() {
 
   // Handle incoming WebSocket notification messages
   const handleWebSocketMessage = useCallback((message: any) => {
-    if (message.type === "notification") {
-      const notification = message.payload as Notification;
-      setLatestNotification(notification);
-      
-      // Invalidate queries to refresh notification list and count
-      queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
+    try {
+      if (message.type === "notification") {
+        try {
+          const notification = message.payload as Notification;
+          setLatestNotification(notification);
+          
+          // Invalidate queries to refresh notification list and count
+          try {
+            queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
+          } catch (error) {
+            console.error("[useNotifications] Error invalidating notifications query:", error);
+            console.error("[useNotifications] Error details:", {
+              error,
+              message: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? error.stack : undefined,
+            });
+          }
+          
+          try {
+            queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
+          } catch (error) {
+            console.error("[useNotifications] Error invalidating unread count query:", error);
+            console.error("[useNotifications] Error details:", {
+              error,
+              message: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? error.stack : undefined,
+            });
+          }
+        } catch (error) {
+          console.error("[useNotifications] Error handling notification message:", error);
+          console.error("[useNotifications] Error details:", {
+            error,
+            message: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+            messageType: message.type,
+            payload: message.payload,
+          });
+        }
+      }
+    } catch (error) {
+      console.error("[useNotifications] Unexpected error in WebSocket message handler:", error);
+      console.error("[useNotifications] Error details:", {
+        error,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        messageType: message?.type,
+        payload: message?.payload,
+      });
     }
   }, []);
 

@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "./StatusBadge";
 import { FuelTypeIcon } from "./FuelTypeIcon";
+import { DriverLocationIndicator } from "./DriverLocationIndicator";
 import { MapPin, Calendar, Banknote, Eye } from "lucide-react";
 import { useCurrency } from "@/hooks/use-currency";
 
@@ -49,6 +50,11 @@ export function OrderCard({
           <Calendar className="h-4 w-4 text-muted-foreground" />
           <span className="text-muted-foreground">{date}</span>
         </div>
+        {status === "en_route" && (
+          <div className="pt-1">
+            <DriverLocationIndicator orderId={id} orderState={status} />
+          </div>
+        )}
         <div className="flex items-center justify-between pt-2 border-t">
           {status === "created" ? (
             <div className="flex items-center gap-2">
