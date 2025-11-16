@@ -131,10 +131,10 @@ router.get("/orders/:id", async (req, res) => {
         .single();
 
       if (!driverError && driver) {
-        // Get driver profile for name and phone
+        // Get driver profile for name, phone, and profile photo
         const { data: driverProfile } = await supabaseAdmin
           .from("profiles")
-          .select("full_name, phone")
+          .select("full_name, phone, profile_photo_url")
           .eq("id", driver.user_id)
           .single();
 
@@ -205,7 +205,7 @@ router.get("/orders/:id/offers", async (req, res) => {
     const driverUserIds = Array.from(new Set(drivers?.map((driver: any) => driver.user_id) || []));
     const { data: profiles, error: profilesError } = await supabaseAdmin
       .from("profiles")
-      .select("id, full_name, phone")
+      .select("id, full_name, phone, profile_photo_url")
       .in("id", driverUserIds.length > 0 ? driverUserIds : ["00000000-0000-0000-0000-000000000000"]);
 
     if (profilesError) throw profilesError;

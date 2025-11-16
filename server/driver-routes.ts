@@ -40,6 +40,14 @@ router.get("/profile", async (req, res) => {
         message: "Please complete your profile setup"
       });
     }
+    
+    // Debug: Log profile data to see if profile_photo_url is included
+    console.log("Driver profile fetched:", {
+      id: profile.id,
+      full_name: profile.full_name,
+      profile_photo_url: profile.profile_photo_url,
+      has_photo_url: !!profile.profile_photo_url
+    });
 
     // Get driver-specific data
     const { data: driver, error: driverError } = await supabaseAdmin
@@ -2065,6 +2073,159 @@ router.put("/location", async (req, res) => {
     res.json({ success: true, latitude, longitude });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Update driver profile
+router.put("/profile", async (req, res) => {
+  const user = (req as any).user;
+  const { fullName, profilePhotoUrl } = req.body;
+  
+  try {
+    // Update profile table
+    const updateData: any = {
+      updated_at: new Date().toISOString()
+    };
+    
+    if (fullName) {
+      updateData.full_name = fullName;
+    }
+    
+    if (profilePhotoUrl) {
+      updateData.profile_photo_url = profilePhotoUrl;
+      console.log("Updating profile_photo_url:", profilePhotoUrl);
+    }
+
+    const { error: profileError } = await supabaseAdmin
+      .from("profiles")
+      .update(updateData)
+      .eq("id", user.id);
+
+    if (profileError) {
+      console.error("Error updating profile:", profileError);
+      throw profileError;
+    }
+    
+    // Fetch updated profile to return the new photo URL
+    const { data: updatedProfile } = await supabaseAdmin
+      .from("profiles")
+      .select("profile_photo_url")
+      .eq("id", user.id)
+      .single();
+    
+    console.log("Profile updated successfully. New profile_photo_url:", updatedProfile?.profile_photo_url);
+
+    res.json({ success: true, profile_photo_url: updatedProfile?.profile_photo_url });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get driver documents
+router.get("/documents", async (req, res) => {
+  const user = (req as any).user;
+  
+  try {
+    // Get driver ID
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (driverError) throw driverError;
+    if (!driver) {
+      return res.status(404).json({ error: "Driver profile not found" });
+    }
+
+    // Get documents for this driver
+    // Try to query documents table, but handle if it doesn't exist
+    const { data: documents, error: documentsError } = await supabaseAdmin
+      .from("documents")
+      .select("*")
+      .eq("owner_type", "driver")
+      .eq("owner_id", driver.id)
+      .order("created_at", { ascending: false });
+
+    if (documentsError) {
+      // If table doesn't exist, return empty array instead of error
+      if (documentsError.message?.includes("Could not find") || 
+          documentsError.message?.includes("does not exist") ||
+          documentsError.message?.includes("relation") ||
+          documentsError.code === "42P01" || // PostgreSQL table doesn't exist
+          documentsError.code === "PGRST116") {
+        console.warn("Documents table not found, returning empty array");
+        return res.json([]);
+      }
+      throw documentsError;
+    }
+
+    res.json(documents || []);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Upload driver document
+router.post("/documents", async (req, res) => {
+  const user = (req as any).user;
+  const { doc_type, title, file_path, file_size, mime_type, expiry_date } = req.body;
+  
+  try {
+    if (!doc_type || !file_path) {
+      return res.status(400).json({ error: "doc_type and file_path are required" });
+    }
+
+    // Get driver ID
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (driverError) throw driverError;
+    if (!driver) {
+      return res.status(404).json({ error: "Driver profile not found" });
+    }
+
+    // Insert document
+    const { data: document, error: insertError } = await supabaseAdmin
+      .from("documents")
+      .insert({
+        owner_type: "driver",
+        owner_id: driver.id,
+        doc_type,
+        title: title || doc_type,
+        file_path,
+        file_size: file_size || null,
+        mime_type: mime_type || null,
+        uploaded_by: user.id,
+        expiry_date: expiry_date || null,
+        verification_status: "pending",
+      })
+      .select()
+      .single();
+
+    if (insertError) {
+      // If table doesn't exist, provide helpful error message
+      if (insertError.message?.includes("Could not find") || 
+          insertError.message?.includes("does not exist") ||
+          insertError.message?.includes("relation") ||
+          insertError.code === "42P01" ||
+          insertError.code === "PGRST116") {
+        return res.status(500).json({ 
+          error: "Documents table not found",
+          message: "The documents table does not exist in the database. Please run database migrations to create it.",
+          hint: "Run 'npm run db:push' or create the documents table manually in your Supabase database."
+        });
+      }
+      throw insertError;
+    }
+
+    res.json(document);
+  } catch (error: any) {
+    console.error("Error uploading driver document:", error);
+    res.status(500).json({ error: error.message || "Failed to upload document" });
   }
 });
 

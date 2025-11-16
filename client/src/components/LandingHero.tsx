@@ -2,7 +2,12 @@ import { Button } from "@/components/ui/button";
 import { Logo } from "./Logo";
 import { ArrowRight, Fuel, Shield, Clock } from "lucide-react";
 
-export function LandingHero() {
+interface LandingHeroProps {
+	onGetStarted?: () => void;
+	onLearnMore?: () => void;
+}
+
+export function LandingHero({ onGetStarted, onLearnMore }: LandingHeroProps) {
   return (
     <div className="relative min-h-screen flex items-center justify-center overflow-hidden">
       {/* Gradient background */}
@@ -23,11 +28,11 @@ export function LandingHero() {
         </p>
         
         <div className="flex flex-col sm:flex-row gap-4 justify-center mb-16">
-          <Button size="lg" className="text-lg" data-testid="button-get-started">
+          <Button size="lg" className="text-lg" data-testid="button-get-started" onClick={onGetStarted}>
             Get Started
             <ArrowRight className="ml-2 h-5 w-5" />
           </Button>
-          <Button size="lg" variant="outline" className="text-lg" data-testid="button-learn-more">
+          <Button size="lg" variant="outline" className="text-lg" data-testid="button-learn-more" onClick={onLearnMore}>
             Learn More
           </Button>
         </div>

@@ -33,6 +33,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { MapPin, Calendar, Package, User, Phone, Clock, Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
 import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DriverLocationMap } from "./DriverLocationMap";
 import { OrderChat } from "./OrderChat";
 import { useCurrency } from "@/hooks/use-currency";
@@ -367,26 +368,47 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                             acceptDriverOfferMutation.isPending &&
                             acceptDriverOfferMutation.variables === quote.id;
 
+                          const driverProfilePhotoUrl = quote.driver?.profile?.profile_photo_url || quote.driver?.profile?.profilePhotoUrl;
+                          
                           return (
                             <div key={quote.id} className="border border-border rounded-lg p-3 space-y-3">
                               <div className="flex items-start justify-between gap-3">
-                                <div>
-                                  <p className="text-sm font-semibold">{driverName}</p>
-                                  {quote.driver?.profile?.phone && (
-                                    <p className="text-xs text-muted-foreground">
-                                      <a
-                                        href={`tel:${quote.driver.profile.phone}`}
-                                        className="text-primary hover:underline"
-                                      >
-                                        {quote.driver.profile.phone}
-                                      </a>
-                                    </p>
-                                  )}
-                                  {quote.driver?.premiumStatus === "active" && (
-                                    <Badge variant="outline" className="mt-1 text-xs">
-                                      Premium Driver
-                                    </Badge>
-                                  )}
+                                <div className="flex items-start gap-3 flex-1">
+                                  <Avatar className="h-10 w-10 flex-shrink-0">
+                                    <AvatarImage 
+                                      src={
+                                        driverProfilePhotoUrl 
+                                          ? driverProfilePhotoUrl.includes('/') && !driverProfilePhotoUrl.startsWith('/') && !driverProfilePhotoUrl.startsWith('http')
+                                            ? `${import.meta.env.VITE_SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co'}/storage/v1/object/public/${driverProfilePhotoUrl}`
+                                            : driverProfilePhotoUrl.startsWith('/')
+                                              ? driverProfilePhotoUrl
+                                              : `/objects/${driverProfilePhotoUrl}`
+                                          : undefined
+                                      } 
+                                      alt={driverName} 
+                                    />
+                                    <AvatarFallback className="bg-primary text-primary-foreground text-xs">
+                                      {driverName.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)}
+                                    </AvatarFallback>
+                                  </Avatar>
+                                  <div>
+                                    <p className="text-sm font-semibold">{driverName}</p>
+                                    {quote.driver?.profile?.phone && (
+                                      <p className="text-xs text-muted-foreground">
+                                        <a
+                                          href={`tel:${quote.driver.profile.phone}`}
+                                          className="text-primary hover:underline"
+                                        >
+                                          {quote.driver.profile.phone}
+                                        </a>
+                                      </p>
+                                    )}
+                                    {quote.driver?.premiumStatus === "active" && (
+                                      <Badge variant="outline" className="mt-1 text-xs">
+                                        Premium Driver
+                                      </Badge>
+                                    )}
+                                  </div>
                                 </div>
                                 <div className="text-right">
                                   <p className="text-sm font-semibold text-primary">
@@ -481,7 +503,23 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                   
                   <div className="space-y-2">
                     <div className="flex items-center gap-3">
-                      <User className="h-4 w-4 text-muted-foreground" />
+                      <Avatar className="h-10 w-10 flex-shrink-0">
+                        <AvatarImage 
+                          src={
+                            order.driver_details.profile_photo_url
+                              ? order.driver_details.profile_photo_url.includes('/') && !order.driver_details.profile_photo_url.startsWith('/') && !order.driver_details.profile_photo_url.startsWith('http')
+                                ? `${import.meta.env.VITE_SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co'}/storage/v1/object/public/${order.driver_details.profile_photo_url}`
+                                : order.driver_details.profile_photo_url.startsWith('/')
+                                  ? order.driver_details.profile_photo_url
+                                  : `/objects/${order.driver_details.profile_photo_url}`
+                              : undefined
+                          } 
+                          alt={order.driver_details.full_name || "Driver"} 
+                        />
+                        <AvatarFallback className="bg-primary text-primary-foreground text-xs">
+                          {(order.driver_details.full_name || "Driver").split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)}
+                        </AvatarFallback>
+                      </Avatar>
                       <div>
                         <p className="text-sm font-medium">Driver Name</p>
                         <p className="text-sm" data-testid="text-driver-name">

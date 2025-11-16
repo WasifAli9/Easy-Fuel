@@ -10,6 +10,12 @@ export default function Landing() {
     <div className="min-h-screen">
       <div className="fixed top-4 right-4 z-50 flex gap-2">
         <Button
+          onClick={() => setLocation("/signup")}
+          data-testid="button-signup-nav"
+        >
+          Sign Up
+        </Button>
+        <Button
           variant="outline"
           onClick={() => setLocation("/auth")}
           data-testid="button-signin-nav"
@@ -18,10 +24,10 @@ export default function Landing() {
         </Button>
         <ThemeToggle />
       </div>
-      
-      <div onClick={() => setLocation("/auth")}>
-        <LandingHero />
-      </div>
+      <LandingHero 
+        onGetStarted={() => setLocation("/signup")}
+        onLearnMore={() => setLocation("/auth")}
+      />
     </div>
   );
 }

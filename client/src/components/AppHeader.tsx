@@ -2,6 +2,7 @@ import { Logo } from "./Logo";
 import { ThemeToggle } from "./ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { Bell, User, Menu, LogOut, MapPin, UserCircle, Home, CreditCard, X } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -460,8 +461,29 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
                 variant="ghost" 
                 size="icon"
                 data-testid="button-profile"
+                className="rounded-full"
               >
-                <User className="h-5 w-5" />
+                {profile?.profilePhotoUrl ? (
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage 
+                      src={
+                        profile.profilePhotoUrl.includes('/') && !profile.profilePhotoUrl.startsWith('/') && !profile.profilePhotoUrl.startsWith('http')
+                          ? `${import.meta.env.VITE_SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co'}/storage/v1/object/public/${profile.profilePhotoUrl}`
+                          : profile.profilePhotoUrl.startsWith('/') 
+                            ? profile.profilePhotoUrl 
+                            : `/objects/${profile.profilePhotoUrl}`
+                      } 
+                      alt={profile?.fullName || "User"} 
+                    />
+                    <AvatarFallback className="bg-primary text-primary-foreground text-sm">
+                      {profile?.fullName?.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || "U"}
+                    </AvatarFallback>
+                  </Avatar>
+                ) : (
+                  <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
+                    <User className="h-4 w-4 text-primary" />
+                  </div>
+                )}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -485,6 +507,24 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
                   <DropdownMenuItem onClick={() => setLocation("/customer/payment-methods")} data-testid="menu-payment-methods-mobile">
                     <CreditCard className="h-4 w-4 mr-2" />
                     Payment Methods
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
+              {profile?.role === "driver" && (
+                <>
+                  <DropdownMenuItem onClick={() => setLocation("/driver/profile")} data-testid="menu-profile">
+                    <UserCircle className="h-4 w-4 mr-2" />
+                    My Profile
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
+              {profile?.role === "supplier" && (
+                <>
+                  <DropdownMenuItem onClick={() => setLocation("/supplier/profile")} data-testid="menu-profile">
+                    <UserCircle className="h-4 w-4 mr-2" />
+                    My Profile
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                 </>
@@ -541,6 +581,36 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
                   </Button>
                 </Link>
                 <Link href="/customer/profile">
+                  <Button 
+                    variant="ghost" 
+                    className="w-full justify-start" 
+                    onClick={() => setMobileMenuOpen(false)}
+                    data-testid="mobile-nav-profile"
+                  >
+                    <UserCircle className="h-4 w-4 mr-2" />
+                    My Profile
+                  </Button>
+                </Link>
+              </>
+            )}
+            {profile?.role === "driver" && (
+              <>
+                <Link href="/driver/profile">
+                  <Button 
+                    variant="ghost" 
+                    className="w-full justify-start" 
+                    onClick={() => setMobileMenuOpen(false)}
+                    data-testid="mobile-nav-profile"
+                  >
+                    <UserCircle className="h-4 w-4 mr-2" />
+                    My Profile
+                  </Button>
+                </Link>
+              </>
+            )}
+            {profile?.role === "supplier" && (
+              <>
+                <Link href="/supplier/profile">
                   <Button 
                     variant="ghost" 
                     className="w-full justify-start" 

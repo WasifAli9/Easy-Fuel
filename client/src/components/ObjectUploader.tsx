@@ -36,8 +36,8 @@ export function ObjectUploader({
   children,
 }: ObjectUploaderProps) {
   const [showModal, setShowModal] = useState(false);
-  const [uppy] = useState(() =>
-    new Uppy({
+  const [uppy] = useState(() => {
+    const instance = new Uppy({
       restrictions: {
         maxNumberOfFiles,
         maxFileSize,
@@ -53,7 +53,15 @@ export function ObjectUploader({
         onComplete?.(result);
         setShowModal(false);
       })
-  );
+      .on("upload-error", (file, error, response) => {
+        console.error("Uppy upload error:", { file, error, response });
+      })
+      .on("upload", (data) => {
+        console.log("Uppy upload started:", data);
+      });
+    
+    return instance;
+  });
 
   return (
     <div>

@@ -11,12 +11,15 @@ import Landing from "@/pages/Landing";
 import Auth from "@/pages/Auth";
 import ResetPassword from "@/pages/ResetPassword";
 import RoleSetup from "@/pages/RoleSetup";
+import Signup from "@/pages/Signup";
 import CustomerDashboard from "@/pages/CustomerDashboard";
 import SavedAddresses from "@/pages/SavedAddresses";
 import PaymentMethods from "@/pages/PaymentMethods";
 import CustomerProfile from "@/pages/CustomerProfile";
 import DriverDashboard from "@/pages/DriverDashboard";
+import DriverProfile from "@/pages/DriverProfile";
 import SupplierDashboard from "@/pages/SupplierDashboard";
+import SupplierProfile from "@/pages/SupplierProfile";
 import AdminDashboard from "@/pages/AdminDashboard";
 import NotFound from "@/pages/not-found";
 
@@ -79,6 +82,7 @@ function Router() {
         )}
       </Route>
       <Route path="/auth" component={Auth} />
+      <Route path="/signup" component={Signup} />
       <Route path="/reset-password" component={ResetPassword} />
       <Route path="/setup">
         {() => <ProtectedRoute component={RoleSetup} allowWithoutProfile={true} />}
@@ -98,8 +102,14 @@ function Router() {
       <Route path="/driver">
         {() => <ProtectedRoute component={DriverDashboard} role="driver" />}
       </Route>
+      <Route path="/driver/profile">
+        {() => <ProtectedRoute component={DriverProfile} role="driver" />}
+      </Route>
       <Route path="/supplier">
         {() => <ProtectedRoute component={SupplierDashboard} role="supplier" />}
+      </Route>
+      <Route path="/supplier/profile">
+        {() => <ProtectedRoute component={SupplierProfile} role="supplier" />}
       </Route>
       <Route path="/admin">
         {() => <ProtectedRoute component={AdminDashboard} role="admin" />}

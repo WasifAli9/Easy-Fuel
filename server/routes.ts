@@ -14,6 +14,9 @@ import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { ObjectPermission } from "./objectAcl";
 import { websocketService } from "./websocket";
 
+// Check if we should use Supabase Storage (when not on Replit or explicitly enabled)
+const USE_SUPABASE_STORAGE = process.env.USE_SUPABASE_STORAGE === "true" || !process.env.REPL_ID;
+
 // Helper function to parse cookies
 function parseCookies(cookieHeader: string | undefined): Record<string, string> {
   const cookies: Record<string, string> = {};
@@ -144,6 +147,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const userId = user?.id;
     
     try {
+      // If using Supabase Storage, redirect to Supabase Storage URL
+      if (USE_SUPABASE_STORAGE || !process.env.PRIVATE_OBJECT_DIR) {
+        const objectPath = req.params.objectPath;
+        const bucketName = process.env.SUPABASE_STORAGE_BUCKET || "private-objects";
+        const supabaseUrl = process.env.SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co';
+        
+        // Construct Supabase Storage public URL
+        const supabaseStorageUrl = `${supabaseUrl}/storage/v1/object/public/${bucketName}/${objectPath}`;
+        
+        // Redirect to Supabase Storage URL
+        return res.redirect(302, supabaseStorageUrl);
+      }
+      
       const objectFile = await objectStorageService.getObjectEntityFile(req.path);
       const canAccess = await objectStorageService.canAccessObjectEntity({
         objectFile,
@@ -156,8 +172,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       objectStorageService.downloadObject(objectFile, res);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error checking object access:", error);
+      
+      // If PRIVATE_OBJECT_DIR is not set and we're not using Supabase Storage, try Supabase Storage as fallback
+      if (error.message?.includes("PRIVATE_OBJECT_DIR not set")) {
+        const objectPath = req.params.objectPath;
+        const bucketName = process.env.SUPABASE_STORAGE_BUCKET || "private-objects";
+        const supabaseUrl = process.env.SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co';
+        const supabaseStorageUrl = `${supabaseUrl}/storage/v1/object/public/${bucketName}/${objectPath}`;
+        return res.redirect(302, supabaseStorageUrl);
+      }
+      
       if (error instanceof ObjectNotFoundError) {
         return res.status(404).json({ error: "Object not found" });
       }
@@ -169,10 +195,163 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/objects/upload", requireAuth, async (req, res) => {
     try {
       const uploadURL = await objectStorageService.getObjectEntityUploadURL();
-      res.json({ uploadURL });
-    } catch (error) {
+      
+      // If Supabase Storage is being used, return endpoint info
+      if (uploadURL.startsWith("supabase://")) {
+        const [, bucketName, ...pathParts] = uploadURL.replace("supabase://", "").split("/");
+        const objectPath = pathParts.join("/");
+        res.json({ 
+          uploadURL: `/api/storage/upload/${bucketName}/${objectPath}`,
+          storageType: "supabase",
+          bucketName,
+          objectPath,
+        });
+      } else {
+        res.json({ uploadURL });
+      }
+    } catch (error: any) {
       console.error("Error generating upload URL:", error);
-      res.status(500).json({ error: "Failed to generate upload URL" });
+      console.error("Error stack:", error?.stack);
+      const errorMessage = error?.message || "Failed to generate upload URL";
+      res.status(500).json({ 
+        error: "Failed to generate upload URL",
+        message: errorMessage,
+        details: error?.toString() || String(error)
+      });
+    }
+  });
+
+  // Supabase Storage upload endpoint (protected)
+  app.put("/api/storage/upload/:bucket/:path(*)", requireAuth, async (req, res) => {
+    const user = (req as any).user;
+    const { bucket, path } = req.params;
+    
+    try {
+      // Get the file from the request body
+      // Uppy sends the file as raw binary data
+      const chunks: Buffer[] = [];
+      
+      req.on("data", (chunk: Buffer) => {
+        chunks.push(chunk);
+      });
+      
+      await new Promise<void>((resolve, reject) => {
+        req.on("end", () => resolve());
+        req.on("error", reject);
+      });
+      
+      const fileBuffer = Buffer.concat(chunks);
+      
+      if (!fileBuffer || fileBuffer.length === 0) {
+        return res.status(400).json({ error: "No file data received" });
+      }
+
+      // Check if bucket exists, create if it doesn't
+      let bucketExists = false;
+      try {
+        const { data: buckets, error: listError } = await supabaseAdmin.storage.listBuckets();
+        if (listError) {
+          console.warn("Could not list buckets:", listError);
+        } else {
+          bucketExists = buckets?.some((b: any) => b.name === bucket) || false;
+        }
+      } catch (listErr) {
+        console.warn("Error checking buckets:", listErr);
+      }
+      
+      if (!bucketExists) {
+        console.log(`Bucket "${bucket}" not found, attempting to create it...`);
+        try {
+          const { data: newBucket, error: createError } = await supabaseAdmin.storage.createBucket(bucket, {
+            public: true, // Make bucket public for profile pictures
+            fileSizeLimit: 5242880, // 5MB
+            allowedMimeTypes: ['image/*'],
+          });
+          
+          if (createError) {
+            console.error("Error creating bucket:", createError);
+            // Don't fail immediately - try to upload anyway in case bucket was created by another process
+            // But provide helpful error message
+            if (!createError.message?.includes("already exists")) {
+              console.warn(`Bucket creation failed, but continuing with upload attempt. Error: ${createError.message}`);
+            }
+          } else {
+            console.log(`Bucket "${bucket}" created successfully`);
+          }
+        } catch (createErr: any) {
+          console.warn(`Bucket creation attempt failed: ${createErr.message}. Continuing with upload...`);
+        }
+      }
+
+      // Upload to Supabase Storage
+      console.log(`Uploading to Supabase Storage: bucket="${bucket}", path="${path}", size=${fileBuffer.length} bytes`);
+      const { data, error } = await supabaseAdmin.storage
+        .from(bucket)
+        .upload(path, fileBuffer, {
+          contentType: req.headers["content-type"] || "application/octet-stream",
+          upsert: false,
+        });
+
+      if (error) {
+        console.error("Supabase storage upload error:", error);
+        console.error("Error details:", JSON.stringify(error, null, 2));
+        
+        // If bucket still doesn't exist after creation attempt, provide helpful error
+        if (error.message?.includes("Bucket not found") || error.statusCode === '404' || error.status === 404) {
+          return res.status(500).json({ 
+            error: "Storage bucket not found",
+            message: `Bucket "${bucket}" does not exist in Supabase Storage.`,
+            hint: `Please create the bucket manually:
+1. Go to your Supabase Dashboard (https://supabase.com/dashboard)
+2. Select your project
+3. Navigate to Storage
+4. Click "New bucket"
+5. Name it: "${bucket}"
+6. Make it PUBLIC (toggle "Public bucket" ON)
+7. Click "Create bucket"
+Then try uploading again.`,
+            bucketName: bucket
+          });
+        }
+        
+        return res.status(500).json({ 
+          error: "Failed to upload to Supabase Storage",
+          message: error.message,
+          details: error
+        });
+      }
+
+      // Return the object path in the format expected by the client
+      // Also include uploadURL for Uppy compatibility
+      if (!data) {
+        console.error("Upload succeeded but no data returned from Supabase");
+        return res.status(500).json({ 
+          error: "Upload failed",
+          message: "No data returned from storage service"
+        });
+      }
+
+      const objectPath = `${bucket}/${data.path}`;
+      const supabaseUrl = process.env.SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co';
+      const publicUrl = `${supabaseUrl}/storage/v1/object/public/${objectPath}`;
+      
+      console.log(`Upload successful: objectPath="${objectPath}"`);
+      
+      // Return 200 OK with JSON response
+      res.status(200).json({ 
+        objectPath,
+        path: data.path,
+        fullPath: objectPath,
+        uploadURL: objectPath, // For Uppy compatibility
+        location: publicUrl, // Public URL for the uploaded file
+        url: publicUrl // Alternative field name
+      });
+    } catch (error: any) {
+      console.error("Error in storage upload endpoint:", error);
+      res.status(500).json({ 
+        error: "Failed to upload file",
+        message: error.message || "Unknown error"
+      });
     }
   });
 
@@ -186,6 +365,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
+      // If using Supabase Storage, the path is already in the format bucket/path
+      // Just return it as-is (Supabase handles ACL through RLS policies)
+      if (profilePictureURL.includes("/") && !profilePictureURL.startsWith("/") && !profilePictureURL.startsWith("http")) {
+        // This is likely a Supabase Storage path (bucket/path)
+        res.json({ objectPath: profilePictureURL });
+        return;
+      }
+
+      // For Replit storage, use the ACL policy system
       const objectPath = await objectStorageService.trySetObjectEntityAclPolicy(
         profilePictureURL,
         {
@@ -195,9 +383,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
 
       res.json({ objectPath });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error setting profile picture ACL:", error);
-      res.status(500).json({ error: "Internal server error" });
+      // If ACL setting fails but we have a path, still return it (for Supabase Storage)
+      if (profilePictureURL) {
+        res.json({ objectPath: profilePictureURL });
+      } else {
+        res.status(500).json({ error: "Internal server error" });
+      }
     }
   });
 

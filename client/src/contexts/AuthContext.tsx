@@ -7,6 +7,7 @@ interface Profile {
   role: "customer" | "driver" | "supplier" | "admin";
   fullName: string;
   phone?: string;
+  profilePhotoUrl?: string;
 }
 
 interface AuthContextType {
@@ -14,12 +15,14 @@ interface AuthContextType {
   profile: Profile | null;
   session: Session | null;
   loading: boolean;
+  signUpWithPassword: (email: string, password: string, fullName?: string) => Promise<void>;
   signInWithOtp: (email: string) => Promise<void>;
   signInWithPassword: (email: string, password: string) => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   updatePassword: (newPassword: string) => Promise<void>;
   signOut: () => Promise<void>;
   setUserRole: (role: "customer" | "driver" | "supplier" | "admin", fullName: string, phone?: string) => Promise<void>;
+  refetchProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -74,6 +77,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         role: data.role,
         fullName: data.full_name,
         phone: data.phone,
+        profilePhotoUrl: data.profile_photo_url || undefined,
       } : null);
     } catch (error) {
       console.error("Error fetching profile:", error);
@@ -103,6 +107,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       password,
     });
 
+    if (error) throw error;
+  }
+
+  async function signUpWithPassword(email: string, password: string, fullName?: string) {
+    const redirectTo = window.location.origin;
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: redirectTo,
+        data: fullName ? { full_name: fullName } : undefined,
+      },
+    });
     if (error) throw error;
   }
 
@@ -163,17 +180,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await fetchProfile(user.id);
   }
 
+  const refetchProfile = async () => {
+    if (user) {
+      await fetchProfile(user.id);
+    }
+  };
+
   const value = {
     user,
     profile,
     session,
     loading,
+    signUpWithPassword,
     signInWithOtp,
     signInWithPassword,
     resetPassword,
     updatePassword,
     signOut,
     setUserRole,
+    refetchProfile,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

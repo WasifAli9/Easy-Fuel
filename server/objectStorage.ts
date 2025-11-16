@@ -9,8 +9,10 @@ import {
   getObjectAclPolicy,
   setObjectAclPolicy,
 } from "./objectAcl";
+import { supabaseAdmin } from "./supabase";
 
 const REPLIT_SIDECAR_ENDPOINT = "http://127.0.0.1:1106";
+const USE_SUPABASE_STORAGE = process.env.USE_SUPABASE_STORAGE === "true" || !process.env.REPL_ID;
 
 export const objectStorageClient = new Storage({
   credentials: {
@@ -60,10 +62,12 @@ export class ObjectStorageService {
   getPrivateObjectDir(): string {
     const dir = process.env.PRIVATE_OBJECT_DIR || "";
     if (!dir) {
+      console.error("PRIVATE_OBJECT_DIR environment variable is not set!");
       throw new Error(
-        "PRIVATE_OBJECT_DIR not set. Create a bucket in 'Object Storage' tool"
+        "PRIVATE_OBJECT_DIR not set. Create a bucket in 'Object Storage' tool and set the PRIVATE_OBJECT_DIR environment variable"
       );
     }
+    console.log("Using PRIVATE_OBJECT_DIR:", dir);
     return dir;
   }
 
@@ -112,17 +116,61 @@ export class ObjectStorageService {
   }
 
   async getObjectEntityUploadURL(): Promise<string> {
-    const privateObjectDir = this.getPrivateObjectDir();
-    const objectId = randomUUID();
-    const fullPath = `${privateObjectDir}/uploads/${objectId}`;
-    const { bucketName, objectName } = parseObjectPath(fullPath);
+    try {
+      // Use Supabase Storage if not on Replit or if explicitly enabled
+      if (USE_SUPABASE_STORAGE) {
+        return await this.getSupabaseUploadURL();
+      }
+      
+      const privateObjectDir = this.getPrivateObjectDir();
+      if (!privateObjectDir) {
+        throw new Error("PRIVATE_OBJECT_DIR environment variable is not set");
+      }
+      
+      const objectId = randomUUID();
+      const fullPath = `${privateObjectDir}/uploads/${objectId}`;
+      
+      let bucketName: string;
+      let objectName: string;
+      
+      try {
+        const parsed = parseObjectPath(fullPath);
+        bucketName = parsed.bucketName;
+        objectName = parsed.objectName;
+      } catch (parseError: any) {
+        throw new Error(`Failed to parse object path: ${parseError.message}. Path: ${fullPath}`);
+      }
 
-    return signObjectURL({
-      bucketName,
-      objectName,
-      method: "PUT",
-      ttlSec: 900,
-    });
+      return await signObjectURL({
+        bucketName,
+        objectName,
+        method: "PUT",
+        ttlSec: 900,
+      });
+    } catch (error: any) {
+      console.error("Error in getObjectEntityUploadURL:", error);
+      // If Replit sidecar fails and we haven't tried Supabase, fallback to Supabase
+      if (!USE_SUPABASE_STORAGE && (error.message?.includes("Cannot connect to Replit") || error.message?.includes("ECONNREFUSED"))) {
+        console.log("Replit sidecar unavailable, falling back to Supabase Storage");
+        return await this.getSupabaseUploadURL();
+      }
+      throw error;
+    }
+  }
+
+  private async getSupabaseUploadURL(): Promise<string> {
+    try {
+      const bucketName = process.env.SUPABASE_STORAGE_BUCKET || "private-objects";
+      const objectId = randomUUID();
+      const objectPath = `uploads/${objectId}`;
+      
+      // Return a special format that indicates Supabase Storage should be used
+      // The client will upload to our server endpoint which will handle Supabase Storage
+      return `supabase://${bucketName}/${objectPath}`;
+    } catch (error: any) {
+      console.error("Error in getSupabaseUploadURL:", error);
+      throw new Error(`Failed to generate Supabase upload URL: ${error.message || "Unknown error"}`);
+    }
   }
 
   async getObjectEntityFile(objectPath: string): Promise<File> {
@@ -234,28 +282,71 @@ async function signObjectURL({
   method: "GET" | "PUT" | "DELETE" | "HEAD";
   ttlSec: number;
 }): Promise<string> {
-  const request = {
-    bucket_name: bucketName,
-    object_name: objectName,
-    method,
-    expires_at: new Date(Date.now() + ttlSec * 1000).toISOString(),
-  };
-  const response = await fetch(
-    `${REPLIT_SIDECAR_ENDPOINT}/object-storage/signed-object-url`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(request),
+  try {
+    console.log("Signing URL for:", { bucketName, objectName, method });
+    const request = {
+      bucket_name: bucketName,
+      object_name: objectName,
+      method,
+      expires_at: new Date(Date.now() + ttlSec * 1000).toISOString(),
+    };
+    
+    const sidecarUrl = `${REPLIT_SIDECAR_ENDPOINT}/object-storage/signed-object-url`;
+    console.log("Fetching from sidecar:", sidecarUrl);
+    
+    let response: Response;
+    try {
+      response = await fetch(sidecarUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(request),
+        // Add timeout to detect connection issues faster
+        signal: AbortSignal.timeout(5000), // 5 second timeout
+      });
+    } catch (fetchError: any) {
+      console.error("Fetch error:", fetchError);
+      
+      // Check if it's a connection refused error
+      if (
+        fetchError.code === "ECONNREFUSED" || 
+        fetchError.message?.includes("ECONNREFUSED") ||
+        fetchError.name === "AbortError" ||
+        fetchError.message?.includes("timeout")
+      ) {
+        throw new Error(
+          `Cannot connect to Replit sidecar at ${REPLIT_SIDECAR_ENDPOINT}. ` +
+          `This application requires Replit's object storage. ` +
+          `If you're not running on Replit, please set up object storage or configure PRIVATE_OBJECT_DIR environment variable. ` +
+          `Error: ${fetchError.message || "Connection refused"}`
+        );
+      }
+      throw new Error(`Network error connecting to sidecar: ${fetchError.message || fetchError}`);
     }
-  );
-  if (!response.ok) {
-    throw new Error(
-      `Failed to sign object URL, errorcode: ${response.status}`
-    );
-  }
+    
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "Unknown error");
+      console.error("Sidecar response error:", response.status, errorText);
+      throw new Error(
+        `Failed to sign object URL: HTTP ${response.status} - ${errorText}`
+      );
+    }
 
-  const { signed_url: signedURL } = await response.json();
-  return signedURL;
+    const responseData = await response.json();
+    console.log("Sidecar response received");
+    
+    if (!responseData.signed_url) {
+      console.error("Response data:", responseData);
+      throw new Error("No signed_url in response from sidecar");
+    }
+    
+    return responseData.signed_url;
+  } catch (error: any) {
+    console.error("Error in signObjectURL:", error);
+    if (error.message) {
+      throw error;
+    }
+    throw new Error(`Failed to sign object URL: ${error.message || "Unknown error"}`);
+  }
 }

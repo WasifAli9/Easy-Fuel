@@ -526,4 +526,170 @@ router.get("/orders", async (req, res) => {
   }
 });
 
+// ============== SUPPLIER PROFILE ==============
+
+// Get supplier profile
+router.get("/profile", async (req, res) => {
+  const user = (req as any).user;
+  
+  try {
+    // Get profile data
+    const { data: profile, error: profileError } = await supabaseAdmin
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (profileError) {
+      if (profileError.message?.includes("Invalid API key")) {
+        throw profileError;
+      }
+      throw profileError;
+    }
+    
+    // If no profile, user needs to complete setup
+    if (!profile) {
+      return res.status(404).json({ 
+        error: "Supplier profile not found",
+        code: "PROFILE_SETUP_REQUIRED",
+        message: "Please complete your profile setup"
+      });
+    }
+
+    // Get supplier-specific data
+    const { data: supplier, error: supplierError } = await supabaseAdmin
+      .from("suppliers")
+      .select("*")
+      .eq("owner_id", user.id)
+      .maybeSingle();
+
+    if (supplierError) {
+      if (supplierError.message?.includes("Invalid API key")) {
+        throw supplierError;
+      }
+      throw supplierError;
+    }
+    
+    // If no supplier record but profile exists, create it
+    if (!supplier) {
+      const { data: newSupplier, error: createError } = await supabaseAdmin
+        .from("suppliers")
+        .insert({ 
+          owner_id: user.id,
+          name: profile.full_name || "Supplier",
+          registered_name: profile.full_name || "Supplier",
+          kyb_status: "pending"
+        })
+        .select()
+        .single();
+      
+      if (createError) {
+        // If RLS error, try to get the supplier record that might have been created
+        if (createError.message?.includes("row-level security")) {
+          const { data: existingSupplier } = await supabaseAdmin
+            .from("suppliers")
+            .select("*")
+            .eq("owner_id", user.id)
+            .maybeSingle();
+          
+          if (existingSupplier) {
+            return res.json({
+              ...profile,
+              ...existingSupplier,
+              email: user.email || null
+            });
+          }
+        }
+        throw createError;
+      }
+
+      return res.json({
+        ...profile,
+        ...newSupplier,
+        email: user.email || null
+      });
+    }
+
+    // Combine profile, supplier, and email data
+    res.json({
+      ...profile,
+      ...supplier,
+      email: user.email || null
+    });
+  } catch (error: any) {
+    // Handle PGRST116 error (no rows found) gracefully
+    if (error?.code === 'PGRST116') {
+      return res.status(404).json({ 
+        error: "Supplier profile not found",
+        code: "PROFILE_SETUP_REQUIRED"
+      });
+    }
+    console.error("Error fetching supplier profile:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update supplier profile
+router.put("/profile", async (req, res) => {
+  const user = (req as any).user;
+  const { fullName, phone, addressStreet, addressCity, addressProvince, addressPostalCode, addressCountry } = req.body;
+  
+  try {
+    // Validate that at least one field is being updated
+    const hasUpdates = fullName !== undefined || phone !== undefined || 
+                      addressStreet !== undefined || addressCity !== undefined || 
+                      addressProvince !== undefined || addressPostalCode !== undefined || 
+                      addressCountry !== undefined;
+    
+    if (!hasUpdates) {
+      return res.status(400).json({ error: "At least one field must be provided for update" });
+    }
+
+    // Update profile table - only update fields that are provided
+    const updateData: any = {
+      updated_at: new Date().toISOString()
+    };
+    
+    // Only include fields that are explicitly provided (allowing empty strings to clear fields)
+    if (fullName !== undefined) {
+      updateData.full_name = fullName || null;
+    }
+    
+    if (phone !== undefined) {
+      updateData.phone = phone || null;
+    }
+    
+    if (addressStreet !== undefined) {
+      updateData.address_street = addressStreet || null;
+    }
+    
+    if (addressCity !== undefined) {
+      updateData.address_city = addressCity || null;
+    }
+    
+    if (addressProvince !== undefined) {
+      updateData.address_province = addressProvince || null;
+    }
+    
+    if (addressPostalCode !== undefined) {
+      updateData.address_postal_code = addressPostalCode || null;
+    }
+    
+    if (addressCountry !== undefined) {
+      updateData.address_country = addressCountry || null;
+    }
+
+    const { error: profileError } = await supabaseAdmin
+      .from("profiles")
+      .update(updateData)
+      .eq("id", user.id);
+
+    if (profileError) throw profileError;
+
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;
