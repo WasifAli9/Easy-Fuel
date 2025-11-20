@@ -31,7 +31,7 @@ router.post("/update", async (req, res) => {
       .update({
         current_lat: validated.latitude,
         current_lng: validated.longitude,
-        last_location_update: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       })
       .eq("id", driver.id);
 
@@ -89,7 +89,7 @@ router.get("/driver/:driverId", async (req, res) => {
 
     const { data: driver, error: driverLocationError } = await supabaseAdmin
       .from("drivers")
-      .select("current_lat, current_lng, last_location_update")
+      .select("current_lat, current_lng, updated_at")
       .eq("id", driverId)
       .single();
 
@@ -104,7 +104,7 @@ router.get("/driver/:driverId", async (req, res) => {
     res.json({
       latitude: driver.current_lat,
       longitude: driver.current_lng,
-      lastUpdate: driver.last_location_update,
+      lastUpdate: driver.updated_at,
     });
   } catch (error: any) {
     console.error("Error fetching driver location:", error);

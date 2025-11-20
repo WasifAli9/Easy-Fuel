@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Plus, Package, MapPin, TrendingUp, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/utils";
+import { useWebSocket } from "@/hooks/useWebSocket";
 
 export default function SupplierDashboard() {
   const { toast } = useToast();
@@ -29,10 +30,31 @@ export default function SupplierDashboard() {
 
   const { data: depots, isLoading: depotsLoading } = useQuery<any[]>({
     queryKey: ["/api/supplier/depots"],
+    refetchInterval: 5000, // Poll every 5 seconds for real-time updates
+    staleTime: 0,
   });
 
   const { data: orders, isLoading: ordersLoading } = useQuery<any[]>({
     queryKey: ["/api/supplier/orders"],
+    refetchInterval: 5000, // Poll every 5 seconds for real-time updates
+    staleTime: 0,
+  });
+
+  // Listen for real-time updates via WebSocket
+  useWebSocket((message) => {
+    console.log("[SupplierDashboard] WebSocket message received:", message.type, message);
+    
+    if (message.type === "new_order" || message.type === "order_update" || message.type === "order_state_changed") {
+      // Refresh orders when new orders are created or updated
+      console.log("[SupplierDashboard] Invalidating orders due to:", message.type);
+      queryClient.invalidateQueries({ queryKey: ["/api/supplier/orders"] });
+    }
+    
+    if (message.type === "depot_created" || message.type === "depot_updated" || message.type === "depot_deleted" || message.type === "pricing_updated") {
+      // Refresh depots when depot or pricing changes
+      console.log("[SupplierDashboard] Invalidating depots due to:", message.type);
+      queryClient.invalidateQueries({ queryKey: ["/api/supplier/depots"] });
+    }
   });
 
   const deleteDepotMutation = useMutation({

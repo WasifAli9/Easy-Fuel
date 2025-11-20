@@ -57,12 +57,18 @@ app.use((req, res, next) => {
   }
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
+  // Other ports are firewalled. Default to 5002 if not specified.
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
-  const port = 5002;
-  const HOST = process.env.HOST || 'localhost';
-  server.listen(port, () => {
-    log(`serving on port ${port}`);
+  const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 5002;
+  const HOST = process.env.HOST || '0.0.0.0';
+  
+  server.listen(port, HOST, () => {
+    log(`🚀 Server running on http://${HOST}:${port}`);
+    log(`📡 API endpoints available at http://${HOST}:${port}/api`);
+    if (app.get("env") === "development") {
+      log(`🔧 Development mode - Vite HMR enabled`);
+    }
   });
 })();
+

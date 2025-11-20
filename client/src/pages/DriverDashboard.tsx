@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { AppHeader } from "@/components/AppHeader";
 import { JobCard } from "@/components/JobCard";
@@ -20,6 +20,17 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { CompleteDeliveryDialog } from "@/components/CompleteDeliveryDialog";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { useAuth } from "@/contexts/AuthContext";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export default function DriverDashboard() {
   const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null);
@@ -27,12 +38,86 @@ export default function DriverDashboard() {
   const [dismissedPendingOfferOrderIds, setDismissedPendingOfferOrderIds] = useState<string[]>([]);
   const [orderToComplete, setOrderToComplete] = useState<any | null>(null);
   const [completeDialogOpen, setCompleteDialogOpen] = useState(false);
+  const [locationPermissionDialogOpen, setLocationPermissionDialogOpen] = useState(false);
   const { toast } = useToast();
+  const { profile } = useAuth();
+
+  // Request location permission when driver logs in
+  useEffect(() => {
+    if (profile?.role === "driver" && navigator.geolocation) {
+      // Check if permission was already granted or denied
+      navigator.permissions?.query({ name: "geolocation" }).then((result) => {
+        if (result.state === "prompt") {
+          // Permission not yet requested, show dialog
+          setLocationPermissionDialogOpen(true);
+        } else if (result.state === "denied") {
+          // Permission was denied, show toast
+          toast({
+            title: "Location Access Required",
+            description: "Please enable location access in your browser settings to track your location.",
+            variant: "destructive",
+          });
+        }
+        // If granted, do nothing (location tracking will start automatically)
+      }).catch(() => {
+        // Permissions API not supported, try to request directly
+        setLocationPermissionDialogOpen(true);
+      });
+    }
+  }, [profile?.role, toast]);
+
+  const handleRequestLocationPermission = async () => {
+    setLocationPermissionDialogOpen(false);
+    
+    if (!navigator.geolocation) {
+      toast({
+        title: "Geolocation Not Supported",
+        description: "Your browser does not support geolocation.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      // Request location permission by trying to get current position
+      await new Promise<void>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(
+          () => {
+            toast({
+              title: "Location Access Granted",
+              description: "Your location will be tracked automatically.",
+            });
+            resolve();
+          },
+          (error) => {
+            if (error.code === error.PERMISSION_DENIED) {
+              toast({
+                title: "Location Access Denied",
+                description: "Please enable location access in your browser settings to track your location.",
+                variant: "destructive",
+              });
+            } else {
+              toast({
+                title: "Location Error",
+                description: "Failed to get your location. Please check your browser settings.",
+                variant: "destructive",
+              });
+            }
+            reject(error);
+          },
+          { timeout: 5000 }
+        );
+      });
+    } catch (error) {
+      // Error already handled in toast
+    }
+  };
 
   // Fetch available dispatch offers
   const { data: offersData, isLoading, error: offersError, refetch: refetchOffers } = useQuery<any>({
     queryKey: ["/api/driver/offers"],
-    refetchInterval: 60000, // Refresh every 60 seconds (WebSocket handles real-time)
+    refetchInterval: 5000, // Poll every 5 seconds for real-time updates
+    staleTime: 0, // Always consider data stale to allow immediate refetch
   });
 
   // Handle both array response (offers) and object response (with eligibility info)
@@ -56,6 +141,8 @@ export default function DriverDashboard() {
   // Fetch driver profile to check availability status
   const { data: driverProfile } = useQuery<any>({
     queryKey: ["/api/driver/profile"],
+    refetchInterval: 5000, // Poll every 5 seconds
+    staleTime: 0,
   });
 
   const { data: statsData, isLoading: statsLoading } = useQuery<{
@@ -66,27 +153,82 @@ export default function DriverDashboard() {
     totalDeliveries: number;
   }>({
     queryKey: ["/api/driver/stats"],
+    refetchInterval: 5000, // Poll every 5 seconds
+    staleTime: 0,
   });
 
   // Fetch assigned orders (accepted deliveries)
   const { data: assignedOrders = [], isLoading: loadingAssigned } = useQuery<any[]>({
     queryKey: ["/api/driver/assigned-orders"],
-    refetchInterval: 15000, // Refresh every 15 seconds
+    refetchInterval: 5000, // Poll every 5 seconds for real-time updates
+    staleTime: 0,
   });
 
   // Fetch completed orders (last week)
   const { data: completedOrders = [], isLoading: loadingCompleted } = useQuery<any[]>({
     queryKey: ["/api/driver/completed-orders"],
-    refetchInterval: 60000, // Refresh every 60 seconds
+    refetchInterval: 5000, // Poll every 5 seconds for real-time updates
+    staleTime: 0,
   });
 
   const { currency } = useCurrency();
 
-  // Set up WebSocket to refresh offers when new orders arrive
+  // Set up WebSocket to refresh data when changes occur
   useWebSocket((message) => {
-    if (message.type === "dispatch_offer" || message.type === "notification") {
-      // Refresh offers when new dispatch offers arrive
+    console.log("[DriverDashboard] WebSocket message received:", message.type, message);
+    
+    const orderData = message.order || message.payload?.order;
+    const orderId = message.orderId || message.payload?.orderId;
+    
+    if (message.type === "order_updated" && orderData) {
+      // Directly update the query cache with new order data (like chat messages)
+      console.log("[DriverDashboard] Updating order in cache:", orderId);
+      
+      // Update assigned orders list
+      queryClient.setQueryData<any[]>(["/api/driver/assigned-orders"], (old = []) => {
+        const exists = old.findIndex((o: any) => o.id === orderId);
+        if (exists >= 0) {
+          // Update existing order
+          const updated = [...old];
+          updated[exists] = orderData;
+          return updated;
+        } else if (["assigned", "en_route", "picked_up"].includes(orderData.state)) {
+          // Add new order if it's in an active state
+          return [orderData, ...old];
+        }
+        return old;
+      });
+      
+      // Update completed orders if delivered
+      if (orderData.state === "delivered") {
+        queryClient.setQueryData<any[]>(["/api/driver/completed-orders"], (old = []) => {
+          const exists = old.findIndex((o: any) => o.id === orderId);
+          if (exists >= 0) {
+            const updated = [...old];
+            updated[exists] = orderData;
+            return updated;
+          } else {
+            return [orderData, ...old];
+          }
+        });
+      }
+      
+      // Invalidate stats to recalculate
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/stats"] });
+    }
+    
+    if (message.type === "dispatch_offer" || message.type === "new_order" || message.type === "order_assigned") {
+      // Refresh offers when new dispatch offers arrive or orders are assigned
+      console.log("[DriverDashboard] Invalidating offers due to:", message.type);
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/offers"] });
       refetchOffers();
+    }
+    
+    if (message.type === "order_update" || message.type === "order_assigned" || message.type === "order_state_changed") {
+      // Fallback: invalidate queries for other message types
+      console.log("[DriverDashboard] Invalidating assigned orders due to:", message.type);
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/assigned-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/stats"] });
     }
   });
   
@@ -106,8 +248,11 @@ export default function DriverDashboard() {
       const response = await apiRequest("POST", `/api/driver/offers/${offerId}/reject`);
       return response.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/driver/offers"] });
+    onSuccess: async () => {
+      // Invalidate all related queries
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/offers"] });
+      // Immediately refetch to show updated state
+      await queryClient.refetchQueries({ queryKey: ["/api/driver/offers"] });
       toast({
         title: "Offer rejected",
         description: "You have declined this delivery offer",
@@ -127,10 +272,17 @@ export default function DriverDashboard() {
       const response = await apiRequest("POST", `/api/driver/orders/${orderId}/start`);
       return response.json();
     },
-    onSuccess: (_data, orderId) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/driver/assigned-orders"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/driver/stats"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
+    onSuccess: async (_data, orderId) => {
+      // Invalidate all related queries
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/assigned-orders"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/stats"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/offers"] });
+      // Immediately refetch to show updated state
+      await queryClient.refetchQueries({ queryKey: ["/api/driver/assigned-orders"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/orders", orderId] });
       toast({
         title: "Delivery started",
         description: `You are now en route for order ${orderId.substring(0, 8).toUpperCase()}`,
@@ -150,9 +302,17 @@ export default function DriverDashboard() {
       const response = await apiRequest("POST", `/api/driver/orders/${orderId}/pickup`);
       return response.json();
     },
-    onSuccess: (_data, orderId) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/driver/assigned-orders"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/driver/stats"] });
+    onSuccess: async (_data, orderId) => {
+      // Invalidate all related queries
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/assigned-orders"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/stats"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId, "offers"] });
+      // Immediately refetch to show updated state
+      await queryClient.refetchQueries({ queryKey: ["/api/driver/assigned-orders"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/orders", orderId] });
+      await queryClient.refetchQueries({ queryKey: ["/api/orders"] });
       toast({
         title: "Fuel collected",
         description: `Marked order ${orderId.substring(0, 8).toUpperCase()} as picked up`,
@@ -313,10 +473,10 @@ export default function DriverDashboard() {
           </TabsContent>
 
           <TabsContent value="assigned" className="space-y-3 sm:space-y-4">
-            {/* GPS Location Tracker - Only active when on delivery */}
+            {/* GPS Location Tracker - Always active for drivers to send live coordinates */}
             <DriverLocationTracker 
-              isOnDelivery={driverProfile?.availability_status === "on_delivery"}
-              activeOrderId={assignedOrders.find((o: any) => o.state === "en_route")?.id || null}
+              isOnDelivery={true} // Always track location when driver is logged in
+              activeOrderId={assignedOrders.find((o: any) => o.state === "en_route" || o.state === "picked_up")?.id || null}
             />
             
             {loadingAssigned ? (
@@ -529,6 +689,27 @@ export default function DriverDashboard() {
             }
           }}
         />
+
+        {/* Location Permission Dialog */}
+        <AlertDialog open={locationPermissionDialogOpen} onOpenChange={setLocationPermissionDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Enable Location Tracking</AlertDialogTitle>
+              <AlertDialogDescription>
+                To provide real-time location updates to customers, we need access to your location. 
+                Your location will be sent every 0.5 seconds when you're on a delivery.
+                <br /><br />
+                Please click "Allow" when your browser asks for location permission.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Not Now</AlertDialogCancel>
+              <AlertDialogAction onClick={handleRequestLocationPermission}>
+                Enable Location
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </main>
     </div>
   );

@@ -10,19 +10,29 @@ Before using the application, you must enable email authentication in Supabase:
 4. Find **Email** provider and click **Edit**
 5. Enable the following:
    - ✅ Enable Email provider
-   - ✅ Confirm email (optional - can disable for development)
-   - ✅ Enable Email OTP
+   - ✅ **Confirm email** ← **ENABLE for production!** (optional for development only)
+   - ✅ Enable Email OTP (for magic links)
+   - ✅ Secure email change (recommended for security)
 6. Click **Save**
+
+**Important**: 
+- **Development**: You can disable "Confirm email" for faster testing
+- **Production**: MUST enable "Confirm email" to require users to verify their email before signing in
 
 ### Configure Redirect URLs
 
 1. Go to **Authentication** → **URL Configuration**
-2. Add your application URLs to **Redirect URLs**:
+2. Set **Site URL** to your main application URL:
+   - For development: `http://localhost:5000`
+   - For production: `http://devportal.easyfuel.ai` (or your domain)
+   - ⚠️ **IMPORTANT**: No trailing slash!
+3. Add your application URLs to **Redirect URLs** (Allowed redirect URLs):
    - For development: `http://localhost:5000/**`
    - For Replit: `https://*.replit.dev/**`
-   - For production: `https://yourdomain.com/**`
-3. Set **Site URL** to your main application URL
+   - For production: `http://devportal.easyfuel.ai/**` (or your domain)
 4. Click **Save**
+
+**Note**: The Site URL must match your deployment URL exactly (including http/https protocol). The redirect URLs should include `/**` wildcard to allow callbacks to any route.
 
 ## 2. Apply Database Migration
 

@@ -39,6 +39,7 @@ import { OrderChat } from "./OrderChat";
 import { useCurrency } from "@/hooks/use-currency";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatCurrency } from "@/lib/utils";
+import { useWebSocket } from "@/hooks/useWebSocket";
 
 const orderEditSchema = z.object({
   fuelTypeId: z.string().min(1, "Please select a fuel type"),
@@ -71,11 +72,38 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
   const { data: order, isLoading: loadingOrder } = useQuery<any>({
     queryKey: ["/api/orders", orderId],
     enabled: open && !!orderId,
+    refetchInterval: 5000, // Poll every 5 seconds for real-time updates
+    staleTime: 0,
   });
 
   const { data: driverQuotes = [], isLoading: loadingQuotes } = useQuery<any[]>({
     queryKey: ["/api/orders", orderId, "offers"],
     enabled: open && !!orderId,
+    refetchInterval: 5000, // Poll every 5 seconds for real-time updates
+    staleTime: 0,
+  });
+
+  // Listen for real-time order updates via WebSocket
+  useWebSocket((message) => {
+    const messageType = message.type;
+    const msgOrderId = message.orderId || message.payload?.orderId;
+    const orderData = message.order || message.payload?.order;
+    
+    if (msgOrderId === orderId && messageType === "order_updated" && orderData) {
+      // Directly update the query cache with new order data (like chat messages)
+      queryClient.setQueryData(["/api/orders", orderId], orderData);
+      
+      // Also update the orders list
+      queryClient.setQueryData<any[]>(["/api/orders"], (old = []) => {
+        const exists = old.findIndex((o: any) => o.id === orderId);
+        if (exists >= 0) {
+          const updated = [...old];
+          updated[exists] = orderData;
+          return updated;
+        }
+        return old;
+      });
+    }
   });
 
   // Get accepted or pending quote for pricing calculation
@@ -165,7 +193,7 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
     }
   }, [order, form]);
 
-  const updateOrderMutation = useMutation({
+  const updateOrderMutation = useMutation<any, any, OrderEditValues>({
     mutationFn: async (values: OrderEditValues) => {
       const response = await apiRequest("PATCH", `/api/orders/${orderId}`, {
         fuelTypeId: values.fuelTypeId,
@@ -176,9 +204,15 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
       });
       return response.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId] });
+    onSuccess: async () => {
+      // Invalidate all related queries
+      await queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId, "offers"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/offers"] });
+      // Immediately refetch to show updated state
+      await queryClient.refetchQueries({ queryKey: ["/api/orders", orderId] });
+      await queryClient.refetchQueries({ queryKey: ["/api/orders"] });
       toast({
         title: "Order updated",
         description: "Your order has been updated successfully",
@@ -199,8 +233,14 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
       const response = await apiRequest("DELETE", `/api/orders/${orderId}`);
       return response.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+    onSuccess: async () => {
+      // Invalidate all related queries
+      await queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId, "offers"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/offers"] });
+      // Immediately refetch to show updated state
+      await queryClient.refetchQueries({ queryKey: ["/api/orders"] });
       toast({
         title: "Order cancelled",
         description: "Your order has been cancelled successfully",
@@ -221,14 +261,21 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
       const response = await apiRequest("POST", `/api/orders/${orderId}/offers/${driverOfferId}/accept`);
       return response.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId, "offers"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/chat/thread", orderId] });
+    onSuccess: async () => {
+      // Invalidate all related queries
+      await queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId, "offers"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/chat/thread", orderId] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/offers"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/assigned-orders"] });
+      // Immediately refetch to show updated state
+      await queryClient.refetchQueries({ queryKey: ["/api/orders", orderId] });
+      await queryClient.refetchQueries({ queryKey: ["/api/orders", orderId, "offers"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/orders"] });
       toast({
         title: "Driver assigned",
-        description: "You accepted the driver’s quote. They have been notified.",
+        description: "You accepted the driver's quote. They have been notified.",
       });
     },
     onError: (error: any) => {
@@ -272,6 +319,7 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
 
   const canEdit = ["created", "awaiting_payment"].includes(order.state);
   const canCancel = !["delivered", "cancelled", "picked_up", "en_route"].includes(order.state);
+  // Chat is available from when driver is assigned until order is completed (delivered)
   const canUseChat =
     order.assigned_driver_id &&
     ["assigned", "en_route", "picked_up"].includes(order.state) &&
@@ -562,25 +610,36 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                 </div>
               )}
 
-              {/* Live GPS Tracking Map - Show when driver is en_route */}
-              {order.assigned_driver_id && order.state === "en_route" && (
+              {/* Chat with driver - Show when driver is assigned until order is completed */}
+              {canUseChat && (
+                <div className="space-y-4">
+                  <OrderChat
+                    orderId={order.id}
+                    currentUserType="customer"
+                  />
+                </div>
+              )}
+
+              {/* Live GPS Tracking Map - Show when driver is en_route until delivered */}
+              {order.assigned_driver_id && ["en_route", "picked_up"].includes(order.state) && (
                 <div className="space-y-4">
                   <DriverLocationMap
                     orderId={order.id}
                     deliveryLat={order.drop_lat}
                     deliveryLng={order.drop_lng}
                   />
-                  
-                  {canUseChat ? (
-                    <OrderChat
-                      orderId={order.id}
-                      currentUserType="customer"
-                    />
-                  ) : (
-                    <div className="border border-border/60 rounded-lg p-4 text-sm text-muted-foreground">
-                      Chat is no longer available for this order.
-                    </div>
-                  )}
+                </div>
+              )}
+              
+              {/* Debug: Show why map isn't showing (remove in production) */}
+              {process.env.NODE_ENV === 'development' && !order.assigned_driver_id && ["en_route", "picked_up"].includes(order.state) && (
+                <div className="text-xs text-muted-foreground p-2 bg-yellow-50 dark:bg-yellow-900/20 rounded">
+                  Debug: Map not showing - No assigned_driver_id. Order state: {order.state}
+                </div>
+              )}
+              {process.env.NODE_ENV === 'development' && order.assigned_driver_id && !["en_route", "picked_up"].includes(order.state) && order.state !== "delivered" && (
+                <div className="text-xs text-muted-foreground p-2 bg-yellow-50 dark:bg-yellow-900/20 rounded">
+                  Debug: Map not showing - Order state is "{order.state}" (needs "en_route" or "picked_up")
                 </div>
               )}
 

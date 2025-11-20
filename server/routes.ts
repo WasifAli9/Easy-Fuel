@@ -37,13 +37,13 @@ export async function getSupabaseUser(req: Request) {
   // Try to get token from Authorization header first
   let token: string | null = null;
   const authHeader = req.headers.authorization;
+  const cookieHeader = req.headers.cookie; // Declare at function scope
   
   if (authHeader?.startsWith("Bearer ")) {
     token = authHeader.substring(7);
   } else {
     // Fallback: try to get token from cookies
     // Supabase stores session in cookies with key pattern: sb-<project-ref>-auth-token
-    const cookieHeader = req.headers.cookie;
     
     if (cookieHeader) {
       const cookies = parseCookies(cookieHeader);
@@ -66,6 +66,11 @@ export async function getSupabaseUser(req: Request) {
   }
 
   if (!token) {
+    console.error("⚠️  No auth token found in request:", {
+      hasAuthHeader: !!authHeader,
+      hasCookie: !!cookieHeader,
+      path: req.path
+    });
     return null;
   }
   
@@ -74,12 +79,41 @@ export async function getSupabaseUser(req: Request) {
     // Use auth client with anon key for token validation
     const { data: { user }, error } = await supabaseAuth.auth.getUser(token);
     
-    if (error || !user) {
+    if (error) {
+      console.error("🔴 Token validation failed:", {
+        error: error.message,
+        code: error.status,
+        path: req.path,
+        tokenPreview: token.substring(0, 20) + '...'
+      });
+      return null;
+    }
+    
+    if (!user) {
+      console.error("🔴 Token valid but no user returned:", {
+        path: req.path,
+        tokenPreview: token.substring(0, 20) + '...'
+      });
       return null;
     }
 
+    // Success! User authenticated
+    console.log("✅ User authenticated:", {
+      userId: user.id,
+      email: user.email,
+      path: req.path
+    });
     return user;
   } catch (error: any) {
+    // Handle DNS resolution errors (Supabase instance may be paused or network issues)
+    if (error?.code === 'ENOTFOUND') {
+      console.error("⚠️  Cannot reach Supabase:", error.hostname);
+      console.error("   Possible causes:");
+      console.error("   1. Supabase project paused (free tier) - visit Supabase Dashboard to wake it");
+      console.error("   2. Network/DNS issues - check internet connection");
+      console.error("   3. Firewall blocking connection to Supabase");
+      return null;
+    }
     // Handle connection timeouts and network errors gracefully
     if (error?.code === 'UND_ERR_CONNECT_TIMEOUT' || error?.message?.includes('timeout')) {
       console.error("Supabase connection timeout:", error.message);
@@ -95,6 +129,14 @@ export async function getSupabaseUser(req: Request) {
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const user = await getSupabaseUser(req);
   if (!user) {
+    // Log why authentication failed for debugging
+    const hasAuthHeader = !!req.headers.authorization;
+    const hasCookie = !!req.headers.cookie;
+    console.error(`❌ Auth failed for ${req.method} ${req.path}:`, {
+      hasAuthHeader,
+      hasCookie: hasCookie ? 'yes (checking for token...)' : 'no',
+      userAgent: req.headers['user-agent']?.substring(0, 50)
+    });
     return res.status(401).json({ error: "Unauthorized" });
   }
   (req as any).user = user;

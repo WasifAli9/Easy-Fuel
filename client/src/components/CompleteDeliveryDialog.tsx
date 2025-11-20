@@ -59,14 +59,24 @@ export function CompleteDeliveryDialog({
 
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: async () => {
+      const orderId = order.id;
+      // Invalidate all related queries
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/assigned-orders"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/stats"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/completed-orders"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId, "offers"] });
+      // Immediately refetch to show updated state
+      await queryClient.refetchQueries({ queryKey: ["/api/driver/assigned-orders"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/orders", orderId] });
+      await queryClient.refetchQueries({ queryKey: ["/api/orders"] });
       toast({
         title: "Delivery completed",
         description: "The order has been marked as delivered successfully.",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/driver/assigned-orders"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/driver/stats"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
       onOpenChange(false);
     },
     onError: (error: any) => {

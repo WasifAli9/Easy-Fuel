@@ -45,6 +45,7 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
         const ws = new WebSocket(wsUrl);
 
         ws.onopen = () => {
+          console.log("[useWebSocket] Connected successfully");
           setIsConnected(true);
           reconnectAttempts.current = 0;
         };
@@ -57,6 +58,13 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
             if (message.type === "pong") {
               return;
             }
+            
+            // Debug logging for real-time updates
+            console.log("[useWebSocket] Message received:", {
+              type: message.type,
+              hasPayload: !!message.payload,
+              payloadKeys: message.payload ? Object.keys(message.payload) : [],
+            });
             
             // Call the message handler using ref to avoid stale closures
             if (onMessageRef.current) {
@@ -72,6 +80,8 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
                   payload: message.payload,
                 });
               }
+            } else {
+              console.warn("[useWebSocket] No message handler registered for message type:", message.type);
             }
           } catch (error) {
             console.error("[useWebSocket] Error parsing WebSocket message:", error);
@@ -88,7 +98,13 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
           console.error("WebSocket error:", error);
         };
 
-        ws.onclose = () => {
+        ws.onclose = (event) => {
+          console.log("[useWebSocket] Connection closed", {
+            code: event.code,
+            reason: event.reason,
+            wasClean: event.wasClean,
+            reconnectAttempt: reconnectAttempts.current,
+          });
           setIsConnected(false);
           wsRef.current = null;
 
@@ -96,10 +112,13 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
           if (reconnectAttempts.current < maxReconnectAttempts) {
             reconnectAttempts.current++;
             const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
+            console.log(`[useWebSocket] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current}/${maxReconnectAttempts})`);
             
             reconnectTimeoutRef.current = setTimeout(() => {
               connect();
             }, delay);
+          } else {
+            console.error("[useWebSocket] Max reconnection attempts reached");
           }
         };
 

@@ -6,6 +6,7 @@ import { parse } from "url";
 
 interface AuthenticatedWebSocket extends WebSocket {
   userId?: string;
+  userRole?: string;
   isAlive?: boolean;
 }
 
@@ -43,6 +44,18 @@ class WebSocketService {
       // Attach user ID to WebSocket
       ws.userId = user.id;
       ws.isAlive = true;
+
+      // Fetch user role from database
+      const { supabaseAdmin } = await import("./supabase");
+      const { data: profile } = await supabaseAdmin
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .maybeSingle();
+      
+      if (profile?.role) {
+        ws.userRole = profile.role;
+      }
 
       // Add client to the map
       if (!this.clients.has(user.id)) {
@@ -149,10 +162,15 @@ class WebSocketService {
     });
   }
 
-  sendOrderUpdate(userId: string, order: any) {
+  sendOrderUpdate(userId: string, message: any) {
+    // If message already has a type field, send it directly
+    // Otherwise, wrap it as an order_update message
+    if (message && typeof message === 'object' && 'type' in message) {
+      return this.sendToUser(userId, message);
+    }
     return this.sendToUser(userId, {
       type: "order_update",
-      payload: order,
+      payload: message,
     });
   }
 
@@ -192,6 +210,44 @@ class WebSocketService {
       count += clients.size;
     });
     return count;
+  }
+
+  /**
+   * Broadcast message to all users with a specific role
+   */
+  async broadcastToRole(role: string, message: WebSocketMessage): Promise<void> {
+    if (!this.wss) return;
+
+    const { supabaseAdmin } = await import("./supabase");
+    
+    // Get all user IDs with this role
+    const { data: profiles } = await supabaseAdmin
+      .from("profiles")
+      .select("id")
+      .eq("role", role);
+
+    if (!profiles || profiles.length === 0) return;
+
+    const userIds = new Set(profiles.map(p => p.id));
+
+    // Send to all connected users with this role
+    this.wss.clients.forEach((ws: WebSocket) => {
+      const authWs = ws as AuthenticatedWebSocket;
+      if (authWs.userId && userIds.has(authWs.userId)) {
+        this.sendToSocket(authWs, message);
+      }
+    });
+  }
+
+  /**
+   * Broadcast message to all connected users
+   */
+  broadcastToAll(message: WebSocketMessage): void {
+    if (!this.wss) return;
+
+    this.wss.clients.forEach((ws: WebSocket) => {
+      this.sendToSocket(ws, message);
+    });
   }
 }
 

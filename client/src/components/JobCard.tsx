@@ -128,7 +128,7 @@ export function JobCard({
             onClick={onAccept}
             data-testid={`button-accept-${id}`}
           >
-            Accept Job
+            Write Offer
           </Button>
         </CardFooter>
       )}

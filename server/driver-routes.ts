@@ -318,6 +318,41 @@ async function fetchOrderForDriver(orderId: string, driverId: string) {
   return order;
 }
 
+// Helper function to fetch full order data for WebSocket broadcast
+async function fetchFullOrderData(orderId: string) {
+  const { data: order, error } = await supabaseAdmin
+    .from("orders")
+    .select(`
+      *,
+      fuel_types (
+        id,
+        code,
+        label
+      ),
+      delivery_addresses (
+        id,
+        label,
+        address_street,
+        address_city,
+        address_province,
+        address_postal_code
+      ),
+      customers (
+        id,
+        company_name,
+        user_id
+      )
+    `)
+    .eq("id", orderId)
+    .single();
+
+  if (error || !order) {
+    return null;
+  }
+
+  return order;
+}
+
 async function getUserEmail(userId: string | null | undefined) {
   if (!userId) return null;
   try {
@@ -453,9 +488,30 @@ router.get("/offers", async (req, res) => {
     );
 
     // Filter to only orders that have NO dispatch offers at all
-    const pendingOrders = (ordersWithoutOffers || []).filter(
+    let pendingOrders = (ordersWithoutOffers || []).filter(
       (order: any) => !orderIdsWithAnyOffers.has(order.id)
     );
+
+    // Filter pending orders by distance if driver has location set
+    if (driver.current_lat && driver.current_lng && pendingOrders.length > 0) {
+      const { calculateDistance } = await import("./utils/distance");
+      const radiusPreference = driver.job_radius_preference_miles || 50; // Default 50 miles
+      
+      pendingOrders = pendingOrders.filter((order: any) => {
+        if (!order.drop_lat || !order.drop_lng) {
+          return false; // Skip orders without delivery location
+        }
+        
+        const distance = calculateDistance(
+          driver.current_lat!,
+          driver.current_lng!,
+          order.drop_lat,
+          order.drop_lng
+        );
+        
+        return distance <= radiusPreference;
+      });
+    }
 
     // 3. Convert pending orders to offer-like objects for consistent frontend display
     const pendingOffers = pendingOrders.map((order: any) => ({
@@ -823,6 +879,26 @@ router.post("/orders/:orderId/start", async (req, res) => {
 
     if (updateError) throw updateError;
 
+    // Fetch full updated order data for WebSocket broadcast
+    const fullOrderData = await fetchFullOrderData(orderId);
+    
+    // Broadcast order state change via WebSocket with full order data
+    const customerUserId = order.customers?.user_id;
+    if (customerUserId && fullOrderData) {
+      websocketService.sendOrderUpdate(customerUserId, {
+        type: "order_updated",
+        orderId,
+        order: fullOrderData,
+      });
+    }
+
+    // Also notify driver
+    websocketService.sendOrderUpdate(user.id, {
+      type: "order_updated",
+      orderId,
+      order: fullOrderData,
+    });
+
     await ensureChatThreadForAssignment({
       orderId,
       customerId: order.customer_id,
@@ -846,8 +922,6 @@ router.post("/orders/:orderId/start", async (req, res) => {
       customerUserId: order.customers?.user_id,
       driverUserId: driver.user_id,
     });
-
-    const customerUserId = order.customers?.user_id;
 
     if (customerUserId) {
       const { data: driverProfile } = await supabaseAdmin
@@ -914,15 +988,33 @@ router.post("/orders/:orderId/pickup", async (req, res) => {
 
     if (updateError) throw updateError;
 
+    // Fetch full updated order data for WebSocket broadcast
+    const fullOrderData = await fetchFullOrderData(orderId);
+    
+    // Broadcast order state change via WebSocket with full order data
     const customerUserId = order.customers?.user_id;
+    if (customerUserId && fullOrderData) {
+      websocketService.sendOrderUpdate(customerUserId, {
+        type: "order_updated",
+        orderId,
+        order: fullOrderData,
+      });
+    }
+
+    // Also notify driver
+    websocketService.sendOrderUpdate(user.id, {
+      type: "order_updated",
+      orderId,
+      order: fullOrderData,
+    });
 
     if (customerUserId) {
-      const payload = {
+      const sent = websocketService.sendOrderUpdate(customerUserId, {
+        type: "order_state_changed",
         orderId,
         state: "picked_up",
-        driverId: driver.id,
-      };
-      const sent = websocketService.sendOrderUpdate(customerUserId, payload);
+        order: fullOrderData,
+      });
 
       pushNotificationService
         .sendOrderUpdate(
@@ -1016,6 +1108,26 @@ router.post("/orders/:orderId/complete", async (req, res) => {
       return res.status(409).json({ error: "Order could not be marked as delivered. Please retry." });
     }
 
+    // Fetch full updated order data for WebSocket broadcast
+    const fullOrderData = await fetchFullOrderData(orderId);
+    
+    // Broadcast order completion via WebSocket with full order data
+    const customerUserId = updatedOrder.customers?.user_id;
+    if (customerUserId && fullOrderData) {
+      websocketService.sendOrderUpdate(customerUserId, {
+        type: "order_updated",
+        orderId,
+        order: fullOrderData,
+      });
+    }
+
+    // Also notify driver
+    websocketService.sendOrderUpdate(user.id, {
+      type: "order_updated",
+      orderId,
+      order: fullOrderData,
+    });
+
     try {
       await supabaseAdmin
         .from("drivers")
@@ -1025,7 +1137,6 @@ router.post("/orders/:orderId/complete", async (req, res) => {
     }
 
     const orderShortId = updatedOrder.id.substring(0, 8).toUpperCase();
-    const customerUserId = updatedOrder.customers?.user_id;
     const deliveryAddress = formatDeliveryAddress(updatedOrder);
     const deliveredAtFormatted = formatDateTimeForZA(updatedOrder.delivered_at || nowIso);
     const fuelTypeLabel = updatedOrder.fuel_types?.label || "Fuel";
@@ -1334,6 +1445,14 @@ router.post("/offers/:id/accept", async (req, res) => {
         currency,
         proposedDeliveryTime
       );
+
+      // Broadcast offer update to customer via WebSocket
+      websocketService.sendOrderUpdate(customerUserId, {
+        type: "driver_offer_received",
+        orderId: updatedOfferRecord.order_id,
+        offerId: updatedOfferRecord.id,
+        state: "pending_customer",
+      });
     }
 
     res.json({
@@ -1393,6 +1512,12 @@ router.post("/offers/:id/reject", async (req, res) => {
       .eq("id", offerId);
 
     if (rejectError) throw rejectError;
+
+    // Broadcast offer rejection - refresh offers list
+    websocketService.sendToUser(user.id, {
+      type: "offer_rejected",
+      payload: { offerId },
+    });
 
     res.json({ success: true, message: "Offer rejected successfully" });
   } catch (error: any) {
@@ -1500,6 +1625,12 @@ router.post("/vehicles", async (req, res) => {
     } catch (err: any) {
     }
 
+    // Broadcast vehicle creation
+    websocketService.sendToUser(user.id, {
+      type: "vehicle_created",
+      payload: { vehicleId: vehicle.id },
+    });
+
     // Transform to camelCase for frontend
     res.json(vehicleToCamelCase(vehicle));
   } catch (error: any) {
@@ -1583,6 +1714,12 @@ router.patch("/vehicles/:vehicleId", async (req, res) => {
     } catch (err: any) {
     }
 
+    // Broadcast vehicle update
+    websocketService.sendToUser(user.id, {
+      type: "vehicle_updated",
+      payload: { vehicleId: vehicleId },
+    });
+
     // Transform to camelCase for frontend
     res.json(vehicleToCamelCase(vehicle));
   } catch (error: any) {
@@ -1625,6 +1762,12 @@ router.delete("/vehicles/:vehicleId", async (req, res) => {
       .eq("driver_id", driver.id);
 
     if (deleteError) throw deleteError;
+
+    // Broadcast vehicle deletion
+    websocketService.sendToUser(user.id, {
+      type: "vehicle_deleted",
+      payload: { vehicleId: vehicleId },
+    });
 
     res.json({ success: true, message: "Vehicle deleted successfully" });
   } catch (error: any) {
@@ -2002,7 +2145,7 @@ router.put("/location", async (req, res) => {
       return res.status(404).json({ error: "Driver profile not found" });
     }
 
-    // If orderId is provided, verify the driver is assigned to this order and it's en_route
+    // If orderId is provided, verify the driver is assigned to this order and it's en_route or picked_up
     let activeOrderId: string | null = null;
     if (orderId) {
       const { data: order } = await supabaseAdmin
@@ -2010,19 +2153,19 @@ router.put("/location", async (req, res) => {
         .select("id, state")
         .eq("id", orderId)
         .eq("assigned_driver_id", driver.id)
-        .eq("state", "en_route")
+        .in("state", ["en_route", "picked_up"])
         .maybeSingle();
       
       if (order) {
         activeOrderId = order.id;
       }
     } else {
-      // If no orderId provided, check if driver has any en_route orders
+      // If no orderId provided, check if driver has any en_route or picked_up orders
       const { data: activeOrder } = await supabaseAdmin
         .from("orders")
         .select("id")
         .eq("assigned_driver_id", driver.id)
-        .eq("state", "en_route")
+        .in("state", ["en_route", "picked_up"])
         .order("updated_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -2032,14 +2175,13 @@ router.put("/location", async (req, res) => {
       }
     }
 
-    // Update driver's current location
+    // Update driver's current location (this serves as the default/fallback location)
     const nowIso = new Date().toISOString();
     const { error: updateError } = await supabaseAdmin
       .from("drivers")
       .update({
         current_lat: latitude,
         current_lng: longitude,
-        last_location_update: nowIso,
         updated_at: nowIso,
       })
       .eq("id", driver.id);
@@ -2068,6 +2210,34 @@ router.put("/location", async (req, res) => {
 
     if (historyError) {
       console.error("Error saving location history:", historyError);
+    }
+
+    // Send real-time location update via WebSocket to customer if order is active
+    if (activeOrderId) {
+      try {
+        // Get customer user ID for this order
+        const { data: order } = await supabaseAdmin
+          .from("orders")
+          .select(`
+            id,
+            customers!inner(user_id)
+          `)
+          .eq("id", activeOrderId)
+          .single();
+
+        if (order?.customers?.user_id) {
+          // Send location update to customer via WebSocket
+          websocketService.sendLocationUpdate(order.customers.user_id, {
+            orderId: activeOrderId,
+            latitude,
+            longitude,
+            timestamp: nowIso,
+          });
+        }
+      } catch (wsError) {
+        // Don't fail the request if WebSocket fails
+        console.error("Error sending location update via WebSocket:", wsError);
+      }
     }
 
     res.json({ success: true, latitude, longitude });
@@ -2114,6 +2284,12 @@ router.put("/profile", async (req, res) => {
       .single();
     
     console.log("Profile updated successfully. New profile_photo_url:", updatedProfile?.profile_photo_url);
+
+    // Broadcast driver profile update
+    websocketService.sendToUser(user.id, {
+      type: "driver_profile_updated",
+      payload: { userId: user.id },
+    });
 
     res.json({ success: true, profile_photo_url: updatedProfile?.profile_photo_url });
   } catch (error: any) {

@@ -35,7 +35,8 @@ export function DriverLocationTracker({ isOnDelivery, activeOrderId }: DriverLoc
     }
   };
 
-  const getCurrentLocation = () => {
+  // Start/stop tracking based on delivery status
+  useEffect(() => {
     if (!navigator.geolocation) {
       setLocationError("Geolocation is not supported by your browser");
       toast({
@@ -46,63 +47,59 @@ export function DriverLocationTracker({ isOnDelivery, activeOrderId }: DriverLoc
       return;
     }
 
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        updateLocation(position.coords.latitude, position.coords.longitude);
-      },
-      (error) => {
-        console.error("Geolocation error:", error);
-        let errorMessage = "Failed to get your location";
-        
-        switch (error.code) {
-          case error.PERMISSION_DENIED:
-            errorMessage = "Location permission denied. Please enable location access in your browser settings.";
-            break;
-          case error.POSITION_UNAVAILABLE:
-            errorMessage = "Location information unavailable";
-            break;
-          case error.TIMEOUT:
-            errorMessage = "Location request timed out";
-            break;
-        }
-        
-        setLocationError(errorMessage);
-        toast({
-          title: "Location Error",
-          description: errorMessage,
-          variant: "destructive",
-        });
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0,
-      }
-    );
-  };
-
-  // Start/stop tracking based on delivery status
-  useEffect(() => {
     if (isOnDelivery) {
       setIsTracking(true);
       
-      // Update immediately
-      getCurrentLocation();
+      // Use watchPosition for continuous real-time GPS tracking (more efficient than polling)
+      const watchId = navigator.geolocation.watchPosition(
+        (position) => {
+          updateLocation(position.coords.latitude, position.coords.longitude);
+        },
+        (error) => {
+          console.error("Geolocation error:", error);
+          let errorMessage = "Failed to get your location";
+          
+          switch (error.code) {
+            case error.PERMISSION_DENIED:
+              errorMessage = "Location permission denied. Please enable location access in your browser settings.";
+              break;
+            case error.POSITION_UNAVAILABLE:
+              errorMessage = "Location information unavailable";
+              break;
+            case error.TIMEOUT:
+              errorMessage = "Location request timed out";
+              break;
+          }
+          
+          setLocationError(errorMessage);
+          // Don't show toast on every error, only on permission denied
+          if (error.code === error.PERMISSION_DENIED) {
+            toast({
+              title: "Location Error",
+              description: errorMessage,
+              variant: "destructive",
+            });
+          }
+        },
+        {
+          enableHighAccuracy: true, // Use GPS for best accuracy
+          timeout: 5000,
+          maximumAge: 500, // Accept positions up to 0.5 seconds old
+        }
+      );
       
-      // Then update every 30 seconds
-      const interval = setInterval(getCurrentLocation, 30000);
-      
-      return () => clearInterval(interval);
+      return () => {
+        navigator.geolocation.clearWatch(watchId);
+        setIsTracking(false);
+        setLastUpdate(null);
+        setLocationError(null);
+      };
     } else {
       setIsTracking(false);
       setLastUpdate(null);
       setLocationError(null);
     }
-  }, [isOnDelivery]);
-
-  if (!isOnDelivery) {
-    return null; // Don't show anything when not on delivery
-  }
+  }, [isOnDelivery, activeOrderId, toast]);
 
   return (
     <Card>
@@ -110,7 +107,7 @@ export function DriverLocationTracker({ isOnDelivery, activeOrderId }: DriverLoc
         <CardTitle className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <MapPin className="h-5 w-5" />
-            GPS Tracking
+            GPS Location Tracking
           </div>
           {isTracking && (
             <Badge variant="default" className="bg-green-600">
@@ -119,7 +116,9 @@ export function DriverLocationTracker({ isOnDelivery, activeOrderId }: DriverLoc
           )}
         </CardTitle>
         <CardDescription>
-          Your location is being shared with the customer
+          {activeOrderId 
+            ? "Your location is being shared with the customer in real-time"
+            : "Your location is being tracked. It will be shared when you start a delivery"}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">
@@ -140,7 +139,7 @@ export function DriverLocationTracker({ isOnDelivery, activeOrderId }: DriverLoc
         )}
 
         <div className="text-sm">
-          <p className="font-medium">Updates every 30 seconds</p>
+          <p className="font-medium">Real-time GPS tracking (updates every 0.5 seconds)</p>
           <p className="text-muted-foreground">
             Make sure location services are enabled on your device
           </p>

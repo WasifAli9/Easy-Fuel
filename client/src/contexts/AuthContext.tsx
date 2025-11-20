@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import type { User, Session } from "@supabase/supabase-js";
+import { queryClient } from "@/lib/queryClient";
 
 interface Profile {
   id: string;
@@ -72,13 +73,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (error) throw error;
       
-      setProfile(data ? {
+      const profileData = data ? {
         id: data.id,
         role: data.role,
         fullName: data.full_name,
         phone: data.phone,
         profilePhotoUrl: data.profile_photo_url || undefined,
-      } : null);
+      } : null;
+      
+      setProfile(profileData);
+      
+      // Invalidate related queries to ensure UI updates
+      if (profileData) {
+        // Invalidate profile-related queries
+        await queryClient.invalidateQueries({ queryKey: ["/api/customer/profile"] });
+        await queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
+        await queryClient.invalidateQueries({ queryKey: ["/api/supplier/profile"] });
+      }
     } catch (error) {
       console.error("Error fetching profile:", error);
       setProfile(null);
@@ -111,8 +122,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function signUpWithPassword(email: string, password: string, fullName?: string) {
-    const redirectTo = window.location.origin;
-    const { error } = await supabase.auth.signUp({
+    // Use the current window origin for redirect, ensuring it includes the full path
+    const redirectTo = `${window.location.origin}/auth`;
+    
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -120,7 +133,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         data: fullName ? { full_name: fullName } : undefined,
       },
     });
+    
     if (error) throw error;
+    
+    // Return data so caller knows if email confirmation is required
+    return data;
   }
 
   async function resetPassword(email: string) {
@@ -152,30 +169,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   ) {
     if (!user) throw new Error("No user logged in");
 
-    const { error } = await supabase.from("profiles").insert({
+    const { error: profileError } = await supabase.from("profiles").insert({
       id: user.id,
       role,
       full_name: fullName,
       phone,
     });
 
-    if (error) throw error;
+    if (profileError) throw profileError;
 
     // Also create role-specific record
     if (role === "customer") {
-      await supabase.from("customers").insert({
+      const { error } = await supabase.from("customers").insert({
         user_id: user.id,
       });
+      if (error) throw error;
     } else if (role === "driver") {
-      await supabase.from("drivers").insert({
+      const { error } = await supabase.from("drivers").insert({
         user_id: user.id,
       });
+      if (error) throw error;
     } else if (role === "supplier") {
-      await supabase.from("suppliers").insert({
+      const { error } = await supabase.from("suppliers").insert({
         owner_id: user.id,
         name: fullName,
       });
+      if (error) throw error;
     }
+
+    // Invalidate related queries to ensure state updates
+    await queryClient.invalidateQueries({ queryKey: ["/api/admin/kyc/pending"] });
+    await queryClient.invalidateQueries({ queryKey: ["/api/admin/customers"] });
+    await queryClient.invalidateQueries({ queryKey: ["/api/admin/drivers"] });
+    await queryClient.invalidateQueries({ queryKey: ["/api/admin/suppliers"] });
 
     await fetchProfile(user.id);
   }

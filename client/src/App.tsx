@@ -7,8 +7,10 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { NotificationPermissionBanner } from "@/components/NotificationPermissionBanner";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
+import { useRealtimeUpdates } from "@/hooks/useRealtimeUpdates";
 import Landing from "@/pages/Landing";
 import Auth from "@/pages/Auth";
+import AuthTest from "@/pages/AuthTest";
 import ResetPassword from "@/pages/ResetPassword";
 import RoleSetup from "@/pages/RoleSetup";
 import Signup from "@/pages/Signup";
@@ -68,6 +70,9 @@ function ProtectedRoute({
 
 function Router() {
   const { user, profile } = useAuth();
+  
+  // Set up global real-time updates via WebSocket
+  useRealtimeUpdates();
 
   return (
     <>
@@ -82,6 +87,7 @@ function Router() {
         )}
       </Route>
       <Route path="/auth" component={Auth} />
+      <Route path="/auth-test" component={AuthTest} />
       <Route path="/signup" component={Signup} />
       <Route path="/reset-password" component={ResetPassword} />
       <Route path="/setup">

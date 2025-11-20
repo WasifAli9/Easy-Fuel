@@ -142,10 +142,21 @@ export function AcceptOfferDialog({
       });
       return response.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/driver/offers"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/driver/assigned-orders"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/driver/stats"] });
+    onSuccess: async () => {
+      const orderId = order?.id;
+      // Invalidate all related queries
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/offers"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/assigned-orders"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/stats"] });
+      if (orderId) {
+        await queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId] });
+        await queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId, "offers"] });
+        await queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+        // Immediately refetch
+        await queryClient.refetchQueries({ queryKey: ["/api/orders", orderId] });
+        await queryClient.refetchQueries({ queryKey: ["/api/orders", orderId, "offers"] });
+      }
+      await queryClient.refetchQueries({ queryKey: ["/api/driver/offers"] });
       toast({
         title: "Quote submitted",
         description: "Your delivery quote was sent to the customer. We'll notify you once they respond.",

@@ -26,6 +26,9 @@ export default defineConfig({
       "@assets": path.resolve(import.meta.dirname, "attached_assets"),
     },
   },
+  // Ensure PWA assets (manifest, icons, service worker) are included in dev + build.
+  // This points Vite's public directory at the top-level `public` folder.
+  publicDir: path.resolve(import.meta.dirname, "public"),
   root: path.resolve(import.meta.dirname, "client"),
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),

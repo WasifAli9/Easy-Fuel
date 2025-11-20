@@ -313,12 +313,40 @@ router.post("/kyc/driver/:id/approve", async (req, res) => {
   try {
     const { id } = req.params;
 
+    // Get driver user_id before updating
+    const { data: driver } = await supabaseAdmin
+      .from("drivers")
+      .select("user_id")
+      .eq("id", id)
+      .single();
+
     const { error } = await supabaseAdmin
       .from("drivers")
       .update({ kyc_status: "approved", updated_at: new Date().toISOString() })
       .eq("id", id);
 
     if (error) throw error;
+
+    // Broadcast KYC approval to all admins and the driver
+    const { websocketService } = await import("./websocket");
+    websocketService.broadcastToRole("admin", {
+      type: "kyc_approved",
+      payload: {
+        driverId: id,
+        userId: driver?.user_id,
+        type: "driver",
+      },
+    });
+
+    if (driver?.user_id) {
+      websocketService.sendToUser(driver.user_id, {
+        type: "kyc_approved",
+        payload: {
+          driverId: id,
+          type: "driver",
+        },
+      });
+    }
 
     res.json({ success: true, message: "Driver KYC approved" });
   } catch (error: any) {
@@ -332,12 +360,40 @@ router.post("/kyc/driver/:id/reject", async (req, res) => {
   try {
     const { id } = req.params;
 
+    // Get driver user_id before updating
+    const { data: driver } = await supabaseAdmin
+      .from("drivers")
+      .select("user_id")
+      .eq("id", id)
+      .single();
+
     const { error } = await supabaseAdmin
       .from("drivers")
       .update({ kyc_status: "rejected", updated_at: new Date().toISOString() })
       .eq("id", id);
 
     if (error) throw error;
+
+    // Broadcast KYC rejection to all admins and the driver
+    const { websocketService } = await import("./websocket");
+    websocketService.broadcastToRole("admin", {
+      type: "kyc_rejected",
+      payload: {
+        driverId: id,
+        userId: driver?.user_id,
+        type: "driver",
+      },
+    });
+
+    if (driver?.user_id) {
+      websocketService.sendToUser(driver.user_id, {
+        type: "kyc_rejected",
+        payload: {
+          driverId: id,
+          type: "driver",
+        },
+      });
+    }
 
     res.json({ success: true, message: "Driver KYC rejected" });
   } catch (error: any) {
@@ -351,12 +407,40 @@ router.post("/kyc/supplier/:id/approve", async (req, res) => {
   try {
     const { id } = req.params;
 
+    // Get supplier owner_id before updating
+    const { data: supplier } = await supabaseAdmin
+      .from("suppliers")
+      .select("owner_id")
+      .eq("id", id)
+      .single();
+
     const { error } = await supabaseAdmin
       .from("suppliers")
       .update({ kyb_status: "approved", updated_at: new Date().toISOString() })
       .eq("id", id);
 
     if (error) throw error;
+
+    // Broadcast KYB approval to all admins and the supplier
+    const { websocketService } = await import("./websocket");
+    websocketService.broadcastToRole("admin", {
+      type: "kyc_approved",
+      payload: {
+        supplierId: id,
+        userId: supplier?.owner_id,
+        type: "supplier",
+      },
+    });
+
+    if (supplier?.owner_id) {
+      websocketService.sendToUser(supplier.owner_id, {
+        type: "kyc_approved",
+        payload: {
+          supplierId: id,
+          type: "supplier",
+        },
+      });
+    }
 
     res.json({ success: true, message: "Supplier KYB approved" });
   } catch (error: any) {
@@ -370,12 +454,40 @@ router.post("/kyc/supplier/:id/reject", async (req, res) => {
   try {
     const { id } = req.params;
 
+    // Get supplier owner_id before updating
+    const { data: supplier } = await supabaseAdmin
+      .from("suppliers")
+      .select("owner_id")
+      .eq("id", id)
+      .single();
+
     const { error } = await supabaseAdmin
       .from("suppliers")
       .update({ kyb_status: "rejected", updated_at: new Date().toISOString() })
       .eq("id", id);
 
     if (error) throw error;
+
+    // Broadcast KYB rejection to all admins and the supplier
+    const { websocketService } = await import("./websocket");
+    websocketService.broadcastToRole("admin", {
+      type: "kyc_rejected",
+      payload: {
+        supplierId: id,
+        userId: supplier?.owner_id,
+        type: "supplier",
+      },
+    });
+
+    if (supplier?.owner_id) {
+      websocketService.sendToUser(supplier.owner_id, {
+        type: "kyc_rejected",
+        payload: {
+          supplierId: id,
+          type: "supplier",
+        },
+      });
+    }
 
     res.json({ success: true, message: "Supplier KYB rejected" });
   } catch (error: any) {
@@ -521,6 +633,29 @@ router.post("/users/create", async (req, res) => {
       await supabaseAdmin.from("profiles").delete().eq("id", userId);
       await supabaseAdmin.auth.admin.deleteUser(userId);
       throw new Error(`Failed to create ${role} record: ${roleError.message}`);
+    }
+
+    // Broadcast user creation to all admins via WebSocket
+    const { websocketService } = await import("./websocket");
+    websocketService.broadcastToRole("admin", {
+      type: "user_created",
+      payload: {
+        userId,
+        role,
+        fullName,
+        email,
+      },
+    });
+
+    // If driver or supplier created, also broadcast KYC submission
+    if (role === "driver" || role === "supplier") {
+      websocketService.broadcastToRole("admin", {
+        type: "kyc_submitted",
+        payload: {
+          userId,
+          role,
+        },
+      });
     }
 
     res.json({

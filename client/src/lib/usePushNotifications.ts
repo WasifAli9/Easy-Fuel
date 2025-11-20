@@ -97,17 +97,23 @@ export function usePushNotifications() {
     setIsLoading(true);
 
     try {
+      // Fetch API endpoints with credentials to send cookies
       const response = await fetch("/api/push/vapid-public-key", {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("sb-access-token")}`,
-        },
+        credentials: 'include', // Send cookies with request
       });
 
       if (!response.ok) {
+        console.error("Failed to get VAPID public key:", response.status, response.statusText);
         throw new Error("Failed to get VAPID public key");
       }
 
       const { publicKey } = await response.json();
+      
+      if (!publicKey) {
+        console.error("No public key received from server");
+        throw new Error("No VAPID public key received");
+      }
+
       const registration = await navigator.serviceWorker.ready;
 
       const subscription = await registration.pushManager.subscribe({
@@ -121,8 +127,8 @@ export function usePushNotifications() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("sb-access-token")}`,
         },
+        credentials: 'include', // Send cookies with request
         body: JSON.stringify({
           endpoint: subscriptionJson.endpoint,
           keys: {
@@ -134,7 +140,9 @@ export function usePushNotifications() {
       });
 
       if (!saveResponse.ok) {
-        throw new Error("Failed to save subscription");
+        const errorData = await saveResponse.json().catch(() => ({}));
+        console.error("Failed to save subscription:", saveResponse.status, errorData);
+        throw new Error(`Failed to save subscription: ${errorData.error || saveResponse.statusText}`);
       }
 
       setIsSubscribed(true);
@@ -147,7 +155,7 @@ export function usePushNotifications() {
       console.error("Error subscribing to push notifications:", error);
       toast({
         title: "Error",
-        description: "Failed to enable push notifications",
+        description: error instanceof Error ? error.message : "Failed to enable push notifications",
         variant: "destructive",
       });
       return false;
@@ -178,14 +186,15 @@ export function usePushNotifications() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("sb-access-token")}`,
         },
+        credentials: 'include', // Send cookies with request
         body: JSON.stringify({
           endpoint: subscriptionJson.endpoint,
         }),
       });
 
       if (!response.ok) {
+        console.error("Failed to unsubscribe:", response.status, response.statusText);
         throw new Error("Failed to unsubscribe");
       }
 

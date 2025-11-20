@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppHeader } from "@/components/AppHeader";
 import { OrderCard } from "@/components/OrderCard";
 import { CreateOrderDialog } from "@/components/CreateOrderDialog";
@@ -20,16 +20,62 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { useWebSocket } from "@/hooks/useWebSocket";
 
 export default function CustomerDashboard() {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [selectedFuelTypeId, setSelectedFuelTypeId] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
+  const queryClient = useQueryClient();
 
   // Fetch orders from API
   const { data: orders = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/orders"],
+    refetchInterval: 5000, // Poll every 5 seconds for real-time updates
+    staleTime: 0, // Always consider data stale to allow immediate refetch
+  });
+
+  // Listen for real-time order updates via WebSocket
+  useWebSocket((message) => {
+    console.log("[CustomerDashboard] WebSocket message received:", message.type, message);
+    
+    // Handle both direct message types and payload-wrapped messages
+    const messageType = message.type;
+    const orderId = message.orderId || message.payload?.orderId;
+    const orderData = message.order || message.payload?.order;
+    
+    if (messageType === "order_updated" && orderData) {
+      // Directly update the query cache with new order data (like chat messages)
+      console.log("[CustomerDashboard] Updating order in cache:", orderId);
+      
+      // Update orders list
+      queryClient.setQueryData<any[]>(["/api/orders"], (old = []) => {
+        const exists = old.findIndex((o: any) => o.id === orderId);
+        if (exists >= 0) {
+          // Update existing order
+          const updated = [...old];
+          updated[exists] = orderData;
+          return updated;
+        } else {
+          // Add new order to the beginning
+          return [orderData, ...old];
+        }
+      });
+      
+      // Update single order query if it's the selected order
+      if (selectedOrderId && orderId === selectedOrderId) {
+        queryClient.setQueryData(["/api/orders", orderId], orderData);
+      }
+    } else if (messageType === "order_update" || messageType === "order_created" || messageType === "order_state_changed" || messageType === "driver_offer_received") {
+      // Fallback: invalidate queries for other message types
+      console.log("[CustomerDashboard] Invalidating orders due to:", messageType);
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      
+      if (selectedOrderId && orderId === selectedOrderId) {
+        queryClient.invalidateQueries({ queryKey: ["/api/orders", selectedOrderId] });
+      }
+    }
   });
 
   // Fetch fuel types for filter

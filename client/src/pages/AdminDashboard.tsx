@@ -13,6 +13,7 @@ import { Users, Truck, TrendingUp, Building2, UserCheck, Search } from "lucide-r
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useWebSocket } from "@/hooks/useWebSocket";
 
 interface PendingKYC {
   drivers: Array<{
@@ -124,6 +125,25 @@ export default function AdminDashboard() {
   // Fetch all drivers
   const { data: allDrivers, isLoading: driversLoading } = useQuery<Driver[]>({
     queryKey: ["/api/admin/drivers"],
+  });
+
+  // Listen for real-time updates via WebSocket
+  useWebSocket((message) => {
+    console.log("[AdminDashboard] WebSocket message received:", message.type, message);
+    
+    if (message.type === "kyc_submitted" || message.type === "kyc_approved" || message.type === "kyc_rejected") {
+      // Refresh KYC pending list when applications are submitted or reviewed
+      console.log("[AdminDashboard] Invalidating KYC pending due to:", message.type);
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/kyc/pending"] });
+    }
+    
+    if (message.type === "user_created" || message.type === "user_updated" || message.type === "kyc_approved" || message.type === "kyc_rejected") {
+      // Refresh user lists when users are created/updated or KYC status changes
+      console.log("[AdminDashboard] Invalidating user lists due to:", message.type);
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/customers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/drivers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/suppliers"] });
+    }
   });
 
   // Approve driver mutation

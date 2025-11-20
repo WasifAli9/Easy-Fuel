@@ -198,7 +198,10 @@ export default function Auth() {
                     {loading ? "Signing in..." : "Sign In"}
                   </Button>
                   <p className="text-xs text-center text-muted-foreground">
-                    Use this for @easyfuel.ai test accounts
+                    Don't have an account?{" "}
+                    <a href="/signup" className="text-primary hover:underline font-medium">
+                      Sign up
+                    </a>
                   </p>
                 </form>
               ) : (
@@ -298,7 +301,10 @@ export default function Auth() {
                     {loading ? "Sending..." : "Send Magic Link"}
                   </Button>
                   <p className="text-xs text-center text-muted-foreground">
-                    We'll send you a secure link to sign in
+                    Don't have an account?{" "}
+                    <a href="/signup" className="text-primary hover:underline font-medium">
+                      Sign up
+                    </a>
                   </p>
                 </form>
               ) : (

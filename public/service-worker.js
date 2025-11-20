@@ -20,9 +20,25 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) =>
       Promise.all(
-        cacheNames
-          .filter((name) => name !== CACHE_NAME)
-          .map((name) => caches.delete(name))
+        cacheNames.map((name) => {
+          // Delete all old caches
+          if (name !== CACHE_NAME) {
+            return caches.delete(name);
+          }
+          // For current cache, remove any API responses that might have been cached
+          return caches.open(name).then((cache) => {
+            return cache.keys().then((keys) => {
+              return Promise.all(
+                keys
+                  .filter((request) => {
+                    const url = new URL(request.url);
+                    return url.pathname.startsWith("/api/");
+                  })
+                  .map((request) => cache.delete(request))
+              );
+            });
+          });
+        })
       )
     )
   );
@@ -76,6 +92,18 @@ self.addEventListener("fetch", (event) => {
 
   const request = event.request;
   const url = new URL(request.url);
+
+  // Ignore non-HTTP(S) requests (chrome-extension, etc.)
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return;
+  }
+
+  // NEVER cache API requests - always fetch from network
+  // This ensures state updates work correctly
+  if (url.pathname.startsWith("/api/")) {
+    event.respondWith(fetch(request));
+    return;
+  }
 
   if (request.mode === "navigate") {
     event.respondWith(networkFirst(request));

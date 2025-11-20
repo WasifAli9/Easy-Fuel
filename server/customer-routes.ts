@@ -9,6 +9,41 @@ import { orderNotifications, offerNotifications } from "./notification-helpers";
 
 const router = Router();
 
+// Helper function to fetch full order data for WebSocket broadcast
+async function fetchFullOrderData(orderId: string) {
+  const { data: order, error } = await supabaseAdmin
+    .from("orders")
+    .select(`
+      *,
+      fuel_types (
+        id,
+        code,
+        label
+      ),
+      delivery_addresses (
+        id,
+        label,
+        address_street,
+        address_city,
+        address_province,
+        address_postal_code
+      ),
+      customers (
+        id,
+        company_name,
+        user_id
+      )
+    `)
+    .eq("id", orderId)
+    .single();
+
+  if (error || !order) {
+    return null;
+  }
+
+  return order;
+}
+
 // Get all fuel types (for order creation)
 router.get("/fuel-types", async (req, res) => {
   try {
@@ -430,6 +465,48 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
       return res.status(409).json({ error: "Failed to assign driver. Please refresh and try again." });
     }
 
+    // Fetch full updated order data for WebSocket broadcast
+    const fullOrderData = await fetchFullOrderData(updatedOrder.id);
+    
+    // Broadcast order update via WebSocket with full order data
+    const { websocketService } = await import("./websocket");
+    
+    if (fullOrderData) {
+      // Notify customer
+      websocketService.sendOrderUpdate(user.id, {
+        type: "order_updated",
+        orderId: updatedOrder.id,
+        order: fullOrderData,
+      });
+
+      // Notify driver
+      if (offer.driver_id) {
+        const { data: driver } = await supabaseAdmin
+          .from("drivers")
+          .select("user_id")
+          .eq("id", offer.driver_id)
+          .single();
+        
+        if (driver?.user_id) {
+          websocketService.sendOrderUpdate(driver.user_id, {
+            type: "order_updated",
+            orderId: updatedOrder.id,
+            order: fullOrderData,
+          });
+        }
+      }
+    }
+
+    // Broadcast to all drivers that this order is no longer available
+    websocketService.broadcastToRole("driver", {
+      type: "order_assigned",
+      payload: {
+        orderId: updatedOrder.id,
+        state: updatedOrder.state,
+        assignedDriverId: updatedOrder.assigned_driver_id,
+      },
+    });
+
     const { error: selectedOfferError } = await supabaseAdmin
       .from("dispatch_offers")
       .update({
@@ -758,6 +835,57 @@ router.post("/orders", async (req, res) => {
 
     if (orderError) throw orderError;
 
+    // Broadcast new order to all drivers via WebSocket
+    // Use setImmediate to ensure database transaction is committed first
+    const { websocketService } = await import("./websocket");
+    setImmediate(async () => {
+      await websocketService.broadcastToRole("driver", {
+        type: "new_order",
+        payload: {
+          orderId: newOrder.id,
+          fuelTypeId: newOrder.fuel_type_id,
+          litres: litresNum,
+          dropLat: lat,
+          dropLng: lng,
+          state: newOrder.state,
+          createdAt: newOrder.created_at,
+        },
+      });
+    });
+
+    // Also notify the customer who created the order
+    websocketService.sendOrderUpdate(user.id, {
+      type: "order_created",
+      orderId: newOrder.id,
+      state: newOrder.state,
+    });
+
+    // Notify supplier if order uses their depot
+    if (depotId) {
+      const { data: depot } = await supabaseAdmin
+        .from("depots")
+        .select("supplier_id")
+        .eq("id", depotId)
+        .single();
+      
+      if (depot?.supplier_id) {
+        const { data: supplier } = await supabaseAdmin
+          .from("suppliers")
+          .select("owner_id")
+          .eq("id", depot.supplier_id)
+          .single();
+        
+        if (supplier?.owner_id) {
+          websocketService.sendOrderUpdate(supplier.owner_id, {
+            type: "new_order",
+            orderId: newOrder.id,
+            depotId,
+            state: newOrder.state,
+          });
+        }
+      }
+    }
+
     // Create dispatch offers for drivers (async, don't wait)
     createDispatchOffers({
       orderId: newOrder.id,
@@ -876,6 +1004,13 @@ router.patch("/orders/:id", async (req, res) => {
 
     if (updateError) throw updateError;
 
+    // Broadcast order update
+    websocketService.sendOrderUpdate(user.id, {
+      type: "order_updated",
+      orderId: orderId,
+      state: updatedOrder.state,
+    });
+
     res.json(updatedOrder);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -933,6 +1068,13 @@ router.delete("/orders/:id", async (req, res) => {
       .single();
 
     if (cancelError) throw cancelError;
+
+    // Broadcast order cancellation
+    websocketService.sendOrderUpdate(user.id, {
+      type: "order_cancelled",
+      orderId: orderId,
+      state: cancelledOrder.state,
+    });
 
     res.json(cancelledOrder);
   } catch (error: any) {
@@ -1028,6 +1170,13 @@ router.post("/delivery-addresses", async (req, res) => {
       .single();
 
     if (error) throw error;
+    
+    // Broadcast delivery address creation
+    websocketService.sendToUser(user.id, {
+      type: "address_created",
+      payload: { addressId: newAddress.id },
+    });
+    
     res.json(newAddress);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1098,6 +1247,12 @@ router.patch("/delivery-addresses/:id", async (req, res) => {
       return res.status(404).json({ error: "Address not found" });
     }
 
+    // Broadcast delivery address update
+    websocketService.sendToUser(user.id, {
+      type: "address_updated",
+      payload: { addressId: addressId },
+    });
+
     res.json(updatedAddress);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1128,6 +1283,13 @@ router.delete("/delivery-addresses/:id", async (req, res) => {
       .eq("customer_id", customer.id);
 
     if (error) throw error;
+    
+    // Broadcast delivery address deletion
+    websocketService.sendToUser(user.id, {
+      type: "address_deleted",
+      payload: { addressId: addressId },
+    });
+    
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1236,6 +1398,13 @@ router.post("/payment-methods", async (req, res) => {
       .single();
 
     if (error) throw error;
+    
+    // Broadcast payment method creation
+    websocketService.sendToUser(user.id, {
+      type: "payment_method_created",
+      payload: { paymentMethodId: newPaymentMethod.id },
+    });
+    
     res.json(newPaymentMethod);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1267,6 +1436,13 @@ router.delete("/payment-methods/:id", async (req, res) => {
       .eq("customer_id", customer.id);
 
     if (error) throw error;
+    
+    // Broadcast payment method deletion
+    websocketService.sendToUser(user.id, {
+      type: "payment_method_deleted",
+      payload: { paymentMethodId: paymentMethodId },
+    });
+    
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1401,6 +1577,13 @@ router.post("/addresses", async (req, res) => {
       .single();
 
     if (error) throw error;
+    
+    // Broadcast address creation
+    websocketService.sendToUser(user.id, {
+      type: "address_created",
+      payload: { addressId: newAddress.id },
+    });
+    
     res.json(newAddress);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1474,6 +1657,12 @@ router.put("/addresses/:id", async (req, res) => {
     if (!updatedAddress) {
       return res.status(404).json({ error: "Address not found" });
     }
+
+    // Broadcast address update
+    websocketService.sendToUser(user.id, {
+      type: "address_updated",
+      payload: { addressId: addressId },
+    });
 
     res.json(updatedAddress);
   } catch (error: any) {
@@ -1666,6 +1855,12 @@ router.put("/profile", async (req, res) => {
 
     if (customerError) throw customerError;
 
+    // Broadcast customer profile update
+    websocketService.sendToUser(user.id, {
+      type: "customer_profile_updated",
+      payload: { userId: user.id },
+    });
+
     res.json({ success: true, customer: updatedCustomer });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1723,13 +1918,17 @@ router.get("/orders/:orderId/driver-location", async (req, res) => {
       return res.status(404).json({ error: "Driver not found" });
     }
 
-    // For en_route orders, get the most recent location from driver_locations table
+    // Get driver location with fallback priority:
+    // 1. Most recent location from driver_locations (for this order, then any order)
+    // 2. Last known location from driver_locations (any time)
+    // 3. Default location from driver settings (current_lat/current_lng)
     let latitude: number | null = null;
     let longitude: number | null = null;
     let lastUpdate: string | null = null;
+    let locationSource: "realtime" | "last_known" | "default" = "default";
 
-    if (order.state === "en_route") {
-      // Get the most recent location from driver_locations table for this specific order
+    if (["en_route", "picked_up"].includes(order.state)) {
+      // Priority 1: Get the most recent location from driver_locations table for this specific order
       // Prioritize locations from the last 5 minutes to ensure we get fresh GPS data
       const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
       
@@ -1743,7 +1942,7 @@ router.get("/orders/:orderId/driver-location", async (req, res) => {
         .limit(1)
         .maybeSingle();
 
-      // If no recent location found for this specific order, try to get any recent location from this driver
+      // Priority 2: If no recent location for this order, try any recent location from this driver
       if (locationError || !recentLocation || !recentLocation.lat || !recentLocation.lng) {
         const { data: fallbackLocation } = await supabaseAdmin
           .from("driver_locations")
@@ -1758,19 +1957,42 @@ router.get("/orders/:orderId/driver-location", async (req, res) => {
           latitude = fallbackLocation.lat;
           longitude = fallbackLocation.lng;
           lastUpdate = fallbackLocation.created_at;
+          locationSource = "realtime";
         }
       } else {
         latitude = recentLocation.lat;
         longitude = recentLocation.lng;
         lastUpdate = recentLocation.created_at;
+        locationSource = "realtime";
+      }
+
+      // Priority 3: If no recent location, get last known location (any time)
+      if (!latitude || !longitude) {
+        const { data: lastKnownLocation } = await supabaseAdmin
+          .from("driver_locations")
+          .select("lat, lng, created_at")
+          .eq("driver_id", driver.id)
+          .not("lat", "is", null)
+          .not("lng", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        
+        if (lastKnownLocation && lastKnownLocation.lat && lastKnownLocation.lng) {
+          latitude = lastKnownLocation.lat;
+          longitude = lastKnownLocation.lng;
+          lastUpdate = lastKnownLocation.created_at;
+          locationSource = "last_known";
+        }
       }
     }
 
-    // Fallback to current_lat/current_lng if no recent location found
+    // Priority 4: Fallback to default location from driver settings (current_lat/current_lng)
     if (!latitude || !longitude) {
       if (driver.current_lat && driver.current_lng) {
         latitude = driver.current_lat;
         longitude = driver.current_lng;
+        locationSource = "default";
       } else {
         return res.status(404).json({ error: "No driver location available" });
       }
@@ -1789,6 +2011,7 @@ router.get("/orders/:orderId/driver-location", async (req, res) => {
       driverName: driverProfile?.full_name || "Driver",
       orderState: order.state,
       lastUpdate: lastUpdate || null,
+      locationSource, // Indicates if this is realtime, last_known, or default location
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });

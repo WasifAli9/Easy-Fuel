@@ -209,6 +209,17 @@ router.put("/depots/:depotId/pricing/:fuelTypeId", async (req, res) => {
     if (historyError) {
     }
 
+    // Broadcast pricing update to supplier via WebSocket
+    const { websocketService } = await import("./websocket");
+    websocketService.sendToUser(user.id, {
+      type: "pricing_updated",
+      payload: {
+        depotId,
+        fuelTypeId,
+        priceCents,
+      },
+    });
+
     res.json({ success: true, message: "Pricing updated successfully" });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -309,6 +320,16 @@ router.post("/depots", async (req, res) => {
 
     if (depotError) throw depotError;
 
+    // Broadcast depot creation to supplier via WebSocket
+    const { websocketService } = await import("./websocket");
+    websocketService.sendToUser(user.id, {
+      type: "depot_created",
+      payload: {
+        depotId: depot.id,
+        name: depot.name,
+      },
+    });
+
     res.json(depot);
   } catch (error: any) {
     if (error instanceof z.ZodError) {
@@ -360,6 +381,15 @@ router.patch("/depots/:depotId", async (req, res) => {
       .single();
 
     if (updateError) throw updateError;
+
+    // Broadcast depot update to supplier via WebSocket
+    const { websocketService } = await import("./websocket");
+    websocketService.sendToUser(user.id, {
+      type: "depot_updated",
+      payload: {
+        depotId: updated.id,
+      },
+    });
 
     res.json(updated);
   } catch (error: any) {
@@ -419,6 +449,15 @@ router.delete("/depots/:depotId", async (req, res) => {
       .eq("id", depotId);
 
     if (deleteError) throw deleteError;
+
+    // Broadcast depot deletion to supplier via WebSocket
+    const { websocketService } = await import("./websocket");
+    websocketService.sendToUser(user.id, {
+      type: "depot_deleted",
+      payload: {
+        depotId,
+      },
+    });
 
     res.json({ success: true, message: "Depot deleted successfully" });
   } catch (error: any) {
@@ -685,6 +724,13 @@ router.put("/profile", async (req, res) => {
       .eq("id", user.id);
 
     if (profileError) throw profileError;
+
+    // Broadcast supplier profile update
+    const { websocketService } = await import("./websocket");
+    websocketService.sendToUser(user.id, {
+      type: "supplier_profile_updated",
+      payload: { userId: user.id },
+    });
 
     res.json({ success: true });
   } catch (error: any) {
