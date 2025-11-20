@@ -606,17 +606,17 @@ router.get("/stats", async (req, res) => {
 
     if (activeError) throw activeError;
 
-    // Today's earnings (delivered today)
-    const { data: todaysOrders, error: todayError } = await supabaseAdmin
+    // This week's earnings (delivered this week)
+    const { data: thisWeekOrders, error: weekError } = await supabaseAdmin
       .from("orders")
       .select("delivery_fee_cents, total_cents")
       .eq("assigned_driver_id", driver.id)
       .eq("state", "delivered")
-      .gte("delivered_at", todayISO);
+      .gte("delivered_at", weekISO);
 
-    if (todayError) throw todayError;
+    if (weekError) throw weekError;
 
-    const todayEarningsCents = (todaysOrders || []).reduce((sum, order: any) => {
+    const todayEarningsCents = (thisWeekOrders || []).reduce((sum, order: any) => {
       const deliveryFee = Number(order.delivery_fee_cents) || 0;
       const total = Number(order.total_cents) || 0;
       return sum + (deliveryFee > 0 ? deliveryFee : total);

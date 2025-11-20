@@ -373,7 +373,7 @@ export default function DriverDashboard() {
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-4 sm:mb-8">
           <StatsCard
-            title="Today's Earnings"
+            title="Earnings This Week"
             value={todayEarningsDisplay}
             icon={Wallet}
           />

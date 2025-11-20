@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
-import { Icon } from "leaflet";
+import { Icon, divIcon } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { Truck, MapPin } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -45,6 +45,40 @@ function RecenterMap({ lat, lng }: { lat: number; lng: number }) {
   }, [lat, lng, map]);
   return null;
 }
+
+// Create custom car/truck icon for driver location (memoized)
+const carIcon = (() => {
+  // Create SVG truck icon
+  const iconHtml = `
+    <div style="
+      background-color: #10b981;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 3px solid white;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    ">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"></path>
+        <path d="M15 18H9"></path>
+        <path d="M19 18h2a1 1 0 0 0 1-1v-3.28a1 1 0 0 0-.684-.948l-1.923-.641a1 1 0 0 1-.578-.502L17 10"></path>
+        <circle cx="7" cy="18" r="2"></circle>
+        <circle cx="17" cy="18" r="2"></circle>
+      </svg>
+    </div>
+  `;
+
+  return divIcon({
+    html: iconHtml,
+    className: 'custom-car-icon',
+    iconSize: [40, 40],
+    iconAnchor: [20, 20],
+    popupAnchor: [0, -20],
+  });
+})();
 
 export function DriverLocationMap({
   orderId,
@@ -222,8 +256,8 @@ export function DriverLocationMap({
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
               
-              {/* Driver marker */}
-              <Marker position={[driverLat, driverLng]}>
+              {/* Driver marker with car icon */}
+              <Marker position={[driverLat, driverLng]} icon={carIcon}>
                 <Popup>
                   <div className="text-center">
                     <p className="font-semibold">{driverLocation.driverName}</p>
