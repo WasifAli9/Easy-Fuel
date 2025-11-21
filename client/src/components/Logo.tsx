@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Fuel } from "lucide-react";
 
 interface LogoProps {
@@ -20,10 +21,24 @@ export function Logo({ size = "md", showText = true }: LogoProps) {
     xl: "text-4xl",
   };
 
+  // Try to load logo image, fallback to icon if not found
+  const logoSrc = "/logo.png";
+  const [logoError, setLogoError] = useState(false);
+
   return (
     <div className="flex items-center gap-2">
-      <div className="rounded-lg bg-primary p-1.5">
-        <Fuel className={`${sizeClasses[size]} text-primary-foreground`} />
+      <div className="rounded-lg bg-primary p-1.5 flex items-center justify-center">
+        {!logoError ? (
+          <img
+            src={logoSrc}
+            alt="Easy Fuel Logo"
+            className={sizeClasses[size]}
+            onError={() => setLogoError(true)}
+            style={{ objectFit: "contain" }}
+          />
+        ) : (
+          <Fuel className={`${sizeClasses[size]} text-primary-foreground`} />
+        )}
       </div>
       {showText && (
         <span className={`${textSizeClasses[size]} font-bold tracking-tight`}>
