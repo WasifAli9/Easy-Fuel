@@ -25,9 +25,23 @@ const currencyLocaleMap: Record<string, string> = {
 
 export function formatCurrency(amount: number, currencyCode: string = 'ZAR'): string {
   const locale = currencyLocaleMap[currencyCode] || 'en-ZA';
-  return new Intl.NumberFormat(locale, {
+  const formatted = new Intl.NumberFormat(locale, {
     style: 'currency',
     currency: currencyCode,
     minimumFractionDigits: 2,
   }).format(amount);
+  
+  // Replace comma decimal separator with dot for consistency
+  // This ensures all prices use dots (.) instead of commas (,) for decimals
+  // For 'en-ZA' locale, comma is used as decimal separator (e.g., "R 100,00")
+  // We replace the last comma (which is always the decimal separator) with a dot
+  const lastCommaIndex = formatted.lastIndexOf(',');
+  if (lastCommaIndex !== -1) {
+    // Check if comma is followed by 2 digits (decimal separator pattern)
+    const afterComma = formatted.substring(lastCommaIndex + 1);
+    if (/^\d{2}/.test(afterComma)) {
+      return formatted.substring(0, lastCommaIndex) + '.' + afterComma;
+    }
+  }
+  return formatted;
 }

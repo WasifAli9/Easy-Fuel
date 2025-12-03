@@ -145,22 +145,37 @@ export function SupplierPricingManager() {
     },
   });
 
-  // Update stock mutation (only for first tier)
+  // Update stock mutation (works with or without tiers)
   const updateStockMutation = useMutation({
-    mutationFn: async ({ tierId, availableLitres }: { tierId: string; availableLitres: number }) => {
-      const response = await apiRequest(
-        "PUT",
-        `/api/supplier/depots/${selectedDepotId}/pricing/tiers/${tierId}`,
-        { availableLitres }
-      );
-      return response.json();
+    mutationFn: async ({ fuelTypeId, availableLitres, tierId }: { fuelTypeId: string; availableLitres: number; tierId?: string }) => {
+      // If tierId is provided, use the tier update endpoint
+      // Otherwise, use the stock-only endpoint (which creates a default tier if needed)
+      if (tierId) {
+        const response = await apiRequest(
+          "PUT",
+          `/api/supplier/depots/${selectedDepotId}/pricing/tiers/${tierId}`,
+          { availableLitres }
+        );
+        return response.json();
+      } else {
+        // Use the stock-only endpoint (works even when no tiers exist)
+        const response = await apiRequest(
+          "PUT",
+          `/api/supplier/depots/${selectedDepotId}/pricing/${fuelTypeId}/stock`,
+          { availableLitres }
+        );
+        return response.json();
+      }
     },
-    onSuccess: () => {
+    onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/supplier/depots", selectedDepotId, "pricing"] });
       setEditingStock({});
+      const message = variables.tierId 
+        ? "Available stock has been updated successfully."
+        : "Available stock has been updated successfully. A default pricing tier (R 100.00/L) was created. You can update the price when you add pricing tiers.";
       toast({
         title: "Stock updated",
-        description: "Available stock has been updated successfully.",
+        description: message,
       });
     },
     onError: (error: any) => {
@@ -227,39 +242,33 @@ export function SupplierPricingManager() {
   };
 
   const handleDeleteTier = (tierId: string, fuelTypeId: string) => {
-    // Check how many tiers exist for this fuel type
-    const fuelType = fuelTypes?.find(ft => ft.id === fuelTypeId);
-    const tierCount = fuelType?.pricing_tiers?.length || 0;
-    
-    if (tierCount <= 1) {
-      toast({
-        title: "Cannot delete",
-        description: "You must have at least one pricing tier for each fuel type",
-        variant: "destructive",
-      });
-      return;
-    }
-    
-    if (confirm("Are you sure you want to delete this pricing tier?")) {
+    if (window.confirm("Are you sure you want to delete this pricing tier?")) {
       deleteTierMutation.mutate(tierId);
     }
   };
 
-  const handleUpdateStock = (tierId: string, fuelTypeId: string) => {
+  const handleUpdateStock = (fuelTypeId: string, tierId?: string) => {
     const stockValue = editingStock[fuelTypeId];
-    if (!stockValue) return;
+    if (stockValue === undefined || stockValue === null || stockValue === "") {
+      toast({
+        title: "No stock value",
+        description: "Please enter a stock amount to update",
+        variant: "destructive",
+      });
+      return;
+    }
 
     const stock = parseFloat(stockValue);
     if (isNaN(stock) || stock < 0) {
       toast({
         title: "Invalid stock",
-        description: "Please enter a valid stock amount",
+        description: "Please enter a valid stock amount (must be a number >= 0)",
         variant: "destructive",
       });
       return;
     }
 
-    updateStockMutation.mutate({ tierId, availableLitres: stock });
+    updateStockMutation.mutate({ fuelTypeId, availableLitres: stock, tierId });
   };
 
   const getTierRange = (tier: PricingTier, allTiers: PricingTier[], index: number): string => {
@@ -348,17 +357,9 @@ export function SupplierPricingManager() {
                         />
                         <Button
                           onClick={() => {
-                            if (tierForStock) {
-                              handleUpdateStock(tierForStock.id, fuelType.id);
-                            } else {
-                              toast({
-                                title: "No tiers",
-                                description: "Please add at least one pricing tier before setting stock",
-                                variant: "destructive",
-                              });
-                            }
+                            handleUpdateStock(fuelType.id, tierForStock?.id);
                           }}
-                          disabled={updateStockMutation.isPending || !tierForStock || sortedTiers.length === 0}
+                          disabled={updateStockMutation.isPending}
                         >
                           {updateStockMutation.isPending ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
@@ -397,10 +398,14 @@ export function SupplierPricingManager() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => handleDeleteTier(tier.id, fuelType.id)}
-                                disabled={sortedTiers.length <= 1}
-                                title={sortedTiers.length <= 1 ? "Cannot delete the last tier" : "Delete tier"}
+                                disabled={deleteTierMutation.isPending}
+                                title="Delete tier"
                               >
-                                <Trash2 className="h-4 w-4" />
+                                {deleteTierMutation.isPending ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-4 w-4" />
+                                )}
                               </Button>
                             </div>
                           </div>

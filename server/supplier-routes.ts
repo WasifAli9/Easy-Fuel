@@ -347,6 +347,101 @@ router.post("/depots/:depotId/pricing/:fuelTypeId/tiers", async (req, res) => {
   }
 });
 
+// Update stock for a fuel type (creates default tier if none exists)
+// This route must come BEFORE the tier update route to avoid route conflicts
+router.put("/depots/:depotId/pricing/:fuelTypeId/stock", async (req, res) => {
+  const user = (req as any).user;
+  const depotId = req.params.depotId;
+  const fuelTypeId = req.params.fuelTypeId;
+  const { availableLitres } = req.body;
+
+  try {
+    // Validate input
+    const availableLitresNum = parseFloat(availableLitres);
+    if (isNaN(availableLitresNum) || availableLitresNum < 0) {
+      return res.status(400).json({
+        error: "Available litres must be a non-negative number"
+      });
+    }
+
+    // Get supplier ID and verify depot belongs to this supplier
+    const { data: suppliers, error: supplierError } = await supabaseAdmin
+      .from("suppliers")
+      .select("id")
+      .eq("owner_id", user.id)
+      .limit(1);
+
+    const supplier = suppliers && suppliers.length > 0 ? suppliers[0] : null;
+    if (supplierError || !supplier) {
+      return res.status(404).json({ error: "Supplier profile not found" });
+    }
+
+    // Verify depot belongs to supplier
+    const { data: depot, error: depotError } = await supabaseAdmin
+      .from("depots")
+      .select("id")
+      .eq("id", depotId)
+      .eq("supplier_id", supplier.id)
+      .single();
+
+    if (depotError || !depot) {
+      return res.status(404).json({ error: "Depot not found" });
+    }
+
+    // Check if any tiers exist for this fuel type
+    const { data: existingTiers, error: tiersError } = await supabaseAdmin
+      .from("depot_prices")
+      .select("id")
+      .eq("depot_id", depotId)
+      .eq("fuel_type_id", fuelTypeId)
+      .limit(1);
+
+    if (tiersError) throw tiersError;
+
+    if (existingTiers && existingTiers.length > 0) {
+      // Update stock for all existing tiers
+      const { error: updateError } = await supabaseAdmin
+        .from("depot_prices")
+        .update({ available_litres: availableLitresNum })
+        .eq("depot_id", depotId)
+        .eq("fuel_type_id", fuelTypeId);
+
+      if (updateError) throw updateError;
+
+      // Return one of the updated tiers
+      const { data: updatedTier } = await supabaseAdmin
+        .from("depot_prices")
+        .select("*")
+        .eq("depot_id", depotId)
+        .eq("fuel_type_id", fuelTypeId)
+        .limit(1)
+        .single();
+
+      return res.json(updatedTier);
+    } else {
+      // No tiers exist, create a default tier with stock
+      // Use min_litres = 0 and price_cents = 10000 (R 100.00 default price)
+      const { data: newTier, error: insertError } = await supabaseAdmin
+        .from("depot_prices")
+        .insert({
+          depot_id: depotId,
+          fuel_type_id: fuelTypeId,
+          price_cents: 10000, // Default price: R 100.00
+          min_litres: 0,
+          available_litres: availableLitresNum,
+        })
+        .select()
+        .single();
+
+      if (insertError) throw insertError;
+      return res.json(newTier);
+    }
+  } catch (error: any) {
+    console.error("Error updating stock:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Update a pricing tier
 router.put("/depots/:depotId/pricing/tiers/:tierId", async (req, res) => {
   const user = (req as any).user;
@@ -424,9 +519,9 @@ router.put("/depots/:depotId/pricing/tiers/:tierId", async (req, res) => {
       updateData.min_litres = minLitres;
     }
 
-    // Update available_litres only if this is the first tier (min_litres = 0)
-    // Stock is shared across all tiers for the same fuel type
-    if (availableLitres !== undefined && existingTier.min_litres === 0) {
+    // Update available_litres (stock is shared across all tiers for the same fuel type)
+    // Allow stock update from any tier, not just the one with min_litres = 0
+    if (availableLitres !== undefined) {
       const availableLitresNum = parseFloat(availableLitres);
       if (isNaN(availableLitresNum) || availableLitresNum < 0) {
         return res.status(400).json({
@@ -434,11 +529,28 @@ router.put("/depots/:depotId/pricing/tiers/:tierId", async (req, res) => {
         });
       }
       // Update stock for all tiers of this fuel type
-      await supabaseAdmin
+      const { data: updatedStockTiers, error: stockUpdateError } = await supabaseAdmin
         .from("depot_prices")
-        .update({ available_litres: availableLitresNum.toString() })
+        .update({ available_litres: availableLitresNum })
         .eq("depot_id", depotId)
-        .eq("fuel_type_id", existingTier.fuel_type_id);
+        .eq("fuel_type_id", existingTier.fuel_type_id)
+        .select();
+      
+      if (stockUpdateError) {
+        console.error("Error updating stock:", stockUpdateError);
+        return res.status(500).json({
+          error: "Failed to update stock",
+          details: stockUpdateError.message
+        });
+      }
+      
+      // If only stock is being updated (no priceCents or minLitres), return the updated tier
+      if (priceCents === undefined && minLitres === undefined) {
+        const updatedTierWithStock = updatedStockTiers?.find(t => t.id === tierId);
+        if (updatedTierWithStock) {
+          return res.json(updatedTierWithStock);
+        }
+      }
     }
 
     // Update the tier
@@ -501,20 +613,7 @@ router.delete("/depots/:depotId/pricing/tiers/:tierId", async (req, res) => {
       return res.status(404).json({ error: "Pricing tier not found" });
     }
 
-    // Check if this is the only tier (can't delete if it's the only one)
-    const { data: allTiers } = await supabaseAdmin
-      .from("depot_prices")
-      .select("id")
-      .eq("depot_id", depotId)
-      .eq("fuel_type_id", existingTier.fuel_type_id);
-
-    if (allTiers && allTiers.length <= 1) {
-      return res.status(400).json({
-        error: "Cannot delete the last pricing tier for this fuel type"
-      });
-    }
-
-    // Delete the tier
+    // Delete the tier (no restriction - allow deletion of any tier, even if it's the only one)
     const { error: deleteError } = await supabaseAdmin
       .from("depot_prices")
       .delete()

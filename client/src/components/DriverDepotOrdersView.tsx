@@ -15,7 +15,11 @@ import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/utils";
 import { useCurrency } from "@/hooks/use-currency";
 
-export function DriverDepotOrdersView() {
+interface DriverDepotOrdersViewProps {
+  statusFilter?: string[] | null;
+}
+
+export function DriverDepotOrdersView({ statusFilter }: DriverDepotOrdersViewProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { currency } = useCurrency();
@@ -24,6 +28,11 @@ export function DriverDepotOrdersView() {
     queryKey: ["/api/supplier/driver-depot-orders"],
     refetchInterval: 10000, // Refresh every 10 seconds
   });
+
+  // Filter orders based on statusFilter
+  const filteredOrders = statusFilter && statusFilter.length > 0
+    ? (orders || []).filter((order: any) => statusFilter.includes(order.status))
+    : orders || [];
 
   const updateOrderMutation = useMutation({
     mutationFn: async ({
@@ -77,13 +86,15 @@ export function DriverDepotOrdersView() {
     );
   }
 
-  if (!orders || orders.length === 0) {
+  if (!filteredOrders || filteredOrders.length === 0) {
     return (
       <div className="text-center py-12 text-muted-foreground">
         <Package className="h-12 w-12 mx-auto mb-4 opacity-50" />
-        <p>No driver orders yet</p>
+        <p>{statusFilter && statusFilter.length > 0 ? "No active orders" : "No driver orders yet"}</p>
         <p className="text-sm mt-2">
-          Driver orders from your depots will appear here
+          {statusFilter && statusFilter.length > 0 
+            ? "Orders with pending or confirmed status will appear here"
+            : "Driver orders from your depots will appear here"}
         </p>
       </div>
     );
@@ -106,7 +117,7 @@ export function DriverDepotOrdersView() {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {orders.map((order: any) => (
+          {filteredOrders.map((order: any) => (
             <TableRow key={order.id}>
               <TableCell className="font-medium">
                 #{order.id.slice(0, 8)}

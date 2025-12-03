@@ -8,7 +8,7 @@ import { SupplierPricingManager } from "@/components/SupplierPricingManagerTiere
 import { DepotManagementDialog } from "@/components/DepotManagementDialog";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, MapPin, TrendingUp, Loader2 } from "lucide-react";
+import { Plus, MapPin, TrendingUp, Loader2, ShoppingCart } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/utils";
 import { useWebSocket } from "@/hooks/useWebSocket";
@@ -19,6 +19,9 @@ export default function SupplierDashboard() {
   const queryClient = useQueryClient();
   const [depotDialogOpen, setDepotDialogOpen] = useState(false);
   const [selectedDepot, setSelectedDepot] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState<string>("driver-orders");
+  const [orderStatusFilter, setOrderStatusFilter] = useState<string[] | null>(null);
+  const [depotStatusFilter, setDepotStatusFilter] = useState<"all" | "active" | null>(null);
 
   const { data: depots, isLoading: depotsLoading, error: depotsError } = useQuery<any[]>({
     queryKey: ["/api/supplier/depots"],
@@ -26,6 +29,12 @@ export default function SupplierDashboard() {
     staleTime: 0,
     retry: 2,
     retryDelay: 1000,
+  });
+
+  // Fetch driver depot orders to count active orders
+  const { data: orders } = useQuery<any[]>({
+    queryKey: ["/api/supplier/driver-depot-orders"],
+    refetchInterval: 10000, // Refresh every 10 seconds
   });
 
 
@@ -37,6 +46,12 @@ export default function SupplierDashboard() {
       // Refresh depots when depot or pricing changes
       console.log("[SupplierDashboard] Invalidating depots due to:", message.type);
       queryClient.invalidateQueries({ queryKey: ["/api/supplier/depots"] });
+    }
+    
+    if (message.type === "driver_depot_order_placed" || message.type === "driver_depot_order_confirmed" || message.type === "driver_depot_order_fulfilled" || message.type === "driver_depot_order_cancelled") {
+      // Refresh orders when order status changes
+      console.log("[SupplierDashboard] Invalidating orders due to:", message.type);
+      queryClient.invalidateQueries({ queryKey: ["/api/supplier/driver-depot-orders"] });
     }
   });
 
@@ -77,6 +92,11 @@ export default function SupplierDashboard() {
   };
 
   const activeDepots = (depots || []).filter((depot: any) => depot.is_active !== false);
+  
+  // Count active orders (pending or confirmed status)
+  const activeOrders = (orders || []).filter(
+    (order: any) => order.status === "pending" || order.status === "confirmed"
+  ).length;
 
   return (
     <div className="min-h-screen bg-background">
@@ -96,21 +116,41 @@ export default function SupplierDashboard() {
           </Button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
           <StatsCard
             title="Active Depots"
             value={activeDepots.length.toString()}
             icon={MapPin}
+            onClick={() => {
+              setActiveTab("depots");
+              setDepotStatusFilter("active");
+              setOrderStatusFilter(null);
+            }}
           />
           <StatsCard
             title="Total Depots"
             value={depots?.length?.toString() || "0"}
             description="Including inactive"
             icon={TrendingUp}
+            onClick={() => {
+              setActiveTab("depots");
+              setDepotStatusFilter("all");
+              setOrderStatusFilter(null);
+            }}
+          />
+          <StatsCard
+            title="Active Orders"
+            value={activeOrders.toString()}
+            icon={ShoppingCart}
+            onClick={() => {
+              setActiveTab("driver-orders");
+              setOrderStatusFilter(["pending", "confirmed"]);
+              setDepotStatusFilter(null);
+            }}
           />
         </div>
 
-        <Tabs defaultValue="driver-orders" className="space-y-6">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
             <TabsList className="min-w-max">
               <TabsTrigger value="driver-orders" data-testid="tab-driver-orders">
@@ -126,7 +166,7 @@ export default function SupplierDashboard() {
           </div>
 
           <TabsContent value="driver-orders" className="space-y-4">
-            <DriverDepotOrdersView />
+            <DriverDepotOrdersView statusFilter={orderStatusFilter} />
           </TabsContent>
 
           <TabsContent value="depots" className="space-y-4">
@@ -144,9 +184,17 @@ export default function SupplierDashboard() {
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
               </div>
-            ) : depots && depots.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {depots.map((depot: any) => (
+            ) : (() => {
+              // Filter depots based on depotStatusFilter
+              let filteredDepots = depots || [];
+              if (depotStatusFilter === "active") {
+                filteredDepots = filteredDepots.filter((depot: any) => depot.is_active !== false);
+              }
+              // If depotStatusFilter is "all" or null, show all depots
+              
+              return filteredDepots.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {filteredDepots.map((depot: any) => (
                   <DepotCard
                     key={depot.id}
                     id={depot.id}
@@ -197,17 +245,20 @@ export default function SupplierDashboard() {
                     onEdit={() => handleEditDepot(depot)}
                     onDelete={() => handleDeleteDepot(depot.id)}
                   />
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-12 text-muted-foreground">
-                <MapPin className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p>No depots yet</p>
-                <p className="text-sm mt-2">
-                  Click "Add Depot" to create your first depot
-                </p>
-              </div>
-            )}
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-12 text-muted-foreground">
+                  <MapPin className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>{depotStatusFilter === "active" ? "No active depots" : "No depots yet"}</p>
+                  <p className="text-sm mt-2">
+                    {depotStatusFilter === "active" 
+                      ? "Activate a depot to see it here"
+                      : "Click \"Add Depot\" to create your first depot"}
+                  </p>
+                </div>
+              );
+            })()}
           </TabsContent>
 
           <TabsContent value="pricing" className="space-y-4">

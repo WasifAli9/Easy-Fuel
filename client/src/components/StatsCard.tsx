@@ -10,11 +10,16 @@ interface StatsCardProps {
     value: number;
     isPositive: boolean;
   };
+  onClick?: () => void;
 }
 
-export function StatsCard({ title, value, description, icon: Icon, trend }: StatsCardProps) {
+export function StatsCard({ title, value, description, icon: Icon, trend, onClick }: StatsCardProps) {
   return (
-    <Card className="hover-elevate" data-testid={`card-stats-${title.toLowerCase().replace(/\s+/g, '-')}`}>
+    <Card 
+      className={`hover-elevate ${onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
+      data-testid={`card-stats-${title.toLowerCase().replace(/\s+/g, '-')}`}
+      onClick={onClick}
+    >
       <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
         <p className="text-sm font-medium text-muted-foreground">{title}</p>
         <Icon className="h-4 w-4 text-muted-foreground" />
