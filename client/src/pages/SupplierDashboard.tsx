@@ -4,23 +4,15 @@ import { apiRequest } from "@/lib/queryClient";
 import { AppHeader } from "@/components/AppHeader";
 import { DepotCard } from "@/components/DepotCard";
 import { StatsCard } from "@/components/StatsCard";
-import { SupplierPricingManager } from "@/components/SupplierPricingManager";
+import { SupplierPricingManager } from "@/components/SupplierPricingManagerTiered";
 import { DepotManagementDialog } from "@/components/DepotManagementDialog";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
-import { Plus, Package, MapPin, TrendingUp, Loader2 } from "lucide-react";
+import { Plus, MapPin, TrendingUp, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/utils";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { DriverDepotOrdersView } from "@/components/DriverDepotOrdersView";
 
 export default function SupplierDashboard() {
   const { toast } = useToast();
@@ -28,27 +20,18 @@ export default function SupplierDashboard() {
   const [depotDialogOpen, setDepotDialogOpen] = useState(false);
   const [selectedDepot, setSelectedDepot] = useState<any>(null);
 
-  const { data: depots, isLoading: depotsLoading } = useQuery<any[]>({
+  const { data: depots, isLoading: depotsLoading, error: depotsError } = useQuery<any[]>({
     queryKey: ["/api/supplier/depots"],
     refetchInterval: 5000, // Poll every 5 seconds for real-time updates
     staleTime: 0,
+    retry: 2,
+    retryDelay: 1000,
   });
 
-  const { data: orders, isLoading: ordersLoading } = useQuery<any[]>({
-    queryKey: ["/api/supplier/orders"],
-    refetchInterval: 5000, // Poll every 5 seconds for real-time updates
-    staleTime: 0,
-  });
 
   // Listen for real-time updates via WebSocket
   useWebSocket((message) => {
     console.log("[SupplierDashboard] WebSocket message received:", message.type, message);
-    
-    if (message.type === "new_order" || message.type === "order_update" || message.type === "order_state_changed") {
-      // Refresh orders when new orders are created or updated
-      console.log("[SupplierDashboard] Invalidating orders due to:", message.type);
-      queryClient.invalidateQueries({ queryKey: ["/api/supplier/orders"] });
-    }
     
     if (message.type === "depot_created" || message.type === "depot_updated" || message.type === "depot_deleted" || message.type === "pricing_updated") {
       // Refresh depots when depot or pricing changes
@@ -93,7 +76,7 @@ export default function SupplierDashboard() {
     setDepotDialogOpen(true);
   };
 
-  const activeDepots = depots?.filter((d: any) => d.is_active) || [];
+  const activeDepots = (depots || []).filter((depot: any) => depot.is_active !== false);
 
   return (
     <div className="min-h-screen bg-background">
@@ -113,13 +96,7 @@ export default function SupplierDashboard() {
           </Button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-          <StatsCard
-            title="Total Orders"
-            value={orders?.length?.toString() || "0"}
-            description="All time"
-            icon={Package}
-          />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
           <StatsCard
             title="Active Depots"
             value={activeDepots.length.toString()}
@@ -133,23 +110,37 @@ export default function SupplierDashboard() {
           />
         </div>
 
-        <Tabs defaultValue="depots" className="space-y-6">
+        <Tabs defaultValue="driver-orders" className="space-y-6">
           <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
             <TabsList className="min-w-max">
+              <TabsTrigger value="driver-orders" data-testid="tab-driver-orders">
+                Driver Orders
+              </TabsTrigger>
               <TabsTrigger value="depots" data-testid="tab-depots">
                 Depots
               </TabsTrigger>
               <TabsTrigger value="pricing" data-testid="tab-pricing">
                 Pricing
               </TabsTrigger>
-              <TabsTrigger value="orders" data-testid="tab-orders">
-                Orders
-              </TabsTrigger>
             </TabsList>
           </div>
 
+          <TabsContent value="driver-orders" className="space-y-4">
+            <DriverDepotOrdersView />
+          </TabsContent>
+
           <TabsContent value="depots" className="space-y-4">
-            {depotsLoading ? (
+            {depotsError ? (
+              <div className="text-center py-12 text-destructive">
+                <p>Error loading depots: {depotsError instanceof Error ? depotsError.message : "Unknown error"}</p>
+                <Button 
+                  onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/supplier/depots"] })}
+                  className="mt-4"
+                >
+                  Retry
+                </Button>
+              </div>
+            ) : depotsLoading ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
               </div>
@@ -167,13 +158,42 @@ export default function SupplierDashboard() {
                           .map(([day, hours]) => `${day}: ${hours}`)
                           .join(', ')
                       : 'Hours not set'}
-                    fuelPrices={
-                      depot.depot_prices?.map((dp: any) => ({
-                        type: dp.fuel_types?.label || 'Unknown',
-                        pricePerLitre: dp.price_cents / 100,
-                      })) || []
-                    }
-                    isActive={depot.is_active}
+                    fuelPrices={(() => {
+                      // Group depot_prices by fuel_type_id to show tiers together
+                      const pricesByFuelType = (depot.depot_prices || []).reduce((acc: any, dp: any) => {
+                        const fuelTypeId = dp.fuel_type_id;
+                        const fuelTypeLabel = dp.fuel_types?.label || 'Unknown';
+                        
+                        if (!acc[fuelTypeId]) {
+                          acc[fuelTypeId] = {
+                            type: fuelTypeLabel,
+                            pricePerLitre: dp.price_cents / 100, // Keep for backward compatibility
+                            tiers: [],
+                          };
+                        }
+                        
+                        // Add tier information
+                        acc[fuelTypeId].tiers.push({
+                          id: dp.id,
+                          type: fuelTypeLabel,
+                          pricePerLitre: dp.price_cents / 100,
+                          minLitres: Number(dp.min_litres) || 0,
+                        });
+                        
+                        return acc;
+                      }, {});
+                      
+                      // Convert to array and sort tiers within each fuel type (matching driver portal logic)
+                      return Object.values(pricesByFuelType).map((fuel: any) => ({
+                        ...fuel,
+                        tiers: fuel.tiers.sort((a: any, b: any) => {
+                          const aMin = parseFloat(a.minLitres?.toString() || "0");
+                          const bMin = parseFloat(b.minLitres?.toString() || "0");
+                          return aMin - bMin;
+                        }),
+                      }));
+                    })()}
+                    isActive={depot.is_active !== false}
                     onEdit={() => handleEditDepot(depot)}
                     onDelete={() => handleDeleteDepot(depot.id)}
                   />
@@ -192,76 +212,6 @@ export default function SupplierDashboard() {
 
           <TabsContent value="pricing" className="space-y-4">
             <SupplierPricingManager />
-          </TabsContent>
-
-          <TabsContent value="orders" className="space-y-4">
-            {ordersLoading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              </div>
-            ) : orders && orders.length > 0 ? (
-              <div className="rounded-lg border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Order ID</TableHead>
-                      <TableHead>Customer</TableHead>
-                      <TableHead>Fuel Type</TableHead>
-                      <TableHead>Quantity</TableHead>
-                      <TableHead>Depot</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Amount</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {orders.map((order: any) => (
-                      <TableRow key={order.id} data-testid={`row-order-${order.id}`}>
-                        <TableCell className="font-medium">
-                          #{order.id.slice(0, 8)}
-                        </TableCell>
-                        <TableCell>
-                          {order.customers?.profiles?.full_name || "Unknown"}
-                        </TableCell>
-                        <TableCell>
-                          {order.fuel_types?.label || "Unknown"}
-                        </TableCell>
-                        <TableCell>{order.quantity_litres}L</TableCell>
-                        <TableCell>
-                          {order.depots?.name || "Unknown"}
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={
-                              order.state === "delivered"
-                                ? "default"
-                                : order.state === "cancelled"
-                                ? "destructive"
-                                : "secondary"
-                            }
-                            data-testid={`badge-status-${order.id}`}
-                          >
-                            {order.state}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {order.total_price_cents
-                            ? formatCurrency(order.total_price_cents / 100)
-                            : "Pending"}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            ) : (
-              <div className="text-center py-12 text-muted-foreground">
-                <Package className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p>No orders yet</p>
-                <p className="text-sm mt-2">
-                  Orders from customers will appear here
-                </p>
-              </div>
-            )}
           </TabsContent>
         </Tabs>
       </main>

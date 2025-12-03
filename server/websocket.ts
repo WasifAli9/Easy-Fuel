@@ -23,80 +23,87 @@ class WebSocketService {
     this.wss = new WebSocketServer({ server, path: "/ws" });
 
     this.wss.on("connection", async (ws: AuthenticatedWebSocket, req: IncomingMessage) => {
+      try {
+        // Extract token from query params
+        const { query } = parse(req.url || "", true);
+        const token = query.token as string;
 
-      // Extract token from query params
-      const { query } = parse(req.url || "", true);
-      const token = query.token as string;
-
-      if (!token) {
-        ws.close(1008, "Authentication required");
-        return;
-      }
-
-      // Verify token with Supabase
-      const { data: { user }, error } = await supabaseAuth.auth.getUser(token);
-
-      if (error || !user) {
-        ws.close(1008, "Invalid authentication token");
-        return;
-      }
-
-      // Attach user ID to WebSocket
-      ws.userId = user.id;
-      ws.isAlive = true;
-
-      // Fetch user role from database
-      const { supabaseAdmin } = await import("./supabase");
-      const { data: profile } = await supabaseAdmin
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
-        .maybeSingle();
-      
-      if (profile?.role) {
-        ws.userRole = profile.role;
-      }
-
-      // Add client to the map
-      if (!this.clients.has(user.id)) {
-        this.clients.set(user.id, new Set());
-      }
-      this.clients.get(user.id)!.add(ws);
-
-
-      // Handle ping/pong for connection health
-      ws.on("pong", () => {
-        ws.isAlive = true;
-      });
-
-      // Handle incoming messages
-      ws.on("message", (data: string) => {
-        try {
-          const message: WebSocketMessage = JSON.parse(data.toString());
-          this.handleMessage(ws, message);
-        } catch (error) {
-          // Invalid message format, ignore
+        if (!token) {
+          ws.close(1008, "Authentication required");
+          return;
         }
-      });
 
-      // Handle disconnection
-      ws.on("close", () => {
-        if (ws.userId) {
-          const userClients = this.clients.get(ws.userId);
-          if (userClients) {
-            userClients.delete(ws);
-            if (userClients.size === 0) {
-              this.clients.delete(ws.userId);
+        // Verify token with Supabase
+        const { data: { user }, error } = await supabaseAuth.auth.getUser(token);
+
+        if (error || !user) {
+          // Only log in development, and only for non-expired token errors
+          if (process.env.NODE_ENV === "development" && error?.message && !error.message.includes("expired")) {
+            console.error("WebSocket auth error:", error.message);
+          }
+          ws.close(1008, "Invalid authentication token");
+          return;
+        }
+
+        // Attach user ID to WebSocket
+        ws.userId = user.id;
+        ws.isAlive = true;
+
+        // Fetch user role from database
+        const { supabaseAdmin } = await import("./supabase");
+        const { data: profile } = await supabaseAdmin
+          .from("profiles")
+          .select("role")
+          .eq("id", user.id)
+          .maybeSingle();
+        
+        if (profile?.role) {
+          ws.userRole = profile.role;
+        }
+
+        // Add client to the map
+        if (!this.clients.has(user.id)) {
+          this.clients.set(user.id, new Set());
+        }
+        this.clients.get(user.id)!.add(ws);
+
+        // Handle ping/pong for connection health
+        ws.on("pong", () => {
+          ws.isAlive = true;
+        });
+
+        // Handle incoming messages
+        ws.on("message", (data: string) => {
+          try {
+            const message: WebSocketMessage = JSON.parse(data.toString());
+            this.handleMessage(ws, message);
+          } catch (error) {
+            // Invalid message format, ignore
+          }
+        });
+
+        // Handle disconnection
+        ws.on("close", () => {
+          if (ws.userId) {
+            const userClients = this.clients.get(ws.userId);
+            if (userClients) {
+              userClients.delete(ws);
+              if (userClients.size === 0) {
+                this.clients.delete(ws.userId);
+              }
             }
           }
-        }
-      });
+        });
 
-      // Send welcome message
-      this.sendToSocket(ws, {
-        type: "connected",
-        payload: { userId: user.id, timestamp: new Date().toISOString() },
-      });
+        // Send welcome message
+        this.sendToSocket(ws, {
+          type: "connected",
+          payload: { userId: user.id, timestamp: new Date().toISOString() },
+        });
+      } catch (error) {
+        console.error("Error in WebSocket connection handler:", error);
+        ws.close(1011, "Internal server error");
+      }
     });
 
     // Heartbeat to detect broken connections

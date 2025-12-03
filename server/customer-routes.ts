@@ -741,22 +741,9 @@ router.post("/orders", async (req, res) => {
       return res.status(400).json({ error: "Delivery address is required" });
     }
 
-    // Get depot ID for order tracking (pricing will be calculated when driver offer is accepted)
-    let depotId = selectedDepotId;
-
-    if (!selectedDepotId) {
-      // Find a depot that has this fuel type
-      const { data: depotPrice } = await supabaseAdmin
-        .from("depot_prices")
-        .select("depot_id")
-        .eq("fuel_type_id", fuelTypeId)
-        .limit(1)
-        .single();
-
-      if (depotPrice) {
-        depotId = depotPrice.depot_id;
-      }
-    }
+    // No longer linking orders to depots - drivers handle depot relationships
+    // Remove depot linking from customer orders
+    const depotId = null;
 
     // Pricing will be calculated when customer accepts a driver's offer
     // Set to 0 as placeholder (marketplace model - drivers compete with their delivery fees)
@@ -860,31 +847,8 @@ router.post("/orders", async (req, res) => {
       state: newOrder.state,
     });
 
-    // Notify supplier if order uses their depot
-    if (depotId) {
-      const { data: depot } = await supabaseAdmin
-        .from("depots")
-        .select("supplier_id")
-        .eq("id", depotId)
-        .single();
-      
-      if (depot?.supplier_id) {
-        const { data: supplier } = await supabaseAdmin
-          .from("suppliers")
-          .select("owner_id")
-          .eq("id", depot.supplier_id)
-          .single();
-        
-        if (supplier?.owner_id) {
-          websocketService.sendOrderUpdate(supplier.owner_id, {
-            type: "new_order",
-            orderId: newOrder.id,
-            depotId,
-            state: newOrder.state,
-          });
-        }
-      }
-    }
+    // No longer notifying suppliers about customer orders
+    // Suppliers only interact with drivers through depot orders
 
     // Create dispatch offers for drivers (async, don't wait)
     createDispatchOffers({

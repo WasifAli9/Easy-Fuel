@@ -31,21 +31,61 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
       return;
     }
 
+    // Check if token is expired
+    if (session.expires_at && session.expires_at * 1000 < Date.now()) {
+      // Token expired - don't attempt connection
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+        setIsConnected(false);
+      }
+      return;
+    }
+
+    // Prevent multiple connections
+    if (wsRef.current?.readyState === WebSocket.OPEN || 
+        wsRef.current?.readyState === WebSocket.CONNECTING) {
+      return; // Already connected or connecting
+    }
+
     const connect = () => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        return; // Already connected
+      // Double-check before creating new connection
+      if (wsRef.current?.readyState === WebSocket.OPEN || 
+          wsRef.current?.readyState === WebSocket.CONNECTING) {
+        return; // Already connected or connecting
       }
 
       try {
         // Get WebSocket URL (convert http to ws)
         const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const wsHost = window.location.host;
+        
+        // Construct host with fallback port to handle undefined port cases
+        let wsHost = window.location.host;
+        
+        // Check if host is invalid or contains "undefined" (can happen in some edge cases)
+        if (!wsHost || wsHost === "undefined" || wsHost.includes("undefined") || wsHost === "localhost" || wsHost === "localhost:") {
+          const hostname = window.location.hostname || "localhost";
+          const port = window.location.port;
+          // Default to 5002 if port is undefined, empty, or "undefined" (development server default)
+          const defaultPort = port && port !== "undefined" && port !== "" ? port : (wsProtocol === "wss:" ? "443" : "5002");
+          wsHost = `${hostname}:${defaultPort}`;
+        }
+        
         const wsUrl = `${wsProtocol}//${wsHost}/ws?token=${session.access_token}`;
+        
+        // Validate URL before creating WebSocket
+        if (wsUrl.includes("undefined")) {
+          console.error("[useWebSocket] Invalid WebSocket URL constructed:", wsUrl);
+          throw new Error(`Invalid WebSocket URL: ${wsUrl}`);
+        }
 
         const ws = new WebSocket(wsUrl);
 
         ws.onopen = () => {
-          console.log("[useWebSocket] Connected successfully");
+          // Only log in development
+          if (process.env.NODE_ENV === "development") {
+            console.log("[useWebSocket] Connected successfully");
+          }
           setIsConnected(true);
           reconnectAttempts.current = 0;
         };
@@ -59,12 +99,10 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
               return;
             }
             
-            // Debug logging for real-time updates
-            console.log("[useWebSocket] Message received:", {
-              type: message.type,
-              hasPayload: !!message.payload,
-              payloadKeys: message.payload ? Object.keys(message.payload) : [],
-            });
+            // Only log in development
+            if (process.env.NODE_ENV === "development" && message.type !== "pong") {
+              console.log("[useWebSocket] Message received:", message.type);
+            }
             
             // Call the message handler using ref to avoid stale closures
             if (onMessageRef.current) {
@@ -95,29 +133,39 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
         };
 
         ws.onerror = (error) => {
-          console.error("WebSocket error:", error);
+          // Only log in development
+          if (process.env.NODE_ENV === "development") {
+            console.error("WebSocket error:", error);
+          }
         };
 
         ws.onclose = (event) => {
-          console.log("[useWebSocket] Connection closed", {
-            code: event.code,
-            reason: event.reason,
-            wasClean: event.wasClean,
-            reconnectAttempt: reconnectAttempts.current,
-          });
           setIsConnected(false);
           wsRef.current = null;
 
-          // Attempt to reconnect
-          if (reconnectAttempts.current < maxReconnectAttempts) {
+          // Only log errors or max attempts, not normal reconnections
+          if (event.code === 1008 && event.reason === "Invalid authentication token") {
+            // Token expired or invalid - don't reconnect, wait for new session
+            if (process.env.NODE_ENV === "development") {
+              console.warn("[useWebSocket] Authentication failed - waiting for new session");
+            }
+            return; // Don't attempt to reconnect with invalid token
+          }
+
+          // Attempt to reconnect only for non-auth errors
+          if (event.code !== 1008 && reconnectAttempts.current < maxReconnectAttempts) {
             reconnectAttempts.current++;
             const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
-            console.log(`[useWebSocket] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current}/${maxReconnectAttempts})`);
+            
+            // Only log in development
+            if (process.env.NODE_ENV === "development") {
+              console.log(`[useWebSocket] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current}/${maxReconnectAttempts})`);
+            }
             
             reconnectTimeoutRef.current = setTimeout(() => {
               connect();
             }, delay);
-          } else {
+          } else if (reconnectAttempts.current >= maxReconnectAttempts) {
             console.error("[useWebSocket] Max reconnection attempts reached");
           }
         };

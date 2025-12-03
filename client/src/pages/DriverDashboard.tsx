@@ -8,6 +8,7 @@ import { DriverVehicleManager } from "@/components/DriverVehicleManager";
 import { DriverPreferencesManager } from "@/components/DriverPreferencesManager";
 import { DriverLocationTracker } from "@/components/DriverLocationTracker";
 import { OrderChat } from "@/components/OrderChat";
+import { DriverDepotsView } from "@/components/DriverDepotsView";
 import { Wallet, TrendingUp, CheckCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -68,7 +69,7 @@ export default function DriverDashboard() {
 
   const handleRequestLocationPermission = async () => {
     setLocationPermissionDialogOpen(false);
-    
+
     if (!navigator.geolocation) {
       toast({
         title: "Geolocation Not Supported",
@@ -176,14 +177,14 @@ export default function DriverDashboard() {
   // Set up WebSocket to refresh data when changes occur
   useWebSocket((message) => {
     console.log("[DriverDashboard] WebSocket message received:", message.type, message);
-    
+
     const orderData = message.order || message.payload?.order;
     const orderId = message.orderId || message.payload?.orderId;
-    
+
     if (message.type === "order_updated" && orderData) {
       // Directly update the query cache with new order data (like chat messages)
       console.log("[DriverDashboard] Updating order in cache:", orderId);
-      
+
       // Update assigned orders list
       queryClient.setQueryData<any[]>(["/api/driver/assigned-orders"], (old = []) => {
         const exists = old.findIndex((o: any) => o.id === orderId);
@@ -198,7 +199,7 @@ export default function DriverDashboard() {
         }
         return old;
       });
-      
+
       // Update completed orders if delivered
       if (orderData.state === "delivered") {
         queryClient.setQueryData<any[]>(["/api/driver/completed-orders"], (old = []) => {
@@ -212,18 +213,18 @@ export default function DriverDashboard() {
           }
         });
       }
-      
+
       // Invalidate stats to recalculate
       queryClient.invalidateQueries({ queryKey: ["/api/driver/stats"] });
     }
-    
+
     if (message.type === "dispatch_offer" || message.type === "new_order" || message.type === "order_assigned") {
       // Refresh offers when new dispatch offers arrive or orders are assigned
       console.log("[DriverDashboard] Invalidating offers due to:", message.type);
       queryClient.invalidateQueries({ queryKey: ["/api/driver/offers"] });
       refetchOffers();
     }
-    
+
     if (message.type === "order_update" || message.type === "order_assigned" || message.type === "order_state_changed") {
       // Fallback: invalidate queries for other message types
       console.log("[DriverDashboard] Invalidating assigned orders due to:", message.type);
@@ -231,7 +232,7 @@ export default function DriverDashboard() {
       queryClient.invalidateQueries({ queryKey: ["/api/driver/stats"] });
     }
   });
-  
+
   // Helper function to format currency using the user's preferred currency
   const formatCurrencyAmount = (amount: number) => formatCurrency(amount, currency);
 
@@ -364,7 +365,7 @@ export default function DriverDashboard() {
   return (
     <div className="min-h-screen bg-background pb-safe">
       <AppHeader />
-      
+
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
         <div className="mb-4 sm:mb-8">
           <h1 className="text-2xl sm:text-3xl font-bold mb-1">Driver Dashboard</h1>
@@ -393,14 +394,21 @@ export default function DriverDashboard() {
 
         <Tabs defaultValue="available" className="space-y-4 sm:space-y-6">
           <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 scrollbar-hide">
-            <TabsList className="min-w-max w-full sm:w-auto grid grid-cols-6 sm:inline-flex">
-              <TabsTrigger value="available" data-testid="tab-available" className="text-xs sm:text-sm">Available</TabsTrigger>
-              <TabsTrigger value="assigned" data-testid="tab-assigned" className="text-xs sm:text-sm">My Jobs</TabsTrigger>
-              <TabsTrigger value="vehicles" data-testid="tab-vehicles" className="text-xs sm:text-sm">Vehicles</TabsTrigger>
-              <TabsTrigger value="pricing" data-testid="tab-pricing" className="text-xs sm:text-sm">Pricing</TabsTrigger>
-              <TabsTrigger value="settings" data-testid="tab-settings" className="text-xs sm:text-sm">Settings</TabsTrigger>
-              <TabsTrigger value="history" data-testid="tab-history" className="text-xs sm:text-sm">History</TabsTrigger>
-            </TabsList>
+            <div className="flex flex-col sm:flex-row sm:justify-between gap-4 min-w-max w-full">
+              <TabsList className="min-w-max w-full sm:w-auto grid grid-cols-3 sm:grid-cols-6 sm:inline-flex">
+                <TabsTrigger value="available" data-testid="tab-available" className="text-xs sm:text-sm">Available</TabsTrigger>
+                <TabsTrigger value="assigned" data-testid="tab-assigned" className="text-xs sm:text-sm">My Jobs</TabsTrigger>
+                <TabsTrigger value="vehicles" data-testid="tab-vehicles" className="text-xs sm:text-sm">Vehicles</TabsTrigger>
+                <TabsTrigger value="pricing" data-testid="tab-pricing" className="text-xs sm:text-sm">Pricing</TabsTrigger>
+                <TabsTrigger value="settings" data-testid="tab-settings" className="text-xs sm:text-sm">Settings</TabsTrigger>
+                <TabsTrigger value="history" data-testid="tab-history" className="text-xs sm:text-sm">History</TabsTrigger>
+              </TabsList>
+
+              <TabsList className="min-w-max w-full sm:w-auto grid grid-cols-2 sm:inline-flex">
+                <TabsTrigger value="depot-orders" data-testid="tab-depot-orders" className="text-xs sm:text-sm">My Depot Orders</TabsTrigger>
+                <TabsTrigger value="available-depots" data-testid="tab-available-depots" className="text-xs sm:text-sm">Available Depots</TabsTrigger>
+              </TabsList>
+            </div>
           </div>
 
           <TabsContent value="available" className="space-y-3 sm:space-y-4">
@@ -440,12 +448,12 @@ export default function DriverDashboard() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
                 {filteredOffers.map((offer) => {
                   const order = offer.orders;
-                  const deliveryAddress = order.delivery_addresses 
+                  const deliveryAddress = order.delivery_addresses
                     ? `${order.delivery_addresses.address_street}, ${order.delivery_addresses.address_city}`
                     : `${order.drop_lat}, ${order.drop_lng}`;
-                  
+
                   // Calculate expires in seconds (for pending offers, use a default long expiry)
-                  const expiresInSeconds = offer.expires_at 
+                  const expiresInSeconds = offer.expires_at
                     ? Math.floor((new Date(offer.expires_at).getTime() - Date.now()) / 1000)
                     : 24 * 60 * 60; // 24 hours default for pending offers
 
@@ -474,11 +482,11 @@ export default function DriverDashboard() {
 
           <TabsContent value="assigned" className="space-y-3 sm:space-y-4">
             {/* GPS Location Tracker - Always active for drivers to send live coordinates */}
-            <DriverLocationTracker 
+            <DriverLocationTracker
               isOnDelivery={true} // Always track location when driver is logged in
               activeOrderId={assignedOrders.find((o: any) => o.state === "en_route" || o.state === "picked_up")?.id || null}
             />
-            
+
             {loadingAssigned ? (
               <div className="text-center py-8 sm:py-12 text-muted-foreground">
                 <p>Loading assigned orders...</p>
@@ -500,85 +508,93 @@ export default function DriverDashboard() {
 
                   return (
                     <Card key={order.id} data-testid={`card-assigned-order-${order.id}`}>
-                    <CardHeader>
-                      <CardTitle className="flex items-center justify-between">
-                        <span className="text-base">
-                          {order.fuel_types?.label || "Fuel"} - {parseFloat(order.litres)}L
-                        </span>
-                        <StatusBadge status={order.state} />
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <div className="flex flex-wrap gap-2">
-                        {order.state === "assigned" && (
-                          <Button
-                            onClick={() => handleStartDelivery(order.id)}
-                            disabled={isStarting}
-                            variant="outline"
-                          >
-                            {isStarting ? "Starting..." : "Start Delivery"}
-                          </Button>
-                        )}
-                        {order.state === "en_route" && (
-                          <Button
-                            onClick={() => handlePickupDelivery(order.id)}
-                            disabled={isPickingUp}
-                            variant="secondary"
-                          >
-                            {isPickingUp ? "Updating..." : "Mark Picked Up"}
-                          </Button>
-                        )}
-                        {["en_route", "picked_up"].includes(order.state) && (
-                          <Button
-                            onClick={() => handleCompleteDelivery(order)}
-                            variant="default"
-                          >
-                            Complete Delivery
-                          </Button>
-                        )}
-                      </div>
+                      <CardHeader>
+                        <CardTitle className="flex items-center justify-between">
+                          <span className="text-base">
+                            {order.fuel_types?.label || "Fuel"} - {parseFloat(order.litres)}L
+                          </span>
+                          <StatusBadge status={order.state} />
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        <div className="flex flex-wrap gap-2">
+                          {order.state === "assigned" && (
+                            <Button
+                              onClick={() => handleStartDelivery(order.id)}
+                              disabled={isStarting}
+                              variant="outline"
+                            >
+                              {isStarting ? "Starting..." : "Start Delivery"}
+                            </Button>
+                          )}
+                          {order.state === "en_route" && (
+                            <Button
+                              onClick={() => handlePickupDelivery(order.id)}
+                              disabled={isPickingUp}
+                              variant="secondary"
+                            >
+                              {isPickingUp ? "Updating..." : "Mark Picked Up"}
+                            </Button>
+                          )}
+                          {["en_route", "picked_up"].includes(order.state) && (
+                            <Button
+                              onClick={() => handleCompleteDelivery(order)}
+                              variant="default"
+                            >
+                              Complete Delivery
+                            </Button>
+                          )}
+                        </div>
 
-                      <div className="grid grid-cols-2 gap-3 text-sm">
-                        <div>
-                          <p className="text-muted-foreground">Customer</p>
-                          <p className="font-medium">
-                            {order.customers?.profiles?.full_name || 
-                             order.customers?.company_name || 
-                             "Customer"}
-                          </p>
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <p className="text-muted-foreground">Customer</p>
+                            <p className="font-medium">
+                              {order.customers?.profiles?.full_name ||
+                                order.customers?.company_name ||
+                                "Customer"}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground">Amount</p>
+                            <p className="font-medium">
+                              {formatCurrencyAmount(order.total_cents / 100)}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground">Delivery Address</p>
+                            <p className="font-medium text-xs">
+                              {order.delivery_addresses?.address_street ||
+                                `${order.drop_lat}, ${order.drop_lng}`}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground">Contact</p>
+                            <p className="font-medium text-xs">
+                              {order.customers?.profiles?.phone || "N/A"}
+                            </p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="text-muted-foreground">Amount</p>
-                          <p className="font-medium">
-                            {formatCurrencyAmount(order.total_cents / 100)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-muted-foreground">Delivery Address</p>
-                          <p className="font-medium text-xs">
-                            {order.delivery_addresses?.address_street || 
-                             `${order.drop_lat}, ${order.drop_lng}`}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-muted-foreground">Contact</p>
-                          <p className="font-medium text-xs">
-                            {order.customers?.profiles?.phone || "N/A"}
-                          </p>
-                        </div>
-                      </div>
 
-                      {/* Chat with customer */}
-                      <OrderChat
-                        orderId={order.id}
-                        currentUserType="driver"
-                      />
-                    </CardContent>
+                        {/* Chat with customer */}
+                        <OrderChat
+                          orderId={order.id}
+                          currentUserType="driver"
+                        />
+                      </CardContent>
                     </Card>
                   );
                 })}
               </div>
             )}
+          </TabsContent>
+
+          <TabsContent value="depot-orders" className="space-y-3 sm:space-y-4">
+            <DriverDepotsView defaultTab="orders" />
+          </TabsContent>
+
+          <TabsContent value="available-depots" className="space-y-3 sm:space-y-4">
+            <DriverDepotsView defaultTab="depots" />
           </TabsContent>
 
           <TabsContent value="vehicles" className="space-y-3 sm:space-y-4">
@@ -605,32 +621,32 @@ export default function DriverDashboard() {
             ) : (
               <div className="grid grid-cols-1 gap-4">
                 {completedOrders.map((order) => {
-                  const customerName = 
-                    order.customers?.profiles?.full_name || 
-                    order.customers?.company_name || 
+                  const customerName =
+                    order.customers?.profiles?.full_name ||
+                    order.customers?.company_name ||
                     "Customer";
-                  
+
                   const fuelName = order.fuel_types?.label || "Fuel";
-                  
+
                   const deliveryAddress = order.delivery_addresses
                     ? [
-                        order.delivery_addresses.address_street,
-                        order.delivery_addresses.address_city,
-                        order.delivery_addresses.address_province
-                      ].filter(Boolean).join(", ") || "Address not specified"
+                      order.delivery_addresses.address_street,
+                      order.delivery_addresses.address_city,
+                      order.delivery_addresses.address_province
+                    ].filter(Boolean).join(", ") || "Address not specified"
                     : order.drop_lat && order.drop_lng
-                    ? `${order.drop_lat}, ${order.drop_lng}`
-                    : "Address not specified";
-                  
+                      ? `${order.drop_lat}, ${order.drop_lng}`
+                      : "Address not specified";
+
                   const earnings = order.total_cents ? order.total_cents / 100 : 0;
-                  const deliveredDate = order.delivered_at 
+                  const deliveredDate = order.delivered_at
                     ? new Date(order.delivered_at).toLocaleDateString("en-ZA", {
-                        year: "numeric",
-                        month: "short",
-                        day: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit"
-                      })
+                      year: "numeric",
+                      month: "short",
+                      day: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit"
+                    })
                     : "Date not available";
 
                   return (
@@ -696,7 +712,7 @@ export default function DriverDashboard() {
             <AlertDialogHeader>
               <AlertDialogTitle>Enable Location Tracking</AlertDialogTitle>
               <AlertDialogDescription>
-                To provide real-time location updates to customers, we need access to your location. 
+                To provide real-time location updates to customers, we need access to your location.
                 Your location will be sent every 0.5 seconds when you're on a delivery.
                 <br /><br />
                 Please click "Allow" when your browser asks for location permission.

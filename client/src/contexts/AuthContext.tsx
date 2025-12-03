@@ -125,6 +125,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Use the current window origin for redirect, ensuring it includes the full path
     const redirectTo = `${window.location.origin}/auth`;
     
+    console.log("[signUpWithPassword] Signing up with:", { email, fullName });
+    
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -135,6 +137,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     
     if (error) throw error;
+    
+    // Debug: Log what was saved
+    if (data.user) {
+      console.log("[signUpWithPassword] User created:", {
+        id: data.user.id,
+        email: data.user.email,
+        user_metadata: data.user.user_metadata,
+        app_metadata: data.user.app_metadata,
+      });
+    }
+    
+    // Refresh user to get latest metadata (in case it wasn't immediately available)
+    if (data.user) {
+      try {
+        const { data: { user: refreshedUser }, error: refreshError } = await supabase.auth.getUser();
+        if (!refreshError && refreshedUser) {
+          console.log("[signUpWithPassword] Refreshed user:", {
+            user_metadata: refreshedUser.user_metadata,
+            app_metadata: refreshedUser.app_metadata,
+          });
+          setUser(refreshedUser);
+        }
+      } catch (refreshErr) {
+        console.warn("[signUpWithPassword] Could not refresh user:", refreshErr);
+      }
+    }
     
     // Return data so caller knows if email confirmation is required
     return data;
@@ -197,13 +225,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (error) throw error;
     }
 
-    // Invalidate related queries to ensure state updates
-    await queryClient.invalidateQueries({ queryKey: ["/api/admin/kyc/pending"] });
-    await queryClient.invalidateQueries({ queryKey: ["/api/admin/customers"] });
-    await queryClient.invalidateQueries({ queryKey: ["/api/admin/drivers"] });
-    await queryClient.invalidateQueries({ queryKey: ["/api/admin/suppliers"] });
+    // Update profile state immediately (optimistic update) for faster redirect
+    setProfile({
+      id: user.id,
+      role,
+      fullName,
+      phone,
+    });
 
-    await fetchProfile(user.id);
+    // Fetch profile and invalidate queries in background (non-blocking)
+    Promise.all([
+      fetchProfile(user.id),
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/kyc/pending"] }),
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/customers"] }),
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/drivers"] }),
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/suppliers"] }),
+    ]).catch((error) => {
+      console.error("Error in background profile fetch:", error);
+    });
   }
 
   const refetchProfile = async () => {

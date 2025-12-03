@@ -41,6 +41,11 @@ export type NotificationType =
   | "order_fulfilled"
   | "order_ready_for_pickup"
   | "supplier_rating_received"
+  // Driver depot orders
+  | "driver_depot_order_placed"
+  | "driver_depot_order_confirmed"
+  | "driver_depot_order_fulfilled"
+  | "driver_depot_order_cancelled"
   // Driver specific
   | "driver_rating_received"
   | "shift_reminder"
@@ -451,6 +456,105 @@ class NotificationService {
       message: `Your order is ready for pickup at ${supplierName}`,
       data: { orderId, supplierName },
       priority: "high",
+    });
+  }
+
+  // ===== DRIVER DEPOT ORDER NOTIFICATIONS =====
+
+  async notifyDriverDepotOrderPlaced(
+    supplierId: string,
+    orderId: string,
+    depotName: string,
+    fuelType: string,
+    litres: number,
+    totalPrice: number,
+    currency: string,
+    pickupDate: string,
+    driverName: string
+  ) {
+    const formattedDate = new Date(pickupDate).toLocaleString("en-ZA", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+    
+    return this.createAndSend({
+      userId: supplierId,
+      type: "driver_depot_order_placed",
+      title: "New Driver Order",
+      message: `${driverName} ordered ${litres}L of ${fuelType} from ${depotName}. Pickup: ${formattedDate}`,
+      data: { orderId, depotName, fuelType, litres, totalPrice, currency, pickupDate, driverName },
+      priority: "high",
+      requireInteraction: true,
+    });
+  }
+
+  async notifyDriverDepotOrderConfirmed(
+    driverId: string,
+    orderId: string,
+    depotName: string,
+    fuelType: string,
+    litres: number,
+    pickupDate: string
+  ) {
+    const formattedDate = new Date(pickupDate).toLocaleString("en-ZA", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+    
+    return this.createAndSend({
+      userId: driverId,
+      type: "driver_depot_order_confirmed",
+      title: "Order Confirmed",
+      message: `Your order for ${litres}L of ${fuelType} from ${depotName} has been confirmed. Pickup: ${formattedDate}`,
+      data: { orderId, depotName, fuelType, litres, pickupDate },
+      priority: "high",
+    });
+  }
+
+  async notifyDriverDepotOrderFulfilled(
+    driverId: string,
+    orderId: string,
+    depotName: string,
+    fuelType: string,
+    litres: number
+  ) {
+    return this.createAndSend({
+      userId: driverId,
+      type: "driver_depot_order_fulfilled",
+      title: "Order Fulfilled",
+      message: `Your order for ${litres}L of ${fuelType} from ${depotName} has been fulfilled`,
+      data: { orderId, depotName, fuelType, litres },
+      priority: "medium",
+    });
+  }
+
+  async notifyDriverDepotOrderCancelled(
+    supplierId: string,
+    driverId: string,
+    orderId: string,
+    depotName: string,
+    fuelType: string,
+    litres: number,
+    reason?: string
+  ) {
+    // Notify supplier
+    await this.createAndSend({
+      userId: supplierId,
+      type: "driver_depot_order_cancelled",
+      title: "Order Cancelled",
+      message: `Driver cancelled order for ${litres}L of ${fuelType} from ${depotName}${reason ? `. Reason: ${reason}` : ""}`,
+      data: { orderId, depotName, fuelType, litres, reason },
+      priority: "medium",
+    });
+
+    // Notify driver
+    return this.createAndSend({
+      userId: driverId,
+      type: "driver_depot_order_cancelled",
+      title: "Order Cancelled",
+      message: `Your order for ${litres}L of ${fuelType} from ${depotName} has been cancelled${reason ? `. Reason: ${reason}` : ""}`,
+      data: { orderId, depotName, fuelType, litres, reason },
+      priority: "medium",
     });
   }
 

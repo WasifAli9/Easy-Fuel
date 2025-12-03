@@ -117,52 +117,46 @@ export function EditAddressDialog({ open, onOpenChange, address }: EditAddressDi
     });
   }, [address, form]);
 
-  const handleGeocode = async () => {
-    const values = form.getValues();
-    
-    // Check if we have enough address info
-    if (!values.addressStreet || !values.addressCity) {
+  const handleGetLiveLocation = () => {
+    setIsGeocoding(true);
+
+    if (!navigator.geolocation) {
       toast({
-        title: "Missing Information",
-        description: "Please enter at least the street address and city before geocoding",
+        title: "Error",
+        description: "Geolocation is not supported by your browser",
         variant: "destructive",
       });
+      setIsGeocoding(false);
       return;
     }
 
-    setIsGeocoding(true);
-    try {
-      const result = await geocodeAddress({
-        street: values.addressStreet,
-        city: values.addressCity,
-        province: values.addressProvince,
-        postalCode: values.addressPostalCode,
-        country: values.addressCountry,
-      });
-
-      if (result) {
-        form.setValue("lat", result.lat);
-        form.setValue("lng", result.lng);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        form.setValue("lat", position.coords.latitude);
+        form.setValue("lng", position.coords.longitude);
         toast({
           title: "Success",
-          description: "Coordinates updated based on address",
+          description: "Location updated successfully",
         });
-      } else {
+        setIsGeocoding(false);
+      },
+      (error) => {
+        let errorMessage = "Failed to get location";
+        if (error.code === error.PERMISSION_DENIED) {
+          errorMessage = "Location permission denied. Please enable it in your browser settings.";
+        } else if (error.code === error.TIMEOUT) {
+          errorMessage = "Location request timed out.";
+        }
+
         toast({
-          title: "Not Found",
-          description: "Could not find coordinates for this address. Please enter them manually.",
+          title: "Error",
+          description: errorMessage,
           variant: "destructive",
         });
-      }
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to geocode address. Please enter coordinates manually.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsGeocoding(false);
-    }
+        setIsGeocoding(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
   };
 
   const updateMutation = useMutation({
@@ -306,19 +300,19 @@ export function EditAddressDialog({ open, onOpenChange, address }: EditAddressDi
               <Button
                 type="button"
                 variant="outline"
-                onClick={handleGeocode}
+                onClick={handleGetLiveLocation}
                 disabled={isGeocoding}
                 data-testid="button-geocode"
               >
                 {isGeocoding ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Getting Coordinates...
+                    Getting Location...
                   </>
                 ) : (
                   <>
                     <MapPin className="h-4 w-4 mr-2" />
-                    Get Coordinates from Address
+                    Get Live Coordinates
                   </>
                 )}
               </Button>

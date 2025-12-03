@@ -4,7 +4,8 @@ import { z } from "zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { MapPin, Loader2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -72,6 +73,7 @@ export function DepotManagementDialog({
 }: DepotManagementDialogProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [isGettingLocation, setIsGettingLocation] = useState(false);
 
   const form = useForm<DepotFormData>({
     resolver: zodResolver(depotSchema),
@@ -84,10 +86,64 @@ export function DepotManagementDialog({
       lat: depot?.lat || 0,
       lng: depot?.lng || 0,
       open_hours: typeof depot?.open_hours === 'object' ? JSON.stringify(depot.open_hours) : depot?.open_hours || "",
-      is_active: depot?.is_active ?? true,
+      is_active: depot?.is_active !== undefined ? depot.is_active : true,
       notes: depot?.notes || "",
     },
   });
+
+  const handleGetCurrentLocation = () => {
+    setIsGettingLocation(true);
+    
+    if (!navigator.geolocation) {
+      toast({
+        title: "Error",
+        description: "Geolocation is not supported by your browser",
+        variant: "destructive",
+      });
+      setIsGettingLocation(false);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        form.setValue("lat", parseFloat(position.coords.latitude.toFixed(6)));
+        form.setValue("lng", parseFloat(position.coords.longitude.toFixed(6)));
+        setIsGettingLocation(false);
+        toast({
+          title: "Location detected",
+          description: "Your current location has been set",
+        });
+      },
+      (error) => {
+        console.error("Error getting location:", error);
+        let errorMessage = "Failed to get your current location. Please enter manually.";
+        
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            errorMessage = "Location permission denied. Please enable location access in your browser settings.";
+            break;
+          case error.POSITION_UNAVAILABLE:
+            errorMessage = "Location information unavailable";
+            break;
+          case error.TIMEOUT:
+            errorMessage = "Location request timed out";
+            break;
+        }
+        
+        toast({
+          title: "Error",
+          description: errorMessage,
+          variant: "destructive",
+        });
+        setIsGettingLocation(false);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      }
+    );
+  };
 
   const createDepotMutation = useMutation({
     mutationFn: async (data: DepotFormData) => {
@@ -113,7 +169,18 @@ export function DepotManagementDialog({
         description: "Depot created successfully",
       });
       onOpenChange(false);
-      form.reset();
+      form.reset({
+        name: "",
+        address_street: "",
+        address_city: "",
+        address_province: "",
+        address_postal_code: "",
+        lat: 0,
+        lng: 0,
+        open_hours: "",
+        is_active: true,
+        notes: "",
+      });
     },
     onError: (error: Error) => {
       toast({
@@ -172,7 +239,7 @@ export function DepotManagementDialog({
           lat: depot.lat || 0,
           lng: depot.lng || 0,
           open_hours: typeof depot.open_hours === 'object' ? JSON.stringify(depot.open_hours) : depot.open_hours || "",
-          is_active: depot.is_active ?? true,
+          is_active: depot.is_active !== undefined ? depot.is_active : true,
           notes: depot.notes || "",
         });
       } else {
@@ -329,6 +396,8 @@ export function DepotManagementDialog({
                         step="any"
                         placeholder="-26.2041"
                         {...field}
+                        value={field.value || ""}
+                        onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : 0)}
                       />
                     </FormControl>
                     <FormMessage />
@@ -349,12 +418,37 @@ export function DepotManagementDialog({
                         step="any"
                         placeholder="28.0473"
                         {...field}
+                        value={field.value || ""}
+                        onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : 0)}
                       />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
+            </div>
+
+            {/* Get Live Coordinates Button */}
+            <div className="flex justify-center py-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleGetCurrentLocation}
+                disabled={isGettingLocation}
+                data-testid="button-get-live-coordinates"
+              >
+                {isGettingLocation ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Getting Location...
+                  </>
+                ) : (
+                  <>
+                    <MapPin className="h-4 w-4 mr-2" />
+                    Get Live Coordinates
+                  </>
+                )}
+              </Button>
             </div>
 
             <FormField
@@ -380,6 +474,28 @@ export function DepotManagementDialog({
 
             <FormField
               control={form.control}
+              name="is_active"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                  <div className="space-y-0.5">
+                    <FormLabel className="text-base">Active Status</FormLabel>
+                    <p className="text-sm text-muted-foreground">
+                      Inactive depots won't be visible to drivers
+                    </p>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                      data-testid="switch-depot-active"
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
               name="notes"
               render={({ field }) => (
                 <FormItem>
@@ -392,28 +508,6 @@ export function DepotManagementDialog({
                     />
                   </FormControl>
                   <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="is_active"
-              render={({ field }) => (
-                <FormItem className="flex items-center justify-between rounded-lg border p-4">
-                  <div className="space-y-0.5">
-                    <FormLabel className="text-base">Active Status</FormLabel>
-                    <div className="text-sm text-muted-foreground">
-                      Depot is available for accepting orders
-                    </div>
-                  </div>
-                  <FormControl>
-                    <Switch
-                      data-testid="switch-depot-active"
-                      checked={field.value}
-                      onCheckedChange={field.onChange}
-                    />
-                  </FormControl>
                 </FormItem>
               )}
             />

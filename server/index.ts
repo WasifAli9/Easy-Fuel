@@ -36,6 +36,16 @@ app.use((req, res, next) => {
   next();
 });
 
+// Add global error handlers to prevent server crashes
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  // Don't exit - log and continue
+});
+
 (async () => {
   const server = await registerRoutes(app);
 
@@ -43,8 +53,9 @@ app.use((req, res, next) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
+    console.error("Unhandled error:", err);
     res.status(status).json({ message });
-    throw err;
+    // Don't throw - just log the error to prevent server crash
   });
 
   // importantly only setup vite in development and after

@@ -1,36 +1,98 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLocation } from "wouter";
 import { RoleSelector } from "@/components/RoleSelector";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
 export default function RoleSetup() {
-  const [selectedRole, setSelectedRole] = useState<"customer" | "driver" | "supplier" | "admin" | null>(null);
-  const [fullName, setFullName] = useState("");
-  const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
-  const { setUserRole } = useAuth();
+  const { user, session, setUserRole } = useAuth();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const [fullName, setFullName] = useState<string | null>(null);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!selectedRole) return;
+  // Fetch user metadata on mount to ensure we have the latest data
+  useEffect(() => {
+    async function fetchUserMetadata() {
+      if (!user) return;
+      
+      try {
+        // First check session user
+        if (session?.user) {
+          const sessionName = session.user.user_metadata?.full_name || 
+                              session.user.app_metadata?.full_name;
+          if (sessionName) {
+            setFullName(sessionName);
+            console.log("[RoleSetup] Found full name from session:", sessionName);
+            return;
+          }
+        }
+        
+        // Refresh user to get latest metadata
+        const { data: { user: refreshedUser }, error } = await supabase.auth.getUser();
+        if (!error && refreshedUser) {
+          const metadataName = refreshedUser.user_metadata?.full_name || 
+                               refreshedUser.app_metadata?.full_name;
+          if (metadataName) {
+            setFullName(metadataName);
+            console.log("[RoleSetup] Found full name from refreshed user:", metadataName);
+          } else {
+            console.warn("[RoleSetup] No full_name found in user metadata:", {
+              user_metadata: refreshedUser.user_metadata,
+              app_metadata: refreshedUser.app_metadata,
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("[RoleSetup] Could not fetch user metadata:", err);
+      }
+    }
+    
+    fetchUserMetadata();
+  }, [user, session]);
+
+  async function handleRoleSelection(role: "customer" | "driver" | "supplier" | "admin") {
+    if (!user || loading) return;
 
     setLoading(true);
     try {
-      await setUserRole(selectedRole, fullName, phone);
+      // Try to get full name from state (fetched from metadata) or from user object
+      const fullNameFromState = fullName;
+      const fullNameFromMetadata = fullNameFromState || 
+                                    user.user_metadata?.full_name || 
+                                    user.app_metadata?.full_name ||
+                                    (user as any).user_metadata?.full_name;
+      
+      // Debug logging
+      console.log("[RoleSetup] User object:", {
+        email: user.email,
+        user_metadata: user.user_metadata,
+        app_metadata: user.app_metadata,
+        fullNameFromState,
+        fullNameFromMetadata,
+      });
+      
+      // Fallback to email username if metadata not available
+      const emailUsername = user.email?.split("@")[0] || "User";
+      const defaultName = fullNameFromMetadata || emailUsername;
+      
+      // Capitalize first letter if not already capitalized
+      const capitalizedName = defaultName.charAt(0).toUpperCase() + defaultName.slice(1);
+      
+      console.log("[RoleSetup] Using full name:", capitalizedName);
+      
+      // Create profile and role-specific record
+      await setUserRole(role, capitalizedName);
+      
+      // Redirect immediately - don't wait for profile fetch
+      setLocation(`/${role}`);
+      
+      // Show success toast (non-blocking)
       toast({
         title: "Profile created",
         description: "Your account is all set up!",
       });
-      
-      // Redirect to role-specific dashboard
-      setLocation(`/${selectedRole}`);
     } catch (error: any) {
       toast({
         title: "Error",
@@ -42,70 +104,20 @@ export default function RoleSetup() {
     }
   }
 
-  if (!selectedRole) {
+  if (loading) {
     return (
-      <div className="min-h-screen bg-background">
-        <RoleSelector onSelectRole={setSelectedRole} />
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-4 text-muted-foreground">Setting up your account...</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setSelectedRole(null)}
-            className="w-fit mb-2"
-            data-testid="button-back"
-          >
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Change role
-          </Button>
-          <CardTitle>Complete Your Profile</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <label htmlFor="fullName" className="text-sm font-medium">
-                Full Name
-              </label>
-              <Input
-                id="fullName"
-                type="text"
-                placeholder="John Doe"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                required
-                data-testid="input-fullname"
-              />
-            </div>
-            <div className="space-y-2">
-              <label htmlFor="phone" className="text-sm font-medium">
-                Phone Number (Optional)
-              </label>
-              <Input
-                id="phone"
-                type="tel"
-                placeholder="+27 123 456 789"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                data-testid="input-phone"
-              />
-            </div>
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={loading}
-              data-testid="button-complete"
-            >
-              {loading ? "Setting up..." : "Complete Setup"}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+    <div className="min-h-screen bg-background">
+      <RoleSelector onSelectRole={handleRoleSelection} />
     </div>
   );
 }

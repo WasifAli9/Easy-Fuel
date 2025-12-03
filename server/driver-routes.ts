@@ -2405,4 +2405,540 @@ router.post("/documents", async (req, res) => {
   }
 });
 
+// ============== DRIVER DEPOT ORDERS ==============
+
+// Get all depots with distance from driver's current location
+router.get("/depots", async (req, res) => {
+  const user = (req as any).user;
+
+  try {
+    // Check authentication
+    if (!user || !user.id) {
+      console.error("GET /driver/depots: User not authenticated", { hasUser: !!user, userId: user?.id });
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    // Import distance utilities early
+    const { calculateDistance, milesToKm } = await import("./utils/distance");
+
+    // Get driver's current location
+    // Use maybeSingle() to handle case where driver profile doesn't exist yet
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("id, current_lat, current_lng")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (driverError) {
+      console.error("Error fetching driver profile:", driverError);
+      return res.status(500).json({ 
+        error: "Failed to fetch driver profile", 
+        details: driverError.message,
+        code: driverError.code 
+      });
+    }
+    
+    if (!driver) {
+      // Return empty array instead of error - driver might not have created profile yet
+      console.warn(`[GET /driver/depots] Driver profile not found for user ${user.id}`);
+      return res.json([]);
+    }
+
+    // Get all depots with their pricing and supplier info
+    // First try with is_active column, fallback if column doesn't exist
+    let depots: any[] = [];
+    let depotsError: any = null;
+    
+    // Try query with is_active column first
+    const queryWithActive = supabaseAdmin
+      .from("depots")
+      .select(`
+        id,
+        supplier_id,
+        name,
+        lat,
+        lng,
+        open_hours,
+        notes,
+        is_active,
+        address_street,
+        address_city,
+        address_province,
+        address_postal_code,
+        created_at,
+        updated_at,
+        depot_prices (
+          id,
+          fuel_type_id,
+          price_cents,
+          min_litres,
+          available_litres,
+          fuel_types (
+            id,
+            label,
+            code
+          )
+        ),
+        suppliers (
+          id,
+          name
+        )
+      `)
+      .eq("is_active", true)
+      .order("name");
+
+    const resultWithActive = await queryWithActive;
+    depots = resultWithActive.data || [];
+    depotsError = resultWithActive.error;
+    
+    console.log(`[GET /driver/depots] Query with is_active: ${depots.length} depots found, error: ${depotsError ? depotsError.message : 'none'}`);
+
+    // If error is about missing column, try without is_active filter
+    if (depotsError && (depotsError.message?.includes("is_active") || depotsError.message?.includes("column") || depotsError.code === "42703" || depotsError.code === "PGRST116")) {
+      console.warn("is_active column doesn't exist, fetching all depots without filter");
+      const queryWithoutActive = supabaseAdmin
+        .from("depots")
+        .select(`
+          id,
+          supplier_id,
+          name,
+          lat,
+          lng,
+          open_hours,
+          notes,
+          address_street,
+          address_city,
+          address_province,
+          address_postal_code,
+          created_at,
+          updated_at,
+          depot_prices (
+            id,
+            fuel_type_id,
+            price_cents,
+            min_litres,
+            available_litres,
+            fuel_types (
+              id,
+              label,
+              code
+            )
+          ),
+          suppliers (
+            id,
+            name
+          )
+        `)
+        .order("name");
+      
+      const resultWithoutActive = await queryWithoutActive;
+      if (resultWithoutActive.error) {
+        console.error("Error fetching depots (fallback):", resultWithoutActive.error);
+        throw resultWithoutActive.error;
+      }
+      depots = resultWithoutActive.data || [];
+    } else if (depotsError) {
+      console.error("Error fetching depots:", depotsError);
+      throw depotsError;
+    }
+
+    // Filter in-memory to ensure only active depots are returned
+    // This handles cases where is_active might be null or undefined (backward compatibility)
+    const activeDepots = (depots || []).filter((depot: any) => {
+      // If is_active is undefined/null, treat as active (for backward compatibility)
+      return depot.is_active !== false;
+    });
+
+    // Calculate distance for each depot if driver has location
+    
+    const depotsWithDistance = activeDepots.map((depot: any) => {
+      let distanceKm = null;
+      let distanceMiles = null;
+
+      if (driver.current_lat && driver.current_lng && depot.lat && depot.lng) {
+        distanceMiles = calculateDistance(
+          driver.current_lat,
+          driver.current_lng,
+          depot.lat,
+          depot.lng
+        );
+        distanceKm = milesToKm(distanceMiles);
+      }
+
+      return {
+        ...depot,
+        distance_km: distanceKm,
+        distance_miles: distanceMiles,
+      };
+    });
+
+    console.log(`[GET /driver/depots] Returning ${depotsWithDistance.length} depots`);
+    res.json(depotsWithDistance);
+  } catch (error: any) {
+    console.error("Error fetching depots:", error);
+    console.error("Error details:", {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+    });
+    res.status(500).json({ 
+      error: error.message || "Failed to fetch depots",
+      details: error.details,
+      code: error.code 
+    });
+  }
+});
+
+// Get driver's depot orders
+router.get("/depot-orders", async (req, res) => {
+  const user = (req as any).user;
+
+  try {
+    // Get driver ID
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (driverError) throw driverError;
+    if (!driver) {
+      return res.status(404).json({ error: "Driver profile not found" });
+    }
+
+    // Get all depot orders for this driver
+    const { data: orders, error: ordersError } = await supabaseAdmin
+      .from("driver_depot_orders")
+      .select(`
+        *,
+        depots (
+          id,
+          name,
+          address_city,
+          address_province,
+          lat,
+          lng
+        ),
+        fuel_types (
+          id,
+          label,
+          code
+        )
+      `)
+      .eq("driver_id", driver.id)
+      .order("created_at", { ascending: false });
+
+    if (ordersError) throw ordersError;
+
+    res.json(orders || []);
+  } catch (error: any) {
+    console.error("Error fetching driver depot orders:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create order from depot
+router.post("/depot-orders", async (req, res) => {
+  const user = (req as any).user;
+  const { depotId, fuelTypeId, litres, pickupDate, notes } = req.body;
+
+  try {
+    // Validate inputs
+    if (!depotId || !fuelTypeId || !litres) {
+      return res.status(400).json({ 
+        error: "depotId, fuelTypeId, and litres are required" 
+      });
+    }
+
+    const litresNum = parseFloat(litres);
+    if (isNaN(litresNum) || litresNum <= 0) {
+      return res.status(400).json({ error: "Invalid litres value" });
+    }
+
+    // Validate pickup date if provided
+    let pickupDateTimestamp = null;
+    if (pickupDate) {
+      pickupDateTimestamp = new Date(pickupDate).toISOString();
+      if (isNaN(new Date(pickupDate).getTime())) {
+        return res.status(400).json({ error: "Invalid pickup date format" });
+      }
+      // Ensure pickup date is in the future
+      if (new Date(pickupDate) <= new Date()) {
+        return res.status(400).json({ error: "Pickup date must be in the future" });
+      }
+    } else {
+      return res.status(400).json({ error: "Pickup date is required" });
+    }
+
+    // Get driver ID
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (driverError) throw driverError;
+    if (!driver) {
+      return res.status(404).json({ error: "Driver profile not found" });
+    }
+
+    // Verify depot exists and is active
+    const { data: depot, error: depotError } = await supabaseAdmin
+      .from("depots")
+      .select("id, is_active")
+      .eq("id", depotId)
+      .single();
+
+    if (depotError || !depot) {
+      return res.status(404).json({ error: "Depot not found" });
+    }
+
+    if (!depot.is_active) {
+      return res.status(400).json({ error: "Depot is not active" });
+    }
+
+    // Get all pricing tiers for this fuel type at this depot
+    const { data: pricingTiers, error: priceError } = await supabaseAdmin
+      .from("depot_prices")
+      .select("id, price_cents, min_litres, available_litres")
+      .eq("depot_id", depotId)
+      .eq("fuel_type_id", fuelTypeId)
+      .order("min_litres", { ascending: false }); // Order by min_litres descending
+
+    if (priceError || !pricingTiers || pricingTiers.length === 0) {
+      return res.status(400).json({ 
+        error: "This fuel type is not available at this depot or pricing is not set" 
+      });
+    }
+
+    // Find the appropriate pricing tier based on order quantity
+    // Select the tier with the highest min_litres that is <= order quantity
+    let selectedTier = null;
+    for (const tier of pricingTiers) {
+      if (litresNum >= parseFloat(tier.min_litres.toString())) {
+        selectedTier = tier;
+        break;
+      }
+    }
+
+    // If no tier matches, use the tier with lowest min_litres (should be 0)
+    if (!selectedTier) {
+      selectedTier = pricingTiers[pricingTiers.length - 1];
+    }
+
+    // Validate order quantity is less than available stock
+    const availableLitres = selectedTier.available_litres !== null && selectedTier.available_litres !== undefined
+      ? parseFloat(selectedTier.available_litres.toString())
+      : 0;
+    
+    if (availableLitres > 0 && litresNum >= availableLitres) {
+      return res.status(400).json({ 
+        error: `You can only order less than ${availableLitres}L. Available stock: ${availableLitres}L` 
+      });
+    }
+
+    // Calculate total price using the selected tier's price
+    const pricePerLitreCents = selectedTier.price_cents;
+    const totalPriceCents = Math.round(pricePerLitreCents * litresNum);
+
+    // Create the order
+    const { data: order, error: orderError } = await supabaseAdmin
+      .from("driver_depot_orders")
+      .insert({
+        driver_id: driver.id,
+        depot_id: depotId,
+        fuel_type_id: fuelTypeId,
+        litres: litresNum.toString(),
+        price_per_litre_cents: pricePerLitreCents,
+        total_price_cents: totalPriceCents,
+        status: "pending",
+        pickup_date: pickupDateTimestamp,
+        notes: notes || null,
+      })
+      .select(`
+        *,
+        depots (
+          id,
+          name,
+          address_city,
+          address_province
+        ),
+        fuel_types (
+          id,
+          label,
+          code
+        )
+      `)
+      .single();
+
+    if (orderError) throw orderError;
+
+    // Notify supplier about the new order
+    const { data: depotWithSupplier } = await supabaseAdmin
+      .from("depots")
+      .select("supplier_id, suppliers!inner(owner_id)")
+      .eq("id", depotId)
+      .single();
+
+    if (depotWithSupplier?.suppliers?.owner_id) {
+      const { websocketService } = await import("./websocket");
+      const { notificationService } = await import("./notification-service");
+      
+      // Get driver profile for name
+      const { data: driverProfile } = await supabaseAdmin
+        .from("profiles")
+        .select("full_name")
+        .eq("id", user.id)
+        .single();
+
+      const driverName = driverProfile?.full_name || "Driver";
+      const fuelTypeLabel = order.fuel_types?.label || "Fuel";
+      const depotName = order.depots?.name || "Depot";
+      const totalPrice = order.total_price_cents / 100;
+      const currency = "ZAR"; // You may want to get this from user profile or app settings
+
+      // Send WebSocket update for real-time delivery
+      websocketService.sendOrderUpdate(depotWithSupplier.suppliers.owner_id, {
+        type: "new_driver_depot_order",
+        orderId: order.id,
+        depotId,
+        driverId: driver.id,
+      });
+
+      // Create notification for supplier
+      await notificationService.notifyDriverDepotOrderPlaced(
+        depotWithSupplier.suppliers.owner_id,
+        order.id,
+        depotName,
+        fuelTypeLabel,
+        litresNum,
+        totalPrice,
+        currency,
+        pickupDateTimestamp!,
+        driverName
+      );
+    }
+
+    res.status(201).json(order);
+  } catch (error: any) {
+    console.error("Error creating depot order:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Cancel depot order (only if pending)
+router.post("/depot-orders/:orderId/cancel", async (req, res) => {
+  const user = (req as any).user;
+  const { orderId } = req.params;
+
+  try {
+    // Get driver ID
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (driverError) throw driverError;
+    if (!driver) {
+      return res.status(404).json({ error: "Driver profile not found" });
+    }
+
+    // Check if order exists and belongs to driver
+    const { data: order, error: orderError } = await supabaseAdmin
+      .from("driver_depot_orders")
+      .select(`
+        *,
+        depots (
+          id,
+          name,
+          supplier_id,
+          suppliers!inner(owner_id)
+        ),
+        fuel_types (
+          id,
+          label,
+          code
+        )
+      `)
+      .eq("id", orderId)
+      .eq("driver_id", driver.id)
+      .single();
+
+    if (orderError || !order) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    // Only pending orders can be cancelled
+    if (order.status !== "pending") {
+      return res.status(400).json({ 
+        error: "Only pending orders can be cancelled" 
+      });
+    }
+
+    // Get current order status before updating
+    const currentStatus = order.status;
+    const orderLitres = parseFloat(order.litres || "0");
+
+    // Update order status
+    const { data: updatedOrder, error: updateError } = await supabaseAdmin
+      .from("driver_depot_orders")
+      .update({
+        status: "cancelled",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", orderId)
+      .select(`
+        *,
+        depots (
+          id,
+          supplier_id,
+          suppliers!inner(owner_id)
+        )
+      `)
+      .single();
+
+    if (updateError) throw updateError;
+
+    // Pending orders don't reduce stock, so no need to restore stock when cancelling
+    // Stock is only deducted when supplier confirms the order (pending -> confirmed)
+    // Since we only allow cancelling pending orders, no stock restoration is needed
+
+    // Notify supplier about cancellation
+    if (order.depots?.suppliers?.owner_id) {
+      const { websocketService } = await import("./websocket");
+      const { notificationService } = await import("./notification-service");
+      
+      const depotName = order.depots?.name || "Depot";
+      const fuelTypeLabel = order.fuel_types?.label || "Fuel";
+      const litres = parseFloat(order.litres || "0");
+      const reason = req.body.reason;
+
+      // Send WebSocket update for real-time delivery
+      websocketService.sendOrderUpdate(order.depots.suppliers.owner_id, {
+        type: "driver_depot_order_cancelled",
+        orderId: updatedOrder.id,
+        status: "cancelled",
+      });
+
+      // Create notification for supplier and driver
+      await notificationService.notifyDriverDepotOrderCancelled(
+        order.depots.suppliers.owner_id,
+        user.id,
+        updatedOrder.id,
+        depotName,
+        fuelTypeLabel,
+        litres,
+        reason
+      );
+    }
+
+    res.json(updatedOrder);
+  } catch (error: any) {
+    console.error("Error cancelling depot order:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;

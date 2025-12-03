@@ -12,15 +12,19 @@ import { Fuel, History, Loader2, MapPin } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
+interface PricingTier {
+  id: string;
+  price_cents: number;
+  min_litres: number;
+  available_litres: number | null;
+}
+
 interface FuelTypeWithPricing {
   id: string;
   code: string;
   label: string;
   active: boolean;
-  pricing: {
-    id: string;
-    price_cents: number;
-  } | null;
+  pricing_tiers: PricingTier[];
 }
 
 interface Depot {
@@ -47,6 +51,7 @@ export function SupplierPricingManager() {
   const [selectedDepotId, setSelectedDepotId] = useState<string>("");
   const [showHistory, setShowHistory] = useState(false);
   const [editingPrices, setEditingPrices] = useState<Record<string, string>>({});
+  const [editingAvailableLitres, setEditingAvailableLitres] = useState<Record<string, string>>({});
   const [editingNotes, setEditingNotes] = useState<Record<string, string>>({});
 
   // Fetch depots
@@ -74,15 +79,16 @@ export function SupplierPricingManager() {
 
   // Update pricing mutation
   const updatePricingMutation = useMutation({
-    mutationFn: async ({ fuelTypeId, priceCents, notes }: { 
+    mutationFn: async ({ fuelTypeId, priceCents, availableLitres, notes }: { 
       fuelTypeId: string; 
       priceCents: number;
+      availableLitres?: number | null;
       notes?: string;
     }) => {
       const response = await apiRequest(
         "PUT",
         `/api/supplier/depots/${selectedDepotId}/pricing/${fuelTypeId}`,
-        { priceCents, notes }
+        { priceCents, availableLitres, notes }
       );
       return response.json();
     },
@@ -99,6 +105,11 @@ export function SupplierPricingManager() {
       });
       // Clear the editing state for this fuel type
       setEditingPrices((prev) => {
+        const next = { ...prev };
+        delete next[variables.fuelTypeId];
+        return next;
+      });
+      setEditingAvailableLitres((prev) => {
         const next = { ...prev };
         delete next[variables.fuelTypeId];
         return next;
@@ -120,6 +131,10 @@ export function SupplierPricingManager() {
 
   const handlePriceChange = (fuelTypeId: string, value: string) => {
     setEditingPrices((prev) => ({ ...prev, [fuelTypeId]: value }));
+  };
+
+  const handleAvailableLitresChange = (fuelTypeId: string, value: string) => {
+    setEditingAvailableLitres((prev) => ({ ...prev, [fuelTypeId]: value }));
   };
 
   const handleNotesChange = (fuelTypeId: string, value: string) => {
@@ -148,9 +163,14 @@ export function SupplierPricingManager() {
       return;
     }
 
+    const availableLitres = editingAvailableLitres[fuelTypeId] 
+      ? parseFloat(editingAvailableLitres[fuelTypeId])
+      : fuelTypes?.find(ft => ft.id === fuelTypeId)?.pricing?.available_litres ?? null;
+
     updatePricingMutation.mutate({
       fuelTypeId,
       priceCents,
+      availableLitres: availableLitres !== null && !isNaN(availableLitres) ? availableLitres : null,
       notes: editingNotes[fuelTypeId],
     });
   };
@@ -255,6 +275,9 @@ export function SupplierPricingManager() {
                             {formatCurrency(fuelType.pricing.price_cents)}
                           </p>
                           <p className="text-xs text-muted-foreground">per litre</p>
+                          <p className="text-sm font-medium mt-1">
+                            Stock: {(fuelType.pricing.available_litres ?? 0)}L
+                          </p>
                         </div>
                       )}
                     </div>
@@ -291,6 +314,28 @@ export function SupplierPricingManager() {
                             )}
                           </Button>
                         </div>
+                      </div>
+
+                      <div>
+                        <Label htmlFor={`available-litres-${fuelType.id}`}>
+                          Available Stock (Litres) {!fuelType.pricing && "*"}
+                        </Label>
+                        <Input
+                          id={`available-litres-${fuelType.id}`}
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          placeholder={(fuelType.pricing?.available_litres ?? 0).toString()}
+                          value={editingAvailableLitres[fuelType.id] ?? (fuelType.pricing?.available_litres ?? 0).toString() ?? ""}
+                          onChange={(e) => handleAvailableLitresChange(fuelType.id, e.target.value)}
+                          className="mt-1.5"
+                          data-testid={`input-available-litres-${fuelType.code}`}
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {fuelType.pricing 
+                            ? "Update stock when adding more fuel. Required when adding new fuel type."
+                            : "Required when adding new fuel type"}
+                        </p>
                       </div>
 
                       {editingPrices[fuelType.id] !== undefined && (
