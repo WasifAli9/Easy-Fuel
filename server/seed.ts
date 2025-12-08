@@ -195,6 +195,7 @@ async function seed() {
         service_fee_percent: "5",
         service_fee_min_cents: 10000, // R100
         base_delivery_fee_cents: 35000, // R350
+        price_per_km_cents: 5000, // R50 per km (admin-configurable)
         dispatch_radius_km: "50",
         dispatch_sla_seconds: 120,
       });

@@ -67,9 +67,10 @@ type OrderFormValues = z.infer<typeof orderFormSchema>;
 
 interface CreateOrderDialogProps {
   trigger?: React.ReactNode;
+  onOrderCreated?: (orderId: string) => void;
 }
 
-export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
+export function CreateOrderDialog({ trigger, onOrderCreated }: CreateOrderDialogProps) {
   const [open, setOpen] = useState(false);
   const [signatureData, setSignatureData] = useState<string | null>(null);
   const [showAddAddressDialog, setShowAddAddressDialog] = useState(false);
@@ -129,18 +130,32 @@ export function CreateOrderDialog({ trigger }: CreateOrderDialogProps) {
         termsAccepted: values.termsAccepted,
         signatureData: signatureData || null,
       });
-      return response.json();
+      const data = await response.json();
+      return data;
     },
-    onSuccess: () => {
+    onSuccess: async (order) => {
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/driver/offers"] }); // Refresh driver offers
-      toast({
-        title: "Order created",
-        description: "Your order has been placed successfully and is now available for drivers",
-      });
+      
+      // Wait a moment for offers to be created
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Invalidate offers query to fetch fresh data
+      queryClient.invalidateQueries({ queryKey: ["/api/orders", order.id, "offers"] });
+      
       form.reset();
       setSignatureData(null);
       setOpen(false);
+      
+      // Call callback to open ViewOrderDialog
+      if (onOrderCreated && order?.id) {
+        onOrderCreated(order.id);
+      } else {
+        toast({
+          title: "Order created",
+          description: "Your order has been placed successfully. Select a driver to proceed.",
+        });
+      }
     },
     onError: (error: any) => {
       console.error("Order creation error:", error);

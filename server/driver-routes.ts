@@ -404,150 +404,22 @@ router.get("/offers", async (req, res) => {
 
     const now = new Date().toISOString();
 
-    // 1. Fetch existing dispatch offers with order and customer details
-    const { data: offers, error: offersError } = await supabaseAdmin
-      .from("dispatch_offers")
-      .select(`
-        *,
-        orders (
-          *,
-          fuel_types (
-            id,
-            label,
-            code
-          ),
-          delivery_addresses (
-            id,
-            label,
-            address_street,
-            address_city,
-            address_province
-          ),
-          customers (
-            id,
-            company_name,
-            user_id
-          )
-        )
-      `)
-      .eq("driver_id", driver.id)
-      .eq("state", "offered")
-      .gt("expires_at", now)
-      .order("created_at", { ascending: false });
-
-    if (offersError) {
-      throw offersError;
-    }
-
-    // 2. Fetch orders in "created" state that have NO dispatch offers yet (show to ALL drivers)
-    // These are orders waiting for dispatch offers to be created
-    const { data: ordersWithoutOffers, error: ordersError } = await supabaseAdmin
-      .from("orders")
-      .select(`
-        *,
-        fuel_types (
-          id,
-          label,
-          code
-        ),
-        delivery_addresses (
-          id,
-          label,
-          address_street,
-          address_city,
-          address_province
-        ),
-        customers (
-          id,
-          company_name,
-          user_id
-        )
-      `)
-      .eq("state", "created")
-      .is("assigned_driver_id", null)
-      .order("created_at", { ascending: false });
-
-    if (ordersError) {
-      throw ordersError;
-    }
-
-    // Check which orders actually have no dispatch offers
-    const orderIdsWithOffers = new Set(
-      (offers || []).map((offer: any) => offer.order_id || offer.orders?.id).filter(Boolean)
-    );
-
-    // Get all order IDs that have dispatch offers (any driver)
-    const { data: allOffers } = await supabaseAdmin
-      .from("dispatch_offers")
-      .select("order_id")
-      .eq("state", "offered")
-      .gt("expires_at", now);
-
-    const orderIdsWithAnyOffers = new Set(
-      (allOffers || []).map((offer: any) => offer.order_id).filter(Boolean)
-    );
-
-    // Filter to only orders that have NO dispatch offers at all
-    let pendingOrders = (ordersWithoutOffers || []).filter(
-      (order: any) => !orderIdsWithAnyOffers.has(order.id)
-    );
-
-    // Filter pending orders by distance if driver has location set
-    if (driver.current_lat && driver.current_lng && pendingOrders.length > 0) {
-      const { calculateDistance } = await import("./utils/distance");
-      const radiusPreference = driver.job_radius_preference_miles || 50; // Default 50 miles
-      
-      pendingOrders = pendingOrders.filter((order: any) => {
-        if (!order.drop_lat || !order.drop_lng) {
-          return false; // Skip orders without delivery location
-        }
-        
-        const distance = calculateDistance(
-          driver.current_lat!,
-          driver.current_lng!,
-          order.drop_lat,
-          order.drop_lng
-        );
-        
-        return distance <= radiusPreference;
-      });
-    }
-
-    // 3. Convert pending orders to offer-like objects for consistent frontend display
-    const pendingOffers = pendingOrders.map((order: any) => ({
-      id: `pending-${order.id}`, // Synthetic ID for pending offers
-      order_id: order.id,
-      driver_id: driver.id,
-      state: "pending" as const, // Special state to indicate no offer created yet
-      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24 hours from now
-      created_at: order.created_at,
-      orders: order, // Include full order data
-      isPendingOffer: true, // Flag to identify these are pending offers
-    }));
-
-    // 4. Combine existing offers and pending offers
-    const allOffersList = [
-      ...(offers || []),
-      ...pendingOffers,
-    ].sort((a: any, b: any) => {
-      // Sort by created_at descending (newest first)
-      const aTime = new Date(a.created_at || a.orders?.created_at || 0).getTime();
-      const bTime = new Date(b.created_at || b.orders?.created_at || 0).getTime();
-      return bTime - aTime;
+    // NEW FLOW: Drivers don't need to write offers anymore
+    // Offers are automatically created when customer places order with state "pending_customer"
+    // Drivers only see orders that are already assigned to them (in "My Jobs" tab)
+    // This endpoint now returns empty array - drivers don't need to see available orders
+    
+    // Return empty array - no manual offers needed
+    // Drivers will only see assigned orders in the "My Jobs" tab
+    // The "Available" tab will show an informational message
+    res.json({
+      offers: [],
+      message: "Orders are automatically matched. You'll see assigned orders in 'My Jobs' tab.",
+      eligibilityIssues,
+      driverStatus: {
+        hasLocation: !!(driver.current_lat && driver.current_lng),
+      }
     });
-
-    // Return offers with eligibility info if no offers found
-    if (allOffersList.length === 0 && eligibilityIssues.length > 0) {
-      return res.json({
-        offers: [],
-        eligibilityIssues,
-        driverStatus: {
-          hasLocation: !!(driver.current_lat && driver.current_lng),
-        }
-      });
-    }
-
-    res.json(allOffersList);
   } catch (error: any) {
     // Handle PGRST116 error (no rows found) gracefully
     if (error?.code === 'PGRST116') {
@@ -1080,8 +952,8 @@ router.post("/orders/:orderId/complete", async (req, res) => {
       return res.status(404).json({ error: "Order not found or not assigned to you" });
     }
 
-    if (!["picked_up", "en_route"].includes(order.state)) {
-      return res.status(409).json({ error: "Order must be picked up or en route before completion" });
+    if (order.state !== "picked_up") {
+      return res.status(409).json({ error: "Order must be picked up before completion" });
     }
 
     const nowIso = new Date().toISOString();
@@ -1098,7 +970,7 @@ router.post("/orders/:orderId/complete", async (req, res) => {
       })
       .eq("id", orderId)
       .eq("assigned_driver_id", driver.id)
-      .in("state", ["picked_up", "en_route"]);
+      .eq("state", "picked_up");
 
     if (updateError) throw updateError;
 
@@ -1246,20 +1118,19 @@ router.post("/orders/:orderId/complete", async (req, res) => {
 });
 
 // Accept a dispatch offer
+// Note: Pricing is now automatically calculated when order is created
+// Drivers can still accept offers to acknowledge them, but pricing is pre-set
 const driverOfferAcceptanceSchema = z.object({
   proposedDeliveryTime: z
-    .string({
-      required_error: "Proposed delivery time is required",
-      invalid_type_error: "Proposed delivery time must be a string",
-    })
-    .min(1, "Proposed delivery time is required"),
+    .string()
+    .optional()
+    .nullable(),
   pricePerKmCents: z
-    .number({
-      required_error: "Price per km is required",
-      invalid_type_error: "Price per km must be a number",
-    })
+    .number()
     .int("Price per km must be a whole number")
-    .min(0, "Price per km must be positive"),
+    .min(0, "Price per km must be positive")
+    .optional()
+    .nullable(), // Optional - pricing is auto-calculated
   notes: z
     .string()
     .max(500, "Notes must be 500 characters or less")
@@ -1359,16 +1230,28 @@ router.post("/offers/:id/accept", async (req, res) => {
     const nowIso = new Date().toISOString();
     let updatedOfferRecord: any = null;
 
+    // Get admin-set price per km (pricing is now auto-calculated)
+    const { data: appSettings } = await supabaseAdmin
+      .from("app_settings")
+      .select("price_per_km_cents")
+      .eq("id", 1)
+      .single();
+
+    const adminPricePerKmCents = appSettings?.price_per_km_cents || 5000;
+    // Use provided pricePerKmCents if given, otherwise use existing offer's price, otherwise use admin default
+    const finalPricePerKmCents = pricePerKmCents ?? offer.proposed_price_per_km_cents ?? adminPricePerKmCents;
+
     if (offerId.startsWith("pending-")) {
       // Create a new dispatch offer record representing this proposal
+      // Note: This path is less common now since offers are auto-created
       const { data: insertedOffer, error: insertError } = await supabaseAdmin
         .from("dispatch_offers")
         .insert({
           order_id: offer.order_id,
           driver_id: driver.id,
           state: "pending_customer",
-          proposed_delivery_time: proposedDeliveryTime,
-          proposed_price_per_km_cents: pricePerKmCents,
+          proposed_delivery_time: proposedDeliveryTime || null,
+          proposed_price_per_km_cents: finalPricePerKmCents,
           proposed_notes: notes || null,
           expires_at: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
         })
@@ -1381,18 +1264,30 @@ router.post("/offers/:id/accept", async (req, res) => {
 
       updatedOfferRecord = insertedOffer;
     } else {
-      // Update existing dispatch offer to pending customer review
+      // Update existing dispatch offer (pricing is already set, just update notes/delivery time if provided)
+      const updateData: any = {
+        updated_at: nowIso,
+      };
+
+      // Only update fields if provided
+      if (proposedDeliveryTime !== undefined && proposedDeliveryTime !== null) {
+        updateData.proposed_delivery_time = proposedDeliveryTime;
+      }
+      if (notes !== undefined) {
+        updateData.proposed_notes = notes || null;
+      }
+      // Pricing is auto-calculated, but allow override if explicitly provided
+      if (pricePerKmCents !== undefined && pricePerKmCents !== null) {
+        updateData.proposed_price_per_km_cents = pricePerKmCents;
+      }
+
+      // Only update state if it's still "offered" (offers are now created as "pending_customer")
       const { data: updatedOffer, error: updateOfferError } = await supabaseAdmin
         .from("dispatch_offers")
-        .update({
-          state: "pending_customer",
-          proposed_delivery_time: proposedDeliveryTime,
-          proposed_price_per_km_cents: pricePerKmCents,
-          proposed_notes: notes || null,
-          updated_at: nowIso,
-        })
+        .update(updateData)
         .eq("id", offerId)
-        .eq("state", "offered")
+        .eq("driver_id", driver.id)
+        .in("state", ["offered", "pending_customer"])
         .select("*, orders(*)")
         .single();
 

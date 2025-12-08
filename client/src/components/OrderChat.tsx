@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -129,43 +128,38 @@ export function OrderChat({ orderId, currentUserType }: OrderChatProps) {
 
   if (threadLoading) {
     return (
-      <Card>
-        <CardContent className="p-6 flex items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </CardContent>
-      </Card>
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
     );
   }
 
   if (threadError || !thread) {
     return (
-      <Card>
-        <CardContent className="p-6 text-center text-muted-foreground">
-          <MessageCircle className="h-12 w-12 mx-auto mb-3 opacity-50" />
-          <p>Chat not available</p>
-          <p className="text-sm mt-1">Chat will be available once a driver is assigned</p>
-        </CardContent>
-      </Card>
+      <div className="text-center py-12 text-muted-foreground">
+        <MessageCircle className="h-12 w-12 mx-auto mb-3 opacity-50" />
+        <p>Chat not available</p>
+        <p className="text-sm mt-1">Chat will be available once a driver is assigned</p>
+      </div>
     );
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <MessageCircle className="h-5 w-5" />
-          Order Chat
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="p-0">
-        <ScrollArea ref={scrollAreaRef} className="h-[300px] px-4">
+    <div className="flex flex-col h-full min-h-[500px]">
+      <div className="flex items-center gap-2 mb-4 pb-3 border-b">
+        <MessageCircle className="h-5 w-5 text-primary" />
+        <h3 className="font-semibold text-base">Order Chat</h3>
+      </div>
+      <div className="flex-1 flex flex-col min-h-0">
+        <ScrollArea ref={scrollAreaRef} className="flex-1 px-1 min-h-[350px]">
           {messagesLoading ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           ) : messages.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
-              <p>No messages yet</p>
+              <MessageCircle className="h-12 w-12 mx-auto mb-3 opacity-30" />
+              <p className="font-medium">No messages yet</p>
               <p className="text-sm mt-1">Start the conversation!</p>
             </div>
           ) : (
@@ -178,17 +172,17 @@ export function OrderChat({ orderId, currentUserType }: OrderChatProps) {
                     className={`flex gap-3 ${isOwnMessage ? 'flex-row-reverse' : 'flex-row'}`}
                     data-testid={`message-${msg.id}`}
                   >
-                    <Avatar className="h-8 w-8 bg-primary/10 text-primary uppercase">
-                      <AvatarFallback className="font-semibold">
+                    <Avatar className="h-8 w-8 bg-primary/10 text-primary uppercase flex-shrink-0">
+                      <AvatarFallback className="font-semibold text-xs">
                         {msg.senderType === "driver" ? "D" : "C"}
                       </AvatarFallback>
                     </Avatar>
-                    <div className={`flex flex-col gap-1 max-w-[70%] ${isOwnMessage ? 'items-end' : 'items-start'}`}>
-                      <div className="flex items-center gap-2 text-sm">
+                    <div className={`flex flex-col gap-1 max-w-[75%] ${isOwnMessage ? 'items-end' : 'items-start'}`}>
+                      <div className="flex items-center gap-2 text-xs">
                         <span className="font-medium text-foreground">
                           {isOwnMessage ? 'You' : msg.senderName}
                         </span>
-                        <span className="text-xs text-muted-foreground">
+                        <span className="text-muted-foreground">
                           {new Date(msg.createdAt).toLocaleTimeString([], { 
                             hour: '2-digit', 
                             minute: '2-digit' 
@@ -214,7 +208,7 @@ export function OrderChat({ orderId, currentUserType }: OrderChatProps) {
           )}
         </ScrollArea>
 
-        <div className="p-4 border-t">
+        <div className="pt-4 mt-auto border-t">
           <div className="flex gap-2">
             <Input
               data-testid="input-chat-message"
@@ -223,6 +217,7 @@ export function OrderChat({ orderId, currentUserType }: OrderChatProps) {
               onChange={(e) => setMessageText(e.target.value)}
               onKeyPress={handleKeyPress}
               disabled={sendMessageMutation.isPending}
+              className="flex-1"
             />
             <Button
               data-testid="button-send-message"
@@ -238,7 +233,7 @@ export function OrderChat({ orderId, currentUserType }: OrderChatProps) {
             </Button>
           </div>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

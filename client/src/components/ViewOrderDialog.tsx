@@ -305,6 +305,10 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent data-testid="dialog-view-order">
+          <DialogHeader>
+            <DialogTitle>Order Details</DialogTitle>
+            <DialogDescription>Loading order details...</DialogDescription>
+          </DialogHeader>
           <div className="flex items-center justify-center py-8">
             <p className="text-muted-foreground">Loading order details...</p>
           </div>
@@ -314,7 +318,16 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
   }
 
   if (!order) {
-    return null;
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent data-testid="dialog-view-order">
+          <DialogHeader>
+            <DialogTitle>Order Details</DialogTitle>
+            <DialogDescription>Order not found</DialogDescription>
+          </DialogHeader>
+        </DialogContent>
+      </Dialog>
+    );
   }
 
   const canEdit = ["created", "awaiting_payment"].includes(order.state);
@@ -378,7 +391,12 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
               {(loadingQuotes || driverQuotes.length > 0) && (
                 <div className="space-y-3 border border-border/60 rounded-lg p-3 bg-background/60">
                   <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium">Driver Quotes</p>
+                    <div>
+                      <p className="text-sm font-medium">Available Drivers</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Prices calculated automatically based on driver pricing and distance
+                      </p>
+                    </div>
                     {loadingQuotes && (
                       <span className="flex items-center gap-2 text-xs text-muted-foreground">
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -389,24 +407,27 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
 
                     {!loadingQuotes && driverQuotes.length === 0 ? (
                       <p className="text-xs text-muted-foreground">
-                        No driver quotes yet. We’ll notify you as soon as a driver responds.
+                        No drivers available yet. We'll notify you as soon as drivers become available.
                       </p>
                     ) : (
                       <div className="space-y-3">
-                        {driverQuotes.map((quote: any) => {
-                          const pricePerKm = (Number(quote.proposed_price_per_km_cents) || 0) / 100;
-                          // Calculate estimated total (will be finalized when accepted)
-                          const litres = parseFloat(order.litres || 0);
-                          const fuelPricePerLiter = (order.fuel_price_cents || 0) / 100;
-                          const estimatedFuelCost = fuelPricePerLiter * litres;
-                          // Note: Delivery fee will be calculated as price_per_km * distance_km when accepted
-                          const proposedTime = quote.proposed_delivery_time
-                            ? new Date(quote.proposed_delivery_time).toLocaleString("en-ZA", {
-                                dateStyle: "medium",
-                                timeStyle: "short",
-                                timeZone: "Africa/Johannesburg",
-                              })
-                            : "Not specified";
+                        {/* Sort by total price (lowest first) */}
+                        {[...driverQuotes]
+                          .sort((a: any, b: any) => {
+                            const totalA = a.estimatedPricing?.total || 0;
+                            const totalB = b.estimatedPricing?.total || 0;
+                            return totalA - totalB;
+                          })
+                          .map((quote: any) => {
+                          // Use estimated pricing from API response
+                          const estimatedPricing = quote.estimatedPricing || {};
+                          const totalPrice = estimatedPricing.total || 0;
+                          const fuelCost = estimatedPricing.fuelCost || 0;
+                          const deliveryFee = estimatedPricing.deliveryFee || 0;
+                          const distanceKm = estimatedPricing.distanceKm || 0;
+                          const pricePerKmCents = estimatedPricing.pricePerKmCents || quote.proposed_price_per_km_cents || 0;
+                          const pricePerKm = pricePerKmCents / 100;
+
                           const driverName = quote.driver?.profile?.fullName || "Driver";
                           const isPendingDecision = !order.assigned_driver_id && quote.state === "pending_customer";
                           const isAccepted = quote.state === "customer_accepted";
@@ -419,7 +440,14 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                           const driverProfilePhotoUrl = quote.driver?.profile?.profile_photo_url || quote.driver?.profile?.profilePhotoUrl;
                           
                           return (
-                            <div key={quote.id} className="border border-border rounded-lg p-3 space-y-3">
+                            <div 
+                              key={quote.id} 
+                              className={`border rounded-lg p-3 space-y-3 ${
+                                isPendingDecision 
+                                  ? "border-primary/50 bg-primary/5 hover:border-primary/70 transition-colors" 
+                                  : "border-border"
+                              }`}
+                            >
                               <div className="flex items-start justify-between gap-3">
                                 <div className="flex items-start gap-3 flex-1">
                                   <Avatar className="h-10 w-10 flex-shrink-0">
@@ -439,7 +467,7 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                                       {driverName.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)}
                                     </AvatarFallback>
                                   </Avatar>
-                                  <div>
+                                  <div className="flex-1">
                                     <p className="text-sm font-semibold">{driverName}</p>
                                     {quote.driver?.profile?.phone && (
                                       <p className="text-xs text-muted-foreground">
@@ -459,16 +487,30 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                                   </div>
                                 </div>
                                 <div className="text-right">
-                                  <p className="text-sm font-semibold text-primary">
-                                    {formatCurrency(pricePerKm, currency)}/km
+                                  <p className="text-lg font-bold text-primary">
+                                    {formatCurrency(totalPrice, currency)}
                                   </p>
-                                  <p className="text-xs text-muted-foreground">Price per km</p>
+                                  <p className="text-xs text-muted-foreground">Total Price</p>
                                 </div>
                               </div>
 
-                              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                <Calendar className="h-3.5 w-3.5" />
-                                <span>{proposedTime}</span>
+                              {/* Pricing Breakdown */}
+                              <div className="grid grid-cols-2 gap-2 text-xs border-t pt-2">
+                                <div>
+                                  <p className="text-muted-foreground">Fuel Cost</p>
+                                  <p className="font-medium">{formatCurrency(fuelCost, currency)}</p>
+                                </div>
+                                <div>
+                                  <p className="text-muted-foreground">Delivery Fee</p>
+                                  <p className="font-medium">
+                                    {formatCurrency(deliveryFee, currency)}
+                                    {distanceKm > 0 && (
+                                      <span className="text-muted-foreground ml-1">
+                                        ({distanceKm.toFixed(1)} km × {formatCurrency(pricePerKm, currency)}/km)
+                                      </span>
+                                    )}
+                                  </p>
+                                </div>
                               </div>
 
                               {quote.proposed_notes && (
@@ -493,7 +535,7 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                                   )}
                                   {quote.state === "pending_customer" && (
                                     <Badge variant="outline" className="text-xs text-primary">
-                                      Awaiting your decision
+                                      Available
                                     </Badge>
                                   )}
                                 </div>
@@ -508,10 +550,10 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                                     {isProcessing ? (
                                       <>
                                         <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                                        Accepting…
+                                        Selecting…
                                       </>
                                     ) : (
-                                      "Accept Quote"
+                                      "Select Driver"
                                     )}
                                   </Button>
                                 )}

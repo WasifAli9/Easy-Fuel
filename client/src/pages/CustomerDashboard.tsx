@@ -174,7 +174,12 @@ export default function CustomerDashboard() {
             <h1 className="text-3xl font-bold">My Orders</h1>
             <p className="text-muted-foreground">Track and manage your fuel deliveries</p>
           </div>
-          <CreateOrderDialog />
+          <CreateOrderDialog 
+            onOrderCreated={(orderId) => {
+              setSelectedOrderId(orderId);
+              setViewDialogOpen(true);
+            }}
+          />
         </div>
 
         <Tabs defaultValue="all" className="space-y-6">

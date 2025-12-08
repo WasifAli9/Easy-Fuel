@@ -173,6 +173,7 @@ export const appSettings = pgTable("app_settings", {
   serviceFeePercent: numeric("service_fee_percent").notNull().default("5"),
   serviceFeeMinCents: integer("service_fee_min_cents").notNull().default(10000),
   baseDeliveryFeeCents: integer("base_delivery_fee_cents").notNull().default(35000),
+  pricePerKmCents: integer("price_per_km_cents").notNull().default(5000), // Fixed price per km set by admin
   dispatchRadiusKm: numeric("dispatch_radius_km").notNull().default("50"),
   dispatchSlaSeconds: integer("dispatch_sla_seconds").notNull().default(120),
   createdAt: timestamp("created_at").defaultNow().notNull(),

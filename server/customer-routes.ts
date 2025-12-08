@@ -215,11 +215,12 @@ router.get("/orders/:id/offers", async (req, res) => {
       return res.status(404).json({ error: "Order not found" });
     }
 
+    // Get all offers for this order - including pending_customer (auto-calculated offers)
     const { data: offers, error: offersError } = await supabaseAdmin
       .from("dispatch_offers")
       .select("id, driver_id, state, proposed_delivery_time, proposed_price_per_km_cents, proposed_notes, created_at, updated_at, customer_response_at")
       .eq("order_id", orderId)
-      .in("state", ["pending_customer", "customer_accepted", "customer_declined"])
+      .in("state", ["pending_customer", "customer_accepted", "customer_declined", "offered"])
       .not("proposed_price_per_km_cents", "is", null)
       .order("created_at", { ascending: false });
 
@@ -248,7 +249,7 @@ router.get("/orders/:id/offers", async (req, res) => {
     // Get order to fetch fuel_type_id for driver pricing lookup
     const { data: orderForPricing } = await supabaseAdmin
       .from("orders")
-      .select("fuel_type_id, selected_depot_id, drop_lat, drop_lng, litres")
+      .select("fuel_type_id, drop_lat, drop_lng, litres")
       .eq("id", orderId)
       .single();
 
@@ -269,39 +270,44 @@ router.get("/orders/:id/offers", async (req, res) => {
       }
     }
 
-    // Calculate distance if depot is available
-    let distanceKm = 0;
-    if (orderForPricing?.selected_depot_id && orderForPricing?.drop_lat && orderForPricing?.drop_lng) {
-      const { data: depot } = await supabaseAdmin
-        .from("depots")
-        .select("lat, lng")
-        .eq("id", orderForPricing.selected_depot_id)
-        .single();
+    // Get driver locations for distance calculation
+    const { data: driversWithLocation } = await supabaseAdmin
+      .from("drivers")
+      .select("id, current_lat, current_lng")
+      .in("id", driverIds);
 
-      if (depot) {
-        const { calculateDistance, milesToKm } = await import("./utils/distance");
-        const distanceMiles = calculateDistance(
-          depot.lat,
-          depot.lng,
-          orderForPricing.drop_lat,
-          orderForPricing.drop_lng
-        );
-        distanceKm = milesToKm(distanceMiles);
-      }
-    }
+    const driverLocationMap = new Map(
+      (driversWithLocation || []).map((d: any) => [d.id, { lat: d.current_lat, lng: d.current_lng }])
+    );
 
     const driverMap = new Map((drivers || []).map((driver: any) => [driver.id, driver]));
     const profileMap = new Map((profiles || []).map((profile: any) => [profile.id, profile]));
+
+    const { calculateDistance, milesToKm } = await import("./utils/distance");
 
     const formattedOffers = offers.map((offer: any) => {
       const driver = driverMap.get(offer.driver_id);
       const profile = driver ? profileMap.get(driver.user_id) : null;
       const fuelPricePerLiterCents = driverPricingMap.get(offer.driver_id) || 0;
 
-      // Calculate estimated pricing for this quote
+      // Calculate distance from driver's current location to customer drop location
+      let distanceKm = 0;
+      const driverLocation = driverLocationMap.get(offer.driver_id);
+      if (driverLocation?.lat && driverLocation?.lng && orderForPricing?.drop_lat && orderForPricing?.drop_lng) {
+        const distanceMiles = calculateDistance(
+          driverLocation.lat,
+          driverLocation.lng,
+          orderForPricing.drop_lat,
+          orderForPricing.drop_lng
+        );
+        distanceKm = milesToKm(distanceMiles);
+      }
+
+      // Calculate pricing for this quote
       const litres = parseFloat(orderForPricing?.litres || 0);
       const fuelCost = (fuelPricePerLiterCents / 100) * litres;
-      const pricePerKmRands = (offer.proposed_price_per_km_cents || 0) / 100;
+      const pricePerKmCents = offer.proposed_price_per_km_cents || 0;
+      const pricePerKmRands = pricePerKmCents / 100;
       const deliveryFee = pricePerKmRands * distanceKm;
       const total = fuelCost + deliveryFee;
 
@@ -316,6 +322,7 @@ router.get("/orders/:id/offers", async (req, res) => {
                 ? {
                     fullName: profile.full_name,
                     phone: profile.phone,
+                    profilePhotoUrl: profile.profile_photo_url,
                   }
                 : null,
             }
@@ -326,6 +333,7 @@ router.get("/orders/:id/offers", async (req, res) => {
           deliveryFee,
           distanceKm,
           total,
+          pricePerKmCents,
         },
       };
     });
@@ -403,25 +411,23 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
     const pricePerKmCents = Number(offer.proposed_price_per_km_cents) || 0;
     const litres = Number(order.litres) || 0;
     
-    // Calculate distance from depot to drop location
+    // Calculate distance from driver's current location to customer drop location
     let distanceKm = 0;
-    if (order.selected_depot_id) {
-      const { data: depot, error: depotError } = await supabaseAdmin
-        .from("depots")
-        .select("lat, lng")
-        .eq("id", order.selected_depot_id)
-        .single();
-      
-      if (!depotError && depot) {
-        const { calculateDistance, milesToKm } = await import("./utils/distance");
-        const distanceMiles = calculateDistance(
-          depot.lat,
-          depot.lng,
-          order.drop_lat,
-          order.drop_lng
-        );
-        distanceKm = milesToKm(distanceMiles);
-      }
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("current_lat, current_lng")
+      .eq("id", offer.driver_id)
+      .single();
+    
+    if (!driverError && driver?.current_lat && driver?.current_lng && order.drop_lat && order.drop_lng) {
+      const { calculateDistance, milesToKm } = await import("./utils/distance");
+      const distanceMiles = calculateDistance(
+        driver.current_lat,
+        driver.current_lng,
+        order.drop_lat,
+        order.drop_lng
+      );
+      distanceKm = milesToKm(distanceMiles);
     }
     
     // Calculate total: (fuel_price_per_liter * litres) + (price_per_km * distance_km)
@@ -850,18 +856,21 @@ router.post("/orders", async (req, res) => {
     // No longer notifying suppliers about customer orders
     // Suppliers only interact with drivers through depot orders
 
-    // Create dispatch offers for drivers (async, don't wait)
-    createDispatchOffers({
-      orderId: newOrder.id,
-      fuelTypeId: newOrder.fuel_type_id,
-      dropLat: lat,
-      dropLng: lng,
-      litres: litresNum,
-      maxBudgetCents: maxBudgetCents || null,
-    })
-    .catch(() => {
-      // Dispatch offers creation failed
-    });
+    // Create dispatch offers for drivers IMMEDIATELY (wait for completion)
+    // This ensures drivers are available when customer views the order
+    try {
+      await createDispatchOffers({
+        orderId: newOrder.id,
+        fuelTypeId: newOrder.fuel_type_id,
+        dropLat: lat,
+        dropLng: lng,
+        litres: litresNum,
+        maxBudgetCents: maxBudgetCents || null,
+      });
+    } catch (error) {
+      console.error("Error creating dispatch offers:", error);
+      // Don't fail the order creation if offers fail - they can be created later
+    }
 
     res.status(201).json(newOrder);
   } catch (error: any) {

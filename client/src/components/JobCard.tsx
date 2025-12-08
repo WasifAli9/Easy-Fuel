@@ -113,25 +113,7 @@ export function JobCard({
           </div>
         </div>
       </CardContent>
-      {(onAccept || onReject) && (
-        <CardFooter className="flex gap-2 pt-0">
-          <Button 
-            variant="outline" 
-            className="flex-1"
-            onClick={onReject}
-            data-testid={`button-reject-${id}`}
-          >
-            Reject
-          </Button>
-          <Button 
-            className="flex-1"
-            onClick={onAccept}
-            data-testid={`button-accept-${id}`}
-          >
-            Write Offer
-          </Button>
-        </CardFooter>
-      )}
+      {/* No action buttons - offers are automatically created */}
     </Card>
   );
 }

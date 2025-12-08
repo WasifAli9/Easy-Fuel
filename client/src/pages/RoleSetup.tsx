@@ -7,7 +7,7 @@ import { supabase } from "@/lib/supabase";
 
 export default function RoleSetup() {
   const [loading, setLoading] = useState(false);
-  const { user, session, setUserRole } = useAuth();
+  const { user, session, profile, setUserRole } = useAuth();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [fullName, setFullName] = useState<string | null>(null);
@@ -85,21 +85,21 @@ export default function RoleSetup() {
       // Create profile and role-specific record
       await setUserRole(role, capitalizedName);
       
-      // Redirect immediately - don't wait for profile fetch
-      setLocation(`/${role}`);
-      
       // Show success toast (non-blocking)
       toast({
         title: "Profile created",
         description: "Your account is all set up!",
       });
+      
+      // Immediately redirect using window.location to bypass service worker caching
+      // setUserRole already awaits all database operations, so we can redirect immediately
+      window.location.href = `/${role}`;
     } catch (error: any) {
       toast({
         title: "Error",
         description: error.message,
         variant: "destructive",
       });
-    } finally {
       setLoading(false);
     }
   }
