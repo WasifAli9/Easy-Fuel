@@ -23,7 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Loader2, User, FileText, Truck, Building2, ShieldCheck, Upload, Camera } from "lucide-react";
+import { Loader2, User, FileText, Truck, Building2, ShieldCheck, Upload, Camera, Eye, CheckCircle2, XCircle } from "lucide-react";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
 import type { UploadResult } from "@uppy/core";
@@ -144,6 +144,10 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Loading User Details</DialogTitle>
+            <DialogDescription>Please wait while we fetch the user information.</DialogDescription>
+          </DialogHeader>
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
           </div>
@@ -210,7 +214,39 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
           <div className="flex items-center gap-4">
             <div className="relative">
               <Avatar className="h-16 w-16">
-                <AvatarImage src={userDetails.profile.profile_photo_url || undefined} />
+                <AvatarImage 
+                  src={
+                    userDetails.profile.profile_photo_url 
+                      ? (() => {
+                          const photoUrl = userDetails.profile.profile_photo_url;
+                          // Handle Supabase Storage format: bucket/path (e.g., "private-objects/uploads/uuid")
+                          if (photoUrl.includes('/') && !photoUrl.startsWith('/') && !photoUrl.startsWith('http')) {
+                            // Check if it's a private bucket (private-objects)
+                            if (photoUrl.startsWith('private-objects/')) {
+                              // Use our server endpoint for private objects (handles authentication)
+                              const pathOnly = photoUrl.replace('private-objects/', '');
+                              return `/objects/${pathOnly}`;
+                            } else {
+                              // For public buckets, use Supabase public URL
+                              return `${import.meta.env.VITE_SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co'}/storage/v1/object/public/${photoUrl}`;
+                            }
+                          }
+                          // Handle /objects/ path format
+                          else if (photoUrl.startsWith('/objects/')) {
+                            return photoUrl;
+                          }
+                          // Handle full URLs
+                          else if (photoUrl.startsWith('http://') || photoUrl.startsWith('https://')) {
+                            return photoUrl;
+                          }
+                          // Default: assume it's a relative path
+                          else {
+                            return `/objects/${photoUrl}`;
+                          }
+                        })()
+                      : undefined
+                  } 
+                />
                 <AvatarFallback className="bg-primary text-primary-foreground text-lg">
                   {userDetails.profile.full_name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)}
                 </AvatarFallback>
@@ -339,36 +375,57 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
                     <div className="space-y-2 mt-1">
                       <Input
                         placeholder="Street"
-                        value={formData.address_street || ""}
-                        onChange={(e) => setFormData({ ...formData, address_street: e.target.value })}
+                        value={formData.address_street || formData.address_line_1 || ""}
+                        onChange={(e) => setFormData({ ...formData, address_street: e.target.value, address_line_1: e.target.value })}
                       />
                       <div className="grid grid-cols-2 gap-2">
                         <Input
                           placeholder="City"
-                          value={formData.address_city || ""}
-                          onChange={(e) => setFormData({ ...formData, address_city: e.target.value })}
+                          value={formData.address_city || formData.city || ""}
+                          onChange={(e) => setFormData({ ...formData, address_city: e.target.value, city: e.target.value })}
                         />
                         <Input
                           placeholder="Province"
-                          value={formData.address_province || ""}
-                          onChange={(e) => setFormData({ ...formData, address_province: e.target.value })}
+                          value={formData.address_province || formData.province || ""}
+                          onChange={(e) => setFormData({ ...formData, address_province: e.target.value, province: e.target.value })}
                         />
                       </div>
                       <Input
                         placeholder="Postal Code"
-                        value={formData.address_postal_code || ""}
-                        onChange={(e) => setFormData({ ...formData, address_postal_code: e.target.value })}
+                        value={formData.address_postal_code || formData.postal_code || ""}
+                        onChange={(e) => setFormData({ ...formData, address_postal_code: e.target.value, postal_code: e.target.value })}
                       />
                     </div>
                   ) : (
                     <div className="text-sm mt-1 text-muted-foreground">
-                      {userDetails.profile.address_street ? (
-                        <>
-                          {userDetails.profile.address_street}<br />
-                          {userDetails.profile.address_city}, {userDetails.profile.address_province}<br />
-                          {userDetails.profile.address_postal_code}
-                        </>
-                      ) : "No address provided"}
+                      {(() => {
+                        // For drivers, check driver table first, then profile
+                        if (userDetails.driver) {
+                          const address = userDetails.driver.address_line_1 || userDetails.profile.address_street;
+                          const city = userDetails.driver.city || userDetails.profile.address_city;
+                          const province = userDetails.driver.province || userDetails.profile.address_province;
+                          const postalCode = userDetails.driver.postal_code || userDetails.profile.address_postal_code;
+                          
+                          if (address || city) {
+                            return (
+                              <>
+                                {address && <>{address}<br /></>}
+                                {city && province ? `${city}, ${province}` : city || province}
+                                {postalCode && <><br />{postalCode}</>}
+                              </>
+                            );
+                          }
+                        } else if (userDetails.profile.address_street) {
+                          return (
+                            <>
+                              {userDetails.profile.address_street}<br />
+                              {userDetails.profile.address_city}, {userDetails.profile.address_province}<br />
+                              {userDetails.profile.address_postal_code}
+                            </>
+                          );
+                        }
+                        return "No address provided";
+                      })()}
                     </div>
                   )}
                 </div>
@@ -579,154 +636,191 @@ function CustomerDetails({ customer, formData, setFormData, isEditing }: any) {
 
 // Driver Details Component
 function DriverDetails({ driver, formData, setFormData, isEditing }: any) {
+  if (!driver) return <p className="text-sm text-muted-foreground">No driver information available</p>;
+
   return (
-    <div className="space-y-4">
-      <h3 className="font-semibold text-sm text-muted-foreground">Driver Information</h3>
-      
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <Label>SA ID / Passport</Label>
-          {isEditing ? (
-            <Input
-              value={formData.za_id_number || formData.passport_number || ""}
-              onChange={(e) => setFormData({ ...formData, za_id_number: e.target.value })}
-            />
-          ) : (
-            <p className="text-sm mt-1">{driver.za_id_number || driver.passport_number || "N/A"}</p>
-          )}
-        </div>
-        <div>
-          <Label>Driver's License</Label>
-          {isEditing ? (
-            <Input
-              value={formData.drivers_license_number || ""}
-              onChange={(e) => setFormData({ ...formData, drivers_license_number: e.target.value })}
-            />
-          ) : (
-            <p className="text-sm mt-1">{driver.drivers_license_number || "N/A"}</p>
-          )}
+    <div className="space-y-6">
+      {/* Identity & Legal Information */}
+      <div>
+        <h3 className="font-semibold text-sm text-muted-foreground mb-4">Identity & Legal Information</h3>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <Label>Driver Type</Label>
+            <p className="text-sm mt-1 capitalize">{driver.driver_type || "N/A"}</p>
+          </div>
+          <div>
+            <Label>ID Type</Label>
+            <p className="text-sm mt-1">{driver.id_type || "N/A"}</p>
+          </div>
+          <div>
+            <Label>ID Number</Label>
+            <p className="text-sm mt-1">{driver.id_number || "N/A"}</p>
+          </div>
+          <div>
+            <Label>ID Issue Country</Label>
+            <p className="text-sm mt-1">{driver.id_issue_country || "N/A"}</p>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <Label>PRDP Number</Label>
-          {isEditing ? (
-            <Input
-              value={formData.prdp_number || ""}
-              onChange={(e) => setFormData({ ...formData, prdp_number: e.target.value })}
-            />
-          ) : (
-            <p className="text-sm mt-1">{driver.prdp_number || "N/A"}</p>
-          )}
-        </div>
-        <div>
-          <Label>Availability Status</Label>
-          {isEditing ? (
-            <Select
-              value={formData.availability_status}
-              onValueChange={(value) => setFormData({ ...formData, availability_status: value })}
-            >
-              <SelectTrigger data-testid="select-availability-status">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="offline">Offline</SelectItem>
-                <SelectItem value="online">Online</SelectItem>
-                <SelectItem value="busy">Busy</SelectItem>
-              </SelectContent>
-            </Select>
-          ) : (
-            <p className="text-sm mt-1 capitalize">{driver.availability_status || "offline"}</p>
-          )}
+      {/* Driver's License */}
+      <div>
+        <h3 className="font-semibold text-sm text-muted-foreground mb-4">Driver's License</h3>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <Label>License Number</Label>
+            <p className="text-sm mt-1">{driver.license_number || "N/A"}</p>
+          </div>
+          <div>
+            <Label>License Code</Label>
+            <p className="text-sm mt-1">{driver.license_code || "N/A"}</p>
+          </div>
+          <div>
+            <Label>Issue Date</Label>
+            <p className="text-sm mt-1">{driver.license_issue_date ? new Date(driver.license_issue_date).toLocaleDateString() : "N/A"}</p>
+          </div>
+          <div>
+            <Label>Expiry Date</Label>
+            <p className="text-sm mt-1">{driver.license_expiry_date ? new Date(driver.license_expiry_date).toLocaleDateString() : "N/A"}</p>
+          </div>
         </div>
       </div>
 
-      <h4 className="font-semibold text-sm text-muted-foreground pt-2">Banking Information</h4>
-      <div className="grid grid-cols-2 gap-4">
+      {/* Professional Driving Permit (PrDP) */}
+      {driver.prdp_required && (
         <div>
-          <Label>Account Holder</Label>
-          {isEditing ? (
-            <Input
-              value={formData.bank_account_name || ""}
-              onChange={(e) => setFormData({ ...formData, bank_account_name: e.target.value })}
-            />
-          ) : (
-            <p className="text-sm mt-1">{driver.bank_account_name || "N/A"}</p>
-          )}
+          <h3 className="font-semibold text-sm text-muted-foreground mb-4">Professional Driving Permit (PrDP)</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label>PrDP Number</Label>
+              <p className="text-sm mt-1">{driver.prdp_number || "N/A"}</p>
+            </div>
+            <div>
+              <Label>Category</Label>
+              <p className="text-sm mt-1">{driver.prdp_category || "N/A"}</p>
+            </div>
+            <div>
+              <Label>Issue Date</Label>
+              <p className="text-sm mt-1">{driver.prdp_issue_date ? new Date(driver.prdp_issue_date).toLocaleDateString() : "N/A"}</p>
+            </div>
+            <div>
+              <Label>Expiry Date</Label>
+              <p className="text-sm mt-1">{driver.prdp_expiry_date ? new Date(driver.prdp_expiry_date).toLocaleDateString() : "N/A"}</p>
+            </div>
+          </div>
         </div>
+      )}
+
+      {/* Dangerous Goods Training */}
+      {driver.dg_training_required && (
         <div>
-          <Label>Bank Name</Label>
-          {isEditing ? (
-            <Input
-              value={formData.bank_name || ""}
-              onChange={(e) => setFormData({ ...formData, bank_name: e.target.value })}
-            />
-          ) : (
+          <h3 className="font-semibold text-sm text-muted-foreground mb-4">Dangerous Goods Training</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label>Training Provider</Label>
+              <p className="text-sm mt-1">{driver.dg_training_provider || "N/A"}</p>
+            </div>
+            <div>
+              <Label>Certificate Number</Label>
+              <p className="text-sm mt-1">{driver.dg_training_certificate_number || "N/A"}</p>
+            </div>
+            <div>
+              <Label>Issue Date</Label>
+              <p className="text-sm mt-1">{driver.dg_training_issue_date ? new Date(driver.dg_training_issue_date).toLocaleDateString() : "N/A"}</p>
+            </div>
+            <div>
+              <Label>Expiry Date</Label>
+              <p className="text-sm mt-1">{driver.dg_training_expiry_date ? new Date(driver.dg_training_expiry_date).toLocaleDateString() : "N/A"}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Criminal Check */}
+      {driver.criminal_check_done && (
+        <div>
+          <h3 className="font-semibold text-sm text-muted-foreground mb-4">Criminal Check</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label>Reference Number</Label>
+              <p className="text-sm mt-1">{driver.criminal_check_reference || "N/A"}</p>
+            </div>
+            <div>
+              <Label>Check Date</Label>
+              <p className="text-sm mt-1">{driver.criminal_check_date ? new Date(driver.criminal_check_date).toLocaleDateString() : "N/A"}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Company Information */}
+      {driver.is_company_driver && (
+        <div>
+          <h3 className="font-semibold text-sm text-muted-foreground mb-4">Company Information</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label>Company ID</Label>
+              <p className="text-sm mt-1">{driver.company_id || "N/A"}</p>
+            </div>
+            <div>
+              <Label>Role in Company</Label>
+              <p className="text-sm mt-1">{driver.role_in_company || "N/A"}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Banking Information */}
+      <div>
+        <h3 className="font-semibold text-sm text-muted-foreground mb-4">Banking Information</h3>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <Label>Account Holder</Label>
+            <p className="text-sm mt-1">{driver.bank_account_holder || driver.bank_account_name || "N/A"}</p>
+          </div>
+          <div>
+            <Label>Bank Name</Label>
             <p className="text-sm mt-1">{driver.bank_name || "N/A"}</p>
-          )}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <Label>Account Number</Label>
-          {isEditing ? (
-            <Input
-              value={formData.account_number || ""}
-              onChange={(e) => setFormData({ ...formData, account_number: e.target.value })}
-            />
-          ) : (
+          </div>
+          <div>
+            <Label>Account Number</Label>
             <p className="text-sm mt-1">{driver.account_number || "N/A"}</p>
-          )}
-        </div>
-        <div>
-          <Label>Branch Code</Label>
-          {isEditing ? (
-            <Input
-              value={formData.branch_code || ""}
-              onChange={(e) => setFormData({ ...formData, branch_code: e.target.value })}
-            />
-          ) : (
+          </div>
+          <div>
+            <Label>Branch Code</Label>
             <p className="text-sm mt-1">{driver.branch_code || "N/A"}</p>
-          )}
+          </div>
+          <div>
+            <Label>Account Type</Label>
+            <p className="text-sm mt-1 capitalize">{driver.account_type || "N/A"}</p>
+          </div>
         </div>
       </div>
 
-      <h4 className="font-semibold text-sm text-muted-foreground pt-2">Emergency Contact</h4>
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <Label>Next of Kin Name</Label>
-          {isEditing ? (
-            <Input
-              value={formData.next_of_kin_name || ""}
-              onChange={(e) => setFormData({ ...formData, next_of_kin_name: e.target.value })}
-            />
-          ) : (
-            <p className="text-sm mt-1">{driver.next_of_kin_name || "N/A"}</p>
+      {/* Compliance Status */}
+      <div>
+        <h3 className="font-semibold text-sm text-muted-foreground mb-4">Compliance Status</h3>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <Label>Status</Label>
+            <p className="text-sm mt-1 capitalize">{driver.status || "N/A"}</p>
+          </div>
+          <div>
+            <Label>Compliance Status</Label>
+            <p className="text-sm mt-1 capitalize">{driver.compliance_status || "N/A"}</p>
+          </div>
+          {driver.compliance_review_date && (
+            <div>
+              <Label>Review Date</Label>
+              <p className="text-sm mt-1">{new Date(driver.compliance_review_date).toLocaleDateString()}</p>
+            </div>
           )}
-        </div>
-        <div>
-          <Label>Next of Kin Phone</Label>
-          {isEditing ? (
-            <Input
-              value={formData.next_of_kin_phone || ""}
-              onChange={(e) => setFormData({ ...formData, next_of_kin_phone: e.target.value })}
-            />
-          ) : (
-            <p className="text-sm mt-1">{driver.next_of_kin_phone || "N/A"}</p>
+          {driver.compliance_rejection_reason && (
+            <div className="col-span-2">
+              <Label>Rejection Reason</Label>
+              <p className="text-sm mt-1 text-destructive">{driver.compliance_rejection_reason}</p>
+            </div>
           )}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4 pt-2">
-        <div>
-          <Label>Rating</Label>
-          <p className="text-sm mt-1">{driver.rating ? `${driver.rating.toFixed(1)} ⭐` : "No ratings yet"}</p>
-        </div>
-        <div>
-          <Label>Completed Trips</Label>
-          <p className="text-sm mt-1">{driver.completed_trips || 0}</p>
         </div>
       </div>
     </div>
@@ -935,91 +1029,52 @@ function VehiclesTab({ driverId, vehicles }: { driverId: string; vehicles: any[]
 function DocumentsTab({ userId, userRole }: { userId: string; userRole: string }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [selectedDocType, setSelectedDocType] = useState<string>("");
-  const [documentTitle, setDocumentTitle] = useState<string>("");
 
   // Fetch documents
   const { data: documents, isLoading } = useQuery<any[]>({
     queryKey: ["/api/admin/users", userId, "documents"],
     enabled: !!userId,
+    queryFn: async () => {
+      const response = await apiRequest("GET", `/api/admin/users/${userId}/documents`);
+      // Ensure we always return an array
+      return Array.isArray(response) ? response : [];
+    },
   });
 
-  // Delete mutation
-  const deleteMutation = useMutation({
-    mutationFn: async (documentId: string) => {
-      return apiRequest("DELETE", `/api/admin/documents/${documentId}`, {});
+  // Update document status mutation
+  const updateDocumentStatusMutation = useMutation({
+    mutationFn: async ({ documentId, status, rejectionReason }: { documentId: string; status: string; rejectionReason?: string }) => {
+      return apiRequest("PATCH", `/api/admin/documents/${documentId}/status`, {
+        status,
+        rejectionReason,
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users", userId, "documents"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users", userId] });
       toast({
         title: "Success",
-        description: "Document deleted successfully",
+        description: "Document status updated successfully",
       });
     },
-    onError: () => {
+    onError: (error: any) => {
       toast({
         title: "Error",
-        description: "Failed to delete document",
+        description: error.message || "Failed to update document status",
         variant: "destructive",
       });
     },
   });
 
-  const handleDocumentUpload = async (result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
-    if (!result.successful || result.successful.length === 0) return;
-    
-    const uploadedFile = result.successful[0];
-    if (!uploadedFile?.uploadURL) return;
-
-    try {
-      const headers = await getAuthHeaders();
-      const response = await fetch("/api/documents", {
-        method: "PUT",
-        headers,
-        body: JSON.stringify({ documentURL: uploadedFile.uploadURL }),
-      });
-
-      if (!response.ok) throw new Error("Failed to set document ACL");
-
-      const { objectPath } = await response.json();
-      
-      // Create document record
-      await apiRequest("POST", `/api/admin/users/${userId}/documents`, {
-        owner_type: userRole,
-        doc_type: selectedDocType,
-        title: documentTitle || uploadedFile.name,
-        file_path: objectPath,
-        file_size: uploadedFile.size,
-        mime_type: uploadedFile.type,
-      });
-      
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/users", userId, "documents"] });
-      
-      toast({
-        title: "Success",
-        description: "Document uploaded successfully",
-      });
-
-      // Reset form
-      setSelectedDocType("");
-      setDocumentTitle("");
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to upload document",
-        variant: "destructive",
-      });
-    }
+  const handleApprove = (documentId: string) => {
+    updateDocumentStatusMutation.mutate({ documentId, status: "approved" });
   };
 
-  const getUploadURL = async () => {
-    const headers = await getAuthHeaders();
-    const response = await fetch("/api/objects/upload", {
-      method: "POST",
-      headers,
-    });
-    const { uploadURL } = await response.json();
-    return { method: "PUT" as const, url: uploadURL };
+  const handleReject = (documentId: string) => {
+    const reason = prompt("Please provide a reason for rejection:");
+    if (reason) {
+      updateDocumentStatusMutation.mutate({ documentId, status: "rejected", rejectionReason: reason });
+    }
   };
 
   const getDocumentTypeLabel = (docType: string) => {
@@ -1028,12 +1083,28 @@ function DocumentsTab({ userId, userRole }: { userId: string; userRole: string }
       passport: "Passport",
       drivers_license: "Driver's License",
       prdp: "PRDP Certificate",
+      prdp_dangerous_goods: "Professional Driving Permit (PrDP-D)",
+      dg_training_certificate: "Dangerous Goods Training Certificate",
+      medical_fitness_certificate: "Medical Fitness Certificate",
       vehicle_registration: "Vehicle Registration",
       roadworthy_certificate: "Roadworthy Certificate",
+      dg_vehicle_permit: "Dangerous Goods Vehicle Permit",
       insurance_certificate: "Insurance Certificate",
+      loa: "Letter of Authority",
       cipc_certificate: "CIPC Certificate",
+      cipc_document: "CIPC Document",
       vat_certificate: "VAT Certificate",
       tax_clearance: "Tax Clearance",
+      tax_clearance_certificate: "Tax Clearance Certificate",
+      wholesale_fuel_license: "Wholesale Fuel License",
+      depot_site_license: "Depot/Site License",
+      additional_fuel_permit: "Additional Fuel Trading Permit",
+      environmental_authorization: "Environmental Authorization",
+      fire_certificate: "Fire Department Certificate",
+      sabs_fuel_quality_certificate: "SABS Fuel Quality Certificate",
+      pump_calibration_certificate: "Pump/Meter Calibration Certificate",
+      public_liability_insurance: "Public Liability Insurance",
+      environmental_liability_insurance: "Environmental Liability Insurance",
       bbbee_certificate: "B-BBEE Certificate",
       dmre_license: "DMRE License",
       coid_certificate: "COID Certificate",
@@ -1043,7 +1114,7 @@ function DocumentsTab({ userId, userRole }: { userId: string; userRole: string }
       safety_certificate: "Safety Certificate",
       other: "Other",
     };
-    return labels[docType] || docType;
+    return labels[docType] || docType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
   };
 
   if (isLoading) {
@@ -1056,73 +1127,17 @@ function DocumentsTab({ userId, userRole }: { userId: string; userRole: string }
 
   return (
     <div className="space-y-4">
-      {/* Upload Section */}
-      <div className="border rounded-lg p-4 space-y-3">
-        <h4 className="font-semibold text-sm">Upload New Document</h4>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <Label>Document Type</Label>
-            <Select value={selectedDocType} onValueChange={setSelectedDocType}>
-              <SelectTrigger data-testid="select-document-type">
-                <SelectValue placeholder="Select type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="za_id">SA ID Document</SelectItem>
-                <SelectItem value="passport">Passport</SelectItem>
-                <SelectItem value="drivers_license">Driver's License</SelectItem>
-                <SelectItem value="prdp">PRDP Certificate</SelectItem>
-                <SelectItem value="vehicle_registration">Vehicle Registration</SelectItem>
-                <SelectItem value="roadworthy_certificate">Roadworthy Certificate</SelectItem>
-                <SelectItem value="insurance_certificate">Insurance Certificate</SelectItem>
-                <SelectItem value="cipc_certificate">CIPC Certificate</SelectItem>
-                <SelectItem value="vat_certificate">VAT Certificate</SelectItem>
-                <SelectItem value="tax_clearance">Tax Clearance</SelectItem>
-                <SelectItem value="bbbee_certificate">B-BBEE Certificate</SelectItem>
-                <SelectItem value="dmre_license">DMRE License</SelectItem>
-                <SelectItem value="coid_certificate">COID Certificate</SelectItem>
-                <SelectItem value="bank_statement">Bank Statement</SelectItem>
-                <SelectItem value="proof_of_address">Proof of Address</SelectItem>
-                <SelectItem value="msds">MSDS</SelectItem>
-                <SelectItem value="safety_certificate">Safety Certificate</SelectItem>
-                <SelectItem value="other">Other</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label>Document Title (Optional)</Label>
-            <Input
-              value={documentTitle}
-              onChange={(e) => setDocumentTitle(e.target.value)}
-              placeholder="Custom title"
-              data-testid="input-document-title"
-            />
-          </div>
-        </div>
-        <ObjectUploader
-          maxNumberOfFiles={1}
-          maxFileSize={10485760}
-          allowedFileTypes={["image/*", "application/pdf"]}
-          onGetUploadParameters={getUploadURL}
-          onComplete={handleDocumentUpload}
-          buttonVariant="default"
-          buttonClassName="w-full"
-        >
-          <Upload className="h-4 w-4 mr-2" />
-          Upload Document
-        </ObjectUploader>
-      </div>
-
       {/* Documents List */}
       <div className="space-y-2">
         <h4 className="font-semibold text-sm">Uploaded Documents</h4>
-        {!documents || documents.length === 0 ? (
+        {!documents || !Array.isArray(documents) || documents.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             <FileText className="h-12 w-12 mx-auto mb-3 opacity-50" />
             <p>No documents uploaded yet</p>
           </div>
         ) : (
           <div className="space-y-2">
-            {documents.map((doc) => (
+            {(Array.isArray(documents) ? documents : []).map((doc) => (
               <div
                 key={doc.id}
                 className="flex items-center justify-between p-3 border rounded-lg hover-elevate"
@@ -1134,47 +1149,86 @@ function DocumentsTab({ userId, userRole }: { userId: string; userRole: string }
                     <Badge variant="outline" className="text-xs">
                       {getDocumentTypeLabel(doc.doc_type)}
                     </Badge>
-                    {doc.verification_status && (
+                    {(doc.document_status || doc.verification_status) && (
                       <Badge
                         variant={
-                          doc.verification_status === "approved"
+                          (doc.document_status || doc.verification_status) === "approved"
                             ? "default"
-                            : doc.verification_status === "pending"
+                            : (doc.document_status || doc.verification_status) === "pending_review" || (doc.document_status || doc.verification_status) === "pending"
                             ? "secondary"
                             : "destructive"
                         }
                         className="text-xs capitalize"
                       >
-                        {doc.verification_status}
+                        {doc.document_status || doc.verification_status}
                       </Badge>
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    {new Date(doc.created_at).toLocaleDateString()} • {doc.mime_type}
+                    Uploaded: {new Date(doc.created_at).toLocaleDateString()} • {doc.mime_type || "Unknown type"}
+                    {doc.expiry_date && ` • Expires: ${new Date(doc.expiry_date).toLocaleDateString()}`}
                   </p>
+                  {doc.document_rejection_reason && (
+                    <p className="text-xs text-destructive mt-1">
+                      Rejection reason: {doc.document_rejection_reason}
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => window.open(doc.file_path, "_blank")}
+                    onClick={() => {
+                      // Get the file URL - might be a Supabase storage path
+                      let fileUrl = doc.file_path;
+                      if (fileUrl && !fileUrl.startsWith('http') && !fileUrl.startsWith('/')) {
+                        // It's a Supabase storage path (bucket/path format)
+                        const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co';
+                        fileUrl = `${supabaseUrl}/storage/v1/object/public/${fileUrl}`;
+                      }
+                      window.open(fileUrl, "_blank");
+                    }}
                     data-testid={`button-view-${doc.id}`}
                   >
+                    <Eye className="h-3 w-3 mr-1" />
                     View
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => deleteMutation.mutate(doc.id)}
-                    disabled={deleteMutation.isPending}
-                    data-testid={`button-delete-${doc.id}`}
-                  >
-                    {deleteMutation.isPending ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      "Delete"
-                    )}
-                  </Button>
+                  {(doc.document_status === "pending_review" || doc.verification_status === "pending" || !doc.document_status) && (
+                    <>
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => handleApprove(doc.id)}
+                        disabled={updateDocumentStatusMutation.isPending}
+                        data-testid={`button-approve-${doc.id}`}
+                      >
+                        {updateDocumentStatusMutation.isPending ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <>
+                            <CheckCircle2 className="h-3 w-3 mr-1" />
+                            Approve
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => handleReject(doc.id)}
+                        disabled={updateDocumentStatusMutation.isPending}
+                        data-testid={`button-reject-${doc.id}`}
+                      >
+                        {updateDocumentStatusMutation.isPending ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <>
+                            <XCircle className="h-3 w-3 mr-1" />
+                            Reject
+                          </>
+                        )}
+                      </Button>
+                    </>
+                  )}
                 </div>
               </div>
             ))}

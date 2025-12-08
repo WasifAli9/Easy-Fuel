@@ -6,11 +6,44 @@ import { websocketService } from "./websocket";
 import { pushNotificationService } from "./push-service";
 import { cleanupChatForOrder, ensureChatThreadForAssignment } from "./chat-service";
 import { offerNotifications, orderNotifications } from "./notification-helpers";
+import { getDriverComplianceStatus, getVehicleComplianceStatus, canDriverAccessPlatform } from "./compliance-service";
 import { z } from "zod";
 import dotenv from "dotenv";
 dotenv.config();
 
 const router = Router();
+
+// Helper middleware to check driver compliance
+async function checkDriverCompliance(req: any, res: any, next: any) {
+  try {
+    const user = req.user;
+    const { data: driver } = await supabaseAdmin
+      .from("drivers")
+      .select("id, status, compliance_status")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (!driver) {
+      return res.status(404).json({ error: "Driver not found" });
+    }
+
+    if (driver.status !== "active" || driver.compliance_status !== "approved") {
+      return res.status(403).json({
+        error: "Compliance not approved",
+        code: "COMPLIANCE_REQUIRED",
+        message: "Your compliance documents must be approved before accessing this feature. Please complete your compliance profile.",
+        status: driver.status,
+        compliance_status: driver.compliance_status,
+      });
+    }
+
+    req.driverId = driver.id;
+    next();
+  } catch (error: any) {
+    console.error("Error checking driver compliance:", error);
+    res.status(500).json({ error: error.message });
+  }
+}
 
 // Get driver profile
 router.get("/profile", async (req, res) => {
@@ -536,6 +569,7 @@ router.get("/stats", async (req, res) => {
 });
 
 // Get driver's assigned orders (accepted deliveries)
+// Note: This route is accessible without compliance approval - will return empty array if not compliant
 router.get("/assigned-orders", async (req, res) => {
   const user = (req as any).user;
 
@@ -549,19 +583,20 @@ router.get("/assigned-orders", async (req, res) => {
 
     if (driverError) throw driverError;
     
-    // If no driver record, create it automatically
+    // If no driver record, return empty array (driver hasn't completed setup)
     if (!driver) {
-      const { data: newDriver, error: createError } = await supabaseAdmin
-        .from("drivers")
-        .insert({ 
-          user_id: user.id,
-          kyc_status: "pending"
-        })
-        .select("id")
-        .single();
-      
-      if (createError) throw createError;
-      driver = newDriver;
+      return res.json([]);
+    }
+
+    // Check if driver is compliant - if not, return empty array (no orders will be assigned)
+    const { data: driverStatus } = await supabaseAdmin
+      .from("drivers")
+      .select("status, compliance_status")
+      .eq("id", driver.id)
+      .single();
+    
+    if (!driverStatus || driverStatus.status !== "active" || driverStatus.compliance_status !== "approved") {
+      return res.json([]);
     }
 
     // Fetch orders assigned to this driver
@@ -625,6 +660,7 @@ router.get("/assigned-orders", async (req, res) => {
 });
 
 // Get completed orders (last week)
+// Note: This route is accessible without compliance approval - will return empty array if not compliant
 router.get("/completed-orders", async (req, res) => {
   const user = (req as any).user;
 
@@ -638,8 +674,19 @@ router.get("/completed-orders", async (req, res) => {
 
     if (driverError) throw driverError;
     
-    // If no driver record, return empty array
+    // If no driver record, return empty array (driver hasn't completed setup)
     if (!driver) {
+      return res.json([]);
+    }
+
+    // Check if driver is compliant - if not, return empty array (no orders will be completed)
+    const { data: driverStatus } = await supabaseAdmin
+      .from("drivers")
+      .select("status, compliance_status")
+      .eq("id", driver.id)
+      .single();
+    
+    if (!driverStatus || driverStatus.status !== "active" || driverStatus.compliance_status !== "approved") {
       return res.json([]);
     }
 
@@ -711,7 +758,7 @@ router.get("/completed-orders", async (req, res) => {
 });
 
 // Mark order as en route (driver started delivery)
-router.post("/orders/:orderId/start", async (req, res) => {
+router.post("/orders/:orderId/start", checkDriverCompliance, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
 
@@ -820,7 +867,7 @@ router.post("/orders/:orderId/start", async (req, res) => {
 });
 
 // Mark order as picked up (fuel collected)
-router.post("/orders/:orderId/pickup", async (req, res) => {
+router.post("/orders/:orderId/pickup", checkDriverCompliance, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
 
@@ -920,7 +967,7 @@ router.post("/orders/:orderId/pickup", async (req, res) => {
 });
 
 // Complete delivery with customer signature
-router.post("/orders/:orderId/complete", async (req, res) => {
+router.post("/orders/:orderId/complete", checkDriverCompliance, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
 
@@ -2303,7 +2350,7 @@ router.post("/documents", async (req, res) => {
 // ============== DRIVER DEPOT ORDERS ==============
 
 // Get all depots with distance from driver's current location
-router.get("/depots", async (req, res) => {
+router.get("/depots", checkDriverCompliance, async (req, res) => {
   const user = (req as any).user;
 
   try {
@@ -2486,7 +2533,7 @@ router.get("/depots", async (req, res) => {
 });
 
 // Get driver's depot orders
-router.get("/depot-orders", async (req, res) => {
+router.get("/depot-orders", checkDriverCompliance, async (req, res) => {
   const user = (req as any).user;
 
   try {
@@ -2534,7 +2581,7 @@ router.get("/depot-orders", async (req, res) => {
 });
 
 // Create order from depot
-router.post("/depot-orders", async (req, res) => {
+router.post("/depot-orders", checkDriverCompliance, async (req, res) => {
   const user = (req as any).user;
   const { depotId, fuelTypeId, litres, pickupDate, notes } = req.body;
 
@@ -2832,6 +2879,241 @@ router.post("/depot-orders/:orderId/cancel", async (req, res) => {
     res.json(updatedOrder);
   } catch (error: any) {
     console.error("Error cancelling depot order:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============== COMPLIANCE ROUTES ==============
+
+// Get driver compliance status
+router.get("/compliance/status", async (req, res) => {
+  const user = (req as any).user;
+  
+  try {
+    // Get driver ID
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (driverError || !driver) {
+      return res.status(404).json({ error: "Driver not found" });
+    }
+
+    const complianceStatus = await getDriverComplianceStatus(driver.id);
+    res.json(complianceStatus);
+  } catch (error: any) {
+    console.error("Error getting driver compliance status:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update driver compliance information
+router.put("/compliance", async (req, res) => {
+  const user = (req as any).user;
+  
+  try {
+    // Get driver ID
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (driverError || !driver) {
+      return res.status(404).json({ error: "Driver not found" });
+    }
+
+    // Extract allowed fields for update
+    const {
+      driver_type,
+      id_type,
+      id_issue_country,
+      license_code,
+      drivers_license_issue_date,
+      prdp_required,
+      prdp_category,
+      prdp_issue_date,
+      dg_training_required,
+      dg_training_provider,
+      dg_training_certificate_number,
+      dg_training_issue_date,
+      dg_training_expiry_date,
+      criminal_check_done,
+      criminal_check_reference,
+      criminal_check_date,
+      is_company_driver,
+      company_id,
+      role_in_company,
+      address_line_1,
+      address_line_2,
+      city,
+      province,
+      postal_code,
+      country,
+    } = req.body;
+
+    const updateData: any = {};
+    if (driver_type !== undefined) updateData.driver_type = driver_type;
+    if (id_type !== undefined) updateData.id_type = id_type;
+    if (id_issue_country !== undefined) updateData.id_issue_country = id_issue_country;
+    if (license_code !== undefined) updateData.license_code = license_code;
+    if (drivers_license_issue_date !== undefined) updateData.drivers_license_issue_date = drivers_license_issue_date;
+    if (prdp_required !== undefined) updateData.prdp_required = prdp_required;
+    if (prdp_category !== undefined) updateData.prdp_category = prdp_category;
+    if (prdp_issue_date !== undefined) updateData.prdp_issue_date = prdp_issue_date;
+    if (dg_training_required !== undefined) updateData.dg_training_required = dg_training_required;
+    if (dg_training_provider !== undefined) updateData.dg_training_provider = dg_training_provider;
+    if (dg_training_certificate_number !== undefined) updateData.dg_training_certificate_number = dg_training_certificate_number;
+    if (dg_training_issue_date !== undefined) updateData.dg_training_issue_date = dg_training_issue_date;
+    if (dg_training_expiry_date !== undefined) updateData.dg_training_expiry_date = dg_training_expiry_date;
+    if (criminal_check_done !== undefined) updateData.criminal_check_done = criminal_check_done;
+    if (criminal_check_reference !== undefined) updateData.criminal_check_reference = criminal_check_reference;
+    if (criminal_check_date !== undefined) updateData.criminal_check_date = criminal_check_date;
+    if (is_company_driver !== undefined) updateData.is_company_driver = is_company_driver;
+    if (company_id !== undefined) updateData.company_id = company_id;
+    if (role_in_company !== undefined) updateData.role_in_company = role_in_company;
+    if (address_line_1 !== undefined) updateData.address_line_1 = address_line_1;
+    if (address_line_2 !== undefined) updateData.address_line_2 = address_line_2;
+    if (city !== undefined) updateData.city = city;
+    if (province !== undefined) updateData.province = province;
+    if (postal_code !== undefined) updateData.postal_code = postal_code;
+    if (country !== undefined) updateData.country = country;
+
+    updateData.updated_at = new Date().toISOString();
+
+    const { data: updatedDriver, error: updateError } = await supabaseAdmin
+      .from("drivers")
+      .update(updateData)
+      .eq("id", driver.id)
+      .select()
+      .single();
+
+    if (updateError) {
+      throw updateError;
+    }
+
+    res.json(updatedDriver);
+  } catch (error: any) {
+    console.error("Error updating driver compliance:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update vehicle compliance
+router.post("/vehicles/:vehicleId/compliance", async (req, res) => {
+  const user = (req as any).user;
+  const { vehicleId } = req.params;
+  
+  try {
+    // Verify vehicle belongs to driver
+    const { data: vehicle, error: vehicleError } = await supabaseAdmin
+      .from("vehicles")
+      .select("driver_id, drivers!inner(user_id)")
+      .eq("id", vehicleId)
+      .single();
+
+    if (vehicleError || !vehicle) {
+      return res.status(404).json({ error: "Vehicle not found" });
+    }
+
+    // Verify ownership
+    const { data: driver } = await supabaseAdmin
+      .from("drivers")
+      .select("user_id")
+      .eq("id", vehicle.driver_id)
+      .single();
+
+    if (!driver || driver.user_id !== user.id) {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const {
+      vehicle_reg_certificate_number,
+      dg_vehicle_permit_required,
+      dg_vehicle_permit_number,
+      dg_vehicle_permit_issue_date,
+      dg_vehicle_permit_expiry_date,
+      vehicle_insured,
+      insurance_provider,
+      policy_number,
+      policy_expiry_date,
+      loa_required,
+      loa_issue_date,
+      loa_expiry_date,
+      roadworthy_certificate_number,
+      roadworthy_issue_date,
+    } = req.body;
+
+    const updateData: any = {};
+    if (vehicle_reg_certificate_number !== undefined) updateData.vehicle_reg_certificate_number = vehicle_reg_certificate_number;
+    if (dg_vehicle_permit_required !== undefined) updateData.dg_vehicle_permit_required = dg_vehicle_permit_required;
+    if (dg_vehicle_permit_number !== undefined) updateData.dg_vehicle_permit_number = dg_vehicle_permit_number;
+    if (dg_vehicle_permit_issue_date !== undefined) updateData.dg_vehicle_permit_issue_date = dg_vehicle_permit_issue_date;
+    if (dg_vehicle_permit_expiry_date !== undefined) updateData.dg_vehicle_permit_expiry_date = dg_vehicle_permit_expiry_date;
+    if (vehicle_insured !== undefined) updateData.vehicle_insured = vehicle_insured;
+    if (insurance_provider !== undefined) updateData.insurance_provider = insurance_provider;
+    if (policy_number !== undefined) updateData.policy_number = policy_number;
+    if (policy_expiry_date !== undefined) updateData.policy_expiry_date = policy_expiry_date;
+    if (loa_required !== undefined) updateData.loa_required = loa_required;
+    if (loa_issue_date !== undefined) updateData.loa_issue_date = loa_issue_date;
+    if (loa_expiry_date !== undefined) updateData.loa_expiry_date = loa_expiry_date;
+    if (roadworthy_certificate_number !== undefined) updateData.roadworthy_certificate_number = roadworthy_certificate_number;
+    if (roadworthy_issue_date !== undefined) updateData.roadworthy_issue_date = roadworthy_issue_date;
+
+    updateData.updated_at = new Date().toISOString();
+
+    const { data: updatedVehicle, error: updateError } = await supabaseAdmin
+      .from("vehicles")
+      .update(updateData)
+      .eq("id", vehicleId)
+      .select()
+      .single();
+
+    if (updateError) {
+      throw updateError;
+    }
+
+    res.json(updatedVehicle);
+  } catch (error: any) {
+    console.error("Error updating vehicle compliance:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get vehicle compliance status
+router.get("/vehicles/:vehicleId/compliance/status", async (req, res) => {
+  const user = (req as any).user;
+  const { vehicleId } = req.params;
+  
+  try {
+    // Verify vehicle belongs to driver
+    const { data: vehicle, error: vehicleError } = await supabaseAdmin
+      .from("vehicles")
+      .select("driver_id, drivers!inner(user_id)")
+      .eq("id", vehicleId)
+      .single();
+
+    if (vehicleError || !vehicle) {
+      return res.status(404).json({ error: "Vehicle not found" });
+    }
+
+    // Verify ownership
+    const { data: driver } = await supabaseAdmin
+      .from("drivers")
+      .select("user_id")
+      .eq("id", vehicle.driver_id)
+      .single();
+
+    if (!driver || driver.user_id !== user.id) {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const complianceStatus = await getVehicleComplianceStatus(vehicleId);
+    res.json(complianceStatus);
+  } catch (error: any) {
+    console.error("Error getting vehicle compliance status:", error);
     res.status(500).json({ error: error.message });
   }
 });

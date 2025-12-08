@@ -25,6 +25,11 @@ export default defineConfig({
       "@shared": path.resolve(import.meta.dirname, "shared"),
       "@assets": path.resolve(import.meta.dirname, "attached_assets"),
     },
+    dedupe: ["react", "react-dom"],
+  },
+  optimizeDeps: {
+    include: ["react", "react-dom"],
+    force: true,
   },
   // Ensure PWA assets (manifest, icons, service worker) are included in dev + build.
   // This points Vite's public directory at the top-level `public` folder.

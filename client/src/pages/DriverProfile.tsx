@@ -18,7 +18,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/contexts/AuthContext";
-import { User, Lock, Upload, FileText, AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
+import { User, Lock, Upload, FileText, AlertTriangle, CheckCircle2, XCircle, Shield, Building, MapPin } from "lucide-react";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +27,10 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ChevronRight, ArrowLeft } from "lucide-react";
 import { Link } from "wouter";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Progress } from "@/components/ui/progress";
 
 const profileSchema = z.object({
   fullName: z.string().min(2, "Full name is required"),
@@ -70,6 +74,78 @@ export default function DriverProfile() {
 
   const { data: documents = [] } = useQuery<DriverDocument[]>({
     queryKey: ["/api/driver/documents"],
+  });
+
+  // Get compliance status
+  const { data: complianceStatus } = useQuery<any>({
+    queryKey: ["/api/driver/compliance/status"],
+  });
+
+  // Compliance form
+  const complianceForm = useForm<any>({
+    defaultValues: {
+      driver_type: profile?.driver_type || "",
+      id_type: profile?.id_type || "",
+      id_issue_country: profile?.id_issue_country || "",
+      license_code: profile?.license_code || "",
+      prdp_required: profile?.prdp_required || false,
+      prdp_category: profile?.prdp_category || "",
+      dg_training_required: profile?.dg_training_required || false,
+      dg_training_provider: profile?.dg_training_provider || "",
+      dg_training_certificate_number: profile?.dg_training_certificate_number || "",
+      criminal_check_done: profile?.criminal_check_done || false,
+      criminal_check_reference: profile?.criminal_check_reference || "",
+      is_company_driver: profile?.is_company_driver || false,
+      role_in_company: profile?.role_in_company || "",
+      address_line_1: profile?.address_line_1 || "",
+      address_line_2: profile?.address_line_2 || "",
+      city: profile?.city || "",
+      province: profile?.province || "",
+      postal_code: profile?.postal_code || "",
+      country: profile?.country || "South Africa",
+    },
+    values: profile ? {
+      driver_type: profile.driver_type || "",
+      id_type: profile.id_type || "",
+      id_issue_country: profile.id_issue_country || "",
+      license_code: profile.license_code || "",
+      prdp_required: profile.prdp_required || false,
+      prdp_category: profile.prdp_category || "",
+      dg_training_required: profile.dg_training_required || false,
+      dg_training_provider: profile.dg_training_provider || "",
+      dg_training_certificate_number: profile.dg_training_certificate_number || "",
+      criminal_check_done: profile.criminal_check_done || false,
+      criminal_check_reference: profile.criminal_check_reference || "",
+      is_company_driver: profile.is_company_driver || false,
+      role_in_company: profile.role_in_company || "",
+      address_line_1: profile.address_line_1 || "",
+      address_line_2: profile.address_line_2 || "",
+      city: profile.city || "",
+      province: profile.province || "",
+      postal_code: profile.postal_code || "",
+      country: profile.country || "South Africa",
+    } : undefined,
+  });
+
+  const updateComplianceMutation = useMutation({
+    mutationFn: async (data: any) => {
+      return apiRequest("PUT", "/api/driver/compliance", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/compliance/status"] });
+      toast({
+        title: "Success",
+        description: "Compliance information updated successfully",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update compliance information",
+        variant: "destructive",
+      });
+    },
   });
 
   const profileForm = useForm<ProfileFormData>({
@@ -160,55 +236,97 @@ export default function DriverProfile() {
     const uploadedFile = result.successful[0];
     console.log("Uploaded file data:", uploadedFile);
     console.log("Uploaded file response:", uploadedFile?.response);
+    console.log("Uploaded file response.body:", uploadedFile?.response?.body);
+    console.log("Uploaded file uploadURL:", uploadedFile?.uploadURL);
     
     // The server upload endpoint returns { objectPath, uploadURL, location, url }
     // objectPath is in bucket/path format which is what we need
     let objectPath: string | undefined;
     
-    // Try to get objectPath from the response body first (this is the correct format)
-    if (uploadedFile?.response) {
+    // Try multiple ways to extract the response data from Uppy
+    // Uppy's AwsS3 plugin stores the response in different places depending on the response format
+    let responseData: any = null;
+    
+    // Method 1: Check response.body (most common for Uppy AwsS3 - response body is a string)
+    if (uploadedFile?.response?.body) {
       try {
-        const responseData = typeof uploadedFile.response === 'string' 
-          ? JSON.parse(uploadedFile.response) 
-          : uploadedFile.response;
-        // Prefer objectPath (bucket/path format) - this is what the server returns
-        objectPath = responseData?.objectPath || responseData?.fullPath;
-        console.log("Extracted objectPath from response:", objectPath);
+        responseData = typeof uploadedFile.response.body === 'string' 
+          ? JSON.parse(uploadedFile.response.body) 
+          : uploadedFile.response.body;
+        console.log("Extracted responseData from response.body:", responseData);
+      } catch (e) {
+        console.warn("Could not parse response.body:", e);
+      }
+    }
+    
+    // Method 2: Check response directly (if it's already an object)
+    if (!responseData && uploadedFile?.response) {
+      try {
+        if (typeof uploadedFile.response === 'object' && !Array.isArray(uploadedFile.response) && uploadedFile.response !== null) {
+          // Check if it has objectPath directly (already parsed)
+          if (uploadedFile.response.objectPath || uploadedFile.response.fullPath) {
+            responseData = uploadedFile.response;
+            console.log("Using response as object:", responseData);
+          } else if (typeof uploadedFile.response === 'string') {
+            responseData = JSON.parse(uploadedFile.response);
+            console.log("Parsed response string:", responseData);
+          }
+        }
       } catch (e) {
         console.warn("Could not parse response:", e);
       }
     }
     
-    // If we don't have objectPath from response, try to extract from uploadURL
+    // Method 3: Check response.data (some Uppy versions)
+    if (!responseData && uploadedFile?.response?.data) {
+      try {
+        responseData = typeof uploadedFile.response.data === 'string' 
+          ? JSON.parse(uploadedFile.response.data) 
+          : uploadedFile.response.data;
+        console.log("Extracted responseData from response.data:", responseData);
+      } catch (e) {
+        console.warn("Could not parse response.data:", e);
+      }
+    }
+    
+    // Extract objectPath from responseData
+    if (responseData) {
+      objectPath = responseData?.objectPath || responseData?.fullPath || responseData?.path;
+      console.log("Extracted objectPath from responseData:", objectPath);
+    }
+    
+    // If we still don't have objectPath, try to extract from uploadURL
     if (!objectPath) {
-      let uploadURL = uploadedFile?.uploadURL || uploadedFile?.response?.uploadURL;
+      let uploadURL = uploadedFile?.uploadURL;
       
       // If uploadURL is the full endpoint path, extract bucket/path from it
-      // The format should be: /api/storage/upload/bucket/path
-      if (uploadURL && uploadURL.startsWith('/api/storage/upload/')) {
-        const pathMatch = uploadURL.match(/\/api\/storage\/upload\/([^/]+)\/(.+)/);
-        if (pathMatch) {
-          const [, bucket, path] = pathMatch;
-          objectPath = `${bucket}/${path}`;
-          console.log("Extracted bucket/path from uploadURL:", objectPath);
-        } else {
-          // If bucket is missing, use default bucket
-          const defaultBucket = "private-objects";
-          const pathMatch = uploadURL.match(/\/api\/storage\/upload\/(.+)/);
+      // The format should be: /api/storage/upload/bucket/path or http://.../api/storage/upload/bucket/path
+      if (uploadURL) {
+        // Remove protocol and domain if present
+        const pathOnly = uploadURL.replace(/^https?:\/\/[^/]+/, '');
+        
+        if (pathOnly.startsWith('/api/storage/upload/')) {
+          const pathMatch = pathOnly.match(/\/api\/storage\/upload\/([^/]+)\/(.+)/);
           if (pathMatch) {
-            const [, path] = pathMatch;
-            objectPath = `${defaultBucket}/${path}`;
-            console.log("Extracted path from uploadURL (using default bucket):", objectPath);
+            const [, bucket, path] = pathMatch;
+            objectPath = `${bucket}/${path}`;
+            console.log("Extracted bucket/path from uploadURL:", objectPath);
+          } else {
+            // If bucket is missing, use default bucket
+            const defaultBucket = "private-objects";
+            const pathMatch = pathOnly.match(/\/api\/storage\/upload\/(.+)/);
+            if (pathMatch) {
+              const [, path] = pathMatch;
+              objectPath = `${defaultBucket}/${path}`;
+              console.log("Extracted path from uploadURL (using default bucket):", objectPath);
+            }
           }
         }
       }
     }
     
-    // Use objectPath as uploadURL for the rest of the function
-    const uploadURL = objectPath;
-    
-    if (!uploadURL) {
-      console.error("No upload URL in upload result:", uploadedFile);
+    if (!objectPath) {
+      console.error("No objectPath found in upload result. Full uploadedFile:", JSON.stringify(uploadedFile, null, 2));
       toast({
         title: "Error",
         description: "Could not get file URL from upload. Please check the console for details.",
@@ -216,89 +334,10 @@ export default function DriverProfile() {
       });
       return;
     }
+    
+    console.log("Final objectPath to use:", objectPath);
 
     try {
-      let objectPath: string;
-      
-      // Helper function to check if a string is a valid URL
-      const isValidURL = (str: string): boolean => {
-        try {
-          new URL(str);
-          return true;
-        } catch {
-          return false;
-        }
-      };
-      
-      // Check if this is a Supabase Storage upload endpoint (starts with /api/storage/upload)
-      // The upload URL format is: /api/storage/upload/bucket/path
-      // We need to extract bucket/path and use that as the storage path
-      if (uploadURL.startsWith('/api/storage/upload/')) {
-        const pathMatch = uploadURL.match(/\/api\/storage\/upload\/([^/]+)\/(.+)/);
-        if (pathMatch) {
-          const [, bucket, path] = pathMatch;
-          // Store as bucket/path format for Supabase Storage
-          objectPath = `${bucket}/${path}`;
-          console.log("Extracted Supabase Storage path:", objectPath);
-        } else {
-          throw new Error("Could not parse Supabase storage path from upload URL");
-        }
-      }
-      // Check if this is a Supabase Storage upload (bucket/path format) - not a full URL
-      else if (uploadURL.includes('/') && !isValidURL(uploadURL) && !uploadURL.startsWith('/objects/') && !uploadURL.startsWith('http')) {
-        // Likely Supabase Storage format: bucket/path (e.g., "private-objects/uploads/uuid")
-        objectPath = uploadURL;
-      }
-      // For Replit/S3 storage, extract path from URL
-      else if (isValidURL(uploadURL)) {
-        // Try to extract path from Google Cloud Storage URL
-        if (uploadURL.includes('storage.googleapis.com')) {
-          try {
-            const url = new URL(uploadURL);
-            objectPath = url.pathname;
-          } catch (e) {
-            console.warn("Failed to parse Google Cloud Storage URL:", e);
-            objectPath = uploadURL;
-          }
-        } 
-        // Try to extract path from S3 URL
-        else if (uploadURL.includes('.s3.') || uploadURL.includes('s3://')) {
-          try {
-            const url = new URL(uploadURL.split('?')[0]);
-            const pathParts = url.pathname.split('/').filter(p => p);
-            if (pathParts.length > 0) {
-              objectPath = '/' + pathParts.join('/');
-            } else {
-              objectPath = uploadURL;
-            }
-          } catch (e) {
-            console.warn("Failed to parse S3 URL:", e);
-            const match = uploadURL.match(/\/private-objects\/uploads\/[^?]+/);
-            objectPath = match ? match[0] : uploadURL.split('?')[0];
-          }
-        }
-        // For other valid URLs, try to extract path
-        else {
-          try {
-            const url = new URL(uploadURL);
-            objectPath = url.pathname || uploadURL;
-          } catch (e) {
-            console.warn("Failed to parse URL:", e);
-            objectPath = uploadURL;
-          }
-        }
-      }
-      // If it's already a path starting with /, use it directly
-      else if (uploadURL.startsWith('/')) {
-        objectPath = uploadURL.split('?')[0];
-      } 
-      // Fallback: use the uploadURL as-is
-      else {
-        objectPath = uploadURL;
-      }
-      
-      console.log("Extracted objectPath:", objectPath);
-
       const headers = await getAuthHeaders();
       const response = await fetch("/api/profile-picture", {
         method: "PUT",
@@ -606,9 +645,17 @@ export default function DriverProfile() {
                           let imageSrc: string;
                           const photoUrl = profile.profile_photo_url;
                           
-                          // Handle Supabase Storage format: bucket/path
+                          // Handle Supabase Storage format: bucket/path (e.g., "private-objects/uploads/uuid")
                           if (photoUrl.includes('/') && !photoUrl.startsWith('/') && !photoUrl.startsWith('http')) {
-                            imageSrc = `${import.meta.env.VITE_SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co'}/storage/v1/object/public/${photoUrl}`;
+                            // Check if it's a private bucket (private-objects)
+                            if (photoUrl.startsWith('private-objects/')) {
+                              // Use our server endpoint for private objects (handles authentication)
+                              const pathOnly = photoUrl.replace('private-objects/', '');
+                              imageSrc = `/objects/${pathOnly}`;
+                            } else {
+                              // For public buckets, use Supabase public URL
+                              imageSrc = `${import.meta.env.VITE_SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co'}/storage/v1/object/public/${photoUrl}`;
+                            }
                           }
                           // Handle /objects/ path format
                           else if (photoUrl.startsWith('/objects/')) {
@@ -761,6 +808,452 @@ export default function DriverProfile() {
 
                   <Button type="submit" disabled={updatePasswordMutation.isPending}>
                     {updatePasswordMutation.isPending ? "Updating..." : "Update Password"}
+                  </Button>
+                </form>
+              </Form>
+            </CardContent>
+          </Card>
+
+          {/* Compliance Status */}
+          {complianceStatus && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Shield className="h-5 w-5" />
+                  Compliance Status
+                </CardTitle>
+                <CardDescription>
+                  Your compliance status and document checklist
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium">Overall Status</p>
+                    <Badge 
+                      variant={
+                        complianceStatus.overallStatus === "approved" ? "default" :
+                        complianceStatus.overallStatus === "rejected" ? "destructive" :
+                        "secondary"
+                      }
+                      className="mt-1"
+                    >
+                      {complianceStatus.overallStatus === "approved" ? "Approved" :
+                       complianceStatus.overallStatus === "rejected" ? "Rejected" :
+                       complianceStatus.overallStatus === "pending" ? "Pending Review" :
+                       "Incomplete"}
+                    </Badge>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-medium">Platform Access</p>
+                    <Badge variant={complianceStatus.canAccessPlatform ? "default" : "secondary"} className="mt-1">
+                      {complianceStatus.canAccessPlatform ? "Active" : "Restricted"}
+                    </Badge>
+                  </div>
+                </div>
+
+                {complianceStatus.checklist && (
+                  <>
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-sm font-medium">Document Progress</p>
+                        <p className="text-sm text-muted-foreground">
+                          {complianceStatus.checklist.approved.length} / {complianceStatus.checklist.required.length} approved
+                        </p>
+                      </div>
+                      <Progress 
+                        value={
+                          (complianceStatus.checklist.approved.length / complianceStatus.checklist.required.length) * 100
+                        } 
+                        className="h-2"
+                      />
+                    </div>
+
+                    {complianceStatus.checklist.missing.length > 0 && (
+                      <Alert>
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertTitle>Missing Documents</AlertTitle>
+                        <AlertDescription>
+                          You need to upload {complianceStatus.checklist.missing.length} more document(s) to complete compliance.
+                        </AlertDescription>
+                      </Alert>
+                    )}
+
+                    {complianceStatus.rejectionReason && (
+                      <Alert variant="destructive">
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertTitle>Compliance Rejected</AlertTitle>
+                        <AlertDescription>
+                          {complianceStatus.rejectionReason}
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Compliance Information Form */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Shield className="h-5 w-5" />
+                Compliance Information
+              </CardTitle>
+              <CardDescription>
+                Complete your compliance profile to access platform features
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Form {...complianceForm}>
+                <form 
+                  onSubmit={complianceForm.handleSubmit((data) => updateComplianceMutation.mutate(data))} 
+                  className="space-y-6"
+                >
+                  {/* Driver Type */}
+                  <FormField
+                    control={complianceForm.control}
+                    name="driver_type"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Driver Type</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select driver type" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="individual">Individual</SelectItem>
+                            <SelectItem value="company_driver">Company Driver</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  {/* ID Type */}
+                  <FormField
+                    control={complianceForm.control}
+                    name="id_type"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>ID Type</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select ID type" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="SA_ID">South African ID</SelectItem>
+                            <SelectItem value="Passport">Passport</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  {complianceForm.watch("id_type") === "Passport" && (
+                    <FormField
+                      control={complianceForm.control}
+                      name="id_issue_country"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Passport Issue Country</FormLabel>
+                          <FormControl>
+                            <Input {...field} placeholder="Enter country" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+
+                  {/* License Code */}
+                  <FormField
+                    control={complianceForm.control}
+                    name="license_code"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>License Code</FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder="e.g., B, EB, C1, EC" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  {/* PrDP Required */}
+                  <FormField
+                    control={complianceForm.control}
+                    name="prdp_required"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                        <FormControl>
+                          <Checkbox
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                        <div className="space-y-1 leading-none">
+                          <FormLabel>Professional Driving Permit (PrDP) Required</FormLabel>
+                          <p className="text-sm text-muted-foreground">
+                            Required for transporting dangerous goods (fuel)
+                          </p>
+                        </div>
+                      </FormItem>
+                    )}
+                  />
+
+                  {complianceForm.watch("prdp_required") && (
+                    <>
+                      <FormField
+                        control={complianceForm.control}
+                        name="prdp_category"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>PrDP Category</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="e.g., Dangerous Goods" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </>
+                  )}
+
+                  {/* Dangerous Goods Training */}
+                  <FormField
+                    control={complianceForm.control}
+                    name="dg_training_required"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                        <FormControl>
+                          <Checkbox
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                        <div className="space-y-1 leading-none">
+                          <FormLabel>Dangerous Goods Training Required</FormLabel>
+                          <p className="text-sm text-muted-foreground">
+                            Required for transporting fuel
+                          </p>
+                        </div>
+                      </FormItem>
+                    )}
+                  />
+
+                  {complianceForm.watch("dg_training_required") && (
+                    <>
+                      <FormField
+                        control={complianceForm.control}
+                        name="dg_training_provider"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Training Provider</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="Enter training provider name" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={complianceForm.control}
+                        name="dg_training_certificate_number"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Certificate Number</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="Enter certificate number" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </>
+                  )}
+
+                  {/* Criminal Check */}
+                  <FormField
+                    control={complianceForm.control}
+                    name="criminal_check_done"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                        <FormControl>
+                          <Checkbox
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                        <div className="space-y-1 leading-none">
+                          <FormLabel>Criminal Check Completed</FormLabel>
+                        </div>
+                      </FormItem>
+                    )}
+                  />
+
+                  {complianceForm.watch("criminal_check_done") && (
+                    <FormField
+                      control={complianceForm.control}
+                      name="criminal_check_reference"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Criminal Check Reference</FormLabel>
+                          <FormControl>
+                            <Input {...field} placeholder="Enter reference number" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+
+                  {/* Company Driver */}
+                  <FormField
+                    control={complianceForm.control}
+                    name="is_company_driver"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                        <FormControl>
+                          <Checkbox
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                        <div className="space-y-1 leading-none">
+                          <FormLabel>Company Driver</FormLabel>
+                          <p className="text-sm text-muted-foreground">
+                            Check if you are a company driver
+                          </p>
+                        </div>
+                      </FormItem>
+                    )}
+                  />
+
+                  {complianceForm.watch("is_company_driver") && (
+                    <FormField
+                      control={complianceForm.control}
+                      name="role_in_company"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Role in Company</FormLabel>
+                          <FormControl>
+                            <Input {...field} placeholder="e.g., Driver, Owner-Driver" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+
+                  <Separator />
+
+                  {/* Address Section */}
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-semibold flex items-center gap-2">
+                      <MapPin className="h-4 w-4" />
+                      Address
+                    </h3>
+                    
+                    <FormField
+                      control={complianceForm.control}
+                      name="address_line_1"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Address Line 1</FormLabel>
+                          <FormControl>
+                            <Input {...field} placeholder="Street address" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={complianceForm.control}
+                      name="address_line_2"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Address Line 2 (Optional)</FormLabel>
+                          <FormControl>
+                            <Input {...field} placeholder="Apartment, suite, etc." />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <FormField
+                        control={complianceForm.control}
+                        name="city"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>City</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="City" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={complianceForm.control}
+                        name="province"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Province</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="Province" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <FormField
+                        control={complianceForm.control}
+                        name="postal_code"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Postal Code</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="Postal code" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={complianceForm.control}
+                        name="country"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Country</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="Country" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  </div>
+
+                  <Button type="submit" disabled={updateComplianceMutation.isPending}>
+                    {updateComplianceMutation.isPending ? "Saving..." : "Save Compliance Information"}
                   </Button>
                 </form>
               </Form>

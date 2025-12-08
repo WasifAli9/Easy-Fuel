@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { supabaseAdmin } from "./supabase";
 import { ObjectStorageService } from "./objectStorage";
+import { getDriverComplianceStatus, getSupplierComplianceStatus } from "./compliance-service";
+import { websocketService } from "./websocket";
 
 const router = Router();
 const objectStorageService = new ObjectStorageService();
@@ -713,6 +715,29 @@ router.get("/users/:userId", async (req, res) => {
       
       result.driver = driver;
       result.vehicles = vehicles || [];
+      
+      // Include address from driver table (compliance fields) or profile as fallback
+      if (driver) {
+        if (driver.address_line_1 || driver.city) {
+          result.address = {
+            address_line_1: driver.address_line_1,
+            address_line_2: driver.address_line_2,
+            city: driver.city,
+            province: driver.province,
+            postal_code: driver.postal_code,
+            country: driver.country || "South Africa",
+          };
+        } else if (profile.address_street || profile.address_city) {
+          result.address = {
+            address_street: profile.address_street,
+            address_line_2: profile.address_line_2,
+            address_city: profile.address_city,
+            address_province: profile.address_province,
+            address_postal_code: profile.address_postal_code,
+            country: profile.country || "South Africa",
+          };
+        }
+      }
     } else if (profile.role === "supplier") {
       const { data: supplier } = await supabaseAdmin
         .from("suppliers")
@@ -937,14 +962,159 @@ router.get("/users/:userId/documents", async (req, res) => {
   try {
     const { userId } = req.params;
     
-    const { data, error } = await supabaseAdmin
+    console.log(`[GET /api/admin/users/${userId}/documents] Fetching documents for user:`, userId);
+    
+    // First, get the profile to determine the role
+    const { data: profile, error: profileError } = await supabaseAdmin
+      .from("profiles")
+      .select("role")
+      .eq("id", userId)
+      .single();
+    
+    if (profileError) {
+      console.error("Error fetching profile:", profileError);
+      return res.json([]);
+    }
+    
+    if (!profile) {
+      console.log("No profile found for user:", userId);
+      return res.json([]);
+    }
+    
+    console.log("Profile role:", profile.role);
+    
+    let ownerId = userId;
+    let ownerType = profile.role;
+    
+    // For drivers, we need to get the driver record ID, not the user ID
+    if (profile.role === "driver") {
+      const { data: driver, error: driverError } = await supabaseAdmin
+        .from("drivers")
+        .select("id, user_id")
+        .eq("user_id", userId)
+        .maybeSingle();
+      
+      if (driverError) {
+        console.error("Error fetching driver:", driverError);
+      }
+      
+      if (driver) {
+        ownerId = driver.id;
+        ownerType = "driver";
+        console.log("Found driver record - driver.id:", driver.id, "user_id:", driver.user_id, "Using ownerId:", ownerId);
+      } else {
+        console.log("No driver record found for user:", userId);
+        // Still try to fetch documents with user_id as owner_id in case they were stored incorrectly
+        ownerId = userId;
+        ownerType = "driver";
+        console.log("Using userId as ownerId fallback:", ownerId);
+      }
+    } else if (profile.role === "supplier") {
+      const { data: supplier } = await supabaseAdmin
+        .from("suppliers")
+        .select("id")
+        .eq("owner_id", userId)
+        .single();
+      
+      if (supplier) {
+        ownerId = supplier.id;
+        ownerType = "supplier";
+      }
+    }
+    
+    console.log("Fetching documents with ownerId:", ownerId, "ownerType:", ownerType);
+    
+    // Also fetch vehicle documents if driver
+    let vehicleDocuments: any[] = [];
+    if (profile.role === "driver" && ownerType === "driver") {
+      const { data: vehicles } = await supabaseAdmin
+        .from("vehicles")
+        .select("id")
+        .eq("driver_id", ownerId);
+      
+      if (vehicles && vehicles.length > 0) {
+        const vehicleIds = vehicles.map(v => v.id);
+        const { data: vDocs } = await supabaseAdmin
+          .from("documents")
+          .select("*")
+          .in("owner_id", vehicleIds)
+          .eq("owner_type", "vehicle")
+          .order("created_at", { ascending: false });
+        
+        vehicleDocuments = vDocs || [];
+        console.log("Found", vehicleDocuments.length, "vehicle documents");
+      }
+    }
+    
+    // First, let's check what documents actually exist in the database for debugging
+    const { data: allDriverDocs, error: debugError } = await supabaseAdmin
       .from("documents")
       .select("*")
-      .eq("owner_id", userId)
+      .eq("owner_type", "driver")
       .order("created_at", { ascending: false });
     
-    if (error) throw error;
-    res.json(data || []);
+    console.log(`[DEBUG] Total documents with owner_type='driver' in database:`, allDriverDocs?.length || 0);
+    if (allDriverDocs && allDriverDocs.length > 0) {
+      console.log(`[DEBUG] Sample document owner_ids:`, allDriverDocs.slice(0, 5).map((d: any) => ({ 
+        owner_id: d.owner_id, 
+        owner_type: d.owner_type, 
+        doc_type: d.doc_type,
+        title: d.title 
+      })));
+    }
+    
+    // Fetch documents for the owner
+    let { data, error } = await supabaseAdmin
+      .from("documents")
+      .select("*")
+      .eq("owner_id", ownerId)
+      .eq("owner_type", ownerType)
+      .order("created_at", { ascending: false });
+    
+    if (error) {
+      console.error("Error fetching documents:", error);
+      throw error;
+    }
+    
+    console.log("Found", data?.length || 0, "documents for owner (ownerId:", ownerId, "ownerType:", ownerType, ")");
+    
+    // If no documents found and we're looking for a driver, try multiple fallback queries
+    if ((!data || data.length === 0) && profile.role === "driver") {
+      console.log("No documents found with driver.id, trying fallback queries...");
+      
+      // Try 1: Query by user_id
+      const { data: fallbackData1, error: fallbackError1 } = await supabaseAdmin
+        .from("documents")
+        .select("*")
+        .eq("owner_id", userId)
+        .eq("owner_type", "driver")
+        .order("created_at", { ascending: false });
+      
+      if (!fallbackError1 && fallbackData1 && fallbackData1.length > 0) {
+        console.log("Found", fallbackData1.length, "documents using fallback query (user_id)");
+        data = fallbackData1;
+      } else {
+        // Try 2: Query all driver documents and filter by uploaded_by
+        const { data: fallbackData2, error: fallbackError2 } = await supabaseAdmin
+          .from("documents")
+          .select("*")
+          .eq("owner_type", "driver")
+          .eq("uploaded_by", userId)
+          .order("created_at", { ascending: false });
+        
+        if (!fallbackError2 && fallbackData2 && fallbackData2.length > 0) {
+          console.log("Found", fallbackData2.length, "documents using fallback query (uploaded_by)");
+          data = fallbackData2;
+        }
+      }
+    }
+    
+    // Combine driver documents with vehicle documents
+    const allDocuments = [...(data || []), ...vehicleDocuments];
+    
+    console.log("Total documents to return:", allDocuments.length);
+    
+    res.json(allDocuments);
   } catch (error: any) {
     console.error("Error fetching documents:", error);
     res.status(500).json({ error: error.message });
@@ -1036,6 +1206,376 @@ router.put("/users/:userId/profile-picture", async (req, res) => {
   } catch (error: any) {
     console.error("Error setting profile picture ACL:", error);
     res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ============== COMPLIANCE REVIEW ROUTES ==============
+
+// Get all pending compliance reviews
+router.get("/compliance/pending", async (req, res) => {
+  try {
+    // Get drivers pending compliance
+    const { data: pendingDrivers, error: driversError } = await supabaseAdmin
+      .from("drivers")
+      .select(`
+        id,
+        user_id,
+        status,
+        compliance_status,
+        profiles!inner(full_name, email, phone)
+      `)
+      .in("status", ["pending_compliance"])
+      .in("compliance_status", ["pending", "incomplete"]);
+
+    if (driversError) {
+      console.error("Error fetching pending drivers:", driversError);
+    }
+
+    // Get suppliers pending compliance
+    const { data: pendingSuppliers, error: suppliersError } = await supabaseAdmin
+      .from("suppliers")
+      .select(`
+        id,
+        owner_id,
+        status,
+        compliance_status,
+        name,
+        registered_name,
+        profiles!inner(full_name, email, phone)
+      `)
+      .in("status", ["pending_compliance"])
+      .in("compliance_status", ["pending", "incomplete"]);
+
+    if (suppliersError) {
+      console.error("Error fetching pending suppliers:", suppliersError);
+    }
+
+    res.json({
+      drivers: pendingDrivers || [],
+      suppliers: pendingSuppliers || [],
+    });
+  } catch (error: any) {
+    console.error("Error getting pending compliance:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get driver compliance checklist
+router.get("/compliance/driver/:id/checklist", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const complianceStatus = await getDriverComplianceStatus(id);
+    res.json(complianceStatus);
+  } catch (error: any) {
+    console.error("Error getting driver compliance checklist:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get supplier compliance checklist
+router.get("/compliance/supplier/:id/checklist", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const complianceStatus = await getSupplierComplianceStatus(id);
+    res.json(complianceStatus);
+  } catch (error: any) {
+    console.error("Error getting supplier compliance checklist:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Approve driver compliance
+router.post("/compliance/driver/:id/approve", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = (req as any).user;
+
+    const { error: updateError } = await supabaseAdmin
+      .from("drivers")
+      .update({
+        compliance_status: "approved",
+        status: "active",
+        compliance_reviewer_id: user.id,
+        compliance_review_date: new Date().toISOString(),
+        compliance_rejection_reason: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+
+    if (updateError) throw updateError;
+
+    // Get driver user_id for notification
+    const { data: driver } = await supabaseAdmin
+      .from("drivers")
+      .select("user_id")
+      .eq("id", id)
+      .single();
+
+    // Broadcast to admins
+    websocketService.broadcastToRole("admin", {
+      type: "compliance_approved",
+      payload: {
+        driverId: id,
+        userId: driver?.user_id,
+        type: "driver",
+        reviewerId: user.id,
+      },
+    });
+
+    // Notify driver
+    if (driver?.user_id) {
+      websocketService.sendToUser(driver.user_id, {
+        type: "compliance_approved",
+        payload: {
+          driverId: id,
+          type: "driver",
+        },
+      });
+    }
+
+    res.json({ success: true, message: "Driver compliance approved" });
+  } catch (error: any) {
+    console.error("Error approving driver compliance:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Reject driver compliance
+router.post("/compliance/driver/:id/reject", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const user = (req as any).user;
+
+    if (!reason) {
+      return res.status(400).json({ error: "Rejection reason is required" });
+    }
+
+    const { error: updateError } = await supabaseAdmin
+      .from("drivers")
+      .update({
+        compliance_status: "rejected",
+        status: "rejected",
+        compliance_reviewer_id: user.id,
+        compliance_review_date: new Date().toISOString(),
+        compliance_rejection_reason: reason,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+
+    if (updateError) throw updateError;
+
+    // Get driver user_id for notification
+    const { data: driver } = await supabaseAdmin
+      .from("drivers")
+      .select("user_id")
+      .eq("id", id)
+      .single();
+
+    // Broadcast to admins
+    websocketService.broadcastToRole("admin", {
+      type: "compliance_rejected",
+      payload: {
+        driverId: id,
+        userId: driver?.user_id,
+        type: "driver",
+        reviewerId: user.id,
+        reason,
+      },
+    });
+
+    // Notify driver
+    if (driver?.user_id) {
+      websocketService.sendToUser(driver.user_id, {
+        type: "compliance_rejected",
+        payload: {
+          driverId: id,
+          type: "driver",
+          reason,
+        },
+      });
+    }
+
+    res.json({ success: true, message: "Driver compliance rejected" });
+  } catch (error: any) {
+    console.error("Error rejecting driver compliance:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Approve supplier compliance
+router.post("/compliance/supplier/:id/approve", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = (req as any).user;
+
+    const { error: updateError } = await supabaseAdmin
+      .from("suppliers")
+      .update({
+        compliance_status: "approved",
+        status: "active",
+        compliance_reviewer_id: user.id,
+        compliance_review_date: new Date().toISOString(),
+        compliance_rejection_reason: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+
+    if (updateError) throw updateError;
+
+    // Get supplier owner_id for notification
+    const { data: supplier } = await supabaseAdmin
+      .from("suppliers")
+      .select("owner_id")
+      .eq("id", id)
+      .single();
+
+    // Broadcast to admins
+    websocketService.broadcastToRole("admin", {
+      type: "compliance_approved",
+      payload: {
+        supplierId: id,
+        userId: supplier?.owner_id,
+        type: "supplier",
+        reviewerId: user.id,
+      },
+    });
+
+    // Notify supplier
+    if (supplier?.owner_id) {
+      websocketService.sendToUser(supplier.owner_id, {
+        type: "compliance_approved",
+        payload: {
+          supplierId: id,
+          type: "supplier",
+        },
+      });
+    }
+
+    res.json({ success: true, message: "Supplier compliance approved" });
+  } catch (error: any) {
+    console.error("Error approving supplier compliance:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Reject supplier compliance
+router.post("/compliance/supplier/:id/reject", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const user = (req as any).user;
+
+    if (!reason) {
+      return res.status(400).json({ error: "Rejection reason is required" });
+    }
+
+    const { error: updateError } = await supabaseAdmin
+      .from("suppliers")
+      .update({
+        compliance_status: "rejected",
+        status: "rejected",
+        compliance_reviewer_id: user.id,
+        compliance_review_date: new Date().toISOString(),
+        compliance_rejection_reason: reason,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+
+    if (updateError) throw updateError;
+
+    // Get supplier owner_id for notification
+    const { data: supplier } = await supabaseAdmin
+      .from("suppliers")
+      .select("owner_id")
+      .eq("id", id)
+      .single();
+
+    // Broadcast to admins
+    websocketService.broadcastToRole("admin", {
+      type: "compliance_rejected",
+      payload: {
+        supplierId: id,
+        userId: supplier?.owner_id,
+        type: "supplier",
+        reviewerId: user.id,
+        reason,
+      },
+    });
+
+    // Notify supplier
+    if (supplier?.owner_id) {
+      websocketService.sendToUser(supplier.owner_id, {
+        type: "compliance_rejected",
+        payload: {
+          supplierId: id,
+          type: "supplier",
+          reason,
+        },
+      });
+    }
+
+    res.json({ success: true, message: "Supplier compliance rejected" });
+  } catch (error: any) {
+    console.error("Error rejecting supplier compliance:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Approve individual document
+router.post("/compliance/documents/:id/approve", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = (req as any).user;
+
+    const { error: updateError } = await supabaseAdmin
+      .from("documents")
+      .update({
+        verification_status: "verified",
+        verified_by: user.id,
+        verified_at: new Date().toISOString(),
+        document_rejection_reason: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+
+    if (updateError) throw updateError;
+
+    res.json({ success: true, message: "Document approved" });
+  } catch (error: any) {
+    console.error("Error approving document:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Reject individual document
+router.post("/compliance/documents/:id/reject", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const user = (req as any).user;
+
+    if (!reason) {
+      return res.status(400).json({ error: "Rejection reason is required" });
+    }
+
+    const { error: updateError } = await supabaseAdmin
+      .from("documents")
+      .update({
+        verification_status: "rejected",
+        verified_by: user.id,
+        verified_at: new Date().toISOString(),
+        document_rejection_reason: reason,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+
+    if (updateError) throw updateError;
+
+    res.json({ success: true, message: "Document rejected" });
+  } catch (error: any) {
+    console.error("Error rejecting document:", error);
+    res.status(500).json({ error: error.message });
   }
 });
 

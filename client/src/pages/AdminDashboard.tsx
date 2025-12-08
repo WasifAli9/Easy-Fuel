@@ -9,7 +9,11 @@ import { StatsCard } from "@/components/StatsCard";
 import { CreateUserDialog } from "@/components/CreateUserDialog";
 import { UserDetailsDialogEnhanced } from "@/components/UserDetailsDialogEnhanced";
 import { Input } from "@/components/ui/input";
-import { Users, Truck, TrendingUp, Building2, UserCheck, Search } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Users, Truck, TrendingUp, Building2, UserCheck, Search, Shield, FileText, CheckCircle2, XCircle, Eye } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -106,6 +110,9 @@ export default function AdminDashboard() {
   const [allSuppliersSearch, setAllSuppliersSearch] = useState("");
   const [driverKycSearch, setDriverKycSearch] = useState("");
   const [supplierKycSearch, setSupplierKycSearch] = useState("");
+  const [complianceSearch, setComplianceSearch] = useState("");
+  const [selectedComplianceEntity, setSelectedComplianceEntity] = useState<{ type: "driver" | "supplier"; id: string } | null>(null);
+  const [complianceDialogOpen, setComplianceDialogOpen] = useState(false);
 
   // Fetch pending KYC/KYB applications
   const { data: pendingKYC, isLoading } = useQuery<PendingKYC>({
@@ -125,6 +132,17 @@ export default function AdminDashboard() {
   // Fetch all drivers
   const { data: allDrivers, isLoading: driversLoading } = useQuery<Driver[]>({
     queryKey: ["/api/admin/drivers"],
+  });
+
+  // Fetch pending compliance reviews
+  const { data: pendingCompliance } = useQuery<any>({
+    queryKey: ["/api/admin/compliance/pending"],
+  });
+
+  // Fetch compliance checklist for selected entity
+  const { data: complianceChecklist } = useQuery<any>({
+    queryKey: ["/api/admin/compliance", selectedComplianceEntity?.type, selectedComplianceEntity?.id, "checklist"],
+    enabled: !!selectedComplianceEntity,
   });
 
   // Listen for real-time updates via WebSocket
@@ -368,6 +386,9 @@ export default function AdminDashboard() {
               <TabsTrigger value="supplier-kyc" data-testid="tab-supplier-kyc">
                 Supplier KYC ({supplierKYC.length})
               </TabsTrigger>
+              <TabsTrigger value="compliance-review" data-testid="tab-compliance-review">
+                Compliance Review ({pendingCompliance ? (pendingCompliance.drivers?.length || 0) + (pendingCompliance.suppliers?.length || 0) : 0})
+              </TabsTrigger>
               <TabsTrigger value="settings" data-testid="tab-settings">Settings</TabsTrigger>
             </TabsList>
           </div>
@@ -568,6 +589,155 @@ export default function AdminDashboard() {
             )}
           </TabsContent>
 
+          <TabsContent value="compliance-review" className="space-y-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search by name..."
+                className="pl-10"
+                value={complianceSearch}
+                onChange={(e) => setComplianceSearch(e.target.value)}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Pending Drivers */}
+              {pendingCompliance?.drivers
+                ?.filter((d: any) => 
+                  d.profiles?.full_name?.toLowerCase().includes(complianceSearch.toLowerCase())
+                )
+                .map((driver: any) => (
+                  <Card key={driver.id} className="relative">
+                    <CardHeader>
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <CardTitle className="text-lg">{driver.profiles?.full_name || "Unknown"}</CardTitle>
+                          <CardDescription>Driver Compliance Review</CardDescription>
+                        </div>
+                        <Badge variant="secondary">
+                          {driver.compliance_status === "pending" ? "Pending" : "Incomplete"}
+                        </Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="text-sm space-y-1">
+                        <p><span className="text-muted-foreground">Status:</span> {driver.status}</p>
+                        <p><span className="text-muted-foreground">Compliance:</span> {driver.compliance_status}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedComplianceEntity({ type: "driver", id: driver.id });
+                            setComplianceDialogOpen(true);
+                          }}
+                        >
+                          <Eye className="h-4 w-4 mr-2" />
+                          Review
+                        </Button>
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={async () => {
+                            try {
+                              await apiRequest("POST", `/api/admin/compliance/driver/${driver.id}/approve`);
+                              queryClient.invalidateQueries({ queryKey: ["/api/admin/compliance/pending"] });
+                              toast({
+                                title: "Success",
+                                description: "Driver compliance approved",
+                              });
+                            } catch (error: any) {
+                              toast({
+                                title: "Error",
+                                description: error.message || "Failed to approve compliance",
+                                variant: "destructive",
+                              });
+                            }
+                          }}
+                        >
+                          <CheckCircle2 className="h-4 w-4 mr-2" />
+                          Approve
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+
+              {/* Pending Suppliers */}
+              {pendingCompliance?.suppliers
+                ?.filter((s: any) => 
+                  s.name?.toLowerCase().includes(complianceSearch.toLowerCase()) ||
+                  s.profiles?.full_name?.toLowerCase().includes(complianceSearch.toLowerCase())
+                )
+                .map((supplier: any) => (
+                  <Card key={supplier.id} className="relative">
+                    <CardHeader>
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <CardTitle className="text-lg">{supplier.name || supplier.profiles?.full_name || "Unknown"}</CardTitle>
+                          <CardDescription>Supplier Compliance Review</CardDescription>
+                        </div>
+                        <Badge variant="secondary">
+                          {supplier.compliance_status === "pending" ? "Pending" : "Incomplete"}
+                        </Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="text-sm space-y-1">
+                        <p><span className="text-muted-foreground">Status:</span> {supplier.status}</p>
+                        <p><span className="text-muted-foreground">Compliance:</span> {supplier.compliance_status}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedComplianceEntity({ type: "supplier", id: supplier.id });
+                            setComplianceDialogOpen(true);
+                          }}
+                        >
+                          <Eye className="h-4 w-4 mr-2" />
+                          Review
+                        </Button>
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={async () => {
+                            try {
+                              await apiRequest("POST", `/api/admin/compliance/supplier/${supplier.id}/approve`);
+                              queryClient.invalidateQueries({ queryKey: ["/api/admin/compliance/pending"] });
+                              toast({
+                                title: "Success",
+                                description: "Supplier compliance approved",
+                              });
+                            } catch (error: any) {
+                              toast({
+                                title: "Error",
+                                description: error.message || "Failed to approve compliance",
+                                variant: "destructive",
+                              });
+                            }
+                          }}
+                        >
+                          <CheckCircle2 className="h-4 w-4 mr-2" />
+                          Approve
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+            </div>
+
+            {(!pendingCompliance || 
+              ((pendingCompliance.drivers?.length || 0) + (pendingCompliance.suppliers?.length || 0) === 0)) && (
+              <div className="text-center py-12 text-muted-foreground">
+                <Shield className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                <p>No pending compliance reviews</p>
+              </div>
+            )}
+          </TabsContent>
+
           <TabsContent value="settings" className="space-y-4">
             <div className="text-center py-12 text-muted-foreground">
               <p>Settings configuration will be available here</p>
@@ -581,6 +751,222 @@ export default function AdminDashboard() {
         open={userDialogOpen}
         onOpenChange={setUserDialogOpen}
       />
+
+      {/* Compliance Review Dialog */}
+      {selectedComplianceEntity && (
+        <Dialog open={complianceDialogOpen} onOpenChange={setComplianceDialogOpen}>
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Shield className="h-5 w-5" />
+                Compliance Review - {selectedComplianceEntity.type === "driver" ? "Driver" : "Supplier"}
+              </DialogTitle>
+              <DialogDescription>
+                Review compliance documents and checklist
+              </DialogDescription>
+            </DialogHeader>
+
+            {complianceChecklist && (
+              <div className="space-y-6">
+                {/* Compliance Status Overview */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Compliance Status</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">Overall Status</span>
+                      <Badge 
+                        variant={
+                          complianceChecklist.overallStatus === "approved" ? "default" :
+                          complianceChecklist.overallStatus === "rejected" ? "destructive" :
+                          "secondary"
+                        }
+                      >
+                        {complianceChecklist.overallStatus === "approved" ? "Approved" :
+                         complianceChecklist.overallStatus === "rejected" ? "Rejected" :
+                         complianceChecklist.overallStatus === "pending" ? "Pending Review" :
+                         "Incomplete"}
+                      </Badge>
+                    </div>
+
+                    {complianceChecklist.checklist && (
+                      <>
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-sm font-medium">Document Progress</span>
+                            <span className="text-sm text-muted-foreground">
+                              {complianceChecklist.checklist.approved.length} / {complianceChecklist.checklist.required.length} approved
+                            </span>
+                          </div>
+                          <Progress 
+                            value={
+                              (complianceChecklist.checklist.approved.length / complianceChecklist.checklist.required.length) * 100
+                            } 
+                            className="h-2"
+                          />
+                        </div>
+
+                        {complianceChecklist.checklist.missing.length > 0 && (
+                          <Alert>
+                            <AlertTriangle className="h-4 w-4" />
+                            <AlertTitle>Missing Documents</AlertTitle>
+                            <AlertDescription>
+                              {complianceChecklist.checklist.missing.join(", ")}
+                            </AlertDescription>
+                          </Alert>
+                        )}
+
+                        {complianceChecklist.checklist.pending.length > 0 && (
+                          <Alert>
+                            <AlertTriangle className="h-4 w-4" />
+                            <AlertTitle>Pending Review</AlertTitle>
+                            <AlertDescription>
+                              {complianceChecklist.checklist.pending.length} document(s) awaiting review
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                      </>
+                    )}
+
+                    {complianceChecklist.rejectionReason && (
+                      <Alert variant="destructive">
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertTitle>Rejection Reason</AlertTitle>
+                        <AlertDescription>
+                          {complianceChecklist.rejectionReason}
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Compliance Checklist */}
+                {complianceChecklist.checklist && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Compliance Checklist</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-2">
+                        {complianceChecklist.checklist.required.map((docType: string) => {
+                          const isApproved = complianceChecklist.checklist.approved.includes(docType);
+                          const isPending = complianceChecklist.checklist.pending.includes(docType);
+                          const isRejected = complianceChecklist.checklist.rejected.includes(docType);
+                          const isMissing = complianceChecklist.checklist.missing.includes(docType);
+
+                          return (
+                            <div key={docType} className="flex items-center justify-between p-3 border rounded-lg">
+                              <div className="flex items-center gap-3">
+                                {isApproved ? (
+                                  <CheckCircle2 className="h-5 w-5 text-green-600" />
+                                ) : isRejected ? (
+                                  <XCircle className="h-5 w-5 text-red-600" />
+                                ) : isPending ? (
+                                  <FileText className="h-5 w-5 text-yellow-600" />
+                                ) : (
+                                  <FileText className="h-5 w-5 text-muted-foreground" />
+                                )}
+                                <span className="font-medium">{docType.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}</span>
+                              </div>
+                              <Badge 
+                                variant={
+                                  isApproved ? "default" :
+                                  isRejected ? "destructive" :
+                                  isPending ? "secondary" :
+                                  "outline"
+                                }
+                              >
+                                {isApproved ? "Approved" :
+                                 isRejected ? "Rejected" :
+                                 isPending ? "Pending" :
+                                 "Missing"}
+                              </Badge>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Action Buttons */}
+                <div className="flex gap-2 justify-end">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setComplianceDialogOpen(false);
+                      setSelectedComplianceEntity(null);
+                    }}
+                  >
+                    Close
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    onClick={async () => {
+                      const reason = prompt("Please provide a reason for rejection:");
+                      if (!reason) return;
+
+                      try {
+                        const endpoint = selectedComplianceEntity.type === "driver"
+                          ? `/api/admin/compliance/driver/${selectedComplianceEntity.id}/reject`
+                          : `/api/admin/compliance/supplier/${selectedComplianceEntity.id}/reject`;
+                        
+                        await apiRequest("POST", endpoint, { reason });
+                        queryClient.invalidateQueries({ queryKey: ["/api/admin/compliance/pending"] });
+                        queryClient.invalidateQueries({ queryKey: ["/api/admin/compliance", selectedComplianceEntity.type, selectedComplianceEntity.id, "checklist"] });
+                        setComplianceDialogOpen(false);
+                        setSelectedComplianceEntity(null);
+                        toast({
+                          title: "Success",
+                          description: "Compliance rejected",
+                        });
+                      } catch (error: any) {
+                        toast({
+                          title: "Error",
+                          description: error.message || "Failed to reject compliance",
+                          variant: "destructive",
+                        });
+                      }
+                    }}
+                  >
+                    <XCircle className="h-4 w-4 mr-2" />
+                    Reject
+                  </Button>
+                  <Button
+                    onClick={async () => {
+                      try {
+                        const endpoint = selectedComplianceEntity.type === "driver"
+                          ? `/api/admin/compliance/driver/${selectedComplianceEntity.id}/approve`
+                          : `/api/admin/compliance/supplier/${selectedComplianceEntity.id}/approve`;
+                        
+                        await apiRequest("POST", endpoint);
+                        queryClient.invalidateQueries({ queryKey: ["/api/admin/compliance/pending"] });
+                        queryClient.invalidateQueries({ queryKey: ["/api/admin/compliance", selectedComplianceEntity.type, selectedComplianceEntity.id, "checklist"] });
+                        setComplianceDialogOpen(false);
+                        setSelectedComplianceEntity(null);
+                        toast({
+                          title: "Success",
+                          description: "Compliance approved",
+                        });
+                      } catch (error: any) {
+                        toast({
+                          title: "Error",
+                          description: error.message || "Failed to approve compliance",
+                          variant: "destructive",
+                        });
+                      }
+                    }}
+                  >
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Approve
+                  </Button>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

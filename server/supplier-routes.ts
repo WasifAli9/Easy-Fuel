@@ -1,12 +1,45 @@
 import { Router } from "express";
 import { supabaseAdmin } from "./supabase";
 import { insertDepotSchema } from "../shared/schema";
+import { getSupplierComplianceStatus, canSupplierAccessPlatform } from "./compliance-service";
 import { z } from "zod";
 
 const router = Router();
 
+// Helper middleware to check supplier compliance
+async function checkSupplierCompliance(req: any, res: any, next: any) {
+  try {
+    const user = req.user;
+    const { data: supplier } = await supabaseAdmin
+      .from("suppliers")
+      .select("id, status, compliance_status")
+      .eq("owner_id", user.id)
+      .maybeSingle();
+
+    if (!supplier) {
+      return res.status(404).json({ error: "Supplier not found" });
+    }
+
+    if (supplier.status !== "active" || supplier.compliance_status !== "approved") {
+      return res.status(403).json({
+        error: "Compliance not approved",
+        code: "COMPLIANCE_REQUIRED",
+        message: "Your compliance documents must be approved before accessing this feature. Please complete your compliance profile.",
+        status: supplier.status,
+        compliance_status: supplier.compliance_status,
+      });
+    }
+
+    req.supplierId = supplier.id;
+    next();
+  } catch (error: any) {
+    console.error("Error checking supplier compliance:", error);
+    res.status(500).json({ error: error.message });
+  }
+}
+
 // Get all depots for the authenticated supplier with their pricing
-router.get("/depots", async (req, res) => {
+router.get("/depots", checkSupplierCompliance, async (req, res) => {
   const user = (req as any).user;
 
   try {
@@ -177,7 +210,7 @@ router.get("/depots", async (req, res) => {
 });
 
 // Get pricing for a specific depot
-router.get("/depots/:depotId/pricing", async (req, res) => {
+router.get("/depots/:depotId/pricing", checkSupplierCompliance, async (req, res) => {
   const user = (req as any).user;
   const depotId = req.params.depotId;
 
@@ -258,7 +291,7 @@ router.get("/depots/:depotId/pricing", async (req, res) => {
 });
 
 // Create a new pricing tier for a fuel type
-router.post("/depots/:depotId/pricing/:fuelTypeId/tiers", async (req, res) => {
+router.post("/depots/:depotId/pricing/:fuelTypeId/tiers", checkSupplierCompliance, async (req, res) => {
   const user = (req as any).user;
   const depotId = req.params.depotId;
   const fuelTypeId = req.params.fuelTypeId;
@@ -694,7 +727,7 @@ router.get("/depots/:depotId/pricing/history", async (req, res) => {
 });
 
 // Create new depot
-router.post("/depots", async (req, res) => {
+router.post("/depots", checkSupplierCompliance, async (req, res) => {
   const user = (req as any).user;
 
   try {
@@ -1561,6 +1594,189 @@ router.patch("/driver-depot-orders/:orderId", async (req, res) => {
     res.json(updatedOrder);
   } catch (error: any) {
     console.error("Error updating driver depot order:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============== DOCUMENTS ROUTES ==============
+
+// Get supplier documents
+router.get("/documents", async (req, res) => {
+  const user = (req as any).user;
+  
+  try {
+    const { data: documents, error } = await supabaseAdmin
+      .from("documents")
+      .select("*")
+      .eq("owner_type", "supplier")
+      .eq("owner_id", user.id)
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+    res.json(documents || []);
+  } catch (error: any) {
+    console.error("Error fetching supplier documents:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create supplier document
+router.post("/documents", async (req, res) => {
+  const user = (req as any).user;
+  const { owner_type, doc_type, title, file_path, file_size, mime_type, document_issue_date, expiry_date } = req.body;
+  
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("documents")
+      .insert({
+        owner_type: owner_type || "supplier",
+        owner_id: user.id,
+        doc_type,
+        title,
+        file_path,
+        file_size,
+        mime_type,
+        document_issue_date,
+        expiry_date,
+        uploaded_by: user.id,
+      })
+      .select()
+      .single();
+    
+    if (error) throw error;
+    res.json(data);
+  } catch (error: any) {
+    console.error("Error creating supplier document:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============== COMPLIANCE ROUTES ==============
+
+// Get supplier compliance status
+router.get("/compliance/status", async (req, res) => {
+  const user = (req as any).user;
+  
+  try {
+    // Get supplier ID
+    const { data: supplier, error: supplierError } = await supabaseAdmin
+      .from("suppliers")
+      .select("id")
+      .eq("owner_id", user.id)
+      .maybeSingle();
+
+    if (supplierError || !supplier) {
+      return res.status(404).json({ error: "Supplier not found" });
+    }
+
+    const complianceStatus = await getSupplierComplianceStatus(supplier.id);
+    res.json(complianceStatus);
+  } catch (error: any) {
+    console.error("Error getting supplier compliance status:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update supplier compliance information
+router.put("/compliance", async (req, res) => {
+  const user = (req as any).user;
+  
+  try {
+    // Get supplier ID
+    const { data: supplier, error: supplierError } = await supabaseAdmin
+      .from("suppliers")
+      .select("id")
+      .eq("owner_id", user.id)
+      .maybeSingle();
+
+    if (supplierError || !supplier) {
+      return res.status(404).json({ error: "Supplier not found" });
+    }
+
+    // Extract allowed fields for update
+    const {
+      director_names,
+      registered_address,
+      vat_certificate_expiry,
+      tax_clearance_number,
+      tax_clearance_expiry,
+      wholesale_license_issue_date,
+      allowed_fuel_types,
+      site_license_number,
+      depot_address,
+      permit_number,
+      permit_expiry_date,
+      environmental_auth_number,
+      approved_storage_capacity_litres,
+      fire_certificate_number,
+      fire_certificate_issue_date,
+      fire_certificate_expiry_date,
+      hse_file_verified,
+      hse_file_last_updated,
+      spill_compliance_confirmed,
+      sabs_certificate_number,
+      sabs_certificate_issue_date,
+      sabs_certificate_expiry_date,
+      calibration_certificate_number,
+      calibration_certificate_issue_date,
+      calibration_certificate_expiry_date,
+      public_liability_policy_number,
+      public_liability_insurance_provider,
+      public_liability_coverage_amount_rands,
+      public_liability_policy_expiry_date,
+      env_insurance_number,
+      env_insurance_expiry_date,
+    } = req.body;
+
+    const updateData: any = {};
+    if (director_names !== undefined) updateData.director_names = director_names;
+    if (registered_address !== undefined) updateData.registered_address = registered_address;
+    if (vat_certificate_expiry !== undefined) updateData.vat_certificate_expiry = vat_certificate_expiry;
+    if (tax_clearance_number !== undefined) updateData.tax_clearance_number = tax_clearance_number;
+    if (tax_clearance_expiry !== undefined) updateData.tax_clearance_expiry = tax_clearance_expiry;
+    if (wholesale_license_issue_date !== undefined) updateData.wholesale_license_issue_date = wholesale_license_issue_date;
+    if (allowed_fuel_types !== undefined) updateData.allowed_fuel_types = allowed_fuel_types;
+    if (site_license_number !== undefined) updateData.site_license_number = site_license_number;
+    if (depot_address !== undefined) updateData.depot_address = depot_address;
+    if (permit_number !== undefined) updateData.permit_number = permit_number;
+    if (permit_expiry_date !== undefined) updateData.permit_expiry_date = permit_expiry_date;
+    if (environmental_auth_number !== undefined) updateData.environmental_auth_number = environmental_auth_number;
+    if (approved_storage_capacity_litres !== undefined) updateData.approved_storage_capacity_litres = approved_storage_capacity_litres;
+    if (fire_certificate_number !== undefined) updateData.fire_certificate_number = fire_certificate_number;
+    if (fire_certificate_issue_date !== undefined) updateData.fire_certificate_issue_date = fire_certificate_issue_date;
+    if (fire_certificate_expiry_date !== undefined) updateData.fire_certificate_expiry_date = fire_certificate_expiry_date;
+    if (hse_file_verified !== undefined) updateData.hse_file_verified = hse_file_verified;
+    if (hse_file_last_updated !== undefined) updateData.hse_file_last_updated = hse_file_last_updated;
+    if (spill_compliance_confirmed !== undefined) updateData.spill_compliance_confirmed = spill_compliance_confirmed;
+    if (sabs_certificate_number !== undefined) updateData.sabs_certificate_number = sabs_certificate_number;
+    if (sabs_certificate_issue_date !== undefined) updateData.sabs_certificate_issue_date = sabs_certificate_issue_date;
+    if (sabs_certificate_expiry_date !== undefined) updateData.sabs_certificate_expiry_date = sabs_certificate_expiry_date;
+    if (calibration_certificate_number !== undefined) updateData.calibration_certificate_number = calibration_certificate_number;
+    if (calibration_certificate_issue_date !== undefined) updateData.calibration_certificate_issue_date = calibration_certificate_issue_date;
+    if (calibration_certificate_expiry_date !== undefined) updateData.calibration_certificate_expiry_date = calibration_certificate_expiry_date;
+    if (public_liability_policy_number !== undefined) updateData.public_liability_policy_number = public_liability_policy_number;
+    if (public_liability_insurance_provider !== undefined) updateData.public_liability_insurance_provider = public_liability_insurance_provider;
+    if (public_liability_coverage_amount_rands !== undefined) updateData.public_liability_coverage_amount_rands = public_liability_coverage_amount_rands;
+    if (public_liability_policy_expiry_date !== undefined) updateData.public_liability_policy_expiry_date = public_liability_policy_expiry_date;
+    if (env_insurance_number !== undefined) updateData.env_insurance_number = env_insurance_number;
+    if (env_insurance_expiry_date !== undefined) updateData.env_insurance_expiry_date = env_insurance_expiry_date;
+
+    updateData.updated_at = new Date().toISOString();
+
+    const { data: updatedSupplier, error: updateError } = await supabaseAdmin
+      .from("suppliers")
+      .update(updateData)
+      .eq("id", supplier.id)
+      .select()
+      .single();
+
+    if (updateError) {
+      throw updateError;
+    }
+
+    res.json(updatedSupplier);
+  } catch (error: any) {
+    console.error("Error updating supplier compliance:", error);
     res.status(500).json({ error: error.message });
   }
 });

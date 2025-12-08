@@ -189,17 +189,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const userId = user?.id;
     
     try {
-      // If using Supabase Storage, redirect to Supabase Storage URL
+      // If using Supabase Storage, serve the file directly
       if (USE_SUPABASE_STORAGE || !process.env.PRIVATE_OBJECT_DIR) {
         const objectPath = req.params.objectPath;
         const bucketName = process.env.SUPABASE_STORAGE_BUCKET || "private-objects";
-        const supabaseUrl = process.env.SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co';
         
-        // Construct Supabase Storage public URL
-        const supabaseStorageUrl = `${supabaseUrl}/storage/v1/object/public/${bucketName}/${objectPath}`;
+        // Check if bucket is public or private
+        const { data: buckets } = await supabaseAdmin.storage.listBuckets();
+        const bucket = buckets?.find((b: any) => b.name === bucketName);
+        const isPublicBucket = bucket?.public || false;
         
-        // Redirect to Supabase Storage URL
-        return res.redirect(302, supabaseStorageUrl);
+        if (isPublicBucket) {
+          // For public buckets, redirect to public URL
+          const supabaseUrl = process.env.SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co';
+          const supabaseStorageUrl = `${supabaseUrl}/storage/v1/object/public/${bucketName}/${objectPath}`;
+          return res.redirect(302, supabaseStorageUrl);
+        } else {
+          // For private buckets, download and serve the file
+          const { data, error } = await supabaseAdmin.storage
+            .from(bucketName)
+            .download(objectPath);
+          
+          if (error) {
+            console.error("Error downloading file from Supabase Storage:", error);
+            return res.status(404).json({ error: "File not found" });
+          }
+          
+          if (!data) {
+            return res.status(404).json({ error: "File not found" });
+          }
+          
+          // Convert blob to buffer
+          const arrayBuffer = await data.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+          
+          // Set appropriate headers
+          res.setHeader('Content-Type', data.type || 'application/octet-stream');
+          res.setHeader('Content-Length', buffer.length);
+          res.setHeader('Cache-Control', 'public, max-age=3600');
+          
+          // Send the file
+          return res.send(buffer);
+        }
       }
       
       const objectFile = await objectStorageService.getObjectEntityFile(req.path);
@@ -237,13 +268,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/objects/upload", requireAuth, async (req, res) => {
     try {
       const uploadURL = await objectStorageService.getObjectEntityUploadURL();
+      console.log("Generated upload URL from service:", uploadURL);
       
       // If Supabase Storage is being used, return endpoint info
       if (uploadURL.startsWith("supabase://")) {
-        const [, bucketName, ...pathParts] = uploadURL.replace("supabase://", "").split("/");
+        const urlWithoutPrefix = uploadURL.replace("supabase://", "");
+        console.log("URL without prefix:", urlWithoutPrefix);
+        const parts = urlWithoutPrefix.split("/");
+        console.log("Split parts:", parts);
+        
+        if (parts.length < 2) {
+          throw new Error(`Invalid Supabase upload URL format: ${uploadURL}. Expected format: supabase://bucket/path`);
+        }
+        
+        const bucketName = parts[0];
+        const pathParts = parts.slice(1);
         const objectPath = pathParts.join("/");
+        
+        console.log("Parsed - bucketName:", bucketName, "objectPath:", objectPath);
+        
+        if (!bucketName) {
+          throw new Error(`Bucket name is missing in upload URL: ${uploadURL}`);
+        }
+        
+        const finalUploadURL = `/api/storage/upload/${bucketName}/${objectPath}`;
+        console.log("Final upload URL:", finalUploadURL);
+        
         res.json({ 
-          uploadURL: `/api/storage/upload/${bucketName}/${objectPath}`,
+          uploadURL: finalUploadURL,
           storageType: "supabase",
           bucketName,
           objectPath,
@@ -267,6 +319,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/storage/upload/:bucket/:path(*)", requireAuth, async (req, res) => {
     const user = (req as any).user;
     const { bucket, path } = req.params;
+    
+    console.log(`[Upload] Received upload request - bucket: "${bucket}", path: "${path}"`);
+    console.log(`[Upload] Full URL: ${req.url}`);
+    console.log(`[Upload] Content-Type: ${req.headers["content-type"]}`);
+    console.log(`[Upload] Content-Length: ${req.headers["content-length"]}`);
     
     try {
       // Get the file from the request body
@@ -304,63 +361,134 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!bucketExists) {
         console.log(`Bucket "${bucket}" not found, attempting to create it...`);
         try {
-          const { data: newBucket, error: createError } = await supabaseAdmin.storage.createBucket(bucket, {
-            public: true, // Make bucket public for profile pictures
-            fileSizeLimit: 5242880, // 5MB
-            allowedMimeTypes: ['image/*'],
-          });
+          // Determine bucket settings based on bucket name
+          // For documents, allow all file types and larger files
+          // For profile pictures, restrict to images only
+          const isDocumentBucket = bucket === "private-objects" || bucket.includes("documents") || bucket.includes("uploads");
+          const isPublicBucket = bucket === "public-objects" || bucket.includes("public");
+          
+          const bucketOptions: any = {
+            public: isPublicBucket, // Make public buckets public, private buckets private
+            fileSizeLimit: isDocumentBucket ? 10485760 : 5242880, // 10MB for documents, 5MB for images
+          };
+          
+          // Only restrict MIME types for image buckets (profile pictures)
+          if (!isDocumentBucket && (bucket.includes("profile") || bucket.includes("avatar"))) {
+            bucketOptions.allowedMimeTypes = ['image/*'];
+          }
+          // For document buckets, allow all file types
+          
+          const { data: newBucket, error: createError } = await supabaseAdmin.storage.createBucket(bucket, bucketOptions);
           
           if (createError) {
             console.error("Error creating bucket:", createError);
+            console.error("Error details:", JSON.stringify(createError, null, 2));
             // Don't fail immediately - try to upload anyway in case bucket was created by another process
             // But provide helpful error message
-            if (!createError.message?.includes("already exists")) {
+            if (!createError.message?.includes("already exists") && !createError.message?.includes("duplicate")) {
               console.warn(`Bucket creation failed, but continuing with upload attempt. Error: ${createError.message}`);
+            } else {
+              // Bucket already exists, mark it as existing
+              bucketExists = true;
+              console.log(`Bucket "${bucket}" already exists`);
             }
           } else {
-            console.log(`Bucket "${bucket}" created successfully`);
+            console.log(`Bucket "${bucket}" created successfully with options:`, bucketOptions);
+            bucketExists = true;
           }
         } catch (createErr: any) {
-          console.warn(`Bucket creation attempt failed: ${createErr.message}. Continuing with upload...`);
+          console.error(`Bucket creation attempt failed: ${createErr.message}`, createErr);
+          console.error("Error stack:", createErr.stack);
+          // Continue with upload attempt - bucket might exist or be created by another process
         }
       }
 
       // Upload to Supabase Storage
-      console.log(`Uploading to Supabase Storage: bucket="${bucket}", path="${path}", size=${fileBuffer.length} bytes`);
-      const { data, error } = await supabaseAdmin.storage
-        .from(bucket)
-        .upload(path, fileBuffer, {
-          contentType: req.headers["content-type"] || "application/octet-stream",
-          upsert: false,
-        });
-
-      if (error) {
-        console.error("Supabase storage upload error:", error);
+      console.log(`Uploading to Supabase Storage: bucket="${bucket}", path="${path}", size=${fileBuffer.length} bytes, contentType="${req.headers["content-type"] || "application/octet-stream"}"`);
+      
+      // Try to upload with upsert enabled first (allows overwriting)
+      // If that fails with a bucket error, try to create bucket again
+      let uploadAttempts = 0;
+      const maxAttempts = 2;
+      let data: any = null;
+      let error: any = null;
+      
+      while (uploadAttempts < maxAttempts) {
+        uploadAttempts++;
+        const result = await supabaseAdmin.storage
+          .from(bucket)
+          .upload(path, fileBuffer, {
+            contentType: req.headers["content-type"] || "application/octet-stream",
+            upsert: uploadAttempts > 1, // Allow overwrite on retry
+          });
+        
+        data = result.data;
+        error = result.error;
+        
+        if (!error) {
+          break; // Success, exit loop
+        }
+        
+        console.error(`Upload attempt ${uploadAttempts} failed:`, error);
         console.error("Error details:", JSON.stringify(error, null, 2));
         
-        // If bucket still doesn't exist after creation attempt, provide helpful error
+        // If bucket doesn't exist and we haven't tried creating it yet, try one more time
         if (error.message?.includes("Bucket not found") || error.statusCode === '404' || error.status === 404) {
+          if (uploadAttempts === 1) {
+            console.log("Bucket not found, attempting to create it before retry...");
+            try {
+              const isDocumentBucket = bucket === "private-objects" || bucket.includes("documents") || bucket.includes("uploads");
+              const isPublicBucket = bucket === "public-objects" || bucket.includes("public");
+              
+              const bucketOptions: any = {
+                public: isPublicBucket,
+                fileSizeLimit: isDocumentBucket ? 10485760 : 5242880,
+              };
+              
+              if (!isDocumentBucket && (bucket.includes("profile") || bucket.includes("avatar"))) {
+                bucketOptions.allowedMimeTypes = ['image/*'];
+              }
+              
+              const { error: createError } = await supabaseAdmin.storage.createBucket(bucket, bucketOptions);
+              if (createError && !createError.message?.includes("already exists") && !createError.message?.includes("duplicate")) {
+                console.error("Failed to create bucket on retry:", createError);
+              } else {
+                console.log("Bucket created successfully, retrying upload...");
+                continue; // Retry upload
+              }
+            } catch (createErr: any) {
+              console.error("Error creating bucket on retry:", createErr);
+            }
+          }
+          
+          // If we've exhausted retries or bucket creation failed, return error
           return res.status(500).json({ 
             error: "Storage bucket not found",
-            message: `Bucket "${bucket}" does not exist in Supabase Storage.`,
+            message: `Bucket "${bucket}" does not exist in Supabase Storage and could not be created automatically.`,
             hint: `Please create the bucket manually:
 1. Go to your Supabase Dashboard (https://supabase.com/dashboard)
 2. Select your project
 3. Navigate to Storage
 4. Click "New bucket"
 5. Name it: "${bucket}"
-6. Make it PUBLIC (toggle "Public bucket" ON)
-7. Click "Create bucket"
+6. Set visibility: ${bucket.includes("public") ? "PUBLIC" : "PRIVATE"}
+7. Set file size limit: ${bucket.includes("documents") || bucket === "private-objects" ? "10MB" : "5MB"}
+8. Click "Create bucket"
 Then try uploading again.`,
-            bucketName: bucket
+            bucketName: bucket,
+            uploadAttempts
           });
         }
         
-        return res.status(500).json({ 
-          error: "Failed to upload to Supabase Storage",
-          message: error.message,
-          details: error
-        });
+        // For other errors, return immediately
+        if (uploadAttempts >= maxAttempts) {
+          return res.status(500).json({ 
+            error: "Failed to upload to Supabase Storage",
+            message: error.message || "Unknown error",
+            details: error,
+            uploadAttempts
+          });
+        }
       }
 
       // Return the object path in the format expected by the client

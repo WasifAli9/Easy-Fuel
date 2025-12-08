@@ -467,11 +467,33 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
                   <Avatar className="h-8 w-8">
                     <AvatarImage 
                       src={
-                        profile.profilePhotoUrl.includes('/') && !profile.profilePhotoUrl.startsWith('/') && !profile.profilePhotoUrl.startsWith('http')
-                          ? `${import.meta.env.VITE_SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co'}/storage/v1/object/public/${profile.profilePhotoUrl}`
-                          : profile.profilePhotoUrl.startsWith('/') 
-                            ? profile.profilePhotoUrl 
-                            : `/objects/${profile.profilePhotoUrl}`
+                        (() => {
+                          const photoUrl = profile.profilePhotoUrl;
+                          // Handle Supabase Storage format: bucket/path (e.g., "private-objects/uploads/uuid")
+                          if (photoUrl.includes('/') && !photoUrl.startsWith('/') && !photoUrl.startsWith('http')) {
+                            // Check if it's a private bucket (private-objects)
+                            if (photoUrl.startsWith('private-objects/')) {
+                              // Use our server endpoint for private objects (handles authentication)
+                              const pathOnly = photoUrl.replace('private-objects/', '');
+                              return `/objects/${pathOnly}`;
+                            } else {
+                              // For public buckets, use Supabase public URL
+                              return `${import.meta.env.VITE_SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co'}/storage/v1/object/public/${photoUrl}`;
+                            }
+                          }
+                          // Handle /objects/ path format
+                          else if (photoUrl.startsWith('/objects/')) {
+                            return photoUrl;
+                          }
+                          // Handle full URLs
+                          else if (photoUrl.startsWith('http://') || photoUrl.startsWith('https://')) {
+                            return photoUrl;
+                          }
+                          // Default: assume it's a relative path
+                          else {
+                            return `/objects/${photoUrl}`;
+                          }
+                        })()
                       } 
                       alt={profile?.fullName || "User"} 
                     />

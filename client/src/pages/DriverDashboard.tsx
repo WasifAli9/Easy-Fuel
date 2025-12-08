@@ -8,7 +8,7 @@ import { DriverPreferencesManager } from "@/components/DriverPreferencesManager"
 import { DriverLocationTracker } from "@/components/DriverLocationTracker";
 import { OrderChat } from "@/components/OrderChat";
 import { DriverDepotsView } from "@/components/DriverDepotsView";
-import { Wallet, TrendingUp, CheckCircle, User, MapPin, Phone, DollarSign, Package, Truck } from "lucide-react";
+import { Wallet, TrendingUp, CheckCircle, User, MapPin, Phone, DollarSign, Package, Truck, CheckCircle2, XCircle, AlertCircle, ArrowRight } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useCurrency } from "@/hooks/use-currency";
@@ -17,6 +17,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { useLocation } from "wouter";
 import { CompleteDeliveryDialog } from "@/components/CompleteDeliveryDialog";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useAuth } from "@/contexts/AuthContext";
@@ -119,6 +122,26 @@ export default function DriverDashboard() {
     refetchInterval: 5000, // Poll every 5 seconds
     staleTime: 0,
   });
+
+  // Fetch pricing to check if any pricing is set
+  const { data: pricingData } = useQuery<any[]>({
+    queryKey: ["/api/driver/pricing"],
+    retry: false,
+    onError: () => {
+      // Silently fail - driver might not have pricing set yet
+    },
+  });
+
+  // Fetch vehicles to check if any vehicle is added
+  const { data: vehiclesData } = useQuery<any[]>({
+    queryKey: ["/api/driver/vehicles"],
+    retry: false,
+    onError: () => {
+      // Silently fail - driver might not have vehicles yet
+    },
+  });
+
+  const [, setLocation] = useLocation();
 
   const { data: statsData, isLoading: statsLoading } = useQuery<{
     activeJobs: number;
@@ -293,8 +316,20 @@ export default function DriverDashboard() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
         <div className="mb-4 sm:mb-8">
-          <h1 className="text-2xl sm:text-3xl font-bold mb-1">Driver Dashboard</h1>
-          <p className="text-sm text-muted-foreground">Manage your deliveries and earnings</p>
+          <div className="flex items-center justify-between mb-1">
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-bold mb-1">Driver Dashboard</h1>
+              <p className="text-sm text-muted-foreground">Manage your deliveries and earnings</p>
+            </div>
+            {driverProfile && (
+              <Badge 
+                variant={driverProfile.status === "active" && driverProfile.compliance_status === "approved" ? "default" : "secondary"}
+                className="text-sm px-3 py-1"
+              >
+                {driverProfile.status === "active" && driverProfile.compliance_status === "approved" ? "Active" : "Inactive"}
+              </Badge>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-4 sm:mb-8">
@@ -341,6 +376,81 @@ export default function DriverDashboard() {
               isOnDelivery={true} // Always track location when driver is logged in
               activeOrderId={assignedOrders.find((o: any) => o.state === "en_route" || o.state === "picked_up")?.id || null}
             />
+
+            {/* Setup Requirements Alert */}
+            {(() => {
+              // Check all requirements
+              const isKYCApproved = driverProfile?.status === "active" && driverProfile?.compliance_status === "approved";
+              const hasPricing = pricingData && pricingData.length > 0 && pricingData.some((p: any) => p.pricing && p.pricing.active);
+              const hasVehicle = vehiclesData && vehiclesData.length > 0;
+              const hasCoordinates = driverProfile?.current_lat && driverProfile?.current_lng;
+
+              const allComplete = isKYCApproved && hasPricing && hasVehicle && hasCoordinates;
+
+              // Don't show if all requirements are met
+              if (allComplete) return null;
+
+              return (
+                <Alert className="border-yellow-200 bg-yellow-50 dark:bg-yellow-950/20">
+                  <AlertCircle className="h-4 w-4 text-yellow-600 dark:text-yellow-500" />
+                  <AlertTitle className="text-yellow-900 dark:text-yellow-100">Setup Required</AlertTitle>
+                  <AlertDescription className="text-yellow-800 dark:text-yellow-200 mt-2">
+                    <p className="mb-3">Complete the following to start receiving orders:</p>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        {isKYCApproved ? (
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                        ) : (
+                          <XCircle className="h-4 w-4 text-yellow-600" />
+                        )}
+                        <span className={isKYCApproved ? "text-green-700 dark:text-green-300" : ""}>
+                          KYC Approval (Complete compliance profile)
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {hasPricing ? (
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                        ) : (
+                          <XCircle className="h-4 w-4 text-yellow-600" />
+                        )}
+                        <span className={hasPricing ? "text-green-700 dark:text-green-300" : ""}>
+                          Fuel Pricing (Set your fuel prices)
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {hasVehicle ? (
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                        ) : (
+                          <XCircle className="h-4 w-4 text-yellow-600" />
+                        )}
+                        <span className={hasVehicle ? "text-green-700 dark:text-green-300" : ""}>
+                          Vehicle (Add at least one vehicle)
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {hasCoordinates ? (
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                        ) : (
+                          <XCircle className="h-4 w-4 text-yellow-600" />
+                        )}
+                        <span className={hasCoordinates ? "text-green-700 dark:text-green-300" : ""}>
+                          Coordinates (Set your location in Settings)
+                        </span>
+                      </div>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-4 border-yellow-300 text-yellow-900 hover:bg-yellow-100 dark:text-yellow-100 dark:border-yellow-800 dark:hover:bg-yellow-900/30"
+                      onClick={() => setLocation("/driver/profile")}
+                    >
+                      Complete Setup
+                      <ArrowRight className="h-3 w-3 ml-2" />
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              );
+            })()}
 
             {loadingAssigned ? (
               <div className="text-center py-8 sm:py-12 text-muted-foreground">

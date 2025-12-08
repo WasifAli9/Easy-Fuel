@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useState } from "react";
 
 type Theme = "dark" | "light" | "system";
 
@@ -26,9 +26,20 @@ export function ThemeProvider({
   storageKey = "easyfuel-ui-theme",
   ...props
 }: ThemeProviderProps) {
-  const [theme, setTheme] = useState<Theme>(
-    () => (localStorage.getItem(storageKey) as Theme) || defaultTheme
-  );
+  const [theme, setTheme] = useState<Theme>(() => {
+    // Check if we're in a browser environment before accessing localStorage
+    if (typeof window !== "undefined" && window.localStorage) {
+      try {
+        const stored = localStorage.getItem(storageKey);
+        if (stored && (stored === "dark" || stored === "light" || stored === "system")) {
+          return stored as Theme;
+        }
+      } catch (e) {
+        console.warn("Failed to read theme from localStorage:", e);
+      }
+    }
+    return defaultTheme;
+  });
 
   useEffect(() => {
     const root = window.document.documentElement;
@@ -51,7 +62,13 @@ export function ThemeProvider({
   const value = {
     theme,
     setTheme: (theme: Theme) => {
-      localStorage.setItem(storageKey, theme);
+      try {
+        if (typeof window !== "undefined" && window.localStorage) {
+          localStorage.setItem(storageKey, theme);
+        }
+      } catch (e) {
+        console.warn("Failed to save theme to localStorage:", e);
+      }
       setTheme(theme);
     },
   };
