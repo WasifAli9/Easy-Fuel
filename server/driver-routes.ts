@@ -4346,7 +4346,6 @@ router.put("/compliance", async (req, res) => {
       dg_training_issue_date: formatDateForInput(updatedDriver.dg_training_issue_date),
       dg_training_expiry_date: formatDateForInput(updatedDriver.dg_training_expiry_date),
       criminal_check_date: formatDateForInput(updatedDriver.criminal_check_date),
-      company_id: updatedDriver.company_id || null,
       bank_account_holder: updatedDriver.bank_account_name || null,
       email: user.email || null
     });

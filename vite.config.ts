@@ -28,7 +28,7 @@ export default defineConfig({
     dedupe: ["react", "react-dom"],
   },
   optimizeDeps: {
-    include: ["react", "react-dom"],
+    include: ["react", "react-dom", "jspdf", "html2canvas"],
     force: true,
   },
   // Ensure PWA assets (manifest, icons, service worker) are included in dev + build.
