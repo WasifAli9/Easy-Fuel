@@ -314,6 +314,7 @@ router.get("/kyc/pending", async (req, res) => {
 router.post("/kyc/driver/:id/approve", async (req, res) => {
   try {
     const { id } = req.params;
+    const user = (req as any).user;
 
     // Get driver user_id before updating
     const { data: driver } = await supabaseAdmin
@@ -322,12 +323,47 @@ router.post("/kyc/driver/:id/approve", async (req, res) => {
       .eq("id", id)
       .single();
 
-    const { error } = await supabaseAdmin
+    console.log(`[KYC Approval] Updating driver ${id} with status: active, compliance_status: approved`);
+    
+    const { data: updatedDriver, error } = await supabaseAdmin
       .from("drivers")
-      .update({ kyc_status: "approved", updated_at: new Date().toISOString() })
-      .eq("id", id);
+      .update({ 
+        kyc_status: "approved",
+        status: "active",
+        compliance_status: "approved",
+        compliance_reviewer_id: user.id,
+        compliance_review_date: new Date().toISOString(),
+        compliance_rejection_reason: null,
+        updated_at: new Date().toISOString() 
+      })
+      .eq("id", id)
+      .select("id, user_id, status, compliance_status, kyc_status")
+      .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error(`[KYC Approval] Error updating driver ${id}:`, error);
+      throw error;
+    }
+    
+    console.log(`[KYC Approval] Driver ${id} updated successfully:`, updatedDriver);
+    
+    // Also update the profile's is_active field so admin portal shows correct status
+    if (updatedDriver?.user_id) {
+      const { error: profileError } = await supabaseAdmin
+        .from("profiles")
+        .update({ 
+          is_active: true,
+          approval_status: "approved"
+        })
+        .eq("id", updatedDriver.user_id);
+      
+      if (profileError) {
+        console.error(`[KYC Approval] Error updating profile for user ${updatedDriver.user_id}:`, profileError);
+        // Don't throw - driver update succeeded, profile update is secondary
+      } else {
+        console.log(`[KYC Approval] Profile ${updatedDriver.user_id} updated successfully: is_active=true, approval_status=approved`);
+      }
+    }
 
     // Broadcast KYC approval to all admins and the driver
     const { websocketService } = await import("./websocket");
@@ -348,6 +384,10 @@ router.post("/kyc/driver/:id/approve", async (req, res) => {
           type: "driver",
         },
       });
+
+      // Send notification to driver
+      const { notificationService } = await import("./notification-service");
+      await notificationService.notifyAdminKycApproved(driver.user_id, "driver");
     }
 
     res.json({ success: true, message: "Driver KYC approved" });
@@ -371,10 +411,26 @@ router.post("/kyc/driver/:id/reject", async (req, res) => {
 
     const { error } = await supabaseAdmin
       .from("drivers")
-      .update({ kyc_status: "rejected", updated_at: new Date().toISOString() })
+      .update({ 
+        kyc_status: "rejected",
+        status: "rejected",
+        compliance_status: "rejected",
+        updated_at: new Date().toISOString() 
+      })
       .eq("id", id);
 
     if (error) throw error;
+    
+    // Also update the profile's is_active field
+    if (driver?.user_id) {
+      await supabaseAdmin
+        .from("profiles")
+        .update({ 
+          is_active: false,
+          approval_status: "rejected"
+        })
+        .eq("id", driver.user_id);
+    }
 
     // Broadcast KYC rejection to all admins and the driver
     const { websocketService } = await import("./websocket");
@@ -395,6 +451,11 @@ router.post("/kyc/driver/:id/reject", async (req, res) => {
           type: "driver",
         },
       });
+
+      // Send notification to driver
+      const { notificationService } = await import("./notification-service");
+      const { reason } = req.body;
+      await notificationService.notifyAdminKycRejected(driver.user_id, "driver", reason);
     }
 
     res.json({ success: true, message: "Driver KYC rejected" });
@@ -408,6 +469,7 @@ router.post("/kyc/driver/:id/reject", async (req, res) => {
 router.post("/kyc/supplier/:id/approve", async (req, res) => {
   try {
     const { id } = req.params;
+    const user = (req as any).user;
 
     // Get supplier owner_id before updating
     const { data: supplier } = await supabaseAdmin
@@ -416,12 +478,55 @@ router.post("/kyc/supplier/:id/approve", async (req, res) => {
       .eq("id", id)
       .single();
 
-    const { error } = await supabaseAdmin
+    console.log(`[KYC Approval] Updating supplier ${id} with status: active, compliance_status: approved`);
+    
+    const { data: updatedSupplier, error } = await supabaseAdmin
       .from("suppliers")
-      .update({ kyb_status: "approved", updated_at: new Date().toISOString() })
-      .eq("id", id);
+      .update({ 
+        kyb_status: "approved",
+        status: "active",
+        compliance_status: "approved",
+        compliance_reviewer_id: user.id,
+        compliance_review_date: new Date().toISOString(),
+        compliance_rejection_reason: null,
+        updated_at: new Date().toISOString() 
+      })
+      .eq("id", id)
+      .select("id, owner_id, status, compliance_status, kyb_status")
+      .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error(`[KYC Approval] Error updating supplier ${id}:`, error);
+      throw error;
+    }
+    
+    console.log(`[KYC Approval] Supplier ${id} updated successfully:`, updatedSupplier);
+    
+    // Also update the profile's is_active field so admin portal shows correct status
+    if (updatedSupplier?.owner_id) {
+      console.log(`[KYC Approval] Updating profile ${updatedSupplier.owner_id} for supplier ${id}`);
+      const { data: updatedProfile, error: profileError } = await supabaseAdmin
+        .from("profiles")
+        .update({ 
+          is_active: true,
+          approval_status: "approved"
+        })
+        .eq("id", updatedSupplier.owner_id)
+        .select("id, is_active, approval_status")
+        .single();
+
+      if (profileError) {
+        console.error(`[KYC Approval] Error updating profile for supplier ${id}:`, profileError);
+        // Don't throw - log but continue
+      } else {
+        console.log(`[KYC Approval] Profile ${updatedSupplier.owner_id} updated successfully:`, {
+          is_active: updatedProfile?.is_active,
+          approval_status: updatedProfile?.approval_status
+        });
+      }
+    } else {
+      console.warn(`[KYC Approval] No owner_id found for supplier ${id}, cannot update profile`);
+    }
 
     // Broadcast KYB approval to all admins and the supplier
     const { websocketService } = await import("./websocket");
@@ -442,6 +547,10 @@ router.post("/kyc/supplier/:id/approve", async (req, res) => {
           type: "supplier",
         },
       });
+
+      // Send notification to supplier
+      const { notificationService } = await import("./notification-service");
+      await notificationService.notifyAdminKycApproved(supplier.owner_id, "supplier");
     }
 
     res.json({ success: true, message: "Supplier KYB approved" });
@@ -465,10 +574,26 @@ router.post("/kyc/supplier/:id/reject", async (req, res) => {
 
     const { error } = await supabaseAdmin
       .from("suppliers")
-      .update({ kyb_status: "rejected", updated_at: new Date().toISOString() })
+      .update({ 
+        kyb_status: "rejected",
+        status: "rejected",
+        compliance_status: "rejected",
+        updated_at: new Date().toISOString() 
+      })
       .eq("id", id);
 
     if (error) throw error;
+    
+    // Also update the profile's is_active field
+    if (supplier?.owner_id) {
+      await supabaseAdmin
+        .from("profiles")
+        .update({ 
+          is_active: false,
+          approval_status: "rejected"
+        })
+        .eq("id", supplier.owner_id);
+    }
 
     // Broadcast KYB rejection to all admins and the supplier
     const { websocketService } = await import("./websocket");
@@ -489,6 +614,11 @@ router.post("/kyc/supplier/:id/reject", async (req, res) => {
           type: "supplier",
         },
       });
+
+      // Send notification to supplier
+      const { notificationService } = await import("./notification-service");
+      const { reason } = req.body;
+      await notificationService.notifyAdminKycRejected(supplier.owner_id, "supplier", reason);
     }
 
     res.json({ success: true, message: "Supplier KYB rejected" });
@@ -739,12 +869,19 @@ router.get("/users/:userId", async (req, res) => {
         }
       }
     } else if (profile.role === "supplier") {
-      const { data: supplier } = await supabaseAdmin
+      // Use maybeSingle to handle cases where supplier record doesn't exist yet
+      const { data: supplier, error: supplierError } = await supabaseAdmin
         .from("suppliers")
         .select("*")
         .eq("owner_id", userId)
-        .single();
-      result.supplier = supplier;
+        .maybeSingle();
+      
+      if (supplierError && supplierError.code !== 'PGRST116') {
+        // PGRST116 is "not found" which is fine, but other errors should be logged
+        console.error("Error fetching supplier:", supplierError);
+      }
+      
+      result.supplier = supplier || null;
     }
 
     res.json(result);
@@ -957,6 +1094,170 @@ router.delete("/vehicles/:vehicleId", async (req, res) => {
   }
 });
 
+// Approve vehicle
+router.post("/vehicles/:vehicleId/approve", async (req, res) => {
+  try {
+    const { vehicleId } = req.params;
+    const user = (req as any).user;
+
+    // Get vehicle to verify it exists
+    const { data: vehicle, error: vehicleError } = await supabaseAdmin
+      .from("vehicles")
+      .select("id, driver_id")
+      .eq("id", vehicleId)
+      .single();
+
+    if (vehicleError) throw vehicleError;
+    if (!vehicle) {
+      return res.status(404).json({ error: "Vehicle not found" });
+    }
+
+    console.log(`[Vehicle Approval] Updating vehicle ${vehicleId} with status: active`);
+    
+    const { data: updatedVehicle, error } = await supabaseAdmin
+      .from("vehicles")
+      .update({ 
+        vehicle_status: "active",
+        updated_at: new Date().toISOString() 
+      })
+      .eq("id", vehicleId)
+      .select("id, vehicle_status")
+      .single();
+
+    if (error) {
+      console.error(`[Vehicle Approval] Error updating vehicle ${vehicleId}:`, error);
+      throw error;
+    }
+    
+    console.log(`[Vehicle Approval] Vehicle ${vehicleId} updated successfully:`, updatedVehicle);
+
+    // Broadcast vehicle approval to all admins and the driver
+    const { websocketService } = await import("./websocket");
+    websocketService.broadcastToRole("admin", {
+      type: "vehicle_approved",
+      payload: {
+        vehicleId: vehicleId,
+        driverId: vehicle.driver_id,
+      },
+    });
+
+    // Get driver's user_id to send notification
+    const { data: driver } = await supabaseAdmin
+      .from("drivers")
+      .select("user_id")
+      .eq("id", vehicle.driver_id)
+      .single();
+
+    if (driver?.user_id) {
+      websocketService.sendToUser(driver.user_id, {
+        type: "vehicle_approved",
+        payload: {
+          vehicleId: vehicleId,
+        },
+      });
+
+      // Send notification to driver
+      const { notificationService } = await import("./notification-service");
+      const registrationNumber = vehicle.registration_number || "Vehicle";
+      await notificationService.notifyAdminVehicleApproved(
+        driver.user_id,
+        vehicleId,
+        registrationNumber
+      );
+    }
+
+    res.json({ success: true, message: "Vehicle approved successfully", vehicle: updatedVehicle });
+  } catch (error: any) {
+    console.error("Error approving vehicle:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Reject vehicle
+router.post("/vehicles/:vehicleId/reject", async (req, res) => {
+  try {
+    const { vehicleId } = req.params;
+    const { rejectionReason } = req.body;
+
+    // Get vehicle to verify it exists
+    const { data: vehicle, error: vehicleError } = await supabaseAdmin
+      .from("vehicles")
+      .select("id, driver_id")
+      .eq("id", vehicleId)
+      .single();
+
+    if (vehicleError) throw vehicleError;
+    if (!vehicle) {
+      return res.status(404).json({ error: "Vehicle not found" });
+    }
+
+    console.log(`[Vehicle Rejection] Updating vehicle ${vehicleId} with status: rejected`);
+    
+    const { data: updatedVehicle, error } = await supabaseAdmin
+      .from("vehicles")
+      .update({ 
+        vehicle_status: "rejected",
+        updated_at: new Date().toISOString() 
+      })
+      .eq("id", vehicleId)
+      .select("id, vehicle_status")
+      .single();
+
+    if (error) {
+      console.error(`[Vehicle Rejection] Error updating vehicle ${vehicleId}:`, error);
+      throw error;
+    }
+
+    // Broadcast vehicle rejection to all admins and the driver
+    const { websocketService } = await import("./websocket");
+    websocketService.broadcastToRole("admin", {
+      type: "vehicle_rejected",
+      payload: {
+        vehicleId: vehicleId,
+        driverId: vehicle.driver_id,
+        rejectionReason,
+      },
+    });
+
+    // Get driver's user_id to send notification
+    const { data: driver } = await supabaseAdmin
+      .from("drivers")
+      .select("user_id")
+      .eq("id", vehicle.driver_id)
+      .single();
+
+    if (driver?.user_id) {
+      websocketService.sendToUser(driver.user_id, {
+        type: "vehicle_rejected",
+        payload: {
+          vehicleId: vehicleId,
+          rejectionReason,
+        },
+      });
+
+      // Send notification to driver
+      const { notificationService } = await import("./notification-service");
+      const { data: vehicleData } = await supabaseAdmin
+        .from("vehicles")
+        .select("registration_number")
+        .eq("id", vehicleId)
+        .single();
+      const registrationNumber = vehicleData?.registration_number || "Vehicle";
+      await notificationService.notifyAdminVehicleRejected(
+        driver.user_id,
+        vehicleId,
+        registrationNumber,
+        rejectionReason
+      );
+    }
+
+    res.json({ success: true, message: "Vehicle rejected", vehicle: updatedVehicle });
+  } catch (error: any) {
+    console.error("Error rejecting vehicle:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get user documents
 router.get("/users/:userId/documents", async (req, res) => {
   try {
@@ -1010,19 +1311,37 @@ router.get("/users/:userId/documents", async (req, res) => {
         console.log("Using userId as ownerId fallback:", ownerId);
       }
     } else if (profile.role === "supplier") {
-      const { data: supplier } = await supabaseAdmin
+      const { data: supplier, error: supplierError } = await supabaseAdmin
         .from("suppliers")
         .select("id")
         .eq("owner_id", userId)
-        .single();
+        .maybeSingle();
+      
+      if (supplierError) {
+        console.error("Error fetching supplier:", supplierError);
+      }
       
       if (supplier) {
         ownerId = supplier.id;
         ownerType = "supplier";
+        console.log("Found supplier record - supplier.id:", supplier.id, "owner_id:", userId, "Using ownerId:", ownerId);
+      } else {
+        console.log("No supplier record found for user:", userId);
+        // Still try to fetch documents with user_id as owner_id in case they were stored incorrectly
+        ownerId = userId;
+        ownerType = "supplier";
+        console.log("Using userId as ownerId fallback:", ownerId);
       }
     }
     
     console.log("Fetching documents with ownerId:", ownerId, "ownerType:", ownerType);
+    
+    // Validate ownerId is a valid UUID before querying
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!ownerId || !uuidRegex.test(ownerId)) {
+      console.warn("Invalid or empty ownerId:", ownerId, "Skipping document query");
+      return res.json([]);
+    }
     
     // Also fetch vehicle documents if driver
     let vehicleDocuments: any[] = [];
@@ -1033,16 +1352,18 @@ router.get("/users/:userId/documents", async (req, res) => {
         .eq("driver_id", ownerId);
       
       if (vehicles && vehicles.length > 0) {
-        const vehicleIds = vehicles.map(v => v.id);
-        const { data: vDocs } = await supabaseAdmin
-          .from("documents")
-          .select("*")
-          .in("owner_id", vehicleIds)
-          .eq("owner_type", "vehicle")
-          .order("created_at", { ascending: false });
-        
-        vehicleDocuments = vDocs || [];
-        console.log("Found", vehicleDocuments.length, "vehicle documents");
+        const vehicleIds = vehicles.map(v => v.id).filter(id => id && uuidRegex.test(id));
+        if (vehicleIds.length > 0) {
+          const { data: vDocs } = await supabaseAdmin
+            .from("documents")
+            .select("*")
+            .in("owner_id", vehicleIds)
+            .eq("owner_type", "vehicle")
+            .order("created_at", { ascending: false });
+          
+          vehicleDocuments = vDocs || [];
+          console.log("Found", vehicleDocuments.length, "vehicle documents");
+        }
       }
     }
     
@@ -1078,33 +1399,71 @@ router.get("/users/:userId/documents", async (req, res) => {
     
     console.log("Found", data?.length || 0, "documents for owner (ownerId:", ownerId, "ownerType:", ownerType, ")");
     
-    // If no documents found and we're looking for a driver, try multiple fallback queries
-    if ((!data || data.length === 0) && profile.role === "driver") {
-      console.log("No documents found with driver.id, trying fallback queries...");
-      
-      // Try 1: Query by user_id
-      const { data: fallbackData1, error: fallbackError1 } = await supabaseAdmin
-        .from("documents")
-        .select("*")
-        .eq("owner_id", userId)
-        .eq("owner_type", "driver")
-        .order("created_at", { ascending: false });
-      
-      if (!fallbackError1 && fallbackData1 && fallbackData1.length > 0) {
-        console.log("Found", fallbackData1.length, "documents using fallback query (user_id)");
-        data = fallbackData1;
-      } else {
-        // Try 2: Query all driver documents and filter by uploaded_by
-        const { data: fallbackData2, error: fallbackError2 } = await supabaseAdmin
-          .from("documents")
-          .select("*")
-          .eq("owner_type", "driver")
-          .eq("uploaded_by", userId)
-          .order("created_at", { ascending: false });
+    // If no documents found, try multiple fallback queries for drivers and suppliers
+    if (!data || data.length === 0) {
+      if (profile.role === "driver") {
+        console.log("No documents found with driver.id, trying fallback queries...");
         
-        if (!fallbackError2 && fallbackData2 && fallbackData2.length > 0) {
-          console.log("Found", fallbackData2.length, "documents using fallback query (uploaded_by)");
-          data = fallbackData2;
+        // Try 1: Query by user_id (validate UUID first)
+        if (userId && uuidRegex.test(userId)) {
+          const { data: fallbackData1, error: fallbackError1 } = await supabaseAdmin
+            .from("documents")
+            .select("*")
+            .eq("owner_id", userId)
+            .eq("owner_type", "driver")
+            .order("created_at", { ascending: false });
+        
+          if (!fallbackError1 && fallbackData1 && fallbackData1.length > 0) {
+            console.log("Found", fallbackData1.length, "documents using fallback query (user_id)");
+            data = fallbackData1;
+          } else {
+            // Try 2: Query all driver documents and filter by uploaded_by (validate UUID first)
+            if (userId && uuidRegex.test(userId)) {
+              const { data: fallbackData2, error: fallbackError2 } = await supabaseAdmin
+                .from("documents")
+                .select("*")
+                .eq("owner_type", "driver")
+                .eq("uploaded_by", userId)
+                .order("created_at", { ascending: false });
+              
+              if (!fallbackError2 && fallbackData2 && fallbackData2.length > 0) {
+                console.log("Found", fallbackData2.length, "documents using fallback query (uploaded_by)");
+                data = fallbackData2;
+              }
+            }
+          }
+        }
+      } else if (profile.role === "supplier") {
+        console.log("No documents found with supplier.id, trying fallback queries...");
+        
+        // Try 1: Query by user_id (owner_id) - validate UUID first
+        if (userId && uuidRegex.test(userId)) {
+          const { data: fallbackData1, error: fallbackError1 } = await supabaseAdmin
+            .from("documents")
+            .select("*")
+            .eq("owner_id", userId)
+            .eq("owner_type", "supplier")
+            .order("created_at", { ascending: false });
+        
+          if (!fallbackError1 && fallbackData1 && fallbackData1.length > 0) {
+            console.log("Found", fallbackData1.length, "supplier documents using fallback query (user_id/owner_id)");
+            data = fallbackData1;
+          } else {
+            // Try 2: Query all supplier documents and filter by uploaded_by (validate UUID first)
+            if (userId && uuidRegex.test(userId)) {
+              const { data: fallbackData2, error: fallbackError2 } = await supabaseAdmin
+                .from("documents")
+                .select("*")
+                .eq("owner_type", "supplier")
+                .eq("uploaded_by", userId)
+                .order("created_at", { ascending: false });
+              
+              if (!fallbackError2 && fallbackData2 && fallbackData2.length > 0) {
+                console.log("Found", fallbackData2.length, "supplier documents using fallback query (uploaded_by)");
+                data = fallbackData2;
+              }
+            }
+          }
         }
       }
     }
@@ -1112,9 +1471,18 @@ router.get("/users/:userId/documents", async (req, res) => {
     // Combine driver documents with vehicle documents
     const allDocuments = [...(data || []), ...vehicleDocuments];
     
-    console.log("Total documents to return:", allDocuments.length);
+    // Filter out documents with empty or invalid file_path
+    const validDocuments = allDocuments.filter((doc: any) => {
+      if (!doc.file_path || doc.file_path.trim() === '') {
+        console.warn("Filtering out document with empty file_path:", doc.id, doc.title);
+        return false;
+      }
+      return true;
+    });
     
-    res.json(allDocuments);
+    console.log("Total documents to return:", validDocuments.length, "(filtered", allDocuments.length - validDocuments.length, "with empty file_path)");
+    
+    res.json(validDocuments);
   } catch (error: any) {
     console.error("Error fetching documents:", error);
     res.status(500).json({ error: error.message });
@@ -1145,6 +1513,104 @@ router.post("/users/:userId/documents", async (req, res) => {
     res.json(data);
   } catch (error: any) {
     console.error("Error creating document:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update document status (used by frontend) - MUST BE BEFORE DELETE ROUTE
+router.patch("/documents/:documentId/status", async (req, res) => {
+  try {
+    const { documentId } = req.params;
+    const { status, rejectionReason } = req.body;
+    const user = (req as any).user;
+
+    console.log(`[PATCH /api/admin/documents/${documentId}/status] Request received`, {
+      documentId,
+      status,
+      hasRejectionReason: !!rejectionReason,
+      userId: user?.id
+    });
+
+    if (!status) {
+      return res.status(400).json({ error: "Status is required" });
+    }
+
+    // Map frontend status to backend status
+    let verificationStatus: string;
+    if (status === "approved") {
+      verificationStatus = "approved"; // Use "approved" instead of "verified" to match frontend
+    } else if (status === "rejected") {
+      verificationStatus = "rejected";
+    } else if (status === "pending" || status === "pending_review") {
+      verificationStatus = "pending";
+    } else {
+      verificationStatus = status;
+    }
+
+    const updateData: any = {
+      verification_status: verificationStatus,
+      verified_by: user.id,
+      verified_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    if (status === "rejected" && rejectionReason) {
+      updateData.document_rejection_reason = rejectionReason;
+    } else if (status === "approved") {
+      updateData.document_rejection_reason = null;
+    }
+
+    const { data: updatedDocument, error: updateError } = await supabaseAdmin
+      .from("documents")
+      .update(updateData)
+      .eq("id", documentId)
+      .select()
+      .single();
+
+    if (updateError) throw updateError;
+
+    console.log("Document status updated:", { documentId, status: verificationStatus });
+
+    // Send WebSocket notification to driver or supplier if document belongs to them
+    if (updatedDocument?.owner_type === "driver") {
+      // Get driver's user_id
+      const { data: driver } = await supabaseAdmin
+        .from("drivers")
+        .select("user_id")
+        .eq("id", updatedDocument.owner_id)
+        .single();
+
+      if (driver?.user_id) {
+        websocketService.sendToUser(driver.user_id, {
+          type: verificationStatus === "approved" ? "document_approved" : "document_rejected",
+          payload: {
+            documentId: documentId,
+            status: verificationStatus,
+          },
+        });
+      }
+    } else if (updatedDocument?.owner_type === "supplier") {
+      // Get supplier's owner_id (which is the user_id)
+      const { data: supplier } = await supabaseAdmin
+        .from("suppliers")
+        .select("owner_id")
+        .eq("id", updatedDocument.owner_id)
+        .single();
+
+      if (supplier?.owner_id) {
+        websocketService.sendToUser(supplier.owner_id, {
+          type: verificationStatus === "approved" ? "document_approved" : "document_rejected",
+          payload: {
+            documentId: documentId,
+            status: verificationStatus,
+          },
+        });
+      }
+    }
+
+    res.json({ success: true, document: updatedDocument });
+  } catch (error: any) {
+    console.error("Error updating document status:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1528,10 +1994,19 @@ router.post("/compliance/documents/:id/approve", async (req, res) => {
     const { id } = req.params;
     const user = (req as any).user;
 
+    // Get document details before updating
+    const { data: document, error: docError } = await supabaseAdmin
+      .from("documents")
+      .select("owner_type, owner_id, doc_type, uploaded_by")
+      .eq("id", id)
+      .single();
+
+    if (docError) throw docError;
+
     const { error: updateError } = await supabaseAdmin
       .from("documents")
       .update({
-        verification_status: "verified",
+        verification_status: "approved",
         verified_by: user.id,
         verified_at: new Date().toISOString(),
         document_rejection_reason: null,
@@ -1540,6 +2015,52 @@ router.post("/compliance/documents/:id/approve", async (req, res) => {
       .eq("id", id);
 
     if (updateError) throw updateError;
+
+    // Send notification to document owner
+    if (document) {
+      let userId: string | null = null;
+      
+      // Get user_id based on owner_type
+      if (document.owner_type === "driver") {
+        const { data: driver } = await supabaseAdmin
+          .from("drivers")
+          .select("user_id")
+          .eq("id", document.owner_id)
+          .single();
+        userId = driver?.user_id || null;
+      } else if (document.owner_type === "supplier") {
+        const { data: supplier } = await supabaseAdmin
+          .from("suppliers")
+          .select("owner_id")
+          .eq("id", document.owner_id)
+          .single();
+        userId = supplier?.owner_id || null;
+      } else if (document.owner_type === "customer") {
+        const { data: customer } = await supabaseAdmin
+          .from("customers")
+          .select("user_id")
+          .eq("id", document.owner_id)
+          .single();
+        userId = customer?.user_id || null;
+      } else if (document.owner_type === "vehicle") {
+        // For vehicle documents, get the driver's user_id
+        const { data: vehicle } = await supabaseAdmin
+          .from("vehicles")
+          .select("driver_id, drivers!inner(user_id)")
+          .eq("id", document.owner_id)
+          .single();
+        userId = vehicle?.drivers?.user_id || null;
+      }
+
+      if (userId) {
+        const { notificationService } = await import("./notification-service");
+        await notificationService.notifyAdminDocumentApproved(
+          userId,
+          id,
+          document.doc_type || "document"
+        );
+      }
+    }
 
     res.json({ success: true, message: "Document approved" });
   } catch (error: any) {

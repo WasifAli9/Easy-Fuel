@@ -22,10 +22,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { MapPin, Package, Loader2, ShoppingCart, XCircle } from "lucide-react";
+import { MapPin, Package, Loader2, ShoppingCart, XCircle, CreditCard, FileSignature, CheckCircle, Receipt } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/utils";
 import { useCurrency } from "@/hooks/use-currency";
+import { DriverDepotOrderPaymentDialog } from "@/components/DriverDepotOrderPaymentDialog";
+import { SignaturePad } from "@/components/SignaturePad";
+import { DriverDepotOrderReceipt } from "@/components/DriverDepotOrderReceipt";
 
 interface DriverDepotsViewProps {
   defaultTab?: "orders" | "depots";
@@ -41,19 +44,60 @@ export function DriverDepotsView({ defaultTab = "orders" }: DriverDepotsViewProp
   const [selectedFuelType, setSelectedFuelType] = useState<string | null>(null);
   const [pickupDate, setPickupDate] = useState("");
   const [notes, setNotes] = useState("");
+  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
+  const [selectedOrderForPayment, setSelectedOrderForPayment] = useState<any>(null);
+  const [signatureDialogOpen, setSignatureDialogOpen] = useState(false);
+  const [selectedOrderForSignature, setSelectedOrderForSignature] = useState<any>(null);
+  const [signatureType, setSignatureType] = useState<"driver" | "delivery" | null>(null);
+  const [signatureData, setSignatureData] = useState<string | null>(null);
+  const [receiptDialogOpen, setReceiptDialogOpen] = useState(false);
+  const [receiptViewDialogOpen, setReceiptViewDialogOpen] = useState(false);
+  const [selectedOrderForReceipt, setSelectedOrderForReceipt] = useState<any>(null);
 
   // Fetch all depots with distance
   const { data: depots, isLoading: depotsLoading, error: depotsError } = useQuery<any[]>({
     queryKey: ["/api/driver/depots"],
     refetchInterval: 30000, // Refresh every 30 seconds
-    retry: 2,
+    retry: (failureCount, error: any) => {
+      // Don't retry on 403 errors (compliance not approved)
+      if (error?.status === 403 || error?.response?.status === 403) {
+        return false;
+      }
+      return failureCount < 2;
+    },
     retryDelay: 1000,
+    // Return empty array on error instead of throwing
+    select: (data) => data || [],
   });
 
   // Fetch driver's depot orders
-  const { data: orders, isLoading: ordersLoading } = useQuery<any[]>({
+  const { data: allOrders, isLoading: ordersLoading, error: ordersError } = useQuery<any[]>({
     queryKey: ["/api/driver/depot-orders"],
     refetchInterval: 10000, // Refresh every 10 seconds
+    retry: (failureCount, error: any) => {
+      // Don't retry on 403 errors (compliance not approved)
+      if (error?.status === 403 || error?.response?.status === 403) {
+        return false;
+      }
+      return failureCount < 2;
+    },
+    retryDelay: 1000,
+    // Return empty array on error instead of throwing
+    select: (data) => data || [],
+  });
+
+  // Filter orders to show all non-completed orders and completed orders from the last week
+  const oneWeekAgo = new Date();
+  oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+  
+  const orders = (allOrders || []).filter((order: any) => {
+    // Show all non-completed orders
+    if (order.status !== "completed") {
+      return true;
+    }
+    // For completed orders, only show those from the last week
+    const orderDate = new Date(order.completed_at || order.updated_at || order.created_at);
+    return orderDate >= oneWeekAgo;
   });
 
   // Create order mutation
@@ -96,10 +140,10 @@ export function DriverDepotsView({ defaultTab = "orders" }: DriverDepotsViewProp
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/driver/depot-orders"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/driver/depots"] }); // Refresh depots to show updated stock
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/depots"] });
       toast({
         title: "Order Cancelled",
-        description: "Your order has been cancelled and stock has been added back to the depot.",
+        description: "Your order has been cancelled.",
       });
     },
     onError: (error: Error) => {
@@ -110,6 +154,128 @@ export function DriverDepotsView({ defaultTab = "orders" }: DriverDepotsViewProp
       });
     },
   });
+
+  // Submit signature mutation
+  const submitSignatureMutation = useMutation({
+    mutationFn: async ({ orderId, signatureUrl, type }: { orderId: string; signatureUrl: string; type: "driver" | "delivery" }) => {
+      // For delivery signature (after release), use driver-signature endpoint which will detect awaiting_signature status
+      const response = await apiRequest("POST", `/api/driver/depot-orders/${orderId}/driver-signature`, { signatureUrl });
+      const updatedOrder = await response.json();
+      return updatedOrder;
+    },
+    onSuccess: async (updatedOrder) => {
+      // Update the cache optimistically with the returned order
+      queryClient.setQueryData<any[]>(["/api/driver/depot-orders"], (oldData) => {
+        if (!oldData) return oldData;
+        return oldData.map((order: any) => 
+          order.id === updatedOrder.id ? updatedOrder : order
+        );
+      });
+      
+      // Also invalidate and refetch to ensure we have the latest data
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/depot-orders"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/driver/depot-orders"] });
+      
+      toast({
+        title: "Receipt Confirmed",
+        description: "Your signature has been submitted. Order completed!",
+      });
+      setSignatureDialogOpen(false);
+      setSelectedOrderForSignature(null);
+      setSignatureData(null);
+      setSignatureType(null);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSubmitSignature = async () => {
+    if (!signatureData || !selectedOrderForSignature || !signatureType) {
+      toast({
+        title: "Validation Error",
+        description: "Please provide a signature",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Convert data URL to blob and upload
+    try {
+      const response = await fetch(signatureData);
+      const blob = await response.blob();
+      const file = new File([blob], "signature.png", { type: "image/png" });
+
+      const { getAuthHeaders } = await import("@/lib/auth-headers");
+      const headers = await getAuthHeaders();
+      
+      // Get upload URL using the correct endpoint
+      const uploadUrlResponse = await fetch("/api/objects/upload", {
+        method: "POST",
+        headers,
+      });
+
+      if (!uploadUrlResponse.ok) {
+        const errorText = await uploadUrlResponse.text();
+        console.error("Upload URL error:", errorText);
+        throw new Error("Failed to get upload URL");
+      }
+
+      const uploadUrlData = await uploadUrlResponse.json();
+      const uploadUrl = uploadUrlData.uploadURL || uploadUrlData.url;
+
+      if (!uploadUrl) {
+        throw new Error("No upload URL returned from server");
+      }
+
+      // Upload file
+      const uploadResponse = await fetch(uploadUrl, {
+        method: "PUT",
+        body: file,
+        headers: {
+          "Content-Type": "image/png",
+        },
+      });
+
+      if (!uploadResponse.ok) {
+        const errorText = await uploadResponse.text();
+        console.error("Upload error:", errorText);
+        throw new Error("Failed to upload signature");
+      }
+
+      // Extract object path from upload URL or use the objectPath from response
+      let signatureUrl: string;
+      if (uploadUrlData.objectPath) {
+        signatureUrl = uploadUrlData.objectPath;
+      } else if (uploadUrl.includes("/api/storage/upload/")) {
+        // Extract path from Supabase storage URL
+        const match = uploadUrl.match(/\/api\/storage\/upload\/([^/]+)\/(.+)/);
+        if (match) {
+          signatureUrl = `${match[1]}/${match[2]}`;
+        } else {
+          signatureUrl = uploadUrl.split("?")[0];
+        }
+      } else {
+        signatureUrl = uploadUrl.split("?")[0];
+      }
+
+      submitSignatureMutation.mutate({
+        orderId: selectedOrderForSignature.id,
+        signatureUrl,
+        type: signatureType,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Upload Error",
+        description: error.message || "Failed to upload signature",
+        variant: "destructive",
+      });
+    }
+  };
 
   const handleOrderClick = (depot: any) => {
     setSelectedDepot(depot);
@@ -170,16 +336,45 @@ export function DriverDepotsView({ defaultTab = "orders" }: DriverDepotsViewProp
     });
   };
 
-  const getStatusBadge = (status: string) => {
-    const variants: Record<string, "default" | "secondary" | "destructive"> = {
+  const getStatusBadge = (order: any) => {
+    const status = order.status;
+    const paymentStatus = order.payment_status;
+    
+    const variants: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
       pending: "secondary",
-      confirmed: "default",
-      fulfilled: "default",
+      pending_payment: "outline",
+      paid: "default",
+      ready_for_pickup: "default",
+      released: "default",
+      awaiting_signature: "default",
+      completed: "default",
+      rejected: "destructive",
       cancelled: "destructive",
     };
+    
+    let displayStatus = status;
+    if (status === "pending_payment") {
+      if (paymentStatus === "paid" && order.payment_method === "bank_transfer") {
+        displayStatus = "Waiting Payment Confirmation";
+      } else if (paymentStatus === "payment_failed") {
+        displayStatus = "Payment Failed";
+      } else {
+        displayStatus = "Awaiting Payment";
+      }
+    } else if (status === "paid") {
+      displayStatus = "Awaiting Signatures";
+    } else if (status === "ready_for_pickup") {
+      displayStatus = "Ready for Pickup";
+    } else if (status === "awaiting_signature") {
+      displayStatus = "Awaiting Driver Signature";
+    } else if (status === "released") {
+      // Legacy status - should not be used anymore, but keep for backward compatibility
+      displayStatus = "Awaiting Driver Signature";
+    }
+    
     return (
       <Badge variant={variants[status] || "secondary"}>
-        {status.charAt(0).toUpperCase() + status.slice(1)}
+        {displayStatus.replace(/_/g, " ").split(" ").map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(" ")}
       </Badge>
     );
   };
@@ -223,6 +418,17 @@ export function DriverDepotsView({ defaultTab = "orders" }: DriverDepotsViewProp
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
           </div>
+        ) : ordersError && (ordersError as any)?.status === 403 ? (
+          <div className="text-center py-12">
+            <div className="bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-6 max-w-md mx-auto">
+              <p className="text-yellow-800 dark:text-yellow-200 font-medium mb-2">
+                Compliance Review Required
+              </p>
+              <p className="text-sm text-yellow-700 dark:text-yellow-300 mb-4">
+                Your compliance documents must be approved before you can view depot orders. Please complete your compliance profile and wait for admin approval.
+              </p>
+            </div>
+          </div>
         ) : orders && orders.length > 0 ? (
           <div className="rounded-lg border">
             <Table>
@@ -250,35 +456,80 @@ export function DriverDepotsView({ defaultTab = "orders" }: DriverDepotsViewProp
                     <TableCell>
                       {formatCurrency(order.total_price_cents / 100, currency)}
                     </TableCell>
-                    <TableCell>{getStatusBadge(order.status)}</TableCell>
+                    <TableCell>{getStatusBadge(order)}</TableCell>
                     <TableCell>
                       {new Date(order.created_at).toLocaleDateString()}
                     </TableCell>
                     <TableCell className="text-right">
-                      {order.status === "pending" && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            if (
-                              confirm(
-                                "Are you sure you want to cancel this order?"
-                              )
-                            ) {
-                              cancelOrderMutation.mutate(order.id);
-                            }
-                          }}
-                          disabled={cancelOrderMutation.isPending}
-                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                          title="Cancel order"
-                        >
-                          {cancelOrderMutation.isPending ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <XCircle className="h-4 w-4" />
-                          )}
-                        </Button>
-                      )}
+                      <div className="flex gap-2 justify-end">
+                        {order.status === "pending" && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              if (
+                                confirm(
+                                  "Are you sure you want to cancel this order?"
+                                )
+                              ) {
+                                cancelOrderMutation.mutate(order.id);
+                              }
+                            }}
+                            disabled={cancelOrderMutation.isPending}
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                            title="Cancel order"
+                          >
+                            {cancelOrderMutation.isPending ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <XCircle className="h-4 w-4" />
+                            )}
+                          </Button>
+                        )}
+                        {(order.status === "pending_payment" || (order.status === "pending_payment" && order.payment_status === "payment_failed")) && (
+                          <Button
+                            variant={order.payment_status === "payment_failed" ? "destructive" : "default"}
+                            size="sm"
+                            onClick={() => {
+                              setSelectedOrderForPayment(order);
+                              setPaymentDialogOpen(true);
+                            }}
+                            title={order.payment_status === "payment_failed" ? "Payment was rejected. Pay again" : "Pay for order"}
+                          >
+                            <CreditCard className="h-4 w-4 mr-1" />
+                            {order.payment_status === "payment_failed" ? "Pay Again" : "Pay Now"}
+                          </Button>
+                        )}
+                        {(order.status === "awaiting_signature" || order.status === "released") && !order.delivery_signature_url && (
+                          <Button
+                            variant="default"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedOrderForSignature(order);
+                              setSignatureType("delivery");
+                              setSignatureDialogOpen(true);
+                            }}
+                            title="Sign to confirm receipt"
+                          >
+                            <FileSignature className="h-4 w-4 mr-1" />
+                            Sign for Receipt
+                          </Button>
+                        )}
+                        {order.status === "completed" && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedOrderForReceipt(order);
+                              setReceiptViewDialogOpen(true);
+                            }}
+                            title="View receipt"
+                          >
+                            <Receipt className="h-4 w-4 mr-1" />
+                            Receipt
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -297,17 +548,28 @@ export function DriverDepotsView({ defaultTab = "orders" }: DriverDepotsViewProp
         </div>
       ) : (
         <div className="space-y-4">
-          {depotsError ? (
-          <div className="text-center py-12 text-destructive">
-            <p>Error loading depots: {depotsError instanceof Error ? depotsError.message : "Unknown error"}</p>
-            <Button 
-              onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/driver/depots"] })}
-              className="mt-4"
-            >
-              Retry
-            </Button>
-          </div>
-        ) : depotsLoading ? (
+          {depotsError && (depotsError as any)?.status === 403 ? (
+            <div className="text-center py-12">
+              <div className="bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-6 max-w-md mx-auto">
+                <p className="text-yellow-800 dark:text-yellow-200 font-medium mb-2">
+                  Compliance Review Required
+                </p>
+                <p className="text-sm text-yellow-700 dark:text-yellow-300 mb-4">
+                  Your compliance documents must be approved before you can view depots. Please complete your compliance profile and wait for admin approval.
+                </p>
+              </div>
+            </div>
+          ) : depotsError ? (
+            <div className="text-center py-12 text-destructive">
+              <p>Error loading depots: {depotsError instanceof Error ? depotsError.message : "Unknown error"}</p>
+              <Button 
+                onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/driver/depots"] })}
+                className="mt-4"
+              >
+                Retry
+              </Button>
+            </div>
+          ) : depotsLoading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
           </div>
@@ -595,6 +857,119 @@ export function DriverDepotsView({ defaultTab = "orders" }: DriverDepotsViewProp
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Payment Dialog */}
+      {selectedOrderForPayment && (
+        <DriverDepotOrderPaymentDialog
+          open={paymentDialogOpen}
+          onOpenChange={setPaymentDialogOpen}
+          order={selectedOrderForPayment}
+          supplierBankDetails={{}}
+        />
+      )}
+
+      {/* Signature Dialog */}
+      <Dialog open={signatureDialogOpen} onOpenChange={setSignatureDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {signatureType === "delivery" ? "Sign to Confirm Receipt" : "Sign Agreement"}
+            </DialogTitle>
+            <DialogDescription>
+              {signatureType === "delivery" 
+                ? "Please sign to confirm that you have received the fuel. This will complete the order."
+                : "Please sign to confirm the order details before fuel release."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {selectedOrderForSignature && (
+              <div className="bg-muted/50 rounded-lg p-4 space-y-2 text-sm">
+                <p><span className="font-semibold">Depot:</span> {selectedOrderForSignature.depots?.name}</p>
+                <p><span className="font-semibold">Fuel Type:</span> {selectedOrderForSignature.fuel_types?.label}</p>
+                <p><span className="font-semibold">Quantity:</span> {selectedOrderForSignature.litres}L</p>
+                <p><span className="font-semibold">Total:</span> {formatCurrency(selectedOrderForSignature.total_price_cents / 100, currency)}</p>
+              </div>
+            )}
+            <SignaturePad
+              value={signatureData}
+              onChange={setSignatureData}
+              height={200}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSignatureDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSubmitSignature}
+              disabled={!signatureData || submitSignatureMutation.isPending}
+            >
+              {submitSignatureMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Submitting...
+                </>
+              ) : (
+                "Submit Signature"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Receipt Confirmation Dialog */}
+      <Dialog open={receiptDialogOpen} onOpenChange={setReceiptDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirm Receipt</DialogTitle>
+            <DialogDescription>
+              Please sign to confirm you have received the fuel.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {selectedOrderForSignature && (
+              <div className="bg-muted/50 rounded-lg p-4 space-y-2 text-sm">
+                <p><span className="font-semibold">Depot:</span> {selectedOrderForSignature.depots?.name}</p>
+                <p><span className="font-semibold">Fuel Type:</span> {selectedOrderForSignature.fuel_types?.label}</p>
+                <p><span className="font-semibold">Ordered:</span> {selectedOrderForSignature.litres}L</p>
+                {selectedOrderForSignature.actual_litres_delivered && (
+                  <p><span className="font-semibold">Received:</span> {selectedOrderForSignature.actual_litres_delivered}L</p>
+                )}
+              </div>
+            )}
+            <SignaturePad
+              value={signatureData}
+              onChange={setSignatureData}
+              height={200}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReceiptDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSubmitSignature}
+              disabled={!signatureData || submitSignatureMutation.isPending}
+            >
+              {submitSignatureMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Confirming...
+                </>
+              ) : (
+                "Confirm Receipt"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Receipt View Dialog */}
+      <DriverDepotOrderReceipt
+        order={selectedOrderForReceipt}
+        open={receiptViewDialogOpen}
+        onOpenChange={setReceiptViewDialogOpen}
+      />
     </>
   );
 }

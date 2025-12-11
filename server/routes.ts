@@ -189,10 +189,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const userId = user?.id;
     
     try {
+      // Validate objectPath is not empty
+      let objectPath = req.params.objectPath;
+      if (!objectPath || objectPath.trim() === '') {
+        return res.status(400).json({ error: "Invalid file path: path cannot be empty" });
+      }
+      
       // If using Supabase Storage, serve the file directly
       if (USE_SUPABASE_STORAGE || !process.env.PRIVATE_OBJECT_DIR) {
-        const objectPath = req.params.objectPath;
-        const bucketName = process.env.SUPABASE_STORAGE_BUCKET || "private-objects";
+        let bucketName = process.env.SUPABASE_STORAGE_BUCKET || "private-objects";
+        
+        // Check if the path already includes bucket name (e.g., "private-objects/uploads/xxx")
+        const pathParts = objectPath.split('/');
+        const knownBuckets = ['private-objects', 'public-objects', 'documents', 'uploads', 'profile-pictures'];
+        
+        if (pathParts.length > 1 && knownBuckets.includes(pathParts[0])) {
+          // Path includes bucket name, extract it
+          bucketName = pathParts[0];
+          objectPath = pathParts.slice(1).join('/');
+        }
+        
+        console.log('Serving file - bucketName:', bucketName, 'objectPath:', objectPath);
         
         // Check if bucket is public or private
         const { data: buckets } = await supabaseAdmin.storage.listBuckets();
@@ -212,7 +229,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           if (error) {
             console.error("Error downloading file from Supabase Storage:", error);
-            return res.status(404).json({ error: "File not found" });
+            return res.status(404).json({ error: "File not found", details: error.message });
           }
           
           if (!data) {
@@ -223,8 +240,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const arrayBuffer = await data.arrayBuffer();
           const buffer = Buffer.from(arrayBuffer);
           
+          // Detect content type from file extension if not provided
+          let contentType = data.type || 'application/octet-stream';
+          if (contentType === 'application/octet-stream') {
+            const ext = objectPath.split('.').pop()?.toLowerCase();
+            const mimeTypes: Record<string, string> = {
+              'pdf': 'application/pdf',
+              'jpg': 'image/jpeg',
+              'jpeg': 'image/jpeg',
+              'png': 'image/png',
+              'gif': 'image/gif',
+              'webp': 'image/webp',
+            };
+            if (ext && mimeTypes[ext]) {
+              contentType = mimeTypes[ext];
+            }
+          }
+          
           // Set appropriate headers
-          res.setHeader('Content-Type', data.type || 'application/octet-stream');
+          res.setHeader('Content-Type', contentType);
           res.setHeader('Content-Length', buffer.length);
           res.setHeader('Cache-Control', 'public, max-age=3600');
           
@@ -261,6 +295,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Object not found" });
       }
       return res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Get presigned view URL for payment proofs (protected)
+  app.post("/api/objects/presigned-url", requireAuth, async (req, res) => {
+    try {
+      const { objectPath } = req.body;
+      if (!objectPath) {
+        return res.status(400).json({ error: "objectPath is required" });
+      }
+
+      // Parse bucket and path
+      let path = objectPath;
+      let bucketName = process.env.SUPABASE_STORAGE_BUCKET || "private-objects";
+      
+      const pathParts = path.split('/');
+      const knownBuckets = ['private-objects', 'public-objects', 'documents', 'uploads', 'profile-pictures'];
+      
+      if (pathParts.length > 1 && knownBuckets.includes(pathParts[0])) {
+        bucketName = pathParts[0];
+        path = pathParts.slice(1).join('/');
+      }
+
+      // Generate a presigned URL that expires in 1 hour
+      // Supabase uses createSignedUrl method
+      const { data, error } = await supabaseAdmin.storage
+        .from(bucketName)
+        .createSignedUrl(path, 3600); // 1 hour expiry
+
+      if (error) {
+        console.error("Error creating presigned URL:", error);
+        return res.status(500).json({ error: "Failed to create presigned URL", details: error.message });
+      }
+
+      if (!data || !data.signedUrl) {
+        return res.status(404).json({ error: "File not found" });
+      }
+
+      res.json({ signedUrl: data.signedUrl });
+    } catch (error: any) {
+      console.error("Error generating presigned URL:", error);
+      res.status(500).json({ error: error.message || "Failed to generate presigned URL" });
     }
   });
 
@@ -505,16 +581,18 @@ Then try uploading again.`,
       const supabaseUrl = process.env.SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co';
       const publicUrl = `${supabaseUrl}/storage/v1/object/public/${objectPath}`;
       
-      console.log(`Upload successful: objectPath="${objectPath}"`);
+      console.log(`Upload successful: objectPath="${objectPath}", data.path="${data.path}"`);
       
-      // Return 200 OK with JSON response
+      // Return 200 OK with JSON response containing objectPath
+      // The objectPath is in format "bucket/path" which is what we store in the database
       res.status(200).json({ 
-        objectPath,
-        path: data.path,
-        fullPath: objectPath,
-        uploadURL: objectPath, // For Uppy compatibility
-        location: publicUrl, // Public URL for the uploaded file
-        url: publicUrl // Alternative field name
+        objectPath,  // This is the key field: "bucket/path" format
+        path: data.path,  // Just the path without bucket
+        fullPath: objectPath,  // Alias for objectPath
+        uploadURL: objectPath, // For Uppy compatibility - use objectPath
+        location: publicUrl, // Public URL for the uploaded file (if bucket is public)
+        url: publicUrl, // Alternative field name
+        bucket // Bucket name
       });
     } catch (error: any) {
       console.error("Error in storage upload endpoint:", error);

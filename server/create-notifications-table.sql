@@ -62,6 +62,34 @@ BEGIN
       'price_estimate_available',
       'favorite_driver_available',
       
+      -- Driver depot orders
+      'driver_depot_order_placed',
+      'driver_depot_order_confirmed',
+      'driver_depot_order_fulfilled',
+      'driver_depot_order_cancelled',
+      'driver_depot_order_accepted',
+      'driver_depot_order_rejected',
+      'driver_depot_payment_verified',
+      'driver_depot_payment_rejected',
+      'driver_depot_order_released',
+      'driver_depot_order_completed',
+      
+      -- Supplier depot order notifications
+      'supplier_depot_order_placed',
+      'supplier_payment_received',
+      'supplier_signature_required',
+      'supplier_order_completed',
+      
+      -- Admin notifications
+      'admin_document_uploaded',
+      'admin_kyc_submitted',
+      'admin_vehicle_approved',
+      'admin_vehicle_rejected',
+      'admin_document_approved',
+      'admin_document_rejected',
+      'admin_kyc_approved',
+      'admin_kyc_rejected',
+      
       -- System & Admin
       'system_alert',
       'account_verification_required',

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { AppHeader } from "@/components/AppHeader";
@@ -13,22 +13,66 @@ import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/utils";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { DriverDepotOrdersView } from "@/components/DriverDepotOrdersView";
+import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/StatusBadge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { useLocation } from "wouter";
 
 export default function SupplierDashboard() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [location, setLocation] = useLocation();
   const [depotDialogOpen, setDepotDialogOpen] = useState(false);
   const [selectedDepot, setSelectedDepot] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<string>("driver-orders");
   const [orderStatusFilter, setOrderStatusFilter] = useState<string[] | null>(null);
   const [depotStatusFilter, setDepotStatusFilter] = useState<"all" | "active" | null>(null);
+  const [kycWarningDialogOpen, setKycWarningDialogOpen] = useState(false);
+
+  // Fetch supplier profile to check KYC status
+  const { data: supplierProfile, refetch: refetchProfile } = useQuery<any>({
+    queryKey: ["/api/supplier/profile"],
+    refetchInterval: 5000, // Poll every 5 seconds
+    staleTime: 0,
+    gcTime: 0, // Don't cache, always fetch fresh data
+  });
+
+  // Debug: Log supplier profile status
+  useEffect(() => {
+    if (supplierProfile) {
+      console.log("[SupplierDashboard] Supplier Profile Status:", {
+        status: supplierProfile.status,
+        compliance_status: supplierProfile.compliance_status,
+        kyb_status: supplierProfile.kyb_status,
+        isActive: supplierProfile.status === "active" && supplierProfile.compliance_status === "approved",
+        fullProfile: supplierProfile
+      });
+    }
+  }, [supplierProfile]);
 
   const { data: depots, isLoading: depotsLoading, error: depotsError } = useQuery<any[]>({
     queryKey: ["/api/supplier/depots"],
     refetchInterval: 5000, // Poll every 5 seconds for real-time updates
     staleTime: 0,
-    retry: 2,
+    retry: (failureCount, error: any) => {
+      // Don't retry on 403 errors (compliance not approved)
+      if (error?.status === 403 || error?.response?.status === 403) {
+        return false;
+      }
+      return failureCount < 2;
+    },
     retryDelay: 1000,
+    // Return empty array on error instead of throwing
+    select: (data) => data || [],
   });
 
   // Fetch driver depot orders to count active orders
@@ -41,6 +85,13 @@ export default function SupplierDashboard() {
   // Listen for real-time updates via WebSocket
   useWebSocket((message) => {
     console.log("[SupplierDashboard] WebSocket message received:", message.type, message);
+    
+    // Handle KYC/compliance approval
+    if (message.type === "kyc_approved" || message.type === "compliance_approved" || message.type === "kyb_approved") {
+      console.log("[SupplierDashboard] KYC/KYB approved, refreshing profile");
+      queryClient.invalidateQueries({ queryKey: ["/api/supplier/profile"], exact: false });
+      refetchProfile();
+    }
     
     if (message.type === "depot_created" || message.type === "depot_updated" || message.type === "depot_deleted" || message.type === "pricing_updated") {
       // Refresh depots when depot or pricing changes
@@ -87,8 +138,22 @@ export default function SupplierDashboard() {
   };
 
   const handleAddDepot = () => {
+    // Check if KYC is approved
+    const isKYCApproved = supplierProfile?.status === "active" && supplierProfile?.compliance_status === "approved";
+    
+    if (!isKYCApproved) {
+      // Show warning dialog
+      setKycWarningDialogOpen(true);
+      return;
+    }
+    
     setSelectedDepot(null);
     setDepotDialogOpen(true);
+  };
+
+  const handleGoToProfile = () => {
+    setKycWarningDialogOpen(false);
+    setLocation("/supplier/profile");
   };
 
   const activeDepots = (depots || []).filter((depot: any) => depot.is_active !== false);
@@ -104,11 +169,23 @@ export default function SupplierDashboard() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-3xl font-bold">My Depots</h1>
-            <p className="text-muted-foreground">
-              Manage your fuel supply locations
-            </p>
+          <div className="flex items-center gap-4">
+            <div>
+              <div className="flex items-center gap-3">
+                <h1 className="text-3xl font-bold">My Depots</h1>
+                {supplierProfile && (
+                  <Badge
+                    variant={supplierProfile.status === "active" && supplierProfile.compliance_status === "approved" ? "default" : "secondary"}
+                    className="text-sm px-3 py-1"
+                  >
+                    {supplierProfile.status === "active" && supplierProfile.compliance_status === "approved" ? "Active" : "Inactive"}
+                  </Badge>
+                )}
+              </div>
+              <p className="text-muted-foreground">
+                Manage your fuel supply locations
+              </p>
+            </div>
           </div>
           <Button onClick={handleAddDepot} data-testid="button-add-depot">
             <Plus className="h-4 w-4 mr-2" />
@@ -171,14 +248,22 @@ export default function SupplierDashboard() {
 
           <TabsContent value="depots" className="space-y-4">
             {depotsError ? (
-              <div className="text-center py-12 text-destructive">
-                <p>Error loading depots: {depotsError instanceof Error ? depotsError.message : "Unknown error"}</p>
-                <Button 
-                  onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/supplier/depots"] })}
-                  className="mt-4"
-                >
-                  Retry
-                </Button>
+              <div className="text-center py-12">
+                <div className="bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-6 max-w-md mx-auto">
+                  <p className="text-yellow-800 dark:text-yellow-200 font-medium mb-2">
+                    Compliance Review Required
+                  </p>
+                  <p className="text-sm text-yellow-700 dark:text-yellow-300 mb-4">
+                    Your compliance documents must be approved before you can manage depots. Please complete your compliance profile and wait for admin approval.
+                  </p>
+                  <Button 
+                    onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/supplier/depots"] })}
+                    variant="outline"
+                    size="sm"
+                  >
+                    Retry
+                  </Button>
+                </div>
               </div>
             ) : depotsLoading ? (
               <div className="flex items-center justify-center py-12">
@@ -250,12 +335,19 @@ export default function SupplierDashboard() {
               ) : (
                 <div className="text-center py-12 text-muted-foreground">
                   <MapPin className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>{depotStatusFilter === "active" ? "No active depots" : "No depots yet"}</p>
-                  <p className="text-sm mt-2">
+                  <p className="text-lg font-medium mb-2">{depotStatusFilter === "active" ? "No active depots" : "No depots yet"}</p>
+                  <p className="text-sm mb-4">
                     {depotStatusFilter === "active" 
                       ? "Activate a depot to see it here"
                       : "Click \"Add Depot\" to create your first depot"}
                   </p>
+                  <Button 
+                    onClick={() => setDepotDialogOpen(true)}
+                    variant="outline"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add Depot
+                  </Button>
                 </div>
               );
             })()}
@@ -272,6 +364,24 @@ export default function SupplierDashboard() {
         onOpenChange={setDepotDialogOpen}
         depot={selectedDepot}
       />
+
+      {/* KYC Warning Dialog */}
+      <AlertDialog open={kycWarningDialogOpen} onOpenChange={setKycWarningDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>KYC Approval Required</AlertDialogTitle>
+            <AlertDialogDescription>
+              Please apply for KYC from profile management and wait for approval before adding depots.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleGoToProfile}>
+              Go to Profile
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

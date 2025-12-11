@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useWebSocket } from "@/hooks/useWebSocket";
 import {
   Dialog,
   DialogContent,
@@ -24,6 +25,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { Loader2, User, FileText, Truck, Building2, ShieldCheck, Upload, Camera, Eye, CheckCircle2, XCircle } from "lucide-react";
+import { normalizeFilePath } from "@/lib/utils";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
 import type { UploadResult } from "@uppy/core";
@@ -50,9 +52,38 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
   const [formData, setFormData] = useState<any>({});
 
   // Fetch user details
-  const { data: userDetails, isLoading } = useQuery<UserDetails>({
+  const { data: userDetails, isLoading, refetch: refetchUserDetails } = useQuery<UserDetails>({
     queryKey: ["/api/admin/users", userId],
     enabled: !!userId && open,
+  });
+
+  // Listen for KYC/compliance approval to refresh user details
+  useWebSocket((message) => {
+    const payload = (message as any).payload || {};
+    const messageUserId = payload.userId;
+    
+    // Check if this message is for the current user
+    const isForCurrentUser = messageUserId === userId;
+    
+    // Also check if message type matches and we have user details loaded
+    const isRelevantMessage = message.type === "kyc_approved" || 
+                              message.type === "compliance_approved" || 
+                              message.type === "kyb_approved" || 
+                              message.type === "kyc_rejected" ||
+                              message.type === "compliance_rejected";
+    
+    if (isRelevantMessage && (isForCurrentUser || (userDetails && payload.type === userDetails.profile?.role))) {
+      console.log("[UserDetailsDialog] KYC status changed, refreshing user details", {
+        messageType: message.type,
+        payload,
+        userId,
+        messageUserId,
+        userRole: userDetails?.profile?.role,
+        isForCurrentUser
+      });
+      refetchUserDetails();
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users", userId] });
+    }
   });
 
   // Update user mutation
@@ -451,15 +482,19 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
               {userDetails.driver && (
                 <DriverDetails driver={userDetails.driver} formData={formData} setFormData={setFormData} isEditing={isEditing} />
               )}
-              {userDetails.supplier && (
+              {userDetails.supplier ? (
                 <SupplierDetails supplier={userDetails.supplier} formData={formData} setFormData={setFormData} isEditing={isEditing} />
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  <p>Supplier profile not found. The supplier may need to complete their profile setup.</p>
+                </div>
               )}
             </TabsContent>
 
             {/* Vehicles Tab - Driver Only */}
             {userDetails.driver && (
               <TabsContent value="vehicles" className="mt-0">
-                <VehiclesTab driverId={userDetails.driver.id} vehicles={userDetails.vehicles || []} />
+                <VehiclesTab driverId={userDetails.driver.id} vehicles={userDetails.vehicles || []} userId={userId} />
               </TabsContent>
             )}
 
@@ -829,6 +864,14 @@ function DriverDetails({ driver, formData, setFormData, isEditing }: any) {
 
 // Supplier Details Component
 function SupplierDetails({ supplier, formData, setFormData, isEditing }: any) {
+  if (!supplier) {
+    return (
+      <div className="text-center py-8 text-muted-foreground">
+        <p>Supplier profile not found. The supplier may need to complete their profile setup.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <h3 className="font-semibold text-sm text-muted-foreground">Supplier Information</h3>
@@ -842,7 +885,7 @@ function SupplierDetails({ supplier, formData, setFormData, isEditing }: any) {
               onChange={(e) => setFormData({ ...formData, registered_name: e.target.value })}
             />
           ) : (
-            <p className="text-sm mt-1">{supplier.registered_name || supplier.name}</p>
+            <p className="text-sm mt-1">{supplier.registered_name || supplier.company_name || supplier.name || "N/A"}</p>
           )}
         </div>
         <div>
@@ -892,14 +935,41 @@ function SupplierDetails({ supplier, formData, setFormData, isEditing }: any) {
               onChange={(e) => setFormData({ ...formData, dmre_license_number: e.target.value })}
             />
           ) : (
-            <p className="text-sm mt-1">{supplier.dmre_license_number || "N/A"}</p>
+            <p className="text-sm mt-1">{supplier.dmre_license_number || supplier.wholesale_license_number || "N/A"}</p>
           )}
         </div>
         <div>
           <Label>KYB Status</Label>
-          <p className="text-sm mt-1 capitalize">{supplier.kyb_status || "pending"}</p>
+          <p className="text-sm mt-1 capitalize">{supplier.kyb_status || supplier.compliance_status || "pending"}</p>
         </div>
       </div>
+
+      {/* Compliance Fields */}
+      {(supplier.company_name || supplier.registered_address || supplier.director_names) && (
+        <>
+          <h4 className="font-semibold text-sm text-muted-foreground pt-4">Company Details</h4>
+          <div className="grid grid-cols-2 gap-4">
+            {supplier.company_name && (
+              <div>
+                <Label>Company Name</Label>
+                <p className="text-sm mt-1">{supplier.company_name}</p>
+              </div>
+            )}
+            {supplier.registered_address && (
+              <div>
+                <Label>Registered Address</Label>
+                <p className="text-sm mt-1">{supplier.registered_address}</p>
+              </div>
+            )}
+            {supplier.director_names && Array.isArray(supplier.director_names) && supplier.director_names.length > 0 && (
+              <div className="col-span-2">
+                <Label>Directors</Label>
+                <p className="text-sm mt-1">{supplier.director_names.join(", ")}</p>
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
       <h4 className="font-semibold text-sm text-muted-foreground pt-2">Primary Contact</h4>
       <div className="grid grid-cols-3 gap-4">
@@ -935,7 +1005,80 @@ function SupplierDetails({ supplier, formData, setFormData, isEditing }: any) {
 }
 
 // Vehicles Tab Component - Driver Only
-function VehiclesTab({ driverId, vehicles }: { driverId: string; vehicles: any[] }) {
+function VehiclesTab({ driverId, vehicles, userId }: { driverId: string; vehicles: any[]; userId: string }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  // Approve vehicle mutation
+  const approveVehicleMutation = useMutation({
+    mutationFn: async (vehicleId: string) => {
+      return apiRequest("POST", `/api/admin/vehicles/${vehicleId}/approve`);
+    },
+    onSuccess: (data, vehicleId) => {
+      // Invalidate admin queries
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users", userId] });
+      // Also invalidate any vehicle-specific queries that might be cached
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/vehicles"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles", vehicleId, "compliance/status"] });
+      toast({
+        title: "Success",
+        description: "Vehicle approved successfully. Compliance status updated to Approved.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to approve vehicle",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Reject vehicle mutation
+  const rejectVehicleMutation = useMutation({
+    mutationFn: async ({ vehicleId, rejectionReason }: { vehicleId: string; rejectionReason?: string }) => {
+      return apiRequest("POST", `/api/admin/vehicles/${vehicleId}/reject`, { rejectionReason });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users", userId] });
+      toast({
+        title: "Success",
+        description: "Vehicle rejected",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to reject vehicle",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleApprove = (vehicleId: string) => {
+    approveVehicleMutation.mutate(vehicleId);
+  };
+
+  const handleReject = (vehicleId: string) => {
+    const reason = prompt("Please provide a reason for rejection (optional):");
+    rejectVehicleMutation.mutate({ vehicleId, rejectionReason: reason || undefined });
+  };
+
+  const getVehicleStatusBadge = (status: string) => {
+    switch (status) {
+      case "active":
+        return <Badge variant="default" className="bg-green-600">Approved</Badge>;
+      case "rejected":
+        return <Badge variant="destructive">Rejected</Badge>;
+      case "suspended":
+        return <Badge variant="secondary">Suspended</Badge>;
+      case "pending_compliance":
+      default:
+        return <Badge variant="secondary">Pending</Badge>;
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -969,9 +1112,12 @@ function VehiclesTab({ driverId, vehicles }: { driverId: string; vehicles: any[]
                     Registration: {vehicle.registration_number || 'N/A'}
                   </p>
                 </div>
-                <Badge variant="outline" data-testid={`badge-capacity-${vehicle.id}`}>
-                  {vehicle.capacity_litres ? `${vehicle.capacity_litres}L` : 'N/A'}
-                </Badge>
+                <div className="flex flex-col items-end gap-2">
+                  <Badge variant="outline" data-testid={`badge-capacity-${vehicle.id}`}>
+                    {vehicle.capacity_litres ? `${vehicle.capacity_litres}L` : 'N/A'}
+                  </Badge>
+                  {getVehicleStatusBadge(vehicle.vehicle_status || "pending_compliance")}
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4 text-sm">
@@ -1017,6 +1163,40 @@ function VehiclesTab({ driverId, vehicles }: { driverId: string; vehicles: any[]
                   </p>
                 </div>
               </div>
+
+              {/* Approve/Reject Actions */}
+              {(vehicle.vehicle_status === "pending_compliance" || !vehicle.vehicle_status) && (
+                <div className="flex gap-2 pt-2 border-t">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => handleApprove(vehicle.id)}
+                    disabled={approveVehicleMutation.isPending || rejectVehicleMutation.isPending}
+                    className="flex-1"
+                  >
+                    {approveVehicleMutation.isPending ? (
+                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                    ) : (
+                      <CheckCircle2 className="h-3 w-3 mr-1" />
+                    )}
+                    Approve
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => handleReject(vehicle.id)}
+                    disabled={approveVehicleMutation.isPending || rejectVehicleMutation.isPending}
+                    className="flex-1"
+                  >
+                    {rejectVehicleMutation.isPending ? (
+                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                    ) : (
+                      <XCircle className="h-3 w-3 mr-1" />
+                    )}
+                    Reject
+                  </Button>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -1035,22 +1215,56 @@ function DocumentsTab({ userId, userRole }: { userId: string; userRole: string }
     queryKey: ["/api/admin/users", userId, "documents"],
     enabled: !!userId,
     queryFn: async () => {
-      const response = await apiRequest("GET", `/api/admin/users/${userId}/documents`);
-      // Ensure we always return an array
-      return Array.isArray(response) ? response : [];
+      try {
+        const response = await apiRequest("GET", `/api/admin/users/${userId}/documents`);
+        const data = await response.json();
+        console.log("[DocumentsTab] Parsed response from API:", data);
+        console.log("[DocumentsTab] Response type:", typeof data);
+        console.log("[DocumentsTab] Is array?", Array.isArray(data));
+        console.log("[DocumentsTab] Response length:", Array.isArray(data) ? data.length : "N/A");
+        
+        // Ensure we always return an array
+        const result = Array.isArray(data) ? data : [];
+        console.log("[DocumentsTab] Returning documents:", result.length);
+        return result;
+      } catch (error) {
+        console.error("[DocumentsTab] Error fetching documents:", error);
+        return [];
+      }
     },
   });
+  
+  console.log("[DocumentsTab] Current documents state:", documents);
+  console.log("[DocumentsTab] Is loading:", isLoading);
 
   // Update document status mutation
   const updateDocumentStatusMutation = useMutation({
     mutationFn: async ({ documentId, status, rejectionReason }: { documentId: string; status: string; rejectionReason?: string }) => {
-      return apiRequest("PATCH", `/api/admin/documents/${documentId}/status`, {
+      const response = await apiRequest("PATCH", `/api/admin/documents/${documentId}/status`, {
         status,
         rejectionReason,
       });
+      
+      // Check if response is ok before parsing JSON
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Error response:", errorText);
+        throw new Error(`Failed to update document status: ${response.status} ${response.statusText}`);
+      }
+      
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await response.text();
+        console.error("Non-JSON response:", text.substring(0, 200));
+        throw new Error("Server returned non-JSON response. The endpoint may not exist or there's a server error.");
+      }
+      
+      return response.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/users", userId, "documents"] });
+    onSuccess: async () => {
+      // Invalidate and refetch documents
+      await queryClient.invalidateQueries({ queryKey: ["/api/admin/users", userId, "documents"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/admin/users", userId, "documents"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users", userId] });
       toast({
         title: "Success",
@@ -1058,6 +1272,7 @@ function DocumentsTab({ userId, userRole }: { userId: string; userRole: string }
       });
     },
     onError: (error: any) => {
+      console.error("Error updating document status:", error);
       toast({
         title: "Error",
         description: error.message || "Failed to update document status",
@@ -1090,6 +1305,7 @@ function DocumentsTab({ userId, userRole }: { userId: string; userRole: string }
       roadworthy_certificate: "Roadworthy Certificate",
       dg_vehicle_permit: "Dangerous Goods Vehicle Permit",
       insurance_certificate: "Insurance Certificate",
+      letter_of_authority: "Letter of Authority",
       loa: "Letter of Authority",
       cipc_certificate: "CIPC Certificate",
       cipc_document: "CIPC Document",
@@ -1152,7 +1368,7 @@ function DocumentsTab({ userId, userRole }: { userId: string; userRole: string }
                     {(doc.document_status || doc.verification_status) && (
                       <Badge
                         variant={
-                          (doc.document_status || doc.verification_status) === "approved"
+                          (doc.document_status || doc.verification_status) === "approved" || (doc.document_status || doc.verification_status) === "verified"
                             ? "default"
                             : (doc.document_status || doc.verification_status) === "pending_review" || (doc.document_status || doc.verification_status) === "pending"
                             ? "secondary"
@@ -1160,7 +1376,7 @@ function DocumentsTab({ userId, userRole }: { userId: string; userRole: string }
                         }
                         className="text-xs capitalize"
                       >
-                        {doc.document_status || doc.verification_status}
+                        {(doc.document_status || doc.verification_status) === "verified" ? "approved" : (doc.document_status || doc.verification_status)}
                       </Badge>
                     )}
                   </div>
@@ -1179,21 +1395,25 @@ function DocumentsTab({ userId, userRole }: { userId: string; userRole: string }
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      // Get the file URL - might be a Supabase storage path
-                      let fileUrl = doc.file_path;
-                      if (fileUrl && !fileUrl.startsWith('http') && !fileUrl.startsWith('/')) {
-                        // It's a Supabase storage path (bucket/path format)
-                        const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co';
-                        fileUrl = `${supabaseUrl}/storage/v1/object/public/${fileUrl}`;
+                      // Normalize the file path to work with /objects/ endpoint
+                      const fileUrl = normalizeFilePath(doc.file_path);
+                      if (fileUrl) {
+                        window.open(fileUrl, "_blank");
+                      } else {
+                        toast({
+                          title: "Error",
+                          description: "Document file path is missing or invalid",
+                          variant: "destructive",
+                        });
                       }
-                      window.open(fileUrl, "_blank");
                     }}
                     data-testid={`button-view-${doc.id}`}
                   >
                     <Eye className="h-3 w-3 mr-1" />
                     View
                   </Button>
-                  {(doc.document_status === "pending_review" || doc.verification_status === "pending" || !doc.document_status) && (
+                  {((doc.document_status === "pending_review" || doc.document_status === "pending" || !doc.document_status) && 
+                    (doc.verification_status === "pending" || doc.verification_status === "pending_review" || !doc.verification_status)) && (
                     <>
                       <Button
                         variant="default"

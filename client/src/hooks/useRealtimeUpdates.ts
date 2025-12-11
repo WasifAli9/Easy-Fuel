@@ -71,8 +71,17 @@ export function useRealtimeUpdates() {
       case "vehicle_created":
       case "vehicle_updated":
       case "vehicle_deleted":
+      case "vehicle_approved":
+      case "vehicle_rejected":
         queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles"] });
         queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
+        // Invalidate compliance status for the specific vehicle
+        if (payload?.vehicleId) {
+          queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles", payload.vehicleId, "compliance/status"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles", payload.vehicleId, "documents"] });
+        }
+        // Also invalidate all vehicle compliance statuses
+        queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles"], exact: false });
         break;
 
       // Driver profile updates

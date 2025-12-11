@@ -78,11 +78,12 @@ export async function getDriverComplianceStatus(driverId: string): Promise<Compl
     }
 
     // Get all documents for driver
+    // NOTE: Documents are stored with owner_id = driver.id (not driver.user_id)
     const { data: documents, error: docsError } = await supabaseAdmin
       .from("documents")
       .select("*")
       .eq("owner_type", "driver")
-      .eq("owner_id", driver.user_id);
+      .eq("owner_id", driver.id);
 
     if (docsError) {
       console.error("Error fetching driver documents:", docsError);
@@ -109,6 +110,24 @@ export async function getDriverComplianceStatus(driverId: string): Promise<Compl
 
     const allDocuments = [...(documents || []), ...vehicleDocuments];
 
+    // Debug: Log all documents found
+    console.log("[Compliance Service] Driver documents found:", {
+      driverId: driverId,
+      driverUserId: driver.user_id,
+      documentsCount: documents?.length || 0,
+      vehicleDocumentsCount: vehicleDocuments.length,
+      allDocumentsCount: allDocuments.length,
+      documentDetails: allDocuments.map(d => ({
+        id: d.id,
+        doc_type: d.doc_type,
+        verification_status: d.verification_status,
+        document_status: d.document_status,
+        owner_type: d.owner_type,
+        owner_id: d.owner_id,
+        title: d.title
+      }))
+    });
+
     // Determine required documents based on driver type and requirements
     const requiredDocs = [...DRIVER_REQUIRED_DOCUMENTS];
     
@@ -119,9 +138,40 @@ export async function getDriverComplianceStatus(driverId: string): Promise<Compl
 
     // Check which documents are uploaded, approved, rejected, pending
     const uploaded = allDocuments.map(d => d.doc_type);
-    const approved = allDocuments.filter(d => d.verification_status === "verified").map(d => d.doc_type);
-    const rejected = allDocuments.filter(d => d.verification_status === "rejected").map(d => d.doc_type);
-    const pending = allDocuments.filter(d => d.verification_status === "pending").map(d => d.doc_type);
+    // Check for approved documents - support multiple status values
+    const approvedDocs = allDocuments.filter(d => {
+      const isApproved = d.verification_status === "verified" || 
+                         d.verification_status === "approved" || 
+                         d.document_status === "approved";
+      if (isApproved) {
+        console.log("[Compliance Service] Found approved document:", {
+          doc_type: d.doc_type,
+          verification_status: d.verification_status,
+          document_status: d.document_status,
+          title: d.title
+        });
+      }
+      return isApproved;
+    });
+    const approved = approvedDocs.map(d => d.doc_type);
+    
+    console.log("[Compliance Service] Document status summary:", {
+      uploaded: uploaded,
+      approved: approved,
+      approvedCount: approved.length,
+      requiredDocs: requiredDocs
+    });
+    const rejected = allDocuments.filter(d => 
+      d.verification_status === "rejected" || 
+      d.document_status === "rejected"
+    ).map(d => d.doc_type);
+    const pending = allDocuments.filter(d => 
+      (d.verification_status === "pending" || 
+       d.verification_status === "pending_review" || 
+       d.document_status === "pending" || 
+       d.document_status === "pending_review") && 
+      !approved.includes(d.doc_type)
+    ).map(d => d.doc_type);
     const missing = requiredDocs.filter(doc => !uploaded.includes(doc));
 
     const checklist: ComplianceChecklist = {
@@ -201,9 +251,9 @@ export async function getVehicleComplianceStatus(vehicleId: string): Promise<Com
     }
 
     const uploaded = (documents || []).map(d => d.doc_type);
-    const approved = (documents || []).filter(d => d.verification_status === "verified").map(d => d.doc_type);
-    const rejected = (documents || []).filter(d => d.verification_status === "rejected").map(d => d.doc_type);
-    const pending = (documents || []).filter(d => d.verification_status === "pending").map(d => d.doc_type);
+    const approved = (documents || []).filter(d => d.verification_status === "verified" || d.verification_status === "approved" || d.document_status === "approved").map(d => d.doc_type);
+    const rejected = (documents || []).filter(d => d.verification_status === "rejected" || d.document_status === "rejected").map(d => d.doc_type);
+    const pending = (documents || []).filter(d => (d.verification_status === "pending" || d.verification_status === "pending_review" || d.document_status === "pending" || d.document_status === "pending_review") && !approved.includes(d.doc_type)).map(d => d.doc_type);
     const missing = requiredDocs.filter(doc => !uploaded.includes(doc));
 
     const checklist: ComplianceChecklist = {
@@ -269,9 +319,9 @@ export async function getSupplierComplianceStatus(supplierId: string): Promise<C
     const requiredDocs = [...SUPPLIER_REQUIRED_DOCUMENTS];
 
     const uploaded = (documents || []).map(d => d.doc_type);
-    const approved = (documents || []).filter(d => d.verification_status === "verified").map(d => d.doc_type);
-    const rejected = (documents || []).filter(d => d.verification_status === "rejected").map(d => d.doc_type);
-    const pending = (documents || []).filter(d => d.verification_status === "pending").map(d => d.doc_type);
+    const approved = (documents || []).filter(d => d.verification_status === "verified" || d.verification_status === "approved" || d.document_status === "approved").map(d => d.doc_type);
+    const rejected = (documents || []).filter(d => d.verification_status === "rejected" || d.document_status === "rejected").map(d => d.doc_type);
+    const pending = (documents || []).filter(d => (d.verification_status === "pending" || d.verification_status === "pending_review" || d.document_status === "pending" || d.document_status === "pending_review") && !approved.includes(d.doc_type)).map(d => d.doc_type);
     const missing = requiredDocs.filter(doc => !uploaded.includes(doc));
 
     const checklist: ComplianceChecklist = {

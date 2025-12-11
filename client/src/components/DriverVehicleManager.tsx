@@ -9,7 +9,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Truck, Plus, Edit, Trash2, Calendar, Gauge, Shield, Upload, FileText, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
+import { Truck, Plus, Edit, Trash2, Calendar, Gauge, Shield, Upload, FileText, CheckCircle2, XCircle, AlertTriangle, Eye } from "lucide-react";
+import { normalizeFilePath } from "@/lib/utils";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
 import { Separator } from "@/components/ui/separator";
@@ -37,17 +38,119 @@ export function DriverVehicleManager() {
     queryKey: ["/api/fuel-types"],
   });
 
-  // Fetch vehicle documents
-  const { data: vehicleDocuments = [] } = useQuery<any[]>({
-    queryKey: ["/api/driver/vehicles/documents"],
-    enabled: false, // Will be enabled when needed
+  // Fetch vehicle documents for selected vehicle
+  const { data: vehicleDocuments = [], refetch: refetchVehicleDocuments } = useQuery<any[]>({
+    queryKey: ["/api/driver/vehicles", selectedVehicleForCompliance, "documents"],
+    enabled: !!selectedVehicleForCompliance,
+    refetchInterval: 5000, // Refetch every 5 seconds to get updated status
   });
 
   // Get vehicle compliance status
   const { data: vehicleComplianceStatus } = useQuery<any>({
     queryKey: ["/api/driver/vehicles", selectedVehicleForCompliance, "compliance/status"],
     enabled: !!selectedVehicleForCompliance,
+    refetchInterval: 5000, // Refetch every 5 seconds to get updated status
   });
+
+  // Helper function to find document by type
+  const findVehicleDocument = (docType: string) => {
+    return vehicleDocuments.find((d: any) => d.doc_type === docType);
+  };
+
+  // Helper function to get document status badge
+  const getDocumentStatusBadge = (status: string) => {
+    switch (status) {
+      case "verified":
+      case "approved":
+        return <Badge variant="default" className="bg-green-600"><CheckCircle2 className="h-3 w-3 mr-1" />Approved</Badge>;
+      case "rejected":
+        return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Rejected</Badge>;
+      case "pending":
+      case "pending_review":
+      default:
+        return <Badge variant="secondary">Pending</Badge>;
+    }
+  };
+
+  // Helper function to handle document upload
+  const handleVehicleDocumentUpload = async (
+    docType: string,
+    title: string,
+    result: any
+  ) => {
+    if (!result.successful || result.successful.length === 0) return;
+    
+    const uploadedFile = result.successful[0];
+    if (!uploadedFile?.uploadURL) return;
+
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch("/api/documents", {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ documentURL: uploadedFile.uploadURL }),
+      });
+
+      if (!response.ok) throw new Error("Failed to set document ACL");
+      const { objectPath } = await response.json();
+      
+      const documentResponse = await apiRequest("POST", "/api/driver/documents", {
+        owner_type: "vehicle",
+        owner_id: selectedVehicleForCompliance,
+        doc_type: docType,
+        title: title || uploadedFile.name,
+        file_path: objectPath,
+        file_size: uploadedFile.size,
+        mime_type: uploadedFile.type,
+      });
+      
+      const newDocument = await documentResponse.json();
+      
+      // Immediately refetch queries to update UI - use refetchQueries for immediate update
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ["/api/driver/vehicles", selectedVehicleForCompliance, "documents"] }),
+        queryClient.refetchQueries({ queryKey: ["/api/driver/vehicles", selectedVehicleForCompliance, "compliance/status"] }),
+      ]);
+      
+      // Also invalidate to ensure any other related queries are refreshed
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles", selectedVehicleForCompliance, "documents"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles", selectedVehicleForCompliance, "compliance/status"] });
+      
+      toast({
+        title: "Success",
+        description: "Document uploaded successfully. Status: Pending Review",
+      });
+    } catch (error: any) {
+      console.error("Error uploading vehicle document:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to upload document",
+        variant: "destructive",
+      });
+      // Ensure modal can still be closed even if there's an error
+      // Don't close automatically on error - let user decide
+    }
+  };
+
+  // Get upload URL helper
+  const getUploadURL = async () => {
+    const headers = await getAuthHeaders();
+    const response = await fetch("/api/objects/upload", {
+      method: "POST",
+      headers,
+    });
+    const { uploadURL } = await response.json();
+    return { method: "PUT" as const, url: uploadURL };
+  };
+
+  // Define all required vehicle documents
+  const requiredVehicleDocuments = [
+    { docType: "vehicle_registration", title: "Vehicle Registration Certificate", required: true },
+    { docType: "roadworthy_certificate", title: "Roadworthy Certificate", required: true },
+    { docType: "insurance_certificate", title: "Insurance Certificate", required: true },
+    { docType: "dg_vehicle_permit", title: "Dangerous Goods Vehicle Permit", required: false },
+    { docType: "letter_of_authority", title: "Letter of Authority", required: false },
+  ];
 
   // Add/Update vehicle mutation
   const saveVehicleMutation = useMutation({
@@ -311,14 +414,17 @@ export function DriverVehicleManager() {
                         </span>
                         <Badge 
                           variant={
-                            (vehicle as any).vehicle_status === "active" ? "default" :
-                            (vehicle as any).vehicle_status === "rejected" ? "destructive" :
+                            vehicle.vehicleStatus === "active" ? "default" :
+                            vehicle.vehicleStatus === "rejected" ? "destructive" :
+                            vehicle.vehicleStatus === "suspended" ? "secondary" :
                             "secondary"
                           }
                           className="text-xs"
                         >
-                          {(vehicle as any).vehicle_status === "active" ? "Active" :
-                           (vehicle as any).vehicle_status === "rejected" ? "Rejected" :
+                          {vehicle.vehicleStatus === "active" ? "Approved" :
+                           vehicle.vehicleStatus === "rejected" ? "Rejected" :
+                           vehicle.vehicleStatus === "suspended" ? "Suspended" :
+                           vehicle.vehicleStatus === "pending_compliance" || !vehicle.vehicleStatus ? "Pending" :
                            "Pending"}
                         </Badge>
                       </div>
@@ -774,7 +880,15 @@ export function DriverVehicleManager() {
       </Dialog>
 
       {/* Vehicle Compliance Management Dialog */}
-      <Dialog open={complianceDialogOpen} onOpenChange={setComplianceDialogOpen}>
+      <Dialog 
+        open={complianceDialogOpen} 
+        onOpenChange={(open) => {
+          setComplianceDialogOpen(open);
+          if (!open) {
+            setSelectedVehicleForCompliance(null);
+          }
+        }}
+      >
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Vehicle Compliance Management</DialogTitle>
@@ -805,7 +919,9 @@ export function DriverVehicleManager() {
                   <>
                     <Progress 
                       value={
-                        (vehicleComplianceStatus.checklist.approved.length / vehicleComplianceStatus.checklist.required.length) * 100
+                        vehicleComplianceStatus.checklist.required.length > 0
+                          ? (vehicleComplianceStatus.checklist.approved.length / vehicleComplianceStatus.checklist.required.length) * 100
+                          : 0
                       } 
                       className="h-2"
                     />
@@ -830,201 +946,73 @@ export function DriverVehicleManager() {
           <div className="space-y-4">
             <h3 className="text-sm font-semibold">Required Documents</h3>
             <div className="space-y-3">
-              <div className="border rounded-lg p-4 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="font-medium">Vehicle Registration Certificate</h4>
-                    <Badge variant="outline" className="text-xs mt-1">Required</Badge>
+              {requiredVehicleDocuments.map((doc) => {
+                const existingDoc = findVehicleDocument(doc.docType);
+                return (
+                  <div key={doc.docType} className="border rounded-lg p-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="font-medium">{doc.title}</h4>
+                        {doc.required && <Badge variant="outline" className="text-xs mt-1">Required</Badge>}
+                      </div>
+                      {existingDoc && getDocumentStatusBadge(existingDoc.verification_status)}
+                    </div>
+                    {existingDoc ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm text-muted-foreground">
+                            Uploaded: {new Date(existingDoc.created_at).toLocaleDateString()}
+                            {existingDoc.expiry_date && ` | Expires: ${new Date(existingDoc.expiry_date).toLocaleDateString()}`}
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              const normalizedPath = normalizeFilePath(existingDoc.file_path);
+                              if (normalizedPath) {
+                                window.open(normalizedPath, "_blank");
+                              } else {
+                                toast({
+                                  title: "Error",
+                                  description: "Document file path is missing or invalid",
+                                  variant: "destructive",
+                                });
+                              }
+                            }}
+                          >
+                            <Eye className="h-4 w-4 mr-2" />
+                            View
+                          </Button>
+                          <ObjectUploader
+                            onGetUploadParameters={getUploadURL}
+                            onComplete={(result) => handleVehicleDocumentUpload(doc.docType, doc.title, result)}
+                            allowedFileTypes={["application/pdf", "image/*"]}
+                            maxFileSize={10485760}
+                            buttonVariant="outline"
+                            buttonSize="sm"
+                          >
+                            <Upload className="h-4 w-4 mr-2" />
+                            Reupload
+                          </ObjectUploader>
+                        </div>
+                      </div>
+                    ) : (
+                      <ObjectUploader
+                        onGetUploadParameters={getUploadURL}
+                        onComplete={(result) => handleVehicleDocumentUpload(doc.docType, doc.title, result)}
+                        allowedFileTypes={["application/pdf", "image/*"]}
+                        maxFileSize={10485760}
+                        buttonVariant="default"
+                      >
+                        <Upload className="h-4 w-4 mr-2" />
+                        Upload {doc.title}
+                      </ObjectUploader>
+                    )}
                   </div>
-                </div>
-                <ObjectUploader
-                  onGetUploadParameters={async () => {
-                    const headers = await getAuthHeaders();
-                    const response = await fetch("/api/objects/upload", {
-                      method: "POST",
-                      headers,
-                    });
-                    const { uploadURL } = await response.json();
-                    return { method: "PUT" as const, url: uploadURL };
-                  }}
-                  onComplete={async (result) => {
-                    // Handle document upload
-                    if (!result.successful || result.successful.length === 0) return;
-                    const uploadedFile = result.successful[0];
-                    if (!uploadedFile?.uploadURL) return;
-
-                    try {
-                      const headers = await getAuthHeaders();
-                      const response = await fetch("/api/documents", {
-                        method: "PUT",
-                        headers,
-                        body: JSON.stringify({ documentURL: uploadedFile.uploadURL }),
-                      });
-
-                      if (!response.ok) throw new Error("Failed to set document ACL");
-                      const { objectPath } = await response.json();
-                      
-                      await apiRequest("POST", "/api/driver/documents", {
-                        owner_type: "vehicle",
-                        owner_id: selectedVehicleForCompliance,
-                        doc_type: "vehicle_registration",
-                        title: "Vehicle Registration Certificate",
-                        file_path: objectPath,
-                        file_size: uploadedFile.size,
-                        mime_type: uploadedFile.type,
-                      });
-                      
-                      queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles", selectedVehicleForCompliance, "compliance/status"] });
-                      toast({
-                        title: "Success",
-                        description: "Document uploaded successfully",
-                      });
-                    } catch (error) {
-                      toast({
-                        title: "Error",
-                        description: "Failed to upload document",
-                        variant: "destructive",
-                      });
-                    }
-                  }}
-                  allowedFileTypes={["application/pdf", "image/*"]}
-                  maxFileSize={10485760}
-                  buttonVariant="default"
-                >
-                  <Upload className="h-4 w-4 mr-2" />
-                  Upload Registration Certificate
-                </ObjectUploader>
-              </div>
-
-              <div className="border rounded-lg p-4 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="font-medium">Roadworthy Certificate</h4>
-                    <Badge variant="outline" className="text-xs mt-1">Required</Badge>
-                  </div>
-                </div>
-                <ObjectUploader
-                  onGetUploadParameters={async () => {
-                    const headers = await getAuthHeaders();
-                    const response = await fetch("/api/objects/upload", {
-                      method: "POST",
-                      headers,
-                    });
-                    const { uploadURL } = await response.json();
-                    return { method: "PUT" as const, url: uploadURL };
-                  }}
-                  onComplete={async (result) => {
-                    if (!result.successful || result.successful.length === 0) return;
-                    const uploadedFile = result.successful[0];
-                    if (!uploadedFile?.uploadURL) return;
-
-                    try {
-                      const headers = await getAuthHeaders();
-                      const response = await fetch("/api/documents", {
-                        method: "PUT",
-                        headers,
-                        body: JSON.stringify({ documentURL: uploadedFile.uploadURL }),
-                      });
-
-                      if (!response.ok) throw new Error("Failed to set document ACL");
-                      const { objectPath } = await response.json();
-                      
-                      await apiRequest("POST", "/api/driver/documents", {
-                        owner_type: "vehicle",
-                        owner_id: selectedVehicleForCompliance,
-                        doc_type: "roadworthy_certificate",
-                        title: "Roadworthy Certificate",
-                        file_path: objectPath,
-                        file_size: uploadedFile.size,
-                        mime_type: uploadedFile.type,
-                      });
-                      
-                      queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles", selectedVehicleForCompliance, "compliance/status"] });
-                      toast({
-                        title: "Success",
-                        description: "Document uploaded successfully",
-                      });
-                    } catch (error) {
-                      toast({
-                        title: "Error",
-                        description: "Failed to upload document",
-                        variant: "destructive",
-                      });
-                    }
-                  }}
-                  allowedFileTypes={["application/pdf", "image/*"]}
-                  maxFileSize={10485760}
-                  buttonVariant="default"
-                >
-                  <Upload className="h-4 w-4 mr-2" />
-                  Upload Roadworthy Certificate
-                </ObjectUploader>
-              </div>
-
-              <div className="border rounded-lg p-4 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="font-medium">Insurance Certificate</h4>
-                    <Badge variant="outline" className="text-xs mt-1">Required</Badge>
-                  </div>
-                </div>
-                <ObjectUploader
-                  onGetUploadParameters={async () => {
-                    const headers = await getAuthHeaders();
-                    const response = await fetch("/api/objects/upload", {
-                      method: "POST",
-                      headers,
-                    });
-                    const { uploadURL } = await response.json();
-                    return { method: "PUT" as const, url: uploadURL };
-                  }}
-                  onComplete={async (result) => {
-                    if (!result.successful || result.successful.length === 0) return;
-                    const uploadedFile = result.successful[0];
-                    if (!uploadedFile?.uploadURL) return;
-
-                    try {
-                      const headers = await getAuthHeaders();
-                      const response = await fetch("/api/documents", {
-                        method: "PUT",
-                        headers,
-                        body: JSON.stringify({ documentURL: uploadedFile.uploadURL }),
-                      });
-
-                      if (!response.ok) throw new Error("Failed to set document ACL");
-                      const { objectPath } = await response.json();
-                      
-                      await apiRequest("POST", "/api/driver/documents", {
-                        owner_type: "vehicle",
-                        owner_id: selectedVehicleForCompliance,
-                        doc_type: "insurance_certificate",
-                        title: "Insurance Certificate",
-                        file_path: objectPath,
-                        file_size: uploadedFile.size,
-                        mime_type: uploadedFile.type,
-                      });
-                      
-                      queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles", selectedVehicleForCompliance, "compliance/status"] });
-                      toast({
-                        title: "Success",
-                        description: "Document uploaded successfully",
-                      });
-                    } catch (error) {
-                      toast({
-                        title: "Error",
-                        description: "Failed to upload document",
-                        variant: "destructive",
-                      });
-                    }
-                  }}
-                  allowedFileTypes={["application/pdf", "image/*"]}
-                  maxFileSize={10485760}
-                  buttonVariant="default"
-                >
-                  <Upload className="h-4 w-4 mr-2" />
-                  Upload Insurance Certificate
-                </ObjectUploader>
-              </div>
+                );
+              })}
             </div>
           </div>
 
@@ -1035,6 +1023,7 @@ export function DriverVehicleManager() {
                 setComplianceDialogOpen(false);
                 setSelectedVehicleForCompliance(null);
               }}
+              type="button"
             >
               Close
             </Button>

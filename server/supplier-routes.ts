@@ -39,7 +39,8 @@ async function checkSupplierCompliance(req: any, res: any, next: any) {
 }
 
 // Get all depots for the authenticated supplier with their pricing
-router.get("/depots", checkSupplierCompliance, async (req, res) => {
+// Note: Allow viewing depots even if compliance is pending (similar to drivers)
+router.get("/depots", async (req, res) => {
   const user = (req as any).user;
 
   try {
@@ -69,6 +70,18 @@ router.get("/depots", checkSupplierCompliance, async (req, res) => {
 
     if (!supplier) {
       // Return empty array instead of error - supplier might not have created profile yet
+      return res.json([]);
+    }
+
+    // Check compliance status - if not approved, return empty array (can view but no depots shown)
+    const { data: supplierStatus } = await supabaseAdmin
+      .from("suppliers")
+      .select("status, compliance_status")
+      .eq("id", supplier.id)
+      .single();
+    
+    if (!supplierStatus || supplierStatus.status !== "active" || supplierStatus.compliance_status !== "approved") {
+      // Return empty array instead of error - allows UI to load but shows no depots
       return res.json([]);
     }
 
@@ -735,7 +748,7 @@ router.post("/depots", checkSupplierCompliance, async (req, res) => {
     // Use limit(1) to handle duplicate records gracefully
     const { data: suppliers, error: supplierError } = await supabaseAdmin
       .from("suppliers")
-      .select("id")
+      .select("id, status, compliance_status")
       .eq("owner_id", user.id)
       .limit(1);
 
@@ -752,6 +765,17 @@ router.post("/depots", checkSupplierCompliance, async (req, res) => {
 
     if (!supplier) {
       return res.status(404).json({ error: "Supplier profile not found" });
+    }
+
+    // Check if supplier KYC is approved
+    if (supplier.status !== "active" || supplier.compliance_status !== "approved") {
+      return res.status(403).json({
+        error: "KYC approval required",
+        code: "KYC_REQUIRED",
+        message: "Please apply for KYC from profile management and wait for approval before adding depots.",
+        status: supplier.status,
+        compliance_status: supplier.compliance_status,
+      });
     }
 
     // Validate required fields
@@ -1337,7 +1361,7 @@ router.get("/driver-depot-orders", async (req, res) => {
 
     const depotIds = depots.map(d => d.id);
 
-    // Get all driver depot orders for these depots
+    // Get all driver depot orders for these depots (without nested suppliers to avoid relationship issues)
     const { data: orders, error: ordersError } = await supabaseAdmin
       .from("driver_depot_orders")
       .select(`
@@ -1345,7 +1369,11 @@ router.get("/driver-depot-orders", async (req, res) => {
         depots!inner (
           id,
           name,
-          supplier_id
+          supplier_id,
+          address_street,
+          address_city,
+          address_province,
+          address_postal_code
         ),
         drivers (
           id,
@@ -1370,7 +1398,7 @@ router.get("/driver-depot-orders", async (req, res) => {
       throw ordersError;
     }
 
-    // Enrich with driver profile data
+    // Enrich with driver profile data and supplier information
     if (orders && orders.length > 0) {
       const driverUserIds = Array.from(
         new Set(orders.map((o: any) => o.drivers?.user_id).filter(Boolean))
@@ -1390,6 +1418,30 @@ router.get("/driver-depot-orders", async (req, res) => {
           }
         });
       }
+
+      // Enrich with supplier information separately
+      const supplierIds = [...new Set(
+        orders
+          .map((o: any) => o.depots?.supplier_id)
+          .filter(Boolean)
+      )];
+      
+      if (supplierIds.length > 0) {
+        const { data: suppliers } = await supabaseAdmin
+          .from("suppliers")
+          .select("id, name, registered_name")
+          .in("id", supplierIds);
+        
+        const supplierMap = new Map(
+          (suppliers || []).map((s: any) => [s.id, s])
+        );
+        
+        orders.forEach((order: any) => {
+          if (order.depots?.supplier_id) {
+            order.depots.suppliers = supplierMap.get(order.depots.supplier_id) || null;
+          }
+        });
+      }
     }
 
     res.json(orders || []);
@@ -1403,21 +1455,47 @@ router.get("/driver-depot-orders", async (req, res) => {
   }
 });
 
-// Update driver depot order status (confirm/fulfill)
-router.patch("/driver-depot-orders/:orderId", async (req, res) => {
+// Helper function to verify order ownership
+async function verifyOrderOwnership(orderId: string, supplierId: string) {
+  const { data: order, error } = await supabaseAdmin
+    .from("driver_depot_orders")
+    .select(`
+      *,
+      depots!inner (
+        id,
+        supplier_id
+      ),
+      drivers (
+        id,
+        user_id
+      ),
+      fuel_types (
+        id,
+        label,
+        code
+      )
+    `)
+    .eq("id", orderId)
+    .single();
+
+  if (error || !order) {
+    return { error: "Order not found", order: null };
+  }
+
+  if (order.depots?.supplier_id !== supplierId) {
+    return { error: "This order does not belong to your depot", order: null };
+  }
+
+  return { error: null, order };
+}
+
+// Accept driver depot order (moves from pending to pending_payment)
+router.post("/driver-depot-orders/:orderId/accept", async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
-  const { status } = req.body;
 
   try {
-    if (!status || !["confirmed", "fulfilled", "cancelled"].includes(status)) {
-      return res.status(400).json({
-        error: "Valid status is required (confirmed, fulfilled, or cancelled)"
-      });
-    }
-
     // Get supplier ID
-    // Use limit(1) to handle duplicate records gracefully
     const { data: suppliers, error: supplierError } = await supabaseAdmin
       .from("suppliers")
       .select("id")
@@ -1425,175 +1503,591 @@ router.patch("/driver-depot-orders/:orderId", async (req, res) => {
       .limit(1);
 
     const supplier = suppliers && suppliers.length > 0 ? suppliers[0] : null;
-
     if (supplierError) throw supplierError;
     if (!supplier) {
       return res.status(404).json({ error: "Supplier profile not found" });
     }
 
-    // Verify order belongs to supplier's depot
-    const { data: order, error: orderError } = await supabaseAdmin
-      .from("driver_depot_orders")
-      .select(`
-        *,
-        depots!inner (
-          id,
-          supplier_id
-        ),
-        drivers (
-          id,
-          user_id
-        )
-      `)
-      .eq("id", orderId)
-      .single();
-
-    if (orderError || !order) {
-      return res.status(404).json({ error: "Order not found" });
+    // Verify order ownership
+    const { error: ownershipError, order } = await verifyOrderOwnership(orderId, supplier.id);
+    if (ownershipError || !order) {
+      return res.status(ownershipError === "Order not found" ? 404 : 403).json({ error: ownershipError });
     }
 
-    if (order.depots?.supplier_id !== supplier.id) {
-      return res.status(403).json({
-        error: "This order does not belong to your depot"
-      });
+    // Only accept if status is pending
+    if (order.status !== "pending") {
+      return res.status(400).json({ error: `Cannot accept order with status: ${order.status}` });
     }
 
-    // Update order status
+    // Update order to pending_payment
     const { data: updatedOrder, error: updateError } = await supabaseAdmin
       .from("driver_depot_orders")
       .update({
-        status,
+        status: "pending_payment",
+        payment_status: "pending_payment",
         updated_at: new Date().toISOString(),
       })
       .eq("id", orderId)
       .select(`
         *,
-        depots (
-          id,
-          name
-        ),
-        drivers (
-          id,
-          user_id
-        ),
-        fuel_types (
-          id,
-          label,
-          code
-        )
+        depots (id, name),
+        drivers (id, user_id),
+        fuel_types (id, label, code)
       `)
       .single();
 
     if (updateError) throw updateError;
 
-    // Get current order status and litres before updating for stock management
-    const currentStatus = order.status;
-    const orderLitres = parseFloat(order.litres || "0");
-    const fuelTypeId = order.fuel_type_id;
-    const depotId = order.depots?.id;
-
-    // Update available_litres based on status change
-    if (depotId && fuelTypeId) {
-      if (status === "confirmed" && currentStatus === "pending") {
-        // Reduce stock when confirming order
-        const { data: depotPrice } = await supabaseAdmin
-          .from("depot_prices")
-          .select("available_litres")
-          .eq("depot_id", depotId)
-          .eq("fuel_type_id", fuelTypeId)
-          .single();
-
-        if (depotPrice && depotPrice.available_litres !== null) {
-          const currentStock = parseFloat(depotPrice.available_litres.toString());
-          const newStock = Math.max(0, currentStock - orderLitres);
-
-          await supabaseAdmin
-            .from("depot_prices")
-            .update({
-              available_litres: newStock.toString(),
-              updated_at: new Date().toISOString(),
-            })
-            .eq("depot_id", depotId)
-            .eq("fuel_type_id", fuelTypeId);
-        }
-      } else if (status === "cancelled" && currentStatus === "confirmed") {
-        // Add back stock when cancelling confirmed order (only confirmed orders reduce stock)
-        const { data: depotPrice } = await supabaseAdmin
-          .from("depot_prices")
-          .select("available_litres")
-          .eq("depot_id", depotId)
-          .eq("fuel_type_id", fuelTypeId)
-          .single();
-
-        if (depotPrice) {
-          const currentStock = depotPrice.available_litres
-            ? parseFloat(depotPrice.available_litres.toString())
-            : 0;
-          const newStock = currentStock + orderLitres;
-
-          await supabaseAdmin
-            .from("depot_prices")
-            .update({
-              available_litres: newStock.toString(),
-              updated_at: new Date().toISOString(),
-            })
-            .eq("depot_id", depotId)
-            .eq("fuel_type_id", fuelTypeId);
-        }
-      }
-    }
-
-    // Notify driver about status change
+    // Notify driver
     if (order.drivers?.user_id) {
       const { websocketService } = await import("./websocket");
-      const { notificationService } = await import("./notification-service");
-
-      const depotName = updatedOrder.depots?.name || "Depot";
-      const fuelTypeLabel = updatedOrder.fuel_types?.label || "Fuel";
-      const litres = parseFloat(updatedOrder.litres || "0");
-      const pickupDate = updatedOrder.pickup_date;
-
-      // Send WebSocket update for real-time delivery
       websocketService.sendOrderUpdate(order.drivers.user_id, {
-        type: "driver_depot_order_updated",
+        type: "driver_depot_order_accepted",
         orderId: updatedOrder.id,
         status: updatedOrder.status,
       });
 
-      // Create notification based on status
-      if (status === "confirmed") {
-        await notificationService.notifyDriverDepotOrderConfirmed(
-          order.drivers.user_id,
-          updatedOrder.id,
-          depotName,
-          fuelTypeLabel,
-          litres,
-          pickupDate || new Date().toISOString()
-        );
-      } else if (status === "fulfilled") {
-        await notificationService.notifyDriverDepotOrderFulfilled(
-          order.drivers.user_id,
-          updatedOrder.id,
-          depotName,
-          fuelTypeLabel,
-          litres
-        );
-      } else if (status === "cancelled") {
-        await notificationService.notifyDriverDepotOrderCancelled(
-          user.id, // supplier user ID
-          order.drivers.user_id,
-          updatedOrder.id,
-          depotName,
-          fuelTypeLabel,
-          litres,
-          req.body.reason
-        );
-      }
+      // Send notification to driver
+      const { notificationService } = await import("./notification-service");
+      const depotName = updatedOrder.depots?.name || "Depot";
+      const fuelType = updatedOrder.fuel_types?.label || updatedOrder.fuel_types?.code || "fuel";
+      const litres = parseFloat(updatedOrder.litres || "0");
+      const pickupDate = updatedOrder.pickup_date || updatedOrder.created_at;
+      
+      await notificationService.notifyDriverDepotOrderAccepted(
+        order.drivers.user_id,
+        updatedOrder.id,
+        depotName,
+        fuelType,
+        litres,
+        pickupDate
+      );
     }
 
     res.json(updatedOrder);
   } catch (error: any) {
-    console.error("Error updating driver depot order:", error);
+    console.error("Error accepting driver depot order:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Reject driver depot order
+router.post("/driver-depot-orders/:orderId/reject", async (req, res) => {
+  const user = (req as any).user;
+  const { orderId } = req.params;
+  const { reason } = req.body;
+
+  try {
+    // Get supplier ID
+    const { data: suppliers, error: supplierError } = await supabaseAdmin
+      .from("suppliers")
+      .select("id")
+      .eq("owner_id", user.id)
+      .limit(1);
+
+    const supplier = suppliers && suppliers.length > 0 ? suppliers[0] : null;
+    if (supplierError) throw supplierError;
+    if (!supplier) {
+      return res.status(404).json({ error: "Supplier profile not found" });
+    }
+
+    // Verify order ownership
+    const { error: ownershipError, order } = await verifyOrderOwnership(orderId, supplier.id);
+    if (ownershipError || !order) {
+      return res.status(ownershipError === "Order not found" ? 404 : 403).json({ error: ownershipError });
+    }
+
+    // Only reject if status is pending
+    if (order.status !== "pending") {
+      return res.status(400).json({ error: `Cannot reject order with status: ${order.status}` });
+    }
+
+    // Update order to rejected
+    const { data: updatedOrder, error: updateError } = await supabaseAdmin
+      .from("driver_depot_orders")
+      .update({
+        status: "rejected",
+        updated_at: new Date().toISOString(),
+        notes: reason ? `${order.notes || ""}\n[Rejection reason: ${reason}]`.trim() : order.notes,
+      })
+      .eq("id", orderId)
+      .select(`
+        *,
+        depots (id, name),
+        drivers (id, user_id),
+        fuel_types (id, label, code)
+      `)
+      .single();
+
+    if (updateError) throw updateError;
+
+    // Notify driver
+    if (order.drivers?.user_id) {
+      const { websocketService } = await import("./websocket");
+      websocketService.sendOrderUpdate(order.drivers.user_id, {
+        type: "driver_depot_order_rejected",
+        orderId: updatedOrder.id,
+        status: updatedOrder.status,
+        reason,
+      });
+    }
+
+    res.json(updatedOrder);
+  } catch (error: any) {
+    console.error("Error rejecting driver depot order:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Verify payment (for bank transfer - supplier confirms payment received)
+router.post("/driver-depot-orders/:orderId/verify-payment", async (req, res) => {
+  const user = (req as any).user;
+  const { orderId } = req.params;
+
+  try {
+    // Get supplier ID
+    const { data: suppliers, error: supplierError } = await supabaseAdmin
+      .from("suppliers")
+      .select("id")
+      .eq("owner_id", user.id)
+      .limit(1);
+
+    const supplier = suppliers && suppliers.length > 0 ? suppliers[0] : null;
+    if (supplierError) throw supplierError;
+    if (!supplier) {
+      return res.status(404).json({ error: "Supplier profile not found" });
+    }
+
+    // Verify order ownership
+    const { error: ownershipError, order } = await verifyOrderOwnership(orderId, supplier.id);
+    if (ownershipError || !order) {
+      return res.status(ownershipError === "Order not found" ? 404 : 403).json({ error: ownershipError });
+    }
+
+    // Only verify if payment_status is paid (driver uploaded proof)
+    if (order.payment_status !== "paid") {
+      return res.status(400).json({ error: `Payment status must be 'paid' to verify. Current: ${order.payment_status}` });
+    }
+    
+    // For online payments, they're already at ready_for_pickup - no need to verify
+    if (order.payment_method === "online_payment") {
+      return res.status(400).json({ error: "Online payments are automatically processed and do not require verification" });
+    }
+    
+    // Check if payment proof exists (for bank transfers)
+    if (order.payment_method === "bank_transfer" && !order.payment_proof_url) {
+      return res.status(400).json({ error: "Payment proof is required for bank transfer verification" });
+    }
+
+    // Update payment status and order status - go directly to ready_for_pickup
+    const { data: updatedOrder, error: updateError } = await supabaseAdmin
+      .from("driver_depot_orders")
+      .update({
+        payment_status: "payment_verified",
+        status: "ready_for_pickup", // Go directly to ready for pickup, skip signatures
+        payment_confirmed_at: new Date().toISOString(),
+        payment_confirmed_by: user.id,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", orderId)
+      .select(`
+        *,
+        depots (id, name),
+        drivers (id, user_id),
+        fuel_types (id, label, code)
+      `)
+      .single();
+
+    if (updateError) throw updateError;
+
+    // Notify driver
+    if (order.drivers?.user_id) {
+      const { websocketService } = await import("./websocket");
+      websocketService.sendOrderUpdate(order.drivers.user_id, {
+        type: "driver_depot_payment_verified",
+        orderId: updatedOrder.id,
+        status: updatedOrder.status,
+        message: "Payment confirmed. Order is ready for pickup.",
+      });
+
+      // Send notification to driver
+      const { notificationService } = await import("./notification-service");
+      const depotName = updatedOrder.depots?.name || "Depot";
+      const fuelType = updatedOrder.fuel_types?.label || updatedOrder.fuel_types?.code || "fuel";
+      const litres = parseFloat(updatedOrder.litres || "0");
+      
+      await notificationService.notifyDriverDepotPaymentVerified(
+        order.drivers.user_id,
+        updatedOrder.id,
+        depotName,
+        fuelType,
+        litres
+      );
+    }
+
+    res.json(updatedOrder);
+  } catch (error: any) {
+    console.error("Error verifying payment:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Reject payment (supplier marks payment as not received)
+router.post("/driver-depot-orders/:orderId/reject-payment", async (req, res) => {
+  const user = (req as any).user;
+  const { orderId } = req.params;
+  const { reason } = req.body;
+
+  try {
+    // Get supplier ID
+    const { data: suppliers, error: supplierError } = await supabaseAdmin
+      .from("suppliers")
+      .select("id")
+      .eq("owner_id", user.id)
+      .limit(1);
+
+    const supplier = suppliers && suppliers.length > 0 ? suppliers[0] : null;
+    if (supplierError) throw supplierError;
+    if (!supplier) {
+      return res.status(404).json({ error: "Supplier profile not found" });
+    }
+
+    // Verify order ownership
+    const { error: ownershipError, order } = await verifyOrderOwnership(orderId, supplier.id);
+    if (ownershipError || !order) {
+      return res.status(ownershipError === "Order not found" ? 404 : 403).json({ error: ownershipError });
+    }
+
+    // Only reject if payment_status is paid (driver uploaded proof)
+    if (order.payment_status !== "paid") {
+      return res.status(400).json({ error: `Payment status must be 'paid' to reject. Current: ${order.payment_status}` });
+    }
+    
+    // Check if payment proof exists (for bank transfers)
+    if (order.payment_method === "bank_transfer" && !order.payment_proof_url) {
+      return res.status(400).json({ error: "Payment proof is required for bank transfer rejection" });
+    }
+
+    // Update payment status - reset to pending_payment so driver can pay again
+    const { data: updatedOrder, error: updateError } = await supabaseAdmin
+      .from("driver_depot_orders")
+      .update({
+        payment_status: "payment_failed",
+        status: "pending_payment",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", orderId)
+      .select(`
+        *,
+        depots (id, name),
+        drivers (id, user_id),
+        fuel_types (id, label, code)
+      `)
+      .single();
+
+    if (updateError) throw updateError;
+
+    // Notify driver
+    if (order.drivers?.user_id) {
+      const { websocketService } = await import("./websocket");
+      websocketService.sendOrderUpdate(order.drivers.user_id, {
+        type: "driver_depot_payment_rejected",
+        orderId: updatedOrder.id,
+        status: updatedOrder.status,
+        message: reason || "Payment not received. Please try again.",
+      });
+
+      // Send notification to driver
+      const { notificationService } = await import("./notification-service");
+      const depotName = updatedOrder.depots?.name || "Depot";
+      const fuelType = updatedOrder.fuel_types?.label || updatedOrder.fuel_types?.code || "fuel";
+      const litres = parseFloat(updatedOrder.litres || "0");
+      
+      await notificationService.notifyDriverDepotPaymentRejected(
+        order.drivers.user_id,
+        updatedOrder.id,
+        depotName,
+        fuelType,
+        litres,
+        reason
+      );
+    }
+
+    res.json(updatedOrder);
+  } catch (error: any) {
+    console.error("Error rejecting payment:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add supplier signature (before fuel release)
+router.post("/driver-depot-orders/:orderId/supplier-signature", async (req, res) => {
+  const user = (req as any).user;
+  const { orderId } = req.params;
+  const { signatureUrl } = req.body;
+
+  try {
+    if (!signatureUrl) {
+      return res.status(400).json({ error: "signatureUrl is required" });
+    }
+
+    // Get supplier ID
+    const { data: suppliers, error: supplierError } = await supabaseAdmin
+      .from("suppliers")
+      .select("id")
+      .eq("owner_id", user.id)
+      .limit(1);
+
+    const supplier = suppliers && suppliers.length > 0 ? suppliers[0] : null;
+    if (supplierError) throw supplierError;
+    if (!supplier) {
+      return res.status(404).json({ error: "Supplier profile not found" });
+    }
+
+    // Verify order ownership
+    const { error: ownershipError, order } = await verifyOrderOwnership(orderId, supplier.id);
+    if (ownershipError || !order) {
+      return res.status(ownershipError === "Order not found" ? 404 : 403).json({ error: ownershipError });
+    }
+
+    // Check if payment is verified
+    // For online payments, they're already processed and don't need verification
+    // For other payment methods, payment must be verified
+    if (order.payment_method !== "online_payment" && order.payment_method !== "pay_outside_app") {
+      if (order.payment_status !== "payment_verified" && order.payment_status !== "paid") {
+        return res.status(400).json({ error: "Payment must be verified before signing" });
+      }
+    }
+
+    // Update supplier signature
+    const { data: updatedOrder, error: updateError } = await supabaseAdmin
+      .from("driver_depot_orders")
+      .update({
+        supplier_signature_url: signatureUrl,
+        supplier_signed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", orderId)
+      .select(`
+        *,
+        depots (id, name),
+        drivers (id, user_id),
+        fuel_types (id, label, code)
+      `)
+      .single();
+
+    if (updateError) throw updateError;
+
+    // Check if both signatures are present - if so, move to ready_for_pickup
+    // BUT: Skip this for online_payment - those orders should already be at ready_for_pickup
+    // and should not require signatures before release
+    if (updatedOrder.driver_signature_url && updatedOrder.supplier_signature_url && updatedOrder.payment_method !== "online_payment") {
+      await supabaseAdmin
+        .from("driver_depot_orders")
+        .update({
+          status: "ready_for_pickup",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", orderId);
+      
+      updatedOrder.status = "ready_for_pickup";
+    }
+
+    // Notify driver
+    if (order.drivers?.user_id) {
+      const { websocketService } = await import("./websocket");
+      websocketService.sendOrderUpdate(order.drivers.user_id, {
+        type: "driver_depot_order_signed",
+        orderId: updatedOrder.id,
+        status: updatedOrder.status,
+      });
+    }
+
+    res.json(updatedOrder);
+  } catch (error: any) {
+    console.error("Error adding supplier signature:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Release fuel (moves from ready_for_pickup to released)
+router.post("/driver-depot-orders/:orderId/release", async (req, res) => {
+  const user = (req as any).user;
+  const { orderId } = req.params;
+
+  try {
+    // Get supplier ID
+    const { data: suppliers, error: supplierError } = await supabaseAdmin
+      .from("suppliers")
+      .select("id")
+      .eq("owner_id", user.id)
+      .limit(1);
+
+    const supplier = suppliers && suppliers.length > 0 ? suppliers[0] : null;
+    if (supplierError) throw supplierError;
+    if (!supplier) {
+      return res.status(404).json({ error: "Supplier profile not found" });
+    }
+
+    // Verify order ownership
+    const { error: ownershipError, order } = await verifyOrderOwnership(orderId, supplier.id);
+    if (ownershipError || !order) {
+      return res.status(ownershipError === "Order not found" ? 404 : 403).json({ error: ownershipError });
+    }
+
+    if (order.status !== "ready_for_pickup") {
+      return res.status(400).json({ error: `Order must be ready_for_pickup to release. Current: ${order.status}` });
+    }
+
+    // Update order to awaiting_signature - driver needs to sign to complete
+    // Using "awaiting_signature" (19 chars) instead of "awaiting_driver_signature" (25 chars) due to varchar(20) limit
+    const { data: updatedOrder, error: updateError } = await supabaseAdmin
+      .from("driver_depot_orders")
+      .update({
+        status: "awaiting_signature",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", orderId)
+      .select(`
+        *,
+        depots (id, name),
+        drivers (id, user_id),
+        fuel_types (id, label, code)
+      `)
+      .single();
+
+    if (updateError) throw updateError;
+
+    // Reduce stock when fuel is released
+    const orderLitres = parseFloat(order.litres || "0");
+    const fuelTypeId = order.fuel_type_id;
+    const depotId = order.depots?.id;
+
+    if (depotId && fuelTypeId) {
+      const { data: depotPrice } = await supabaseAdmin
+        .from("depot_prices")
+        .select("available_litres")
+        .eq("depot_id", depotId)
+        .eq("fuel_type_id", fuelTypeId)
+        .single();
+
+      if (depotPrice && depotPrice.available_litres !== null) {
+        const currentStock = parseFloat(depotPrice.available_litres.toString());
+        const newStock = Math.max(0, currentStock - orderLitres);
+
+        await supabaseAdmin
+          .from("depot_prices")
+          .update({
+            available_litres: newStock.toString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("depot_id", depotId)
+          .eq("fuel_type_id", fuelTypeId);
+      }
+    }
+
+    // Notify driver
+    if (order.drivers?.user_id) {
+      const { websocketService } = await import("./websocket");
+      websocketService.sendOrderUpdate(order.drivers.user_id, {
+        type: "driver_depot_fuel_released",
+        orderId: updatedOrder.id,
+        status: updatedOrder.status,
+      });
+
+      // Send notification to driver
+      const { notificationService } = await import("./notification-service");
+      const depotName = updatedOrder.depots?.name || "Depot";
+      const fuelType = updatedOrder.fuel_types?.label || updatedOrder.fuel_types?.code || "fuel";
+      const litres = parseFloat(updatedOrder.litres || "0");
+      
+      await notificationService.notifyDriverDepotOrderReleased(
+        order.drivers.user_id,
+        updatedOrder.id,
+        depotName,
+        fuelType,
+        litres
+      );
+    }
+
+    res.json(updatedOrder);
+  } catch (error: any) {
+    console.error("Error releasing fuel:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Confirm delivery (supplier enters actual litres and driver signs)
+router.post("/driver-depot-orders/:orderId/confirm-delivery", async (req, res) => {
+  const user = (req as any).user;
+  const { orderId } = req.params;
+  const { actualLitres } = req.body;
+
+  try {
+    // Get supplier ID
+    const { data: suppliers, error: supplierError } = await supabaseAdmin
+      .from("suppliers")
+      .select("id")
+      .eq("owner_id", user.id)
+      .limit(1);
+
+    const supplier = suppliers && suppliers.length > 0 ? suppliers[0] : null;
+    if (supplierError) throw supplierError;
+    if (!supplier) {
+      return res.status(404).json({ error: "Supplier profile not found" });
+    }
+
+    // Verify order ownership
+    const { error: ownershipError, order } = await verifyOrderOwnership(orderId, supplier.id);
+    if (ownershipError || !order) {
+      return res.status(ownershipError === "Order not found" ? 404 : 403).json({ error: ownershipError });
+    }
+
+    // Only confirm if status is released
+    if (order.status !== "released") {
+      return res.status(400).json({ error: `Order must be released to confirm delivery. Current: ${order.status}` });
+    }
+
+    // Validate actual litres
+    const actualLitresNum = actualLitres ? parseFloat(actualLitres) : null;
+    if (actualLitresNum !== null && (isNaN(actualLitresNum) || actualLitresNum < 0)) {
+      return res.status(400).json({ error: "Invalid actual litres value" });
+    }
+
+    // Update order with actual litres (driver signature will be added separately)
+    const { data: updatedOrder, error: updateError } = await supabaseAdmin
+      .from("driver_depot_orders")
+      .update({
+        actual_litres_delivered: actualLitresNum !== null ? actualLitresNum.toString() : null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", orderId)
+      .select(`
+        *,
+        depots (id, name),
+        drivers (id, user_id),
+        fuel_types (id, label, code)
+      `)
+      .single();
+
+    if (updateError) throw updateError;
+
+    // Notify driver to sign for receipt
+    if (order.drivers?.user_id) {
+      const { websocketService } = await import("./websocket");
+      websocketService.sendOrderUpdate(order.drivers.user_id, {
+        type: "driver_depot_delivery_confirmed",
+        orderId: updatedOrder.id,
+        actualLitres: actualLitresNum,
+      });
+    }
+
+    // Note: Supplier notification for order completion will be sent when driver confirms receipt
+    // See driver-routes.ts confirm-receipt endpoint
+
+    res.json(updatedOrder);
+  } catch (error: any) {
+    console.error("Error confirming delivery:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1644,6 +2138,69 @@ router.post("/documents", async (req, res) => {
       .single();
     
     if (error) throw error;
+
+    // Notify all admins about the new document upload
+    if (data) {
+      try {
+        const { notificationService } = await import("./notification-service");
+        const { data: adminProfiles } = await supabaseAdmin
+          .from("profiles")
+          .select("id")
+          .eq("role", "admin");
+        
+        if (adminProfiles && adminProfiles.length > 0) {
+          const adminUserIds = adminProfiles.map(p => p.id);
+          
+          // Get supplier name for notification
+          const { data: supplierProfile } = await supabaseAdmin
+            .from("profiles")
+            .select("full_name")
+            .eq("id", user.id)
+            .maybeSingle();
+          const ownerName = supplierProfile?.full_name || "Supplier";
+          
+          await notificationService.notifyAdminDocumentUploaded(
+            adminUserIds,
+            data.id,
+            doc_type,
+            "supplier",
+            ownerName
+          );
+
+          // Check if this is a new KYC submission (supplier status is pending)
+          const { data: supplier } = await supabaseAdmin
+            .from("suppliers")
+            .select("kyb_status, status")
+            .eq("owner_id", user.id)
+            .single();
+          
+          if (supplier && (supplier.kyb_status === "pending" || supplier.status === "pending_compliance")) {
+            // Check if this is the first document (new KYC submission)
+            const { data: existingDocs } = await supabaseAdmin
+              .from("documents")
+              .select("id")
+              .eq("owner_type", "supplier")
+              .eq("owner_id", user.id)
+              .neq("id", data.id)
+              .limit(1);
+            
+            // If no other documents exist, this is a new KYC submission
+            if (!existingDocs || existingDocs.length === 0) {
+              await notificationService.notifyAdminKycSubmitted(
+                adminUserIds,
+                user.id,
+                ownerName,
+                "supplier"
+              );
+            }
+          }
+        }
+      } catch (notifError) {
+        console.error("Error sending admin notification for document upload:", notifError);
+        // Don't fail the upload if notification fails
+      }
+    }
+
     res.json(data);
   } catch (error: any) {
     console.error("Error creating supplier document:", error);
@@ -1682,6 +2239,8 @@ router.put("/compliance", async (req, res) => {
   const user = (req as any).user;
   
   try {
+    console.log("PUT /compliance - Request body:", JSON.stringify(req.body, null, 2));
+    
     // Get supplier ID
     const { data: supplier, error: supplierError } = await supabaseAdmin
       .from("suppliers")
@@ -1690,17 +2249,36 @@ router.put("/compliance", async (req, res) => {
       .maybeSingle();
 
     if (supplierError || !supplier) {
+      console.error("Supplier not found:", { supplierError, supplier, userId: user.id });
       return res.status(404).json({ error: "Supplier not found" });
     }
 
-    // Extract allowed fields for update
+    console.log("Found supplier:", supplier.id);
+
+    // Extract all fields from request body
+    const bodyFields = req.body;
+    
+    // Helper function to check if a value should be included in update
+    const shouldInclude = (value: any): boolean => {
+      if (value === undefined) return false;
+      if (value === null) return false;
+      if (typeof value === 'string' && value.trim() === '') return false;
+      return true;
+    };
+
+    // Extract fields - map frontend names to database columns
     const {
+      // Note: company_name maps to registered_name in database, but we'll handle it separately
+      registration_number,
       director_names,
       registered_address,
+      vat_number,
       vat_certificate_expiry,
       tax_clearance_number,
       tax_clearance_expiry,
+      wholesale_license_number,
       wholesale_license_issue_date,
+      wholesale_license_expiry_date,
       allowed_fuel_types,
       site_license_number,
       depot_address,
@@ -1726,42 +2304,104 @@ router.put("/compliance", async (req, res) => {
       public_liability_policy_expiry_date,
       env_insurance_number,
       env_insurance_expiry_date,
-    } = req.body;
+    } = bodyFields;
 
     const updateData: any = {};
-    if (director_names !== undefined) updateData.director_names = director_names;
-    if (registered_address !== undefined) updateData.registered_address = registered_address;
-    if (vat_certificate_expiry !== undefined) updateData.vat_certificate_expiry = vat_certificate_expiry;
-    if (tax_clearance_number !== undefined) updateData.tax_clearance_number = tax_clearance_number;
-    if (tax_clearance_expiry !== undefined) updateData.tax_clearance_expiry = tax_clearance_expiry;
-    if (wholesale_license_issue_date !== undefined) updateData.wholesale_license_issue_date = wholesale_license_issue_date;
-    if (allowed_fuel_types !== undefined) updateData.allowed_fuel_types = allowed_fuel_types;
-    if (site_license_number !== undefined) updateData.site_license_number = site_license_number;
-    if (depot_address !== undefined) updateData.depot_address = depot_address;
-    if (permit_number !== undefined) updateData.permit_number = permit_number;
-    if (permit_expiry_date !== undefined) updateData.permit_expiry_date = permit_expiry_date;
-    if (environmental_auth_number !== undefined) updateData.environmental_auth_number = environmental_auth_number;
-    if (approved_storage_capacity_litres !== undefined) updateData.approved_storage_capacity_litres = approved_storage_capacity_litres;
-    if (fire_certificate_number !== undefined) updateData.fire_certificate_number = fire_certificate_number;
-    if (fire_certificate_issue_date !== undefined) updateData.fire_certificate_issue_date = fire_certificate_issue_date;
-    if (fire_certificate_expiry_date !== undefined) updateData.fire_certificate_expiry_date = fire_certificate_expiry_date;
-    if (hse_file_verified !== undefined) updateData.hse_file_verified = hse_file_verified;
-    if (hse_file_last_updated !== undefined) updateData.hse_file_last_updated = hse_file_last_updated;
-    if (spill_compliance_confirmed !== undefined) updateData.spill_compliance_confirmed = spill_compliance_confirmed;
-    if (sabs_certificate_number !== undefined) updateData.sabs_certificate_number = sabs_certificate_number;
-    if (sabs_certificate_issue_date !== undefined) updateData.sabs_certificate_issue_date = sabs_certificate_issue_date;
-    if (sabs_certificate_expiry_date !== undefined) updateData.sabs_certificate_expiry_date = sabs_certificate_expiry_date;
-    if (calibration_certificate_number !== undefined) updateData.calibration_certificate_number = calibration_certificate_number;
-    if (calibration_certificate_issue_date !== undefined) updateData.calibration_certificate_issue_date = calibration_certificate_issue_date;
-    if (calibration_certificate_expiry_date !== undefined) updateData.calibration_certificate_expiry_date = calibration_certificate_expiry_date;
-    if (public_liability_policy_number !== undefined) updateData.public_liability_policy_number = public_liability_policy_number;
-    if (public_liability_insurance_provider !== undefined) updateData.public_liability_insurance_provider = public_liability_insurance_provider;
-    if (public_liability_coverage_amount_rands !== undefined) updateData.public_liability_coverage_amount_rands = public_liability_coverage_amount_rands;
-    if (public_liability_policy_expiry_date !== undefined) updateData.public_liability_policy_expiry_date = public_liability_policy_expiry_date;
-    if (env_insurance_number !== undefined) updateData.env_insurance_number = env_insurance_number;
-    if (env_insurance_expiry_date !== undefined) updateData.env_insurance_expiry_date = env_insurance_expiry_date;
+    
+    // Process each field - only include non-null, non-empty values
+    // Map company_name to registered_name (database column name)
+    if (shouldInclude(bodyFields.company_name)) updateData.registered_name = bodyFields.company_name;
+    if (shouldInclude(registration_number)) updateData.registration_number = registration_number;
+    if (director_names !== undefined) {
+      if (director_names === "" || director_names === null) {
+        // Don't include - skip updating this field
+      } else if (Array.isArray(director_names) && director_names.length > 0) {
+        updateData.director_names = director_names;
+      } else if (typeof director_names === 'string') {
+        try {
+          const parsed = JSON.parse(director_names);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            updateData.director_names = parsed;
+          }
+        } catch {
+          // If it's a string, convert to array if not empty
+          if (director_names.trim() !== '') {
+            updateData.director_names = [director_names];
+          }
+        }
+      }
+    }
+    if (shouldInclude(registered_address)) updateData.registered_address = registered_address;
+    if (shouldInclude(vat_number)) updateData.vat_number = vat_number;
+    if (shouldInclude(vat_certificate_expiry)) updateData.vat_certificate_expiry = vat_certificate_expiry;
+    if (shouldInclude(tax_clearance_number)) updateData.tax_clearance_number = tax_clearance_number;
+    if (shouldInclude(tax_clearance_expiry)) updateData.tax_clearance_expiry = tax_clearance_expiry;
+    // Map wholesale_license_number to dmre_license_number (database column name)
+    if (shouldInclude(wholesale_license_number)) updateData.dmre_license_number = wholesale_license_number;
+    if (shouldInclude(wholesale_license_issue_date)) updateData.wholesale_license_issue_date = wholesale_license_issue_date;
+    // Map wholesale_license_expiry_date to dmre_license_expiry (database column name)
+    if (shouldInclude(wholesale_license_expiry_date)) updateData.dmre_license_expiry = wholesale_license_expiry_date;
+    if (allowed_fuel_types !== undefined) {
+      if (allowed_fuel_types === "" || allowed_fuel_types === null) {
+        // Don't include - skip updating this field
+      } else if (Array.isArray(allowed_fuel_types) && allowed_fuel_types.length > 0) {
+        updateData.allowed_fuel_types = allowed_fuel_types;
+      } else if (typeof allowed_fuel_types === 'string') {
+        try {
+          const parsed = JSON.parse(allowed_fuel_types);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            updateData.allowed_fuel_types = parsed;
+          }
+        } catch {
+          if (allowed_fuel_types.trim() !== '') {
+            updateData.allowed_fuel_types = [allowed_fuel_types];
+          }
+        }
+      }
+    }
+    if (shouldInclude(site_license_number)) updateData.site_license_number = site_license_number;
+    if (shouldInclude(depot_address)) updateData.depot_address = depot_address;
+    if (shouldInclude(permit_number)) updateData.permit_number = permit_number;
+    if (shouldInclude(permit_expiry_date)) updateData.permit_expiry_date = permit_expiry_date;
+    if (shouldInclude(environmental_auth_number)) updateData.environmental_auth_number = environmental_auth_number;
+    if (approved_storage_capacity_litres !== undefined && approved_storage_capacity_litres !== null && approved_storage_capacity_litres !== '') {
+      const parsed = typeof approved_storage_capacity_litres === 'number' ? approved_storage_capacity_litres : parseInt(approved_storage_capacity_litres);
+      if (!isNaN(parsed)) {
+        updateData.approved_storage_capacity_litres = parsed;
+      }
+    }
+    if (shouldInclude(fire_certificate_number)) updateData.fire_certificate_number = fire_certificate_number;
+    if (shouldInclude(fire_certificate_issue_date)) updateData.fire_certificate_issue_date = fire_certificate_issue_date;
+    if (shouldInclude(fire_certificate_expiry_date)) updateData.fire_certificate_expiry_date = fire_certificate_expiry_date;
+    if (hse_file_verified !== undefined) updateData.hse_file_verified = Boolean(hse_file_verified);
+    if (shouldInclude(hse_file_last_updated)) updateData.hse_file_last_updated = hse_file_last_updated;
+    if (spill_compliance_confirmed !== undefined) updateData.spill_compliance_confirmed = Boolean(spill_compliance_confirmed);
+    if (shouldInclude(sabs_certificate_number)) updateData.sabs_certificate_number = sabs_certificate_number;
+    if (shouldInclude(sabs_certificate_issue_date)) updateData.sabs_certificate_issue_date = sabs_certificate_issue_date;
+    if (shouldInclude(sabs_certificate_expiry_date)) updateData.sabs_certificate_expiry_date = sabs_certificate_expiry_date;
+    if (shouldInclude(calibration_certificate_number)) updateData.calibration_certificate_number = calibration_certificate_number;
+    if (shouldInclude(calibration_certificate_issue_date)) updateData.calibration_certificate_issue_date = calibration_certificate_issue_date;
+    if (shouldInclude(calibration_certificate_expiry_date)) updateData.calibration_certificate_expiry_date = calibration_certificate_expiry_date;
+    if (shouldInclude(public_liability_policy_number)) updateData.public_liability_policy_number = public_liability_policy_number;
+    if (shouldInclude(public_liability_insurance_provider)) updateData.public_liability_insurance_provider = public_liability_insurance_provider;
+    if (public_liability_coverage_amount_rands !== undefined && public_liability_coverage_amount_rands !== null && public_liability_coverage_amount_rands !== '') {
+      const parsed = typeof public_liability_coverage_amount_rands === 'number' ? public_liability_coverage_amount_rands : parseInt(public_liability_coverage_amount_rands);
+      if (!isNaN(parsed)) {
+        updateData.public_liability_coverage_amount_rands = parsed;
+      }
+    }
+    if (shouldInclude(public_liability_policy_expiry_date)) updateData.public_liability_policy_expiry_date = public_liability_policy_expiry_date;
+    if (shouldInclude(env_insurance_number)) updateData.env_insurance_number = env_insurance_number;
+    if (shouldInclude(env_insurance_expiry_date)) updateData.env_insurance_expiry_date = env_insurance_expiry_date;
+
+    // Only proceed if we have fields to update
+    if (Object.keys(updateData).length === 0) {
+      return res.json({ message: "No fields to update", supplier });
+    }
 
     updateData.updated_at = new Date().toISOString();
+
+    console.log("Update data:", JSON.stringify(updateData, null, 2));
 
     const { data: updatedSupplier, error: updateError } = await supabaseAdmin
       .from("suppliers")
@@ -1771,13 +2411,83 @@ router.put("/compliance", async (req, res) => {
       .single();
 
     if (updateError) {
+      console.error("Database update error:", updateError);
+      
+      // Check if it's a schema cache error or column not found error
+      const isColumnError = updateError.message?.includes("Could not find") || 
+                           updateError.message?.includes("schema cache") || 
+                           updateError.code === '42703' ||
+                           updateError.message?.includes("column");
+      
+      if (isColumnError) {
+        console.error("Schema/column error:", updateError.message);
+        console.error("Attempted to update fields:", Object.keys(updateData));
+        
+        // Try to identify which column is missing
+        const missingColumnMatch = updateError.message?.match(/Could not find the '(\w+)' column/);
+        const missingColumn = missingColumnMatch ? missingColumnMatch[1] : 'unknown';
+        
+        // Remove the problematic column and try again
+        const cleanedUpdateData = { ...updateData };
+        delete cleanedUpdateData[missingColumn];
+        delete cleanedUpdateData.updated_at;
+        
+        if (Object.keys(cleanedUpdateData).length > 0) {
+          cleanedUpdateData.updated_at = new Date().toISOString();
+          console.log(`Removed problematic column '${missingColumn}' and retrying with remaining fields...`);
+          
+          // Retry without the problematic column
+          const retryResult = await supabaseAdmin
+            .from("suppliers")
+            .update(cleanedUpdateData)
+            .eq("id", supplier.id)
+            .select()
+            .single();
+          
+          if (retryResult.error) {
+            return res.status(500).json({ 
+              error: `Database column '${missingColumn}' not found in suppliers table.`,
+              details: updateError.message,
+              hint: `Please add the '${missingColumn}' column to the suppliers table or refresh the schema cache by running: NOTIFY pgrst, 'reload schema'; in Supabase SQL Editor.`,
+              attemptedFields: Object.keys(updateData),
+              skippedField: missingColumn
+            });
+          }
+          
+          return res.json({ 
+            ...retryResult.data,
+            warning: `Field '${missingColumn}' was skipped because it doesn't exist in the database.`
+          });
+        } else {
+          return res.status(500).json({ 
+            error: `Database column '${missingColumn}' not found and no other fields to update.`,
+            details: updateError.message,
+            hint: `Please add the '${missingColumn}' column to the suppliers table or refresh the schema cache.`
+          });
+        }
+      }
+      
       throw updateError;
     }
+
+    console.log("Update successful:", updatedSupplier?.id);
 
     res.json(updatedSupplier);
   } catch (error: any) {
     console.error("Error updating supplier compliance:", error);
-    res.status(500).json({ error: error.message });
+    console.error("Error details:", {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+      stack: error.stack
+    });
+    res.status(500).json({ 
+      error: error.message || "Failed to update compliance information",
+      code: error.code,
+      details: error.details,
+      hint: error.hint
+    });
   }
 });
 

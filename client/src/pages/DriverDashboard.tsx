@@ -117,28 +117,35 @@ export default function DriverDashboard() {
   // Orders are automatically matched and appear in "My Jobs" when assigned
 
   // Fetch driver profile to check availability status
-  const { data: driverProfile } = useQuery<any>({
+  const { data: driverProfile, refetch: refetchProfile } = useQuery<any>({
     queryKey: ["/api/driver/profile"],
     refetchInterval: 5000, // Poll every 5 seconds
     staleTime: 0,
+    gcTime: 0, // Don't cache, always fetch fresh data (React Query v5)
   });
 
+  // Debug: Log driver profile status
+  useEffect(() => {
+    if (driverProfile) {
+      console.log("[DriverDashboard] Driver Profile Status:", {
+        status: driverProfile.status,
+        compliance_status: driverProfile.compliance_status,
+        isActive: driverProfile.status === "active" && driverProfile.compliance_status === "approved",
+        fullProfile: driverProfile
+      });
+    }
+  }, [driverProfile]);
+
   // Fetch pricing to check if any pricing is set
-  const { data: pricingData } = useQuery<any[]>({
+  const { data: pricingData = [] } = useQuery<any[]>({
     queryKey: ["/api/driver/pricing"],
     retry: false,
-    onError: () => {
-      // Silently fail - driver might not have pricing set yet
-    },
   });
 
   // Fetch vehicles to check if any vehicle is added
-  const { data: vehiclesData } = useQuery<any[]>({
+  const { data: vehiclesData = [] } = useQuery<any[]>({
     queryKey: ["/api/driver/vehicles"],
     retry: false,
-    onError: () => {
-      // Silently fail - driver might not have vehicles yet
-    },
   });
 
   const [, setLocation] = useLocation();
@@ -175,8 +182,21 @@ export default function DriverDashboard() {
   useWebSocket((message) => {
     console.log("[DriverDashboard] WebSocket message received:", message.type, message);
 
-    const orderData = message.order || message.payload?.order;
-    const orderId = message.orderId || message.payload?.orderId;
+    // Handle KYC/compliance approval
+    if (message.type === "kyc_approved" || message.type === "compliance_approved") {
+      console.log("[DriverDashboard] KYC/Compliance approved, refreshing profile and documents");
+      // Force immediate refetch by invalidating and refetching
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"], exact: false });
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/documents"], exact: false });
+      // Force refetch immediately
+      setTimeout(() => {
+        refetchProfile();
+        queryClient.refetchQueries({ queryKey: ["/api/driver/documents"], exact: false });
+      }, 100);
+    }
+
+    const orderData = (message as any).order || (message as any).payload?.order;
+    const orderId = (message as any).orderId || (message as any).payload?.orderId;
 
     if (message.type === "order_updated" && orderData) {
       // Directly update the query cache with new order data (like chat messages)

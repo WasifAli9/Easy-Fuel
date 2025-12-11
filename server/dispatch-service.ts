@@ -62,9 +62,12 @@ export async function createDispatchOffers({
     const pricePerKmCents = appSettings?.price_per_km_cents || 5000; // Default R50 per km
 
     // Find all available drivers with location, radius, and capacity
+    // IMPORTANT: Only fetch drivers that are active and compliance approved
     const { data: drivers, error: driversError } = await supabaseAdmin
       .from("drivers")
-      .select("id, user_id, premium_status, current_lat, current_lng, job_radius_preference_miles, vehicle_capacity_litres");
+      .select("id, user_id, premium_status, current_lat, current_lng, job_radius_preference_miles, vehicle_capacity_litres, status, compliance_status")
+      .eq("status", "active")
+      .eq("compliance_status", "approved");
 
     if (driversError) {
       console.error("Error fetching drivers:", driversError);

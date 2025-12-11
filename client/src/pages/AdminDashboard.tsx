@@ -211,8 +211,10 @@ export default function AdminDashboard() {
     mutationFn: async (supplierId: string) => {
       return apiRequest("POST", `/api/admin/kyc/supplier/${supplierId}/approve`);
     },
-    onSuccess: () => {
+    onSuccess: (data, supplierId) => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/kyc/pending"] });
+      // Also invalidate all user details queries to refresh status in dialogs
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
       toast({
         title: "Success",
         description: "Supplier KYB approved successfully",

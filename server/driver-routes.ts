@@ -88,6 +88,20 @@ router.get("/profile", async (req, res) => {
       .select("*")
       .eq("user_id", user.id)
       .maybeSingle();
+    
+    // Debug: Log prdp_number and company_id to verify they're being fetched
+    if (driver) {
+      console.log("[Driver Profile API] Driver data fetched:", {
+        driverId: driver.id,
+        prdp_number: driver.prdp_number,
+        company_id: driver.company_id,
+        prdp_number_type: typeof driver.prdp_number,
+        company_id_type: typeof driver.company_id,
+        prdp_number_value: JSON.stringify(driver.prdp_number),
+        company_id_value: JSON.stringify(driver.company_id),
+        allKeys: Object.keys(driver).filter(k => k.includes('prdp') || k.includes('company'))
+      });
+    }
 
     if (driverError) {
       // If it's an API key error, it means the key is invalid
@@ -120,9 +134,63 @@ router.get("/profile", async (req, res) => {
           
           if (existingDriver) {
             // Driver exists, use it
+            // Map phone to mobile_number and id fields
+            const idType = existingDriver.id_type || null;
+            let idNumber = null;
+            if (idType) {
+              const normalizedIdType = String(idType).toUpperCase();
+              if (normalizedIdType === 'SA_ID' || normalizedIdType === 'SOUTH_AFRICA') {
+                idNumber = existingDriver.za_id_number || null;
+              } else if (normalizedIdType === 'PASSPORT') {
+                idNumber = existingDriver.passport_number || null;
+              }
+            } else {
+              idNumber = existingDriver.za_id_number || existingDriver.passport_number || null;
+            }
+            
+            // Helper function to format date for HTML date input
+            const formatDateForInput = (dateValue: any): string | null => {
+              if (!dateValue) return null;
+              try {
+                // If it's already in YYYY-MM-DD format, return as-is
+                if (typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
+                  return dateValue;
+                }
+                // If it's an ISO timestamp string (e.g., "2025-12-13T00:00:00"), extract just the date part
+                if (typeof dateValue === 'string' && dateValue.includes('T')) {
+                  const datePart = dateValue.split('T')[0];
+                  if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+                    return datePart;
+                  }
+                }
+                // Otherwise, try to parse as Date
+                const date = new Date(dateValue);
+                if (isNaN(date.getTime())) return null;
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                return `${year}-${month}-${day}`;
+              } catch (e) {
+                return null;
+              }
+            };
+            
             return res.json({
               ...profile,
               ...existingDriver,
+              mobile_number: profile.phone || null,
+              id_number: idNumber,
+              license_number: existingDriver.drivers_license_number || null,
+              license_issue_date: formatDateForInput(existingDriver.drivers_license_issue_date),
+              license_expiry_date: formatDateForInput(existingDriver.drivers_license_expiry),
+              prdp_number: existingDriver.prdp_number ?? null,
+              prdp_issue_date: formatDateForInput(existingDriver.prdp_issue_date),
+              prdp_expiry_date: formatDateForInput(existingDriver.prdp_expiry),
+              dg_training_issue_date: formatDateForInput(existingDriver.dg_training_issue_date),
+              dg_training_expiry_date: formatDateForInput(existingDriver.dg_training_expiry_date),
+              criminal_check_date: formatDateForInput(existingDriver.criminal_check_date),
+              company_id: existingDriver.company_id || null,
+              bank_account_holder: existingDriver.bank_account_name || null,
               email: user.email || null
             });
           }
@@ -130,19 +198,176 @@ router.get("/profile", async (req, res) => {
         throw createError;
       }
 
+      // Map phone to mobile_number and id fields
+      const idType = newDriver.id_type || null;
+      let idNumber = null;
+      if (idType) {
+        const normalizedIdType = String(idType).toUpperCase();
+        if (normalizedIdType === 'SA_ID' || normalizedIdType === 'SOUTH_AFRICA') {
+          idNumber = newDriver.za_id_number || null;
+        } else if (normalizedIdType === 'PASSPORT') {
+          idNumber = newDriver.passport_number || null;
+        }
+      } else {
+        idNumber = newDriver.za_id_number || newDriver.passport_number || null;
+      }
+      
+      // Helper function to format date for HTML date input
+      const formatDateForInput = (dateValue: any): string | null => {
+        if (!dateValue) return null;
+        try {
+          // If it's already in YYYY-MM-DD format, return as-is
+          if (typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
+            return dateValue;
+          }
+          // If it's an ISO timestamp string (e.g., "2025-12-13T00:00:00"), extract just the date part
+          if (typeof dateValue === 'string' && dateValue.includes('T')) {
+            const datePart = dateValue.split('T')[0];
+            if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+              return datePart;
+            }
+          }
+          // Otherwise, try to parse as Date
+          const date = new Date(dateValue);
+          if (isNaN(date.getTime())) return null;
+          const year = date.getFullYear();
+          const month = String(date.getMonth() + 1).padStart(2, '0');
+          const day = String(date.getDate()).padStart(2, '0');
+          return `${year}-${month}-${day}`;
+        } catch (e) {
+          return null;
+        }
+      };
+
       return res.json({
         ...profile,
         ...newDriver,
+        mobile_number: profile.phone || null,
+        id_number: idNumber,
+        license_number: newDriver.drivers_license_number || null,
+        license_issue_date: formatDateForInput(newDriver.drivers_license_issue_date),
+        license_expiry_date: formatDateForInput(newDriver.drivers_license_expiry),
+        prdp_number: newDriver.prdp_number ?? null,
+        prdp_issue_date: formatDateForInput(newDriver.prdp_issue_date),
+        prdp_expiry_date: formatDateForInput(newDriver.prdp_expiry),
+        dg_training_issue_date: formatDateForInput(newDriver.dg_training_issue_date),
+        dg_training_expiry_date: formatDateForInput(newDriver.dg_training_expiry_date),
+        criminal_check_date: formatDateForInput(newDriver.criminal_check_date),
+        company_id: newDriver.company_id || null,
+        bank_account_holder: newDriver.bank_account_name || null,
         email: user.email || null
       });
     }
 
     // Combine profile, driver, and email data
-    res.json({
-      ...profile,
-      ...driver,
-      email: user.email || null
+    // Map phone to mobile_number for frontend compatibility
+    // Map za_id_number/passport_number back to id_number based on id_type
+    const idType = driver.id_type || null;
+    let idNumber = null;
+    if (idType) {
+      const normalizedIdType = String(idType).toUpperCase();
+      if (normalizedIdType === 'SA_ID' || normalizedIdType === 'SOUTH_AFRICA') {
+        idNumber = driver.za_id_number || null;
+      } else if (normalizedIdType === 'PASSPORT') {
+        idNumber = driver.passport_number || null;
+      }
+    } else {
+      // If no id_type set, try to use whichever one exists
+      idNumber = driver.za_id_number || driver.passport_number || null;
+    }
+    
+    // Helper function to format date for HTML date input (YYYY-MM-DD)
+    const formatDateForInput = (dateValue: any): string | null => {
+      if (!dateValue) return null;
+      try {
+        // If it's already in YYYY-MM-DD format, return as-is
+        if (typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
+          return dateValue;
+        }
+        // If it's an ISO timestamp string (e.g., "2025-12-13T00:00:00"), extract just the date part
+        if (typeof dateValue === 'string' && dateValue.includes('T')) {
+          const datePart = dateValue.split('T')[0];
+          if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+            return datePart;
+          }
+        }
+        // Otherwise, try to parse as Date
+        const date = new Date(dateValue);
+        if (isNaN(date.getTime())) return null;
+        // Format as YYYY-MM-DD for HTML date input
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      } catch (e) {
+        return null;
+      }
+    };
+    
+    // Create a cleaned driver object, removing raw date fields that will be formatted
+    const cleanedDriver = { ...driver };
+    // Remove raw database date field names to prevent ISO timestamps from appearing
+    delete cleanedDriver.drivers_license_issue_date;
+    delete cleanedDriver.drivers_license_expiry;
+    delete cleanedDriver.prdp_issue_date;
+    delete cleanedDriver.prdp_expiry;
+    delete cleanedDriver.dg_training_issue_date;
+    delete cleanedDriver.dg_training_expiry_date;
+    delete cleanedDriver.criminal_check_date;
+    
+    // Debug: Check what's in cleanedDriver before creating response
+    console.log("[Driver Profile API] Before response creation:", {
+      cleanedDriver_prdp_number: cleanedDriver.prdp_number,
+      cleanedDriver_company_id: cleanedDriver.company_id,
+      driver_prdp_number: driver.prdp_number,
+      driver_company_id: driver.company_id
     });
+    
+    const response = {
+      ...profile,
+      ...cleanedDriver,
+      mobile_number: profile.phone || null,
+      id_number: idNumber,
+      // Explicitly set formatted date fields with frontend field names
+      license_number: driver.drivers_license_number || null,
+      license_issue_date: formatDateForInput(driver.drivers_license_issue_date),
+      license_expiry_date: formatDateForInput(driver.drivers_license_expiry),
+      // Explicitly include PrDP fields (return as-is from database, preserve empty strings)
+      prdp_number: driver.hasOwnProperty('prdp_number') ? (driver.prdp_number || '') : null,
+      prdp_issue_date: formatDateForInput(driver.prdp_issue_date),
+      prdp_expiry_date: formatDateForInput(driver.prdp_expiry),
+      dg_training_issue_date: formatDateForInput(driver.dg_training_issue_date),
+      dg_training_expiry_date: formatDateForInput(driver.dg_training_expiry_date),
+      criminal_check_date: formatDateForInput(driver.criminal_check_date),
+      // Explicitly include company fields (return as-is from database)
+      company_id: driver.hasOwnProperty('company_id') ? driver.company_id : null,
+      bank_account_holder: driver.bank_account_name || null,
+      email: user.email || null
+    };
+    
+    // Debug: Check what's in the final response
+    console.log("[Driver Profile API] Final response includes:", {
+      response_prdp_number: response.prdp_number,
+      response_company_id: response.company_id,
+      response_prdp_number_type: typeof response.prdp_number,
+      response_company_id_type: typeof response.company_id
+    });
+    
+    // Debug: Log status fields to verify they're correct
+    console.log("[Driver Profile API] Returning driver profile:", {
+      userId: user.id,
+      driverId: driver.id,
+      status: driver.status,
+      compliance_status: driver.compliance_status,
+      kyc_status: driver.kyc_status,
+      mobile_number: profile.phone,
+      id_type: idType,
+      id_number: idNumber,
+      za_id_number: driver.za_id_number,
+      passport_number: driver.passport_number
+    });
+    
+    res.json(response);
   } catch (error: any) {
     // Handle PGRST116 error (no rows found) gracefully
     if (error?.code === 'PGRST116') {
@@ -174,6 +399,7 @@ function vehicleToCamelCase(vehicle: any) {
     trackerInstalled: vehicle.tracker_installed,
     trackerProvider: vehicle.tracker_provider,
     vehicleRegistrationCertDocId: vehicle.vehicle_registration_cert_doc_id,
+    vehicleStatus: vehicle.vehicle_status, // Include vehicle_status for compliance status
     createdAt: vehicle.created_at,
     updatedAt: vehicle.updated_at,
   };
@@ -2287,7 +2513,7 @@ router.get("/documents", async (req, res) => {
 // Upload driver document
 router.post("/documents", async (req, res) => {
   const user = (req as any).user;
-  const { doc_type, title, file_path, file_size, mime_type, expiry_date } = req.body;
+  const { owner_type, owner_id, doc_type, title, file_path, file_size, mime_type, expiry_date } = req.body;
   
   try {
     if (!doc_type || !file_path) {
@@ -2306,12 +2532,49 @@ router.post("/documents", async (req, res) => {
       return res.status(404).json({ error: "Driver profile not found" });
     }
 
+    // Determine owner_type and owner_id
+    let finalOwnerType: string;
+    let finalOwnerId: string;
+
+    if (owner_type && owner_id) {
+      // If owner_type and owner_id are provided, validate them
+      if (owner_type === "vehicle") {
+        // Verify vehicle belongs to driver
+        const { data: vehicle, error: vehicleError } = await supabaseAdmin
+          .from("vehicles")
+          .select("id, driver_id")
+          .eq("id", owner_id)
+          .eq("driver_id", driver.id)
+          .maybeSingle();
+
+        if (vehicleError) throw vehicleError;
+        if (!vehicle) {
+          return res.status(404).json({ error: "Vehicle not found or access denied" });
+        }
+        finalOwnerType = "vehicle";
+        finalOwnerId = owner_id;
+      } else if (owner_type === "driver") {
+        // Verify it's the driver's own ID
+        if (owner_id !== driver.id) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+        finalOwnerType = "driver";
+        finalOwnerId = driver.id;
+      } else {
+        return res.status(400).json({ error: "Invalid owner_type. Must be 'driver' or 'vehicle'" });
+      }
+    } else {
+      // Default to driver if not specified
+      finalOwnerType = "driver";
+      finalOwnerId = driver.id;
+    }
+
     // Insert document
     const { data: document, error: insertError } = await supabaseAdmin
       .from("documents")
       .insert({
-        owner_type: "driver",
-        owner_id: driver.id,
+        owner_type: finalOwnerType,
+        owner_id: finalOwnerId,
         doc_type,
         title: title || doc_type,
         file_path,
@@ -2340,6 +2603,87 @@ router.post("/documents", async (req, res) => {
       throw insertError;
     }
 
+    // Notify all admins about the new document upload
+    if (document && (finalOwnerType === "driver" || finalOwnerType === "vehicle")) {
+      try {
+        const { notificationService } = await import("./notification-service");
+        const { data: adminProfiles } = await supabaseAdmin
+          .from("profiles")
+          .select("id")
+          .eq("role", "admin");
+        
+        if (adminProfiles && adminProfiles.length > 0) {
+          const adminUserIds = adminProfiles.map(p => p.id);
+          
+          // Get owner name for notification
+          let ownerName = "Driver";
+          if (finalOwnerType === "vehicle") {
+            const { data: vehicle } = await supabaseAdmin
+              .from("vehicles")
+              .select("registration_number")
+              .eq("id", finalOwnerId)
+              .single();
+            ownerName = vehicle?.registration_number || "Vehicle";
+          } else {
+            const { data: driverProfile } = await supabaseAdmin
+              .from("profiles")
+              .select("full_name")
+              .eq("id", user.id)
+              .maybeSingle();
+            ownerName = driverProfile?.full_name || "Driver";
+          }
+          
+          await notificationService.notifyAdminDocumentUploaded(
+            adminUserIds,
+            document.id,
+            doc_type,
+            finalOwnerType,
+            ownerName
+          );
+
+          // Check if this is a new KYC submission (driver status is pending)
+          if (finalOwnerType === "driver") {
+            const { data: driverStatus } = await supabaseAdmin
+              .from("drivers")
+              .select("kyc_status, status")
+              .eq("id", finalOwnerId)
+              .single();
+            
+            if (driverStatus && (driverStatus.kyc_status === "pending" || driverStatus.status === "pending_compliance")) {
+              // Check if this is the first document (new KYC submission)
+              const { data: existingDocs } = await supabaseAdmin
+                .from("documents")
+                .select("id")
+                .eq("owner_type", "driver")
+                .eq("owner_id", finalOwnerId)
+                .neq("id", document.id)
+                .limit(1);
+              
+              // If no other documents exist, this is a new KYC submission
+              if (!existingDocs || existingDocs.length === 0) {
+                const { data: driverProfile } = await supabaseAdmin
+                  .from("profiles")
+                  .select("full_name")
+                  .eq("id", user.id)
+                  .maybeSingle();
+                const userName = driverProfile?.full_name || "Driver";
+                
+                await notificationService.notifyAdminKycSubmitted(
+                  adminUserIds,
+                  user.id,
+                  userName,
+                  "driver"
+                );
+              }
+            }
+          }
+        }
+      } catch (notifError) {
+        console.error("Error sending admin notification for document upload:", notifError);
+        // Don't fail the upload if notification fails
+      }
+    }
+
     res.json(document);
   } catch (error: any) {
     console.error("Error uploading driver document:", error);
@@ -2350,7 +2694,7 @@ router.post("/documents", async (req, res) => {
 // ============== DRIVER DEPOT ORDERS ==============
 
 // Get all depots with distance from driver's current location
-router.get("/depots", checkDriverCompliance, async (req, res) => {
+router.get("/depots", async (req, res) => {
   const user = (req as any).user;
 
   try {
@@ -2363,11 +2707,11 @@ router.get("/depots", checkDriverCompliance, async (req, res) => {
     // Import distance utilities early
     const { calculateDistance, milesToKm } = await import("./utils/distance");
 
-    // Get driver's current location
+    // Get driver's current location and compliance status
     // Use maybeSingle() to handle case where driver profile doesn't exist yet
     const { data: driver, error: driverError } = await supabaseAdmin
       .from("drivers")
-      .select("id, current_lat, current_lng")
+      .select("id, current_lat, current_lng, status, compliance_status")
       .eq("user_id", user.id)
       .maybeSingle();
 
@@ -2383,6 +2727,13 @@ router.get("/depots", checkDriverCompliance, async (req, res) => {
     if (!driver) {
       // Return empty array instead of error - driver might not have created profile yet
       console.warn(`[GET /driver/depots] Driver profile not found for user ${user.id}`);
+      return res.json([]);
+    }
+
+    // Check compliance status - if not approved, return empty array (can view but no depots shown)
+    if (driver.status !== "active" || driver.compliance_status !== "approved") {
+      // Return empty array instead of error - allows UI to load but shows no depots
+      console.log(`[GET /driver/depots] Driver ${driver.id} not compliant, returning empty array`);
       return res.json([]);
     }
 
@@ -2533,23 +2884,35 @@ router.get("/depots", checkDriverCompliance, async (req, res) => {
 });
 
 // Get driver's depot orders
-router.get("/depot-orders", checkDriverCompliance, async (req, res) => {
+router.get("/depot-orders", async (req, res) => {
   const user = (req as any).user;
 
   try {
-    // Get driver ID
+    // Get driver ID and compliance status
     const { data: driver, error: driverError } = await supabaseAdmin
       .from("drivers")
-      .select("id")
+      .select("id, status, compliance_status")
       .eq("user_id", user.id)
-      .single();
+      .maybeSingle();
 
-    if (driverError) throw driverError;
-    if (!driver) {
-      return res.status(404).json({ error: "Driver profile not found" });
+    if (driverError) {
+      console.error("Error fetching driver:", driverError);
+      return res.status(500).json({ error: "Failed to fetch driver profile" });
     }
 
-    // Get all depot orders for this driver
+    if (!driver) {
+      // Return empty array instead of error - driver might not have created profile yet
+      return res.json([]);
+    }
+
+    // Check compliance status - if not approved, return empty array (can view but no orders shown)
+    if (driver.status !== "active" || driver.compliance_status !== "approved") {
+      // Return empty array instead of error - allows UI to load but shows no orders
+      console.log(`[GET /driver/depot-orders] Driver ${driver.id} not compliant, returning empty array`);
+      return res.json([]);
+    }
+
+    // Get all depot orders for this driver (without nested suppliers to avoid relationship issues)
     const { data: orders, error: ordersError } = await supabaseAdmin
       .from("driver_depot_orders")
       .select(`
@@ -2557,10 +2920,13 @@ router.get("/depot-orders", checkDriverCompliance, async (req, res) => {
         depots (
           id,
           name,
+          address_street,
           address_city,
           address_province,
+          address_postal_code,
           lat,
-          lng
+          lng,
+          supplier_id
         ),
         fuel_types (
           id,
@@ -2571,12 +2937,90 @@ router.get("/depot-orders", checkDriverCompliance, async (req, res) => {
       .eq("driver_id", driver.id)
       .order("created_at", { ascending: false });
 
-    if (ordersError) throw ordersError;
+    if (ordersError) {
+      console.error("Error fetching driver depot orders:", ordersError);
+      console.error("Error details:", {
+        message: ordersError.message,
+        code: ordersError.code,
+        details: ordersError.details,
+        hint: ordersError.hint,
+      });
+      throw ordersError;
+    }
+
+    // Enrich orders with supplier information and driver profile separately
+    if (orders && orders.length > 0) {
+      // Enrich with driver profile data
+      const driverUserIds = Array.from(
+        new Set(orders.map((o: any) => o.driver_id).filter(Boolean))
+      );
+
+      if (driverUserIds.length > 0) {
+        // Get driver records to find user_ids
+        const { data: driverRecords } = await supabaseAdmin
+          .from("drivers")
+          .select("id, user_id")
+          .in("id", driverUserIds);
+
+        if (driverRecords && driverRecords.length > 0) {
+          const userIds = driverRecords.map((d: any) => d.user_id).filter(Boolean);
+          
+          if (userIds.length > 0) {
+            const { data: profiles } = await supabaseAdmin
+              .from("profiles")
+              .select("id, full_name, phone")
+              .in("id", userIds);
+
+            const profileMap = new Map(profiles?.map(p => [p.id, p]) || []);
+            const driverUserMap = new Map(driverRecords.map((d: any) => [d.id, d.user_id]));
+
+            orders.forEach((order: any) => {
+              if (order.driver_id) {
+                const userId = driverUserMap.get(order.driver_id);
+                if (userId && profileMap.has(userId)) {
+                  if (!order.drivers) order.drivers = {};
+                  order.drivers.profile = profileMap.get(userId);
+                }
+              }
+            });
+          }
+        }
+      }
+
+      // Enrich with supplier information
+      const supplierIds = [...new Set(
+        orders
+          .map((o: any) => o.depots?.supplier_id)
+          .filter(Boolean)
+      )];
+      
+      if (supplierIds.length > 0) {
+        const { data: suppliers } = await supabaseAdmin
+          .from("suppliers")
+          .select("id, name, registered_name")
+          .in("id", supplierIds);
+        
+        const supplierMap = new Map(
+          (suppliers || []).map((s: any) => [s.id, s])
+        );
+        
+        orders.forEach((order: any) => {
+          if (order.depots?.supplier_id) {
+            order.depots.suppliers = supplierMap.get(order.depots.supplier_id) || null;
+          }
+        });
+      }
+    }
 
     res.json(orders || []);
   } catch (error: any) {
     console.error("Error fetching driver depot orders:", error);
-    res.status(500).json({ error: error.message });
+    console.error("Error stack:", error.stack);
+    res.status(500).json({ 
+      error: error.message || "Failed to fetch driver depot orders",
+      details: error.details,
+      code: error.code 
+    });
   }
 });
 
@@ -2883,6 +3327,417 @@ router.post("/depot-orders/:orderId/cancel", async (req, res) => {
   }
 });
 
+// ============== DRIVER DEPOT ORDER PAYMENT & SIGNATURES ==============
+
+// Submit payment for depot order
+router.post("/depot-orders/:orderId/payment", checkDriverCompliance, async (req, res) => {
+  const user = (req as any).user;
+  const { orderId } = req.params;
+  const { paymentMethod, paymentProofUrl } = req.body;
+
+  try {
+    if (!paymentMethod || !["bank_transfer", "online_payment", "pay_outside_app"].includes(paymentMethod)) {
+      return res.status(400).json({ error: "Valid payment method is required" });
+    }
+
+    // Get driver ID
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (driverError) throw driverError;
+    if (!driver) {
+      return res.status(404).json({ error: "Driver profile not found" });
+    }
+
+    // Get order and verify ownership
+    const { data: order, error: orderError } = await supabaseAdmin
+      .from("driver_depot_orders")
+      .select(`
+        *,
+        depots (id, name, supplier_id, suppliers!inner(owner_id)),
+        fuel_types (id, label)
+      `)
+      .eq("id", orderId)
+      .eq("driver_id", driver.id)
+      .single();
+
+    if (orderError || !order) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    // Only allow payment if status is pending_payment
+    if (order.status !== "pending_payment") {
+      return res.status(400).json({ error: `Order status must be pending_payment. Current: ${order.status}` });
+    }
+
+    // For bank transfer, require proof URL
+    if (paymentMethod === "bank_transfer" && !paymentProofUrl) {
+      return res.status(400).json({ error: "Payment proof URL is required for bank transfer" });
+    }
+
+    // Update order with payment information
+    const updateData: any = {
+      payment_method: paymentMethod,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (paymentProofUrl) {
+      updateData.payment_proof_url = paymentProofUrl;
+    }
+
+    // Handle different payment methods
+    if (paymentMethod === "online_payment") {
+      // Online payment: mark as paid, go directly to ready_for_pickup (payment processed immediately)
+      updateData.payment_status = "paid";
+      updateData.status = "ready_for_pickup";
+    } else if (paymentMethod === "bank_transfer") {
+      // Bank transfer: mark as paid (payment submitted with proof), waiting for supplier verification
+      updateData.payment_status = "paid";
+      updateData.status = "pending_payment";
+    } else if (paymentMethod === "pay_outside_app") {
+      // Pay outside app: skip payment verification, go directly to ready_for_pickup
+      updateData.payment_status = "not_required";
+      updateData.status = "ready_for_pickup";
+    }
+
+    const { data: updatedOrder, error: updateError } = await supabaseAdmin
+      .from("driver_depot_orders")
+      .update(updateData)
+      .eq("id", orderId)
+      .select(`
+        *,
+        depots (id, name, suppliers!inner(owner_id)),
+        fuel_types (id, label)
+      `)
+      .single();
+
+    if (updateError) throw updateError;
+
+    // Notify supplier
+    if (order.depots?.suppliers?.owner_id) {
+      const { websocketService } = await import("./websocket");
+      websocketService.sendOrderUpdate(order.depots.suppliers.owner_id, {
+        type: "driver_depot_payment_submitted",
+        orderId: updatedOrder.id,
+        paymentMethod: updatedOrder.payment_method,
+        paymentStatus: updatedOrder.payment_status,
+      });
+
+      // Send notification to supplier
+      const { notificationService } = await import("./notification-service");
+      const depotName = order.depots?.name || "Depot";
+      const fuelType = order.fuel_types?.label || "fuel";
+      const litres = parseFloat(order.litres || "0");
+      const totalPrice = parseFloat(order.total_price_cents || "0") / 100;
+      const currency = "ZAR";
+      const { data: driverProfile } = await supabaseAdmin
+        .from("profiles")
+        .select("full_name")
+        .eq("id", user.id)
+        .maybeSingle();
+      const driverName = driverProfile?.full_name || "Driver";
+      
+      await notificationService.notifySupplierPaymentReceived(
+        order.depots.suppliers.owner_id,
+        updatedOrder.id,
+        depotName,
+        fuelType,
+        litres,
+        totalPrice,
+        currency,
+        paymentMethod,
+        driverName
+      );
+    }
+
+    res.json(updatedOrder);
+  } catch (error: any) {
+    console.error("Error submitting payment:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add driver signature (before fuel release)
+router.post("/depot-orders/:orderId/driver-signature", checkDriverCompliance, async (req, res) => {
+  const user = (req as any).user;
+  const { orderId } = req.params;
+  const { signatureUrl } = req.body;
+
+  try {
+    if (!signatureUrl) {
+      return res.status(400).json({ error: "signatureUrl is required" });
+    }
+
+    // Get driver ID
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (driverError) throw driverError;
+    if (!driver) {
+      return res.status(404).json({ error: "Driver profile not found" });
+    }
+
+    // Get order and verify ownership
+    const { data: order, error: orderError } = await supabaseAdmin
+      .from("driver_depot_orders")
+      .select(`
+        *,
+        depots (id, name, suppliers!inner(owner_id)),
+        fuel_types (id, label)
+      `)
+      .eq("id", orderId)
+      .eq("driver_id", driver.id)
+      .single();
+
+    if (orderError || !order) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    // Check if order is awaiting signature - if so, this is the delivery signature and should complete the order
+    if (order.status === "awaiting_signature") {
+      // This is a delivery signature after fuel release - complete the order
+      const { data: updatedOrder, error: updateError } = await supabaseAdmin
+        .from("driver_depot_orders")
+        .update({
+          delivery_signature_url: signatureUrl,
+          delivery_signed_at: new Date().toISOString(),
+          status: "completed",
+          completed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", orderId)
+        .select(`
+          *,
+          depots (id, name, suppliers!inner(owner_id)),
+          fuel_types (id, label)
+        `)
+        .single();
+
+      if (updateError) throw updateError;
+
+      // Notify supplier
+      if (order.depots?.suppliers?.owner_id) {
+        const { websocketService } = await import("./websocket");
+        websocketService.sendOrderUpdate(order.depots.suppliers.owner_id, {
+          type: "driver_depot_order_completed",
+          orderId: updatedOrder.id,
+          status: updatedOrder.status,
+        });
+
+        // Send notifications to driver and supplier
+        const { notificationService } = await import("./notification-service");
+        const depotName = order.depots?.name || "Depot";
+        const fuelType = order.fuel_types?.label || "fuel";
+        const litres = parseFloat(order.litres || "0");
+        const { data: driverProfile } = await supabaseAdmin
+          .from("profiles")
+          .select("full_name")
+          .eq("id", user.id)
+          .maybeSingle();
+        const driverName = driverProfile?.full_name || "Driver";
+
+        // Notify driver
+        await notificationService.notifyDriverDepotOrderCompleted(
+          user.id,
+          updatedOrder.id,
+          depotName,
+          fuelType,
+          litres
+        );
+
+        // Notify supplier
+        await notificationService.notifySupplierOrderCompleted(
+          order.depots.suppliers.owner_id,
+          updatedOrder.id,
+          depotName,
+          fuelType,
+          litres,
+          driverName
+        );
+      }
+
+      return res.json(updatedOrder);
+    }
+
+    // For other statuses, check if payment is verified/paid
+    if (order.payment_status !== "payment_verified" && order.payment_status !== "paid" && order.payment_method !== "pay_outside_app") {
+      return res.status(400).json({ error: "Payment must be verified before signing" });
+    }
+
+    // This should not happen in the new flow, but keep for backward compatibility
+    // Update driver signature (old flow - before pickup)
+    const { data: updatedOrder, error: updateError } = await supabaseAdmin
+      .from("driver_depot_orders")
+      .update({
+        driver_signature_url: signatureUrl,
+        driver_signed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", orderId)
+      .select(`
+        *,
+        depots (id, name, suppliers!inner(owner_id)),
+        fuel_types (id, label)
+      `)
+      .single();
+
+    if (updateError) throw updateError;
+
+    // Notify supplier
+    if (order.depots?.suppliers?.owner_id) {
+      const { websocketService } = await import("./websocket");
+      websocketService.sendOrderUpdate(order.depots.suppliers.owner_id, {
+        type: "driver_depot_order_signed",
+        orderId: updatedOrder.id,
+        status: updatedOrder.status,
+      });
+
+      // Send notification to supplier that driver signature is required
+      const { notificationService } = await import("./notification-service");
+      const depotName = order.depots?.name || "Depot";
+      const fuelType = order.fuel_types?.label || "fuel";
+      const litres = parseFloat(order.litres || "0");
+      const { data: driverProfile } = await supabaseAdmin
+        .from("profiles")
+        .select("full_name")
+        .eq("id", user.id)
+        .maybeSingle();
+      const driverName = driverProfile?.full_name || "Driver";
+
+      await notificationService.notifySupplierSignatureRequired(
+        order.depots.suppliers.owner_id,
+        updatedOrder.id,
+        depotName,
+        fuelType,
+        litres,
+        driverName
+      );
+    }
+
+    res.json(updatedOrder);
+  } catch (error: any) {
+    console.error("Error adding driver signature:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Confirm receipt (driver signs after receiving fuel)
+router.post("/depot-orders/:orderId/confirm-receipt", checkDriverCompliance, async (req, res) => {
+  const user = (req as any).user;
+  const { orderId } = req.params;
+  const { signatureUrl } = req.body;
+
+  try {
+    if (!signatureUrl) {
+      return res.status(400).json({ error: "signatureUrl is required" });
+    }
+
+    // Get driver ID
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (driverError) throw driverError;
+    if (!driver) {
+      return res.status(404).json({ error: "Driver profile not found" });
+    }
+
+    // Get order and verify ownership
+    const { data: order, error: orderError } = await supabaseAdmin
+      .from("driver_depot_orders")
+      .select(`
+        *,
+        depots (id, name, suppliers!inner(owner_id)),
+        fuel_types (id, label)
+      `)
+      .eq("id", orderId)
+      .eq("driver_id", driver.id)
+      .single();
+
+    if (orderError || !order) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    // Only confirm receipt if status is released
+    if (order.status !== "released") {
+      return res.status(400).json({ error: `Order must be released to confirm receipt. Current: ${order.status}` });
+    }
+
+    // Update delivery signature and mark as completed
+    const { data: updatedOrder, error: updateError } = await supabaseAdmin
+      .from("driver_depot_orders")
+      .update({
+        delivery_signature_url: signatureUrl,
+        delivery_signed_at: new Date().toISOString(),
+        status: "completed",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", orderId)
+      .select(`
+        *,
+        depots (id, name, suppliers!inner(owner_id)),
+        fuel_types (id, label)
+      `)
+      .single();
+
+    if (updateError) throw updateError;
+
+    // Notify supplier
+    if (order.depots?.suppliers?.owner_id) {
+      const { websocketService } = await import("./websocket");
+      websocketService.sendOrderUpdate(order.depots.suppliers.owner_id, {
+        type: "driver_depot_order_completed",
+        orderId: updatedOrder.id,
+        status: updatedOrder.status,
+      });
+
+      // Send notifications to driver and supplier
+      const { notificationService } = await import("./notification-service");
+      const depotName = order.depots?.name || "Depot";
+      const fuelType = order.fuel_types?.label || "fuel";
+      const litres = parseFloat(order.litres || "0");
+      const { data: driverProfile } = await supabaseAdmin
+        .from("profiles")
+        .select("full_name")
+        .eq("id", user.id)
+        .maybeSingle();
+      const driverName = driverProfile?.full_name || "Driver";
+
+      // Notify driver
+      await notificationService.notifyDriverDepotOrderCompleted(
+        user.id,
+        updatedOrder.id,
+        depotName,
+        fuelType,
+        litres
+      );
+
+      // Notify supplier
+      await notificationService.notifySupplierOrderCompleted(
+        order.depots.suppliers.owner_id,
+        updatedOrder.id,
+        depotName,
+        fuelType,
+        litres,
+        driverName
+      );
+    }
+
+    res.json(updatedOrder);
+  } catch (error: any) {
+    console.error("Error confirming receipt:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ============== COMPLIANCE ROUTES ==============
 
 // Get driver compliance status
@@ -2914,10 +3769,10 @@ router.put("/compliance", async (req, res) => {
   const user = (req as any).user;
   
   try {
-    // Get driver ID
+    // Get driver ID and current id_type for proper mapping
     const { data: driver, error: driverError } = await supabaseAdmin
       .from("drivers")
-      .select("id")
+      .select("id, id_type")
       .eq("user_id", user.id)
       .maybeSingle();
 
@@ -2925,63 +3780,370 @@ router.put("/compliance", async (req, res) => {
       return res.status(404).json({ error: "Driver not found" });
     }
 
-    // Extract allowed fields for update
-    const {
-      driver_type,
-      id_type,
-      id_issue_country,
-      license_code,
-      drivers_license_issue_date,
-      prdp_required,
-      prdp_category,
-      prdp_issue_date,
-      dg_training_required,
-      dg_training_provider,
-      dg_training_certificate_number,
-      dg_training_issue_date,
-      dg_training_expiry_date,
-      criminal_check_done,
-      criminal_check_reference,
-      criminal_check_date,
-      is_company_driver,
-      company_id,
-      role_in_company,
-      address_line_1,
-      address_line_2,
-      city,
-      province,
-      postal_code,
-      country,
-    } = req.body;
+    // Extract all fields from request body
+    const bodyFields = req.body;
+    
+    // Debug: Log incoming request body for prdp_number and company_id
+    console.log("[Compliance Update] Incoming request body:", {
+      prdp_number: bodyFields.prdp_number,
+      company_id: bodyFields.company_id,
+      prdp_number_type: typeof bodyFields.prdp_number,
+      company_id_type: typeof bodyFields.company_id,
+      has_prdp_number: bodyFields.hasOwnProperty('prdp_number'),
+      has_company_id: bodyFields.hasOwnProperty('company_id'),
+      allBodyKeys: Object.keys(bodyFields).filter(k => k.includes('prdp') || k.includes('company'))
+    });
+    
+    // Helper function to check if a value should be included in update
+    const shouldInclude = (value: any): boolean => {
+      if (value === undefined) return false;
+      if (value === null) return false;
+      if (typeof value === 'string' && value.trim() === '') return false;
+      return true;
+    };
+
+    // Helper function to validate UUID format
+    const isValidUUID = (value: any): boolean => {
+      if (!value || typeof value !== 'string') return false;
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      return uuidRegex.test(value.trim());
+    };
+
+    // Map frontend field names to database column names
+    // Only include fields that actually exist in the drivers table
+    const fieldMapping: Record<string, { dbColumn: string; type: 'string' | 'boolean' | 'date' | 'uuid' | 'number' }> = {
+      // Basic profile
+      driver_type: { dbColumn: 'driver_type', type: 'string' },
+      // ID fields - handle id_number based on id_type
+      id_type: { dbColumn: 'id_type', type: 'string' },
+      id_issue_country: { dbColumn: 'id_issue_country', type: 'string' },
+      // Address fields
+      address_line_1: { dbColumn: 'address_line_1', type: 'string' },
+      address_line_2: { dbColumn: 'address_line_2', type: 'string' },
+      city: { dbColumn: 'city', type: 'string' },
+      province: { dbColumn: 'province', type: 'string' },
+      postal_code: { dbColumn: 'postal_code', type: 'string' },
+      country: { dbColumn: 'country', type: 'string' },
+      // License fields
+      license_code: { dbColumn: 'license_code', type: 'string' },
+      license_issue_date: { dbColumn: 'drivers_license_issue_date', type: 'date' },
+      license_expiry_date: { dbColumn: 'drivers_license_expiry', type: 'date' },
+      drivers_license_issue_date: { dbColumn: 'drivers_license_issue_date', type: 'date' },
+      // PrDP fields
+      prdp_required: { dbColumn: 'prdp_required', type: 'boolean' },
+      prdp_number: { dbColumn: 'prdp_number', type: 'string' },
+      prdp_category: { dbColumn: 'prdp_category', type: 'string' },
+      prdp_issue_date: { dbColumn: 'prdp_issue_date', type: 'date' },
+      prdp_expiry_date: { dbColumn: 'prdp_expiry', type: 'date' },
+      // Dangerous Goods Training
+      dg_training_required: { dbColumn: 'dg_training_required', type: 'boolean' },
+      dg_training_provider: { dbColumn: 'dg_training_provider', type: 'string' },
+      dg_training_certificate_number: { dbColumn: 'dg_training_certificate_number', type: 'string' },
+      dg_training_issue_date: { dbColumn: 'dg_training_issue_date', type: 'date' },
+      dg_training_expiry_date: { dbColumn: 'dg_training_expiry_date', type: 'date' },
+      // Criminal Check
+      criminal_check_done: { dbColumn: 'criminal_check_done', type: 'boolean' },
+      criminal_check_reference: { dbColumn: 'criminal_check_reference', type: 'string' },
+      criminal_check_date: { dbColumn: 'criminal_check_date', type: 'date' },
+      // Bank fields
+      bank_account_holder: { dbColumn: 'bank_account_name', type: 'string' },
+      bank_name: { dbColumn: 'bank_name', type: 'string' },
+      account_number: { dbColumn: 'account_number', type: 'string' },
+      branch_code: { dbColumn: 'branch_code', type: 'string' },
+      // Company Link
+      is_company_driver: { dbColumn: 'is_company_driver', type: 'boolean' },
+      company_id: { dbColumn: 'company_id', type: 'uuid' },
+      role_in_company: { dbColumn: 'role_in_company', type: 'string' },
+    };
 
     const updateData: any = {};
-    if (driver_type !== undefined) updateData.driver_type = driver_type;
-    if (id_type !== undefined) updateData.id_type = id_type;
-    if (id_issue_country !== undefined) updateData.id_issue_country = id_issue_country;
-    if (license_code !== undefined) updateData.license_code = license_code;
-    if (drivers_license_issue_date !== undefined) updateData.drivers_license_issue_date = drivers_license_issue_date;
-    if (prdp_required !== undefined) updateData.prdp_required = prdp_required;
-    if (prdp_category !== undefined) updateData.prdp_category = prdp_category;
-    if (prdp_issue_date !== undefined) updateData.prdp_issue_date = prdp_issue_date;
-    if (dg_training_required !== undefined) updateData.dg_training_required = dg_training_required;
-    if (dg_training_provider !== undefined) updateData.dg_training_provider = dg_training_provider;
-    if (dg_training_certificate_number !== undefined) updateData.dg_training_certificate_number = dg_training_certificate_number;
-    if (dg_training_issue_date !== undefined) updateData.dg_training_issue_date = dg_training_issue_date;
-    if (dg_training_expiry_date !== undefined) updateData.dg_training_expiry_date = dg_training_expiry_date;
-    if (criminal_check_done !== undefined) updateData.criminal_check_done = criminal_check_done;
-    if (criminal_check_reference !== undefined) updateData.criminal_check_reference = criminal_check_reference;
-    if (criminal_check_date !== undefined) updateData.criminal_check_date = criminal_check_date;
-    if (is_company_driver !== undefined) updateData.is_company_driver = is_company_driver;
-    if (company_id !== undefined) updateData.company_id = company_id;
-    if (role_in_company !== undefined) updateData.role_in_company = role_in_company;
-    if (address_line_1 !== undefined) updateData.address_line_1 = address_line_1;
-    if (address_line_2 !== undefined) updateData.address_line_2 = address_line_2;
-    if (city !== undefined) updateData.city = city;
-    if (province !== undefined) updateData.province = province;
-    if (postal_code !== undefined) updateData.postal_code = postal_code;
-    if (country !== undefined) updateData.country = country;
+    
+    // Handle id_number separately - map to za_id_number or passport_number based on id_type
+    // Only update if we have both id_number and id_type, and id_number is not empty
+    // IMPORTANT: Only update if id_type is explicitly set to avoid updating wrong column
+    if (bodyFields.id_number !== undefined && shouldInclude(bodyFields.id_number)) {
+      // Get id_type from request body first, then fall back to existing driver data
+      const idType = bodyFields.id_type || driver?.id_type;
+      
+      // Only proceed if we have a valid id_type
+      if (idType) {
+        const idValue = typeof bodyFields.id_number === 'string' ? bodyFields.id_number.trim() : bodyFields.id_number;
+        if (idValue && idValue !== '') {
+          // Normalize id_type to match enum values
+          const normalizedIdType = String(idType).toUpperCase();
+          if (normalizedIdType === 'SA_ID' || normalizedIdType === 'SOUTH_AFRICA') {
+            updateData.za_id_number = idValue;
+            // Clear passport_number if switching to SA_ID
+            if (driver?.passport_number) {
+              updateData.passport_number = null;
+            }
+          } else if (normalizedIdType === 'PASSPORT') {
+            updateData.passport_number = idValue;
+            // Clear za_id_number if switching to Passport
+            if (driver?.za_id_number) {
+              updateData.za_id_number = null;
+            }
+          }
+        }
+      }
+    }
+    
+    // Handle license_number - map to drivers_license_number
+    if (bodyFields.license_number !== undefined && shouldInclude(bodyFields.license_number)) {
+      updateData.drivers_license_number = typeof bodyFields.license_number === 'string' ? bodyFields.license_number.trim() : bodyFields.license_number;
+    }
+    
+    // Collect validation errors
+    const validationErrors: string[] = [];
+    
+    // Process each mapped field
+    for (const [fieldName, mapping] of Object.entries(fieldMapping)) {
+      const value = bodyFields[fieldName];
+      
+      // Debug logging for company_id before processing
+      if (fieldName === 'company_id') {
+        console.log(`[Compliance Update] Processing ${fieldName}:`, {
+          value: value,
+          type: typeof value,
+          isNull: value === null,
+          isEmptyString: value === '',
+          trimmed: typeof value === 'string' ? value.trim() : 'N/A',
+          isValidUUID: isValidUUID(value),
+          hasOwnProperty: bodyFields.hasOwnProperty('company_id')
+        });
+      }
+      
+      if (value === undefined) {
+        if (fieldName === 'company_id') {
+          console.log(`[Compliance Update] ${fieldName} is undefined in request body`);
+        }
+        continue; // Skip if not provided
+      }
+      
+      const dbColumn = mapping.dbColumn;
+      const fieldType = mapping.type;
+      
+      // Debug logging for prdp_number and company_id
+      if (fieldName === 'prdp_number' || fieldName === 'company_id') {
+        console.log(`[Compliance Update] Processing ${fieldName}:`, {
+          value,
+          dbColumn,
+          fieldType,
+          valueType: typeof value,
+          isEmpty: value === '' || value === null
+        });
+      }
+      
+      // Handle different field types
+      if (fieldType === 'boolean') {
+        // Booleans can be false, so include if explicitly set
+        updateData[dbColumn] = Boolean(value);
+      } else if (fieldType === 'uuid') {
+        // UUIDs: if empty string or null, set to null; if valid UUID, use it
+        if (value === null || value === '' || (typeof value === 'string' && value.trim() === '')) {
+          updateData[dbColumn] = null;
+          if (fieldName === 'company_id') {
+            console.log(`[Compliance Update] Setting ${fieldName} (${dbColumn}) to null (empty value)`);
+          }
+        } else if (isValidUUID(value)) {
+          updateData[dbColumn] = typeof value === 'string' ? value.trim() : value;
+          if (fieldName === 'company_id') {
+            console.log(`[Compliance Update] Setting ${fieldName} (${dbColumn}) to valid UUID:`, updateData[dbColumn]);
+          }
+        } else {
+          // Invalid UUID - collect error
+          if (fieldName === 'company_id') {
+            console.log(`[Compliance Update] Skipping ${fieldName} (${dbColumn}) - invalid UUID:`, value, `(type: ${typeof value})`);
+            console.log(`[Compliance Update] UUID validation details:`, {
+              value: value,
+              trimmed: typeof value === 'string' ? value.trim() : value,
+              isValid: isValidUUID(value),
+              uuidRegexTest: typeof value === 'string' ? /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim()) : false
+            });
+            validationErrors.push(`Company ID must be a valid UUID format (e.g., a3d27256-cf59-447a-81c2-ce9babde91d5). The value "${value}" is not a valid UUID.`);
+          }
+        }
+        // Skip if invalid UUID (don't update)
+      } else if (fieldType === 'date') {
+        // Dates: include if not empty string, convert to ISO format for PostgreSQL
+        if (value !== null && value !== '' && typeof value === 'string' && value.trim() !== '') {
+          const trimmedValue = value.trim();
+          // If it's already in ISO format (YYYY-MM-DD or full ISO), use it
+          // Otherwise, try to parse and convert to ISO
+          try {
+            // Check if it's in YYYY-MM-DD format (from HTML date input)
+            if (/^\d{4}-\d{2}-\d{2}$/.test(trimmedValue)) {
+              // HTML date input gives YYYY-MM-DD, convert to ISO timestamp
+              updateData[dbColumn] = new Date(trimmedValue + 'T00:00:00Z').toISOString();
+            } else {
+              // Try to parse as date and convert to ISO
+              const date = new Date(trimmedValue);
+              if (!isNaN(date.getTime())) {
+                updateData[dbColumn] = date.toISOString();
+              } else {
+                // If parsing fails, use the value as-is (might be in a different format)
+                updateData[dbColumn] = trimmedValue;
+              }
+            }
+          } catch (e) {
+            // If conversion fails, use the value as-is
+            console.warn(`Failed to convert date value "${trimmedValue}" for ${dbColumn}, using as-is`);
+            updateData[dbColumn] = trimmedValue;
+          }
+        }
+      } else if (fieldType === 'number') {
+        // Numbers: parse and include if valid
+        if (value !== null && value !== '' && value !== undefined) {
+          const parsed = typeof value === 'number' ? value : parseFloat(value);
+          if (!isNaN(parsed)) {
+            updateData[dbColumn] = parsed;
+          }
+        }
+      } else {
+        // String fields: always include if value is provided (even empty strings to clear fields)
+        if (value !== undefined) {
+          // For string fields, always save the value if it's provided
+          // This allows clearing fields by sending empty strings
+          if (typeof value === 'string') {
+            updateData[dbColumn] = value.trim();
+          } else {
+            updateData[dbColumn] = value;
+          }
+          if (fieldName === 'prdp_number' || fieldName === 'company_id') {
+            console.log(`[Compliance Update] Setting ${fieldName} (${dbColumn}) to:`, updateData[dbColumn], `(type: ${typeof updateData[dbColumn]})`);
+          }
+        }
+      }
+    }
+
+    // Handle mobile_number separately - it should be saved to profiles.phone, not drivers table
+    let profileUpdateData: any = {};
+    if (bodyFields.mobile_number !== undefined && shouldInclude(bodyFields.mobile_number)) {
+      profileUpdateData.phone = typeof bodyFields.mobile_number === 'string' ? bodyFields.mobile_number.trim() : bodyFields.mobile_number;
+      profileUpdateData.updated_at = new Date().toISOString();
+      
+      // Update profile immediately if mobile_number was provided
+      const { error: profileUpdateError } = await supabaseAdmin
+        .from("profiles")
+        .update(profileUpdateData)
+        .eq("id", user.id);
+      
+      if (profileUpdateError) {
+        console.error("Error updating profile phone:", profileUpdateError);
+        return res.status(500).json({ 
+          error: "Failed to update mobile number",
+          details: profileUpdateError.message 
+        });
+      }
+      
+      console.log("Successfully updated profile phone:", profileUpdateData.phone);
+    }
+
+    // Debug: Log updateData before database update
+    console.log("[Compliance Update] About to update driver with data:", {
+      updateData_keys: Object.keys(updateData),
+      updateData_prdp_number: updateData.prdp_number,
+      updateData_company_id: updateData.company_id,
+      updateData_prdp_number_type: typeof updateData.prdp_number,
+      updateData_company_id_type: typeof updateData.company_id,
+      updateData_full: JSON.stringify(updateData, null, 2)
+    });
+    
+    // Only proceed if we have fields to update (either driver fields or profile fields)
+    if (Object.keys(updateData).length === 0 && Object.keys(profileUpdateData).length === 0) {
+      console.log("[Compliance Update] No fields to update - updateData is empty");
+      return res.json({ message: "No fields to update", driver });
+    }
+
+    // Only proceed with driver update if we have fields to update
+    if (Object.keys(updateData).length === 0) {
+      // If we only updated profile, return success
+      if (Object.keys(profileUpdateData).length > 0) {
+        // Fetch updated driver and profile to return
+        const { data: updatedDriver } = await supabaseAdmin
+          .from("drivers")
+          .select("*")
+          .eq("id", driver.id)
+          .single();
+        
+        const { data: updatedProfile } = await supabaseAdmin
+          .from("profiles")
+          .select("*")
+          .eq("id", user.id)
+          .single();
+        
+        // Map za_id_number/passport_number back to id_number
+        const idType = updatedDriver?.id_type || null;
+        let idNumber = null;
+        if (idType) {
+          const normalizedIdType = String(idType).toUpperCase();
+          if (normalizedIdType === 'SA_ID' || normalizedIdType === 'SOUTH_AFRICA') {
+            idNumber = updatedDriver?.za_id_number || null;
+          } else if (normalizedIdType === 'PASSPORT') {
+            idNumber = updatedDriver?.passport_number || null;
+          }
+        } else {
+          idNumber = updatedDriver?.za_id_number || updatedDriver?.passport_number || null;
+        }
+        
+        // Helper function to format date for HTML date input
+        const formatDateForInput = (dateValue: any): string | null => {
+          if (!dateValue) return null;
+          try {
+            // If it's already in YYYY-MM-DD format, return as-is
+            if (typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
+              return dateValue;
+            }
+            // If it's an ISO timestamp string (e.g., "2025-12-13T00:00:00"), extract just the date part
+            if (typeof dateValue === 'string' && dateValue.includes('T')) {
+              const datePart = dateValue.split('T')[0];
+              if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+                return datePart;
+              }
+            }
+            // Otherwise, try to parse as Date
+            const date = new Date(dateValue);
+            if (isNaN(date.getTime())) return null;
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+          } catch (e) {
+            return null;
+          }
+        };
+        
+        return res.json({
+          ...updatedProfile,
+          ...updatedDriver,
+          mobile_number: updatedProfile?.phone || bodyFields.mobile_number,
+          id_number: idNumber,
+          license_number: updatedDriver?.drivers_license_number || null,
+          license_issue_date: formatDateForInput(updatedDriver?.drivers_license_issue_date),
+          license_expiry_date: formatDateForInput(updatedDriver?.drivers_license_expiry),
+          prdp_number: updatedDriver?.hasOwnProperty('prdp_number') ? (updatedDriver.prdp_number || '') : null,
+          prdp_issue_date: formatDateForInput(updatedDriver?.prdp_issue_date),
+          prdp_expiry_date: formatDateForInput(updatedDriver?.prdp_expiry),
+          dg_training_issue_date: formatDateForInput(updatedDriver?.dg_training_issue_date),
+          dg_training_expiry_date: formatDateForInput(updatedDriver?.dg_training_expiry_date),
+          criminal_check_date: formatDateForInput(updatedDriver?.criminal_check_date),
+          company_id: updatedDriver?.hasOwnProperty('company_id') ? updatedDriver.company_id : null,
+          bank_account_holder: updatedDriver?.bank_account_name || null,
+          email: user.email || null
+        });
+      }
+      return res.json({ message: "No fields to update", driver });
+    }
 
     updateData.updated_at = new Date().toISOString();
+
+    // Debug: Log what we're about to update
+    console.log("[Compliance Update] About to update driver with data:", {
+      updateDataKeys: Object.keys(updateData),
+      prdp_number: updateData.prdp_number,
+      company_id: updateData.company_id,
+      updateData: JSON.stringify(updateData, null, 2)
+    });
 
     const { data: updatedDriver, error: updateError } = await supabaseAdmin
       .from("drivers")
@@ -2989,12 +4151,205 @@ router.put("/compliance", async (req, res) => {
       .eq("id", driver.id)
       .select()
       .single();
+    
+    // Debug: Log what was returned from the update
+    if (updatedDriver) {
+      console.log("[Compliance Update] Driver updated successfully:", {
+        prdp_number: updatedDriver.prdp_number,
+        company_id: updatedDriver.company_id,
+        has_prdp_number: updatedDriver.hasOwnProperty('prdp_number'),
+        has_company_id: updatedDriver.hasOwnProperty('company_id')
+      });
+    }
 
     if (updateError) {
+      // Check if it's a schema cache error or column not found error
+      const isColumnError = updateError.message?.includes("Could not find") || 
+                           updateError.message?.includes("schema cache") || 
+                           updateError.code === '42703' ||
+                           updateError.message?.includes("column");
+      
+      if (isColumnError) {
+        console.error("Schema/column error:", updateError.message);
+        console.error("Attempted to update fields:", Object.keys(updateData));
+        
+        // Try to identify which column is missing
+        const missingColumnMatch = updateError.message?.match(/Could not find the '(\w+)' column/);
+        const missingColumn = missingColumnMatch ? missingColumnMatch[1] : 'unknown';
+        
+        // Remove the problematic column and try again
+        const cleanedUpdateData = { ...updateData };
+        delete cleanedUpdateData[missingColumn];
+        delete cleanedUpdateData.updated_at; // Remove updated_at temporarily
+        
+        if (Object.keys(cleanedUpdateData).length > 0) {
+          cleanedUpdateData.updated_at = new Date().toISOString();
+          console.log(`Removed problematic column '${missingColumn}' and retrying with remaining fields...`);
+          
+          // Retry without the problematic column
+          const retryResult = await supabaseAdmin
+            .from("drivers")
+            .update(cleanedUpdateData)
+            .eq("id", driver.id)
+            .select()
+            .single();
+          
+          if (retryResult.error) {
+            return res.status(500).json({ 
+              error: `Database column '${missingColumn}' not found in drivers table.`,
+              details: updateError.message,
+              hint: `Please add the '${missingColumn}' column to the drivers table or refresh the schema cache by running: NOTIFY pgrst, 'reload schema'; in Supabase SQL Editor.`,
+              attemptedFields: Object.keys(updateData),
+              skippedField: missingColumn
+            });
+          }
+          
+        // Fetch updated profile to include phone as mobile_number
+        const { data: updatedProfileAfterRetry } = await supabaseAdmin
+          .from("profiles")
+          .select("*")
+          .eq("id", user.id)
+          .single();
+        
+        // Map za_id_number/passport_number back to id_number
+        const idTypeAfterRetry = retryResult.data.id_type || null;
+        let idNumberAfterRetry = null;
+        if (idTypeAfterRetry) {
+          const normalizedIdType = String(idTypeAfterRetry).toUpperCase();
+          if (normalizedIdType === 'SA_ID' || normalizedIdType === 'SOUTH_AFRICA') {
+            idNumberAfterRetry = retryResult.data.za_id_number || null;
+          } else if (normalizedIdType === 'PASSPORT') {
+            idNumberAfterRetry = retryResult.data.passport_number || null;
+          }
+        } else {
+          idNumberAfterRetry = retryResult.data.za_id_number || retryResult.data.passport_number || null;
+        }
+        
+        // Helper function to format date for HTML date input
+        const formatDateForInput = (dateValue: any): string | null => {
+          if (!dateValue) return null;
+          try {
+            // If it's already in YYYY-MM-DD format, return as-is
+            if (typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
+              return dateValue;
+            }
+            // If it's an ISO timestamp string (e.g., "2025-12-13T00:00:00"), extract just the date part
+            if (typeof dateValue === 'string' && dateValue.includes('T')) {
+              const datePart = dateValue.split('T')[0];
+              if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+                return datePart;
+              }
+            }
+            // Otherwise, try to parse as Date
+            const date = new Date(dateValue);
+            if (isNaN(date.getTime())) return null;
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+          } catch (e) {
+            return null;
+          }
+        };
+        
+        return res.json({ 
+          ...updatedProfileAfterRetry,
+          ...retryResult.data,
+          mobile_number: updatedProfileAfterRetry?.phone || null,
+          id_number: idNumberAfterRetry,
+          license_number: retryResult.data.drivers_license_number || null,
+          license_issue_date: formatDateForInput(retryResult.data.drivers_license_issue_date),
+          license_expiry_date: formatDateForInput(retryResult.data.drivers_license_expiry),
+          prdp_number: retryResult.data.prdp_number ?? null,
+          prdp_issue_date: formatDateForInput(retryResult.data.prdp_issue_date),
+          prdp_expiry_date: formatDateForInput(retryResult.data.prdp_expiry),
+          dg_training_issue_date: formatDateForInput(retryResult.data.dg_training_issue_date),
+          dg_training_expiry_date: formatDateForInput(retryResult.data.dg_training_expiry_date),
+          criminal_check_date: formatDateForInput(retryResult.data.criminal_check_date),
+          company_id: retryResult.data.company_id || null,
+          bank_account_holder: retryResult.data.bank_account_name || null,
+          email: user.email || null,
+          warning: `Field '${missingColumn}' was skipped because it doesn't exist in the database.`
+        });
+        } else {
+          return res.status(500).json({ 
+            error: `Database column '${missingColumn}' not found and no other fields to update.`,
+            details: updateError.message,
+            hint: `Please add the '${missingColumn}' column to the drivers table or refresh the schema cache.`
+          });
+        }
+      }
       throw updateError;
     }
 
-    res.json(updatedDriver);
+    // Fetch updated profile to include phone as mobile_number
+    const { data: updatedProfile } = await supabaseAdmin
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
+      .single();
+    
+    // Map za_id_number/passport_number back to id_number based on id_type
+    const idType = updatedDriver.id_type || null;
+    let idNumber = null;
+    if (idType) {
+      const normalizedIdType = String(idType).toUpperCase();
+      if (normalizedIdType === 'SA_ID' || normalizedIdType === 'SOUTH_AFRICA') {
+        idNumber = updatedDriver.za_id_number || null;
+      } else if (normalizedIdType === 'PASSPORT') {
+        idNumber = updatedDriver.passport_number || null;
+      }
+    } else {
+      idNumber = updatedDriver.za_id_number || updatedDriver.passport_number || null;
+    }
+    
+    // Helper function to format date for HTML date input
+    const formatDateForInput = (dateValue: any): string | null => {
+      if (!dateValue) return null;
+      try {
+        // If it's already in YYYY-MM-DD format, return as-is
+        if (typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
+          return dateValue;
+        }
+        // If it's an ISO timestamp string (e.g., "2025-12-13T00:00:00"), extract just the date part
+        if (typeof dateValue === 'string' && dateValue.includes('T')) {
+          const datePart = dateValue.split('T')[0];
+          if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+            return datePart;
+          }
+        }
+        // Otherwise, try to parse as Date
+        const date = new Date(dateValue);
+        if (isNaN(date.getTime())) return null;
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      } catch (e) {
+        return null;
+      }
+    };
+    
+    // Return combined data with mobile_number, id_number, license, PrDP, training, criminal, company, and bank fields mapped
+    res.json({
+      ...updatedProfile,
+      ...updatedDriver,
+      mobile_number: updatedProfile?.phone || null,
+      id_number: idNumber,
+      license_number: updatedDriver.drivers_license_number || null,
+      license_issue_date: formatDateForInput(updatedDriver.drivers_license_issue_date),
+      license_expiry_date: formatDateForInput(updatedDriver.drivers_license_expiry),
+      prdp_number: updatedDriver.prdp_number ?? null,
+      company_id: updatedDriver.company_id ?? null,
+      prdp_issue_date: formatDateForInput(updatedDriver.prdp_issue_date),
+      prdp_expiry_date: formatDateForInput(updatedDriver.prdp_expiry),
+      dg_training_issue_date: formatDateForInput(updatedDriver.dg_training_issue_date),
+      dg_training_expiry_date: formatDateForInput(updatedDriver.dg_training_expiry_date),
+      criminal_check_date: formatDateForInput(updatedDriver.criminal_check_date),
+      company_id: updatedDriver.company_id || null,
+      bank_account_holder: updatedDriver.bank_account_name || null,
+      email: user.email || null
+    });
   } catch (error: any) {
     console.error("Error updating driver compliance:", error);
     res.status(500).json({ error: error.message });
@@ -3078,6 +4433,64 @@ router.post("/vehicles/:vehicleId/compliance", async (req, res) => {
     res.json(updatedVehicle);
   } catch (error: any) {
     console.error("Error updating vehicle compliance:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get vehicle documents
+router.get("/vehicles/:vehicleId/documents", async (req, res) => {
+  const user = (req as any).user;
+  const { vehicleId } = req.params;
+  
+  try {
+    // Get driver ID
+    const { data: driver, error: driverError } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (driverError) throw driverError;
+    if (!driver) {
+      return res.status(404).json({ error: "Driver profile not found" });
+    }
+
+    // Verify vehicle belongs to driver
+    const { data: vehicle, error: vehicleError } = await supabaseAdmin
+      .from("vehicles")
+      .select("id, driver_id")
+      .eq("id", vehicleId)
+      .eq("driver_id", driver.id)
+      .maybeSingle();
+
+    if (vehicleError) throw vehicleError;
+    if (!vehicle) {
+      return res.status(404).json({ error: "Vehicle not found or access denied" });
+    }
+
+    // Get documents for this vehicle
+    const { data: documents, error: documentsError } = await supabaseAdmin
+      .from("documents")
+      .select("*")
+      .eq("owner_type", "vehicle")
+      .eq("owner_id", vehicleId)
+      .order("created_at", { ascending: false });
+
+    if (documentsError) {
+      if (documentsError.message?.includes("Could not find") || 
+          documentsError.message?.includes("does not exist") ||
+          documentsError.message?.includes("relation") ||
+          documentsError.code === "42P01" ||
+          documentsError.code === "PGRST116") {
+        console.warn("Documents table not found, returning empty array");
+        return res.json([]);
+      }
+      throw documentsError;
+    }
+
+    res.json(documents || []);
+  } catch (error: any) {
+    console.error("Error fetching vehicle documents:", error);
     res.status(500).json({ error: error.message });
   }
 });

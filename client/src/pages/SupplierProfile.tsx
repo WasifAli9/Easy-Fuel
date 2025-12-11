@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -25,7 +25,8 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/contexts/AuthContext";
-import { User, Lock, ArrowLeft, Shield, Building, FileText, Upload, AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import { User, Lock, ArrowLeft, Shield, Building, FileText, Upload, AlertTriangle, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -36,6 +37,7 @@ import { Progress } from "@/components/ui/progress";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { normalizeFilePath } from "@/lib/utils";
 import { ChevronRight } from "lucide-react";
 
 const profileSchema = z.object({
@@ -83,6 +85,34 @@ const SOUTH_AFRICAN_PROVINCES = [
   "Western Cape",
 ];
 
+// Helper function to format dates consistently
+const formatDate = (dateString: string | null | undefined): string => {
+  if (!dateString) return "N/A";
+  try {
+    return new Date(dateString).toLocaleDateString("en-ZA", {
+      dateStyle: "medium",
+      timeZone: "Africa/Johannesburg",
+    });
+  } catch (error) {
+    return "Invalid Date";
+  }
+};
+
+// Helper function to format date for input field (YYYY-MM-DD)
+const formatDateForInput = (dateString: string | null | undefined): string => {
+  if (!dateString) return "";
+  try {
+    const date = new Date(dateString);
+    // Handle timezone by using local date
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  } catch (error) {
+    return "";
+  }
+};
+
 export default function SupplierProfile() {
   const { toast } = useToast();
   const { updatePassword, refetchProfile } = useAuth();
@@ -99,6 +129,21 @@ export default function SupplierProfile() {
   // Get supplier documents
   const { data: documents = [] } = useQuery<any[]>({
     queryKey: ["/api/supplier/documents"],
+    refetchInterval: 5000, // Refetch every 5 seconds to get updated status
+  });
+
+  // Listen for document status updates and KYC approval via WebSocket
+  useWebSocket((message) => {
+    if (message.type === "document_approved" || message.type === "document_rejected" || 
+        message.type === "kyc_approved" || message.type === "compliance_approved" || 
+        message.type === "kyb_approved") {
+      console.log("[SupplierProfile] Received WebSocket message:", message.type);
+      queryClient.invalidateQueries({ queryKey: ["/api/supplier/documents"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/supplier/profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/supplier/compliance/status"] });
+      queryClient.refetchQueries({ queryKey: ["/api/supplier/documents"] });
+      queryClient.refetchQueries({ queryKey: ["/api/supplier/profile"] });
+    }
   });
 
   const profileForm = useForm<ProfileFormData>({
@@ -140,83 +185,137 @@ export default function SupplierProfile() {
     },
   });
 
-  // Compliance form
+  // Helper function to find document by type
+  const findDocument = (docType: string, title?: string) => {
+    return documents.find((d) => {
+      if (d.doc_type !== docType) return false;
+      if (title && d.title !== title) return false;
+      return true;
+    });
+  };
+
+  // Compliance form - use useEffect to reset form when profile data loads
   const complianceForm = useForm<any>({
     defaultValues: {
-      director_names: profile?.director_names || [],
-      registered_address: profile?.registered_address || "",
-      vat_certificate_expiry: profile?.vat_certificate_expiry || "",
-      tax_clearance_number: profile?.tax_clearance_number || "",
-      tax_clearance_expiry: profile?.tax_clearance_expiry || "",
-      wholesale_license_issue_date: profile?.wholesale_license_issue_date || "",
-      allowed_fuel_types: profile?.allowed_fuel_types || [],
-      site_license_number: profile?.site_license_number || "",
-      depot_address: profile?.depot_address || "",
-      permit_number: profile?.permit_number || "",
-      permit_expiry_date: profile?.permit_expiry_date || "",
-      environmental_auth_number: profile?.environmental_auth_number || "",
-      approved_storage_capacity_litres: profile?.approved_storage_capacity_litres || "",
-      fire_certificate_number: profile?.fire_certificate_number || "",
-      fire_certificate_issue_date: profile?.fire_certificate_issue_date || "",
-      fire_certificate_expiry_date: profile?.fire_certificate_expiry_date || "",
-      hse_file_verified: profile?.hse_file_verified || false,
-      hse_file_last_updated: profile?.hse_file_last_updated || "",
-      spill_compliance_confirmed: profile?.spill_compliance_confirmed || false,
-      sabs_certificate_number: profile?.sabs_certificate_number || "",
-      sabs_certificate_issue_date: profile?.sabs_certificate_issue_date || "",
-      sabs_certificate_expiry_date: profile?.sabs_certificate_expiry_date || "",
-      calibration_certificate_number: profile?.calibration_certificate_number || "",
-      calibration_certificate_issue_date: profile?.calibration_certificate_issue_date || "",
-      calibration_certificate_expiry_date: profile?.calibration_certificate_expiry_date || "",
-      public_liability_policy_number: profile?.public_liability_policy_number || "",
-      public_liability_insurance_provider: profile?.public_liability_insurance_provider || "",
-      public_liability_coverage_amount_rands: profile?.public_liability_coverage_amount_rands || "",
-      public_liability_policy_expiry_date: profile?.public_liability_policy_expiry_date || "",
-      env_insurance_number: profile?.env_insurance_number || "",
-      env_insurance_expiry_date: profile?.env_insurance_expiry_date || "",
+      // Company Registration
+      company_name: "",
+      registration_number: "",
+      registered_address: "",
+      director_names: [],
+      // VAT Certificate
+      vat_number: "",
+      // SARS Tax Clearance
+      tax_clearance_number: "",
+      tax_clearance_expiry: "",
+      // Wholesale Fuel Licence
+      wholesale_license_number: "",
+      wholesale_license_issue_date: "",
+      wholesale_license_expiry_date: "",
+      allowed_fuel_types: [],
+      // Depot / Site Licence
+      site_license_number: "",
+      depot_address: "",
+      // Additional Fuel Trading Permit
+      permit_number: "",
+      permit_expiry_date: "",
+      // Environmental Authorisation
+      environmental_auth_number: "",
+      approved_storage_capacity_litres: "",
+      // Fire Department Certificate
+      fire_certificate_number: "",
+      fire_certificate_issue_date: "",
+      fire_certificate_expiry_date: "",
+      // Health & Safety File
+      hse_file_verified: false,
+      hse_file_last_updated: "",
+      // Spill Containment Compliance
+      spill_compliance_confirmed: false,
+      // SABS Fuel Quality Certificate
+      sabs_certificate_number: "",
+      sabs_certificate_issue_date: "",
+      sabs_certificate_expiry_date: "",
+      // Pump / Meter Calibration Certificates
+      calibration_certificate_number: "",
+      calibration_certificate_issue_date: "",
+      calibration_certificate_expiry_date: "",
+      // Public Liability Insurance
+      public_liability_policy_number: "",
+      public_liability_insurance_provider: "",
+      public_liability_coverage_amount_rands: "",
+      public_liability_policy_expiry_date: "",
+      // Environmental Liability Insurance
+      env_insurance_number: "",
+      env_insurance_expiry_date: "",
     },
-    values: profile ? {
-      director_names: profile.director_names || [],
-      registered_address: profile.registered_address || "",
-      vat_certificate_expiry: profile.vat_certificate_expiry || "",
-      tax_clearance_number: profile.tax_clearance_number || "",
-      tax_clearance_expiry: profile.tax_clearance_expiry || "",
-      wholesale_license_issue_date: profile.wholesale_license_issue_date || "",
-      allowed_fuel_types: profile.allowed_fuel_types || [],
-      site_license_number: profile.site_license_number || "",
-      depot_address: profile.depot_address || "",
-      permit_number: profile.permit_number || "",
-      permit_expiry_date: profile.permit_expiry_date || "",
-      environmental_auth_number: profile.environmental_auth_number || "",
-      approved_storage_capacity_litres: profile.approved_storage_capacity_litres || "",
-      fire_certificate_number: profile.fire_certificate_number || "",
-      fire_certificate_issue_date: profile.fire_certificate_issue_date || "",
-      fire_certificate_expiry_date: profile.fire_certificate_expiry_date || "",
-      hse_file_verified: profile.hse_file_verified || false,
-      hse_file_last_updated: profile.hse_file_last_updated || "",
-      spill_compliance_confirmed: profile.spill_compliance_confirmed || false,
-      sabs_certificate_number: profile.sabs_certificate_number || "",
-      sabs_certificate_issue_date: profile.sabs_certificate_issue_date || "",
-      sabs_certificate_expiry_date: profile.sabs_certificate_expiry_date || "",
-      calibration_certificate_number: profile.calibration_certificate_number || "",
-      calibration_certificate_issue_date: profile.calibration_certificate_issue_date || "",
-      calibration_certificate_expiry_date: profile.calibration_certificate_expiry_date || "",
-      public_liability_policy_number: profile.public_liability_policy_number || "",
-      public_liability_insurance_provider: profile.public_liability_insurance_provider || "",
-      public_liability_coverage_amount_rands: profile.public_liability_coverage_amount_rands || "",
-      public_liability_policy_expiry_date: profile.public_liability_policy_expiry_date || "",
-      env_insurance_number: profile.env_insurance_number || "",
-      env_insurance_expiry_date: profile.env_insurance_expiry_date || "",
-    } : undefined,
   });
+
+  // Reset form when profile data loads or changes
+  useEffect(() => {
+    if (profile) {
+      complianceForm.reset({
+        // Company Registration - map registered_name to company_name
+        company_name: profile.registered_name || profile.company_name || "",
+        registration_number: profile.registration_number || "",
+        registered_address: profile.registered_address || "",
+        director_names: Array.isArray(profile.director_names) ? profile.director_names : (profile.director_names ? [profile.director_names] : []),
+        // VAT Certificate
+        vat_number: profile.vat_number || "",
+        // SARS Tax Clearance
+        tax_clearance_number: profile.tax_clearance_number || "",
+        tax_clearance_expiry: profile.tax_clearance_expiry ? formatDateForInput(profile.tax_clearance_expiry) : "",
+        // Wholesale Fuel Licence - map dmre_license_number to wholesale_license_number
+        wholesale_license_number: profile.dmre_license_number || profile.wholesale_license_number || "",
+        wholesale_license_issue_date: profile.wholesale_license_issue_date ? formatDateForInput(profile.wholesale_license_issue_date) : "",
+        wholesale_license_expiry_date: profile.dmre_license_expiry ? formatDateForInput(profile.dmre_license_expiry) : (profile.wholesale_license_expiry_date ? formatDateForInput(profile.wholesale_license_expiry_date) : ""),
+        allowed_fuel_types: Array.isArray(profile.allowed_fuel_types) ? profile.allowed_fuel_types : (profile.allowed_fuel_types ? [profile.allowed_fuel_types] : []),
+        // Depot / Site Licence
+        site_license_number: profile.site_license_number || "",
+        depot_address: profile.depot_address || "",
+        // Additional Fuel Trading Permit
+        permit_number: profile.permit_number || "",
+        permit_expiry_date: profile.permit_expiry_date ? formatDateForInput(profile.permit_expiry_date) : "",
+        // Environmental Authorisation
+        environmental_auth_number: profile.environmental_auth_number || "",
+        approved_storage_capacity_litres: profile.approved_storage_capacity_litres || "",
+        // Fire Department Certificate
+        fire_certificate_number: profile.fire_certificate_number || "",
+        fire_certificate_issue_date: profile.fire_certificate_issue_date ? formatDateForInput(profile.fire_certificate_issue_date) : "",
+        fire_certificate_expiry_date: profile.fire_certificate_expiry_date ? formatDateForInput(profile.fire_certificate_expiry_date) : "",
+        // Health & Safety File
+        hse_file_verified: profile.hse_file_verified || false,
+        hse_file_last_updated: profile.hse_file_last_updated ? formatDateForInput(profile.hse_file_last_updated) : "",
+        // Spill Containment Compliance
+        spill_compliance_confirmed: profile.spill_compliance_confirmed || false,
+        // SABS Fuel Quality Certificate
+        sabs_certificate_number: profile.sabs_certificate_number || "",
+        sabs_certificate_issue_date: profile.sabs_certificate_issue_date ? formatDateForInput(profile.sabs_certificate_issue_date) : "",
+        sabs_certificate_expiry_date: profile.sabs_certificate_expiry_date ? formatDateForInput(profile.sabs_certificate_expiry_date) : "",
+        // Pump / Meter Calibration Certificates
+        calibration_certificate_number: profile.calibration_certificate_number || "",
+        calibration_certificate_issue_date: profile.calibration_certificate_issue_date ? formatDateForInput(profile.calibration_certificate_issue_date) : "",
+        calibration_certificate_expiry_date: profile.calibration_certificate_expiry_date ? formatDateForInput(profile.calibration_certificate_expiry_date) : "",
+        // Public Liability Insurance
+        public_liability_policy_number: profile.public_liability_policy_number || "",
+        public_liability_insurance_provider: profile.public_liability_insurance_provider || "",
+        public_liability_coverage_amount_rands: profile.public_liability_coverage_amount_rands || "",
+        public_liability_policy_expiry_date: profile.public_liability_policy_expiry_date ? formatDateForInput(profile.public_liability_policy_expiry_date) : "",
+        // Environmental Liability Insurance
+        env_insurance_number: profile.env_insurance_number || "",
+        env_insurance_expiry_date: profile.env_insurance_expiry_date ? formatDateForInput(profile.env_insurance_expiry_date) : "",
+      });
+    }
+  }, [profile, complianceForm]);
 
   const updateComplianceMutation = useMutation({
     mutationFn: async (data: any) => {
       return apiRequest("PUT", "/api/supplier/compliance", data);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/supplier/profile"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/supplier/compliance/status"] });
+    onSuccess: async () => {
+      // Invalidate and refetch profile data to get updated values
+      await queryClient.invalidateQueries({ queryKey: ["/api/supplier/profile"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/supplier/compliance/status"] });
+      // Refetch profile to update form values
+      await queryClient.refetchQueries({ queryKey: ["/api/supplier/profile"] });
       toast({
         title: "Success",
         description: "Compliance information updated successfully",
@@ -313,7 +412,8 @@ export default function SupplierProfile() {
   const getDocumentStatusBadge = (status: string) => {
     switch (status) {
       case "verified":
-        return <Badge variant="default" className="bg-green-600"><CheckCircle2 className="h-3 w-3 mr-1" />Verified</Badge>;
+      case "approved":
+        return <Badge variant="default" className="bg-green-600"><CheckCircle2 className="h-3 w-3 mr-1" />Approved</Badge>;
       case "rejected":
         return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Rejected</Badge>;
       default:
@@ -767,26 +867,57 @@ export default function SupplierProfile() {
               <Form {...complianceForm}>
                 <form 
                   onSubmit={complianceForm.handleSubmit((data) => updateComplianceMutation.mutate(data))} 
-                  className="space-y-6"
+                  className="space-y-8"
                 >
-                  {/* Company Registration Section */}
-                  <Collapsible defaultOpen={true}>
-                    <CollapsibleTrigger className="w-full">
-                      <div className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors">
-                        <div className="flex items-center gap-2">
-                          <Building className="h-5 w-5" />
-                          <span className="font-semibold">Company Registration</span>
-                        </div>
-                        <ChevronRight className="h-5 w-5 transition-transform duration-200 data-[state=open]:rotate-90" />
+                  {/* ========== SECTION 1: COMPANY LEGITIMACY ========== */}
+                  <div className="space-y-6">
+                    <div className="border-b-2 border-primary/20 pb-3">
+                      <h2 className="text-xl font-bold flex items-center gap-2">
+                        <Building className="h-5 w-5 text-primary" />
+                        1. Company Legitimacy
+                      </h2>
+                    </div>
+
+                    {/* A. Company Registration (CIPC Docs) */}
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <h3 className="text-lg font-semibold text-primary">A. Company Registration (CIPC Docs)</h3>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="company_name"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Company Name *</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter company name" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={complianceForm.control}
+                          name="registration_number"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Registration Number (CIPC) *</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter CIPC registration number" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
                       </div>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="space-y-4 pt-4">
+
                       <FormField
                         control={complianceForm.control}
                         name="registered_address"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Registered Address</FormLabel>
+                            <FormLabel>Registered Address *</FormLabel>
                             <FormControl>
                               <Textarea {...field} placeholder="Enter registered company address" />
                             </FormControl>
@@ -794,111 +925,437 @@ export default function SupplierProfile() {
                           </FormItem>
                         )}
                       />
-                    </CollapsibleContent>
-                  </Collapsible>
 
-                  <Separator />
+                      <FormField
+                        control={complianceForm.control}
+                        name="director_names"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Director Names *</FormLabel>
+                            <FormControl>
+                              <Textarea 
+                                {...field} 
+                                placeholder="Enter director names (one per line or comma-separated)"
+                                value={Array.isArray(field.value) ? field.value.join(", ") : field.value || ""}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  const names = value.split(/[,\n]/).map(n => n.trim()).filter(Boolean);
+                                  field.onChange(names);
+                                }}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
-                  {/* Tax & VAT Section */}
-                  <Collapsible>
-                    <CollapsibleTrigger className="w-full">
-                      <div className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors">
-                        <div className="flex items-center gap-2">
-                          <FileText className="h-5 w-5" />
-                          <span className="font-semibold">Tax & VAT</span>
-                        </div>
-                        <ChevronRight className="h-5 w-5 transition-transform duration-200 data-[state=open]:rotate-90" />
+                      {/* CIPC Documents Upload */}
+                      <div className="pt-4 border-t border-border">
+                        <h4 className="text-sm font-semibold mb-3">CIPC Documents Upload *</h4>
+                        {(() => {
+                          const existingDoc = findDocument("cipc_certificate");
+                          return existingDoc ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm text-muted-foreground">
+                                  Uploaded: {formatDate(existingDoc.created_at)}
+                                </p>
+                                {getDocumentStatusBadge(existingDoc.verification_status)}
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
+                                    if (normalizedPath) {
+                                      window.open(normalizedPath, "_blank");
+                                    } else {
+                                      toast({
+                                        title: "Error",
+                                        description: "Document file path is missing or invalid",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                >
+                                  View Document
+                                </Button>
+                                <ObjectUploader
+                                  onGetUploadParameters={getUploadURL}
+                                  onComplete={(result) => handleDocumentUpload("cipc_certificate", "CIPC Certificate", result)}
+                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  maxFileSize={10485760}
+                                  buttonVariant="outline"
+                                  buttonSize="sm"
+                                >
+                                  Replace
+                                </ObjectUploader>
+                              </div>
+                            </div>
+                          ) : (
+                            <ObjectUploader
+                              onGetUploadParameters={getUploadURL}
+                              onComplete={(result) => handleDocumentUpload("cipc_certificate", "CIPC Certificate", result)}
+                              allowedFileTypes={["application/pdf", "image/*"]}
+                              maxFileSize={10485760}
+                              buttonVariant="default"
+                            >
+                              <Upload className="h-4 w-4 mr-2" />
+                              Upload CIPC Documents
+                            </ObjectUploader>
+                          );
+                        })()}
                       </div>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="space-y-4 pt-4">
-                      <FormField
-                        control={complianceForm.control}
-                        name="vat_certificate_expiry"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>VAT Certificate Expiry Date</FormLabel>
-                            <FormControl>
-                              <Input type="date" {...field} value={field.value ? new Date(field.value).toISOString().split('T')[0] : ''} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={complianceForm.control}
-                        name="tax_clearance_number"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Tax Clearance Number</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="Enter tax clearance number" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={complianceForm.control}
-                        name="tax_clearance_expiry"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Tax Clearance Expiry Date</FormLabel>
-                            <FormControl>
-                              <Input type="date" {...field} value={field.value ? new Date(field.value).toISOString().split('T')[0] : ''} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </CollapsibleContent>
-                  </Collapsible>
+                    </div>
 
-                  <Separator />
+                    {/* B. VAT Certificate */}
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <h3 className="text-lg font-semibold text-primary">B. VAT Certificate</h3>
+                      
+                      <FormField
+                        control={complianceForm.control}
+                        name="vat_number"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>VAT Number *</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="Enter VAT number" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
-                  {/* Petroleum Licensing Section */}
-                  <Collapsible>
-                    <CollapsibleTrigger className="w-full">
-                      <div className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors">
-                        <div className="flex items-center gap-2">
-                          <FileText className="h-5 w-5" />
-                          <span className="font-semibold">Petroleum Licensing</span>
-                        </div>
-                        <ChevronRight className="h-5 w-5 transition-transform duration-200 data-[state=open]:rotate-90" />
+                      {/* VAT Certificate Upload */}
+                      <div className="pt-4 border-t border-border">
+                        <h4 className="text-sm font-semibold mb-3">VAT Certificate Upload *</h4>
+                        {(() => {
+                          const existingDoc = findDocument("vat_certificate");
+                          return existingDoc ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm text-muted-foreground">
+                                  Uploaded: {formatDate(existingDoc.created_at)}
+                                  {existingDoc.expiry_date && ` | Expires: ${formatDate(existingDoc.expiry_date)}`}
+                                </p>
+                                {getDocumentStatusBadge(existingDoc.verification_status)}
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
+                                    if (normalizedPath) {
+                                      window.open(normalizedPath, "_blank");
+                                    } else {
+                                      toast({
+                                        title: "Error",
+                                        description: "Document file path is missing or invalid",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                >
+                                  View Document
+                                </Button>
+                                <ObjectUploader
+                                  onGetUploadParameters={getUploadURL}
+                                  onComplete={(result) => handleDocumentUpload("vat_certificate", "VAT Certificate", result)}
+                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  maxFileSize={10485760}
+                                  buttonVariant="outline"
+                                  buttonSize="sm"
+                                >
+                                  Replace
+                                </ObjectUploader>
+                              </div>
+                            </div>
+                          ) : (
+                            <ObjectUploader
+                              onGetUploadParameters={getUploadURL}
+                              onComplete={(result) => handleDocumentUpload("vat_certificate", "VAT Certificate", result)}
+                              allowedFileTypes={["application/pdf", "image/*"]}
+                              maxFileSize={10485760}
+                              buttonVariant="default"
+                            >
+                              <Upload className="h-4 w-4 mr-2" />
+                              Upload VAT Certificate
+                            </ObjectUploader>
+                          );
+                        })()}
                       </div>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="space-y-4 pt-4">
-                      <FormField
-                        control={complianceForm.control}
-                        name="wholesale_license_issue_date"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Wholesale License Issue Date</FormLabel>
-                            <FormControl>
-                              <Input type="date" {...field} value={field.value ? new Date(field.value).toISOString().split('T')[0] : ''} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={complianceForm.control}
-                        name="site_license_number"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Site License Number</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="Enter site license number" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                    </div>
+
+                    {/* C. SARS Tax Clearance Certificate */}
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <h3 className="text-lg font-semibold text-primary">C. SARS Tax Clearance Certificate</h3>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="tax_clearance_number"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Tax Clearance Number *</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter tax clearance number" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={complianceForm.control}
+                          name="tax_clearance_expiry"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Tax Clearance Expiry Date *</FormLabel>
+                              <FormControl>
+                                <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      {/* Tax Clearance Document Upload */}
+                      <div className="pt-4 border-t border-border">
+                        <h4 className="text-sm font-semibold mb-3">Tax Clearance Certificate Upload *</h4>
+                        {(() => {
+                          const existingDoc = findDocument("tax_clearance");
+                          return existingDoc ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm text-muted-foreground">
+                                  Uploaded: {formatDate(existingDoc.created_at)}
+                                  {existingDoc.expiry_date && ` | Expires: ${formatDate(existingDoc.expiry_date)}`}
+                                </p>
+                                {getDocumentStatusBadge(existingDoc.verification_status)}
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
+                                    if (normalizedPath) {
+                                      window.open(normalizedPath, "_blank");
+                                    } else {
+                                      toast({
+                                        title: "Error",
+                                        description: "Document file path is missing or invalid",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                >
+                                  View Document
+                                </Button>
+                                <ObjectUploader
+                                  onGetUploadParameters={getUploadURL}
+                                  onComplete={(result) => handleDocumentUpload("tax_clearance", "SARS Tax Clearance Certificate", result)}
+                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  maxFileSize={10485760}
+                                  buttonVariant="outline"
+                                  buttonSize="sm"
+                                >
+                                  Replace
+                                </ObjectUploader>
+                              </div>
+                            </div>
+                          ) : (
+                            <ObjectUploader
+                              onGetUploadParameters={getUploadURL}
+                              onComplete={(result) => handleDocumentUpload("tax_clearance", "SARS Tax Clearance Certificate", result)}
+                              allowedFileTypes={["application/pdf", "image/*"]}
+                              maxFileSize={10485760}
+                              buttonVariant="default"
+                            >
+                              <Upload className="h-4 w-4 mr-2" />
+                              Upload Tax Clearance Certificate
+                            </ObjectUploader>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ========== SECTION 2: PETROLEUM LICENSING (MOST IMPORTANT) ========== */}
+                  <div className="space-y-6 pt-4 border-t-2 border-primary/20">
+                    <div className="border-b-2 border-primary/20 pb-3">
+                      <h2 className="text-xl font-bold flex items-center gap-2">
+                        <FileText className="h-5 w-5 text-primary" />
+                        2. Petroleum Licensing
+                      </h2>
+                      <p className="text-sm text-muted-foreground mt-1 font-semibold text-amber-600">
+                        Most Important
+                      </p>
+                    </div>
+
+                    {/* A. Wholesale Fuel Licence (DMRE) */}
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <h3 className="text-lg font-semibold text-primary">A. Wholesale Fuel Licence (DMRE)</h3>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="wholesale_license_number"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Wholesale License Number *</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter DMRE license number" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={complianceForm.control}
+                          name="allowed_fuel_types"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Allowed Fuel Types *</FormLabel>
+                              <FormControl>
+                                <Input 
+                                  {...field} 
+                                  placeholder="e.g., Diesel, Petrol, Paraffin (comma-separated)"
+                                  value={Array.isArray(field.value) ? field.value.join(", ") : field.value || ""}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    const types = value.split(",").map(t => t.trim()).filter(Boolean);
+                                    field.onChange(types);
+                                  }}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="wholesale_license_issue_date"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>License Issue Date *</FormLabel>
+                              <FormControl>
+                                <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={complianceForm.control}
+                          name="wholesale_license_expiry_date"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>License Expiry Date *</FormLabel>
+                              <FormControl>
+                                <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      {/* DMRE License Document Upload */}
+                      <div className="pt-4 border-t border-border">
+                        <h4 className="text-sm font-semibold mb-3">DMRE Wholesale Fuel License Document Upload *</h4>
+                        {(() => {
+                          const existingDoc = findDocument("dmre_license");
+                          return existingDoc ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm text-muted-foreground">
+                                  Uploaded: {formatDate(existingDoc.created_at)}
+                                  {existingDoc.expiry_date && ` | Expires: ${formatDate(existingDoc.expiry_date)}`}
+                                </p>
+                                {getDocumentStatusBadge(existingDoc.verification_status)}
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
+                                    if (normalizedPath) {
+                                      window.open(normalizedPath, "_blank");
+                                    } else {
+                                      toast({
+                                        title: "Error",
+                                        description: "Document file path is missing or invalid",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                >
+                                  View Document
+                                </Button>
+                                <ObjectUploader
+                                  onGetUploadParameters={getUploadURL}
+                                  onComplete={(result) => handleDocumentUpload("dmre_license", "DMRE Wholesale Fuel License", result)}
+                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  maxFileSize={10485760}
+                                  buttonVariant="outline"
+                                  buttonSize="sm"
+                                >
+                                  Replace
+                                </ObjectUploader>
+                              </div>
+                            </div>
+                          ) : (
+                            <ObjectUploader
+                              onGetUploadParameters={getUploadURL}
+                              onComplete={(result) => handleDocumentUpload("dmre_license", "DMRE Wholesale Fuel License", result)}
+                              allowedFileTypes={["application/pdf", "image/*"]}
+                              maxFileSize={10485760}
+                              buttonVariant="default"
+                            >
+                              <Upload className="h-4 w-4 mr-2" />
+                              Upload DMRE Wholesale Fuel License
+                            </ObjectUploader>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* B. Depot / Site Licence */}
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <h3 className="text-lg font-semibold text-primary">B. Depot / Site Licence</h3>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="site_license_number"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Site License Number *</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter site license number" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
                       <FormField
                         control={complianceForm.control}
                         name="depot_address"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Depot Address</FormLabel>
+                            <FormLabel>Depot Address *</FormLabel>
                             <FormControl>
                               <Textarea {...field} placeholder="Enter depot address" />
                             </FormControl>
@@ -906,116 +1363,381 @@ export default function SupplierProfile() {
                           </FormItem>
                         )}
                       />
-                      <FormField
-                        control={complianceForm.control}
-                        name="permit_number"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Fuel Trading Permit Number</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="Enter permit number" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={complianceForm.control}
-                        name="permit_expiry_date"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Permit Expiry Date</FormLabel>
-                            <FormControl>
-                              <Input type="date" {...field} value={field.value ? new Date(field.value).toISOString().split('T')[0] : ''} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </CollapsibleContent>
-                  </Collapsible>
 
-                  <Separator />
-
-                  {/* Environmental & Safety Section */}
-                  <Collapsible>
-                    <CollapsibleTrigger className="w-full">
-                      <div className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors">
-                        <div className="flex items-center gap-2">
-                          <FileText className="h-5 w-5" />
-                          <span className="font-semibold">Environmental & Safety</span>
-                        </div>
-                        <ChevronRight className="h-5 w-5 transition-transform duration-200 data-[state=open]:rotate-90" />
+                      {/* Site License Document Upload */}
+                      <div className="pt-4 border-t border-border">
+                        <h4 className="text-sm font-semibold mb-3">Site/Depot License Document Upload *</h4>
+                        {(() => {
+                          const existingDoc = findDocument("site_license");
+                          return existingDoc ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm text-muted-foreground">
+                                  Uploaded: {formatDate(existingDoc.created_at)}
+                                </p>
+                                {getDocumentStatusBadge(existingDoc.verification_status)}
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
+                                    if (normalizedPath) {
+                                      window.open(normalizedPath, "_blank");
+                                    } else {
+                                      toast({
+                                        title: "Error",
+                                        description: "Document file path is missing or invalid",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                >
+                                  View Document
+                                </Button>
+                                <ObjectUploader
+                                  onGetUploadParameters={getUploadURL}
+                                  onComplete={(result) => handleDocumentUpload("site_license", "Site/Depot License", result)}
+                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  maxFileSize={10485760}
+                                  buttonVariant="outline"
+                                  buttonSize="sm"
+                                >
+                                  Replace
+                                </ObjectUploader>
+                              </div>
+                            </div>
+                          ) : (
+                            <ObjectUploader
+                              onGetUploadParameters={getUploadURL}
+                              onComplete={(result) => handleDocumentUpload("site_license", "Site/Depot License", result)}
+                              allowedFileTypes={["application/pdf", "image/*"]}
+                              maxFileSize={10485760}
+                              buttonVariant="default"
+                            >
+                              <Upload className="h-4 w-4 mr-2" />
+                              Upload Site/Depot License Document
+                            </ObjectUploader>
+                          );
+                        })()}
                       </div>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="space-y-4 pt-4">
-                      <FormField
-                        control={complianceForm.control}
-                        name="environmental_auth_number"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Environmental Authorisation Number</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="Enter authorisation number" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={complianceForm.control}
-                        name="approved_storage_capacity_litres"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Approved Storage Capacity (Litres)</FormLabel>
-                            <FormControl>
-                              <Input type="number" {...field} placeholder="Enter capacity in litres" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={complianceForm.control}
-                        name="fire_certificate_number"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Fire Certificate Number</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="Enter certificate number" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <div className="grid grid-cols-2 gap-4">
+                    </div>
+
+                    {/* C. Additional Fuel Trading Permit */}
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <h3 className="text-lg font-semibold text-primary">C. Additional Fuel Trading Permit (If required)</h3>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="permit_number"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Permit Number</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter permit number" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={complianceForm.control}
+                          name="permit_expiry_date"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Permit Expiry Date</FormLabel>
+                              <FormControl>
+                                <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      {/* Permit Document Upload */}
+                      <div className="pt-4 border-t border-border">
+                        <h4 className="text-sm font-semibold mb-3">Fuel Trading Permit Document Upload</h4>
+                        {(() => {
+                          const existingDoc = findDocument("fuel_trading_permit");
+                          return existingDoc ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm text-muted-foreground">
+                                  Uploaded: {formatDate(existingDoc.created_at)}
+                                  {existingDoc.expiry_date && ` | Expires: ${formatDate(existingDoc.expiry_date)}`}
+                                </p>
+                                {getDocumentStatusBadge(existingDoc.verification_status)}
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
+                                    if (normalizedPath) {
+                                      window.open(normalizedPath, "_blank");
+                                    } else {
+                                      toast({
+                                        title: "Error",
+                                        description: "Document file path is missing or invalid",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                >
+                                  View Document
+                                </Button>
+                                <ObjectUploader
+                                  onGetUploadParameters={getUploadURL}
+                                  onComplete={(result) => handleDocumentUpload("fuel_trading_permit", "Fuel Trading Permit", result)}
+                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  maxFileSize={10485760}
+                                  buttonVariant="outline"
+                                  buttonSize="sm"
+                                >
+                                  Replace
+                                </ObjectUploader>
+                              </div>
+                            </div>
+                          ) : (
+                            <ObjectUploader
+                              onGetUploadParameters={getUploadURL}
+                              onComplete={(result) => handleDocumentUpload("fuel_trading_permit", "Fuel Trading Permit", result)}
+                              allowedFileTypes={["application/pdf", "image/*"]}
+                              maxFileSize={10485760}
+                              buttonVariant="default"
+                            >
+                              <Upload className="h-4 w-4 mr-2" />
+                              Upload Fuel Trading Permit Document
+                            </ObjectUploader>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ========== SECTION 3: ENVIRONMENTAL & SAFETY COMPLIANCE ========== */}
+                  <div className="space-y-6 pt-4 border-t-2 border-primary/20">
+                    <div className="border-b-2 border-primary/20 pb-3">
+                      <h2 className="text-xl font-bold flex items-center gap-2">
+                        <Shield className="h-5 w-5 text-primary" />
+                        3. Environmental & Safety Compliance
+                      </h2>
+                    </div>
+
+                    {/* A. Environmental Authorisation */}
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <h3 className="text-lg font-semibold text-primary">A. Environmental Authorisation</h3>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="environmental_auth_number"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Environmental Authorisation Number *</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter authorisation number" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={complianceForm.control}
+                          name="approved_storage_capacity_litres"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Approved Storage Capacity (Litres) *</FormLabel>
+                              <FormControl>
+                                <Input type="number" {...field} placeholder="Enter capacity in litres" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      {/* Environmental Document Upload */}
+                      <div className="pt-4 border-t border-border">
+                        <h4 className="text-sm font-semibold mb-3">Environmental Authorisation Document Upload *</h4>
+                        {(() => {
+                          const existingDoc = findDocument("environmental_authorisation");
+                          return existingDoc ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm text-muted-foreground">
+                                  Uploaded: {formatDate(existingDoc.created_at)}
+                                </p>
+                                {getDocumentStatusBadge(existingDoc.verification_status)}
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
+                                    if (normalizedPath) {
+                                      window.open(normalizedPath, "_blank");
+                                    } else {
+                                      toast({
+                                        title: "Error",
+                                        description: "Document file path is missing or invalid",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                >
+                                  View Document
+                                </Button>
+                                <ObjectUploader
+                                  onGetUploadParameters={getUploadURL}
+                                  onComplete={(result) => handleDocumentUpload("environmental_authorisation", "Environmental Authorisation", result)}
+                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  maxFileSize={10485760}
+                                  buttonVariant="outline"
+                                  buttonSize="sm"
+                                >
+                                  Replace
+                                </ObjectUploader>
+                              </div>
+                            </div>
+                          ) : (
+                            <ObjectUploader
+                              onGetUploadParameters={getUploadURL}
+                              onComplete={(result) => handleDocumentUpload("environmental_authorisation", "Environmental Authorisation", result)}
+                              allowedFileTypes={["application/pdf", "image/*"]}
+                              maxFileSize={10485760}
+                              buttonVariant="default"
+                            >
+                              <Upload className="h-4 w-4 mr-2" />
+                              Upload Environmental Authorisation Document
+                            </ObjectUploader>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* B. Fire Department Certificate */}
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <h3 className="text-lg font-semibold text-primary">B. Fire Department Certificate</h3>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="fire_certificate_number"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Fire Certificate Number *</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter certificate number" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <FormField
                           control={complianceForm.control}
                           name="fire_certificate_issue_date"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Fire Certificate Issue Date</FormLabel>
+                              <FormLabel>Fire Certificate Issue Date *</FormLabel>
                               <FormControl>
-                                <Input type="date" {...field} value={field.value ? new Date(field.value).toISOString().split('T')[0] : ''} />
+                                <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
                               </FormControl>
                               <FormMessage />
                             </FormItem>
                           )}
                         />
+
                         <FormField
                           control={complianceForm.control}
                           name="fire_certificate_expiry_date"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Fire Certificate Expiry Date</FormLabel>
+                              <FormLabel>Fire Certificate Expiry Date *</FormLabel>
                               <FormControl>
-                                <Input type="date" {...field} value={field.value ? new Date(field.value).toISOString().split('T')[0] : ''} />
+                                <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
                               </FormControl>
                               <FormMessage />
                             </FormItem>
                           )}
                         />
                       </div>
+
+                      {/* Fire Certificate Document Upload */}
+                      <div className="pt-4 border-t border-border">
+                        <h4 className="text-sm font-semibold mb-3">Fire Department Certificate Upload *</h4>
+                        {(() => {
+                          const existingDoc = findDocument("fire_certificate");
+                          return existingDoc ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm text-muted-foreground">
+                                  Uploaded: {formatDate(existingDoc.created_at)}
+                                  {existingDoc.expiry_date && ` | Expires: ${formatDate(existingDoc.expiry_date)}`}
+                                </p>
+                                {getDocumentStatusBadge(existingDoc.verification_status)}
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
+                                    if (normalizedPath) {
+                                      window.open(normalizedPath, "_blank");
+                                    } else {
+                                      toast({
+                                        title: "Error",
+                                        description: "Document file path is missing or invalid",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                >
+                                  View Document
+                                </Button>
+                                <ObjectUploader
+                                  onGetUploadParameters={getUploadURL}
+                                  onComplete={(result) => handleDocumentUpload("fire_certificate", "Fire Department Certificate", result)}
+                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  maxFileSize={10485760}
+                                  buttonVariant="outline"
+                                  buttonSize="sm"
+                                >
+                                  Replace
+                                </ObjectUploader>
+                              </div>
+                            </div>
+                          ) : (
+                            <ObjectUploader
+                              onGetUploadParameters={getUploadURL}
+                              onComplete={(result) => handleDocumentUpload("fire_certificate", "Fire Department Certificate", result)}
+                              allowedFileTypes={["application/pdf", "image/*"]}
+                              maxFileSize={10485760}
+                              buttonVariant="default"
+                            >
+                              <Upload className="h-4 w-4 mr-2" />
+                              Upload Fire Department Certificate
+                            </ObjectUploader>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* C. Health & Safety File */}
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <h3 className="text-lg font-semibold text-primary">C. Health & Safety File (Confirmation Only)</h3>
+                      
                       <FormField
                         control={complianceForm.control}
                         name="hse_file_verified"
@@ -1036,6 +1758,28 @@ export default function SupplierProfile() {
                           </FormItem>
                         )}
                       />
+
+                      {complianceForm.watch("hse_file_verified") && (
+                        <FormField
+                          control={complianceForm.control}
+                          name="hse_file_last_updated"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>HSE File Last Updated Date</FormLabel>
+                              <FormControl>
+                                <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      )}
+                    </div>
+
+                    {/* D. Spill Containment Compliance */}
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <h3 className="text-lg font-semibold text-primary">D. Spill Containment Compliance</h3>
+                      
                       <FormField
                         control={complianceForm.control}
                         name="spill_compliance_confirmed"
@@ -1053,29 +1797,87 @@ export default function SupplierProfile() {
                           </FormItem>
                         )}
                       />
-                    </CollapsibleContent>
-                  </Collapsible>
 
-                  <Separator />
-
-                  {/* Fuel Quality Section */}
-                  <Collapsible>
-                    <CollapsibleTrigger className="w-full">
-                      <div className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors">
-                        <div className="flex items-center gap-2">
-                          <FileText className="h-5 w-5" />
-                          <span className="font-semibold">Fuel Quality Compliance</span>
-                        </div>
-                        <ChevronRight className="h-5 w-5 transition-transform duration-200 data-[state=open]:rotate-90" />
+                      {/* Spill Certificate Document Upload (Optional) */}
+                      <div className="pt-4 border-t border-border">
+                        <h4 className="text-sm font-semibold mb-3">Spill Certificate Document Upload (Optional)</h4>
+                        {(() => {
+                          const existingDoc = findDocument("spill_certificate");
+                          return existingDoc ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm text-muted-foreground">
+                                  Uploaded: {formatDate(existingDoc.created_at)}
+                                </p>
+                                {getDocumentStatusBadge(existingDoc.verification_status)}
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
+                                    if (normalizedPath) {
+                                      window.open(normalizedPath, "_blank");
+                                    } else {
+                                      toast({
+                                        title: "Error",
+                                        description: "Document file path is missing or invalid",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                >
+                                  View Document
+                                </Button>
+                                <ObjectUploader
+                                  onGetUploadParameters={getUploadURL}
+                                  onComplete={(result) => handleDocumentUpload("spill_certificate", "Spill Certificate", result)}
+                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  maxFileSize={10485760}
+                                  buttonVariant="outline"
+                                  buttonSize="sm"
+                                >
+                                  Replace
+                                </ObjectUploader>
+                              </div>
+                            </div>
+                          ) : (
+                            <ObjectUploader
+                              onGetUploadParameters={getUploadURL}
+                              onComplete={(result) => handleDocumentUpload("spill_certificate", "Spill Certificate", result)}
+                              allowedFileTypes={["application/pdf", "image/*"]}
+                              maxFileSize={10485760}
+                              buttonVariant="default"
+                            >
+                              <Upload className="h-4 w-4 mr-2" />
+                              Upload Spill Certificate Document
+                            </ObjectUploader>
+                          );
+                        })()}
                       </div>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="space-y-4 pt-4">
+                    </div>
+                  </div>
+
+                  {/* ========== SECTION 4: FUEL QUALITY COMPLIANCE ========== */}
+                  <div className="space-y-6 pt-4 border-t-2 border-primary/20">
+                    <div className="border-b-2 border-primary/20 pb-3">
+                      <h2 className="text-xl font-bold flex items-center gap-2">
+                        <FileText className="h-5 w-5 text-primary" />
+                        4. Fuel Quality Compliance
+                      </h2>
+                    </div>
+
+                    {/* A. SABS Fuel Quality Certificate */}
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <h3 className="text-lg font-semibold text-primary">A. SABS Fuel Quality Certificate</h3>
+                      
                       <FormField
                         control={complianceForm.control}
                         name="sabs_certificate_number"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>SABS Fuel Quality Certificate Number</FormLabel>
+                            <FormLabel>SABS Certificate Number *</FormLabel>
                             <FormControl>
                               <Input {...field} placeholder="Enter certificate number" />
                             </FormControl>
@@ -1083,40 +1885,108 @@ export default function SupplierProfile() {
                           </FormItem>
                         )}
                       />
-                      <div className="grid grid-cols-2 gap-4">
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <FormField
                           control={complianceForm.control}
                           name="sabs_certificate_issue_date"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>SABS Certificate Issue Date</FormLabel>
+                              <FormLabel>Certificate Issue Date *</FormLabel>
                               <FormControl>
-                                <Input type="date" {...field} value={field.value ? new Date(field.value).toISOString().split('T')[0] : ''} />
+                                <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
                               </FormControl>
                               <FormMessage />
                             </FormItem>
                           )}
                         />
+
                         <FormField
                           control={complianceForm.control}
                           name="sabs_certificate_expiry_date"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>SABS Certificate Expiry Date</FormLabel>
+                              <FormLabel>Certificate Expiry Date *</FormLabel>
                               <FormControl>
-                                <Input type="date" {...field} value={field.value ? new Date(field.value).toISOString().split('T')[0] : ''} />
+                                <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
                               </FormControl>
                               <FormMessage />
                             </FormItem>
                           )}
                         />
                       </div>
+
+                      {/* SABS Document Upload */}
+                      <div className="pt-4 border-t border-border">
+                        <h4 className="text-sm font-semibold mb-3">SABS Fuel Quality Certificate Upload *</h4>
+                        {(() => {
+                          const existingDoc = findDocument("sabs_certificate");
+                          return existingDoc ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm text-muted-foreground">
+                                  Uploaded: {formatDate(existingDoc.created_at)}
+                                  {existingDoc.expiry_date && ` | Expires: ${formatDate(existingDoc.expiry_date)}`}
+                                </p>
+                                {getDocumentStatusBadge(existingDoc.verification_status)}
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
+                                    if (normalizedPath) {
+                                      window.open(normalizedPath, "_blank");
+                                    } else {
+                                      toast({
+                                        title: "Error",
+                                        description: "Document file path is missing or invalid",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                >
+                                  View Document
+                                </Button>
+                                <ObjectUploader
+                                  onGetUploadParameters={getUploadURL}
+                                  onComplete={(result) => handleDocumentUpload("sabs_certificate", "SABS Fuel Quality Certificate", result)}
+                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  maxFileSize={10485760}
+                                  buttonVariant="outline"
+                                  buttonSize="sm"
+                                >
+                                  Replace
+                                </ObjectUploader>
+                              </div>
+                            </div>
+                          ) : (
+                            <ObjectUploader
+                              onGetUploadParameters={getUploadURL}
+                              onComplete={(result) => handleDocumentUpload("sabs_certificate", "SABS Fuel Quality Certificate", result)}
+                              allowedFileTypes={["application/pdf", "image/*"]}
+                              maxFileSize={10485760}
+                              buttonVariant="default"
+                            >
+                              <Upload className="h-4 w-4 mr-2" />
+                              Upload SABS Fuel Quality Certificate
+                            </ObjectUploader>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* B. Pump / Meter Calibration Certificates */}
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <h3 className="text-lg font-semibold text-primary">B. Pump / Meter Calibration Certificates</h3>
+                      
                       <FormField
                         control={complianceForm.control}
                         name="calibration_certificate_number"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Pump/Meter Calibration Certificate Number</FormLabel>
+                            <FormLabel>Calibration Certificate Number *</FormLabel>
                             <FormControl>
                               <Input {...field} placeholder="Enter certificate number" />
                             </FormControl>
@@ -1124,223 +1994,343 @@ export default function SupplierProfile() {
                           </FormItem>
                         )}
                       />
-                      <div className="grid grid-cols-2 gap-4">
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <FormField
                           control={complianceForm.control}
                           name="calibration_certificate_issue_date"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Calibration Certificate Issue Date</FormLabel>
+                              <FormLabel>Calibration Issue Date *</FormLabel>
                               <FormControl>
-                                <Input type="date" {...field} value={field.value ? new Date(field.value).toISOString().split('T')[0] : ''} />
+                                <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
                               </FormControl>
                               <FormMessage />
                             </FormItem>
                           )}
                         />
+
                         <FormField
                           control={complianceForm.control}
                           name="calibration_certificate_expiry_date"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Calibration Certificate Expiry Date</FormLabel>
+                              <FormLabel>Calibration Expiry Date *</FormLabel>
                               <FormControl>
-                                <Input type="date" {...field} value={field.value ? new Date(field.value).toISOString().split('T')[0] : ''} />
+                                <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
                               </FormControl>
                               <FormMessage />
                             </FormItem>
                           )}
                         />
                       </div>
-                    </CollapsibleContent>
-                  </Collapsible>
 
-                  <Separator />
-
-                  {/* Insurance Section */}
-                  <Collapsible>
-                    <CollapsibleTrigger className="w-full">
-                      <div className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors">
-                        <div className="flex items-center gap-2">
-                          <FileText className="h-5 w-5" />
-                          <span className="font-semibold">Insurance</span>
-                        </div>
-                        <ChevronRight className="h-5 w-5 transition-transform duration-200 data-[state=open]:rotate-90" />
+                      {/* Calibration Certificate Document Upload */}
+                      <div className="pt-4 border-t border-border">
+                        <h4 className="text-sm font-semibold mb-3">Pump/Meter Calibration Certificate Upload *</h4>
+                        {(() => {
+                          const existingDoc = findDocument("calibration_certificate");
+                          return existingDoc ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm text-muted-foreground">
+                                  Uploaded: {formatDate(existingDoc.created_at)}
+                                  {existingDoc.expiry_date && ` | Expires: ${formatDate(existingDoc.expiry_date)}`}
+                                </p>
+                                {getDocumentStatusBadge(existingDoc.verification_status)}
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
+                                    if (normalizedPath) {
+                                      window.open(normalizedPath, "_blank");
+                                    } else {
+                                      toast({
+                                        title: "Error",
+                                        description: "Document file path is missing or invalid",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                >
+                                  View Document
+                                </Button>
+                                <ObjectUploader
+                                  onGetUploadParameters={getUploadURL}
+                                  onComplete={(result) => handleDocumentUpload("calibration_certificate", "Pump/Meter Calibration Certificate", result)}
+                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  maxFileSize={10485760}
+                                  buttonVariant="outline"
+                                  buttonSize="sm"
+                                >
+                                  Replace
+                                </ObjectUploader>
+                              </div>
+                            </div>
+                          ) : (
+                            <ObjectUploader
+                              onGetUploadParameters={getUploadURL}
+                              onComplete={(result) => handleDocumentUpload("calibration_certificate", "Pump/Meter Calibration Certificate", result)}
+                              allowedFileTypes={["application/pdf", "image/*"]}
+                              maxFileSize={10485760}
+                              buttonVariant="default"
+                            >
+                              <Upload className="h-4 w-4 mr-2" />
+                              Upload Calibration Certificate
+                            </ObjectUploader>
+                          );
+                        })()}
                       </div>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="space-y-4 pt-4">
-                      <FormField
-                        control={complianceForm.control}
-                        name="public_liability_policy_number"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Public Liability Policy Number</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="Enter policy number" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={complianceForm.control}
-                        name="public_liability_insurance_provider"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Public Liability Insurance Provider</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="Enter insurance provider" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={complianceForm.control}
-                        name="public_liability_coverage_amount_rands"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Coverage Amount (Rands)</FormLabel>
-                            <FormControl>
-                              <Input type="number" {...field} placeholder="Enter coverage amount" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={complianceForm.control}
-                        name="public_liability_policy_expiry_date"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Public Liability Policy Expiry Date</FormLabel>
-                            <FormControl>
-                              <Input type="date" {...field} value={field.value ? new Date(field.value).toISOString().split('T')[0] : ''} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={complianceForm.control}
-                        name="env_insurance_number"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Environmental Liability Insurance Number (Optional)</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="Enter insurance number" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={complianceForm.control}
-                        name="env_insurance_expiry_date"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Environmental Insurance Expiry Date</FormLabel>
-                            <FormControl>
-                              <Input type="date" {...field} value={field.value ? new Date(field.value).toISOString().split('T')[0] : ''} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </CollapsibleContent>
-                  </Collapsible>
+                    </div>
+                  </div>
 
-                  <Button type="submit" disabled={updateComplianceMutation.isPending}>
-                    {updateComplianceMutation.isPending ? "Saving..." : "Save Compliance Information"}
-                  </Button>
+                  {/* ========== SECTION 5: INSURANCE ========== */}
+                  <div className="space-y-6 pt-4 border-t-2 border-primary/20">
+                    <div className="border-b-2 border-primary/20 pb-3">
+                      <h2 className="text-xl font-bold flex items-center gap-2">
+                        <Shield className="h-5 w-5 text-primary" />
+                        5. Insurance
+                      </h2>
+                    </div>
+
+                    {/* A. Public Liability Insurance */}
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <h3 className="text-lg font-semibold text-primary">A. Public Liability Insurance</h3>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="public_liability_policy_number"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Policy Number *</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter policy number" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={complianceForm.control}
+                          name="public_liability_insurance_provider"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Insurance Provider *</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter insurance provider" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="public_liability_coverage_amount_rands"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Coverage Amount (Rands) *</FormLabel>
+                              <FormControl>
+                                <Input type="number" {...field} placeholder="Enter coverage amount" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={complianceForm.control}
+                          name="public_liability_policy_expiry_date"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Policy Expiry Date *</FormLabel>
+                              <FormControl>
+                                <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      {/* Public Liability Insurance Document Upload */}
+                      <div className="pt-4 border-t border-border">
+                        <h4 className="text-sm font-semibold mb-3">Public Liability Insurance Document Upload *</h4>
+                        {(() => {
+                          const existingDoc = findDocument("public_liability_insurance");
+                          return existingDoc ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm text-muted-foreground">
+                                  Uploaded: {formatDate(existingDoc.created_at)}
+                                  {existingDoc.expiry_date && ` | Expires: ${formatDate(existingDoc.expiry_date)}`}
+                                </p>
+                                {getDocumentStatusBadge(existingDoc.verification_status)}
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
+                                    if (normalizedPath) {
+                                      window.open(normalizedPath, "_blank");
+                                    } else {
+                                      toast({
+                                        title: "Error",
+                                        description: "Document file path is missing or invalid",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                >
+                                  View Document
+                                </Button>
+                                <ObjectUploader
+                                  onGetUploadParameters={getUploadURL}
+                                  onComplete={(result) => handleDocumentUpload("public_liability_insurance", "Public Liability Insurance", result)}
+                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  maxFileSize={10485760}
+                                  buttonVariant="outline"
+                                  buttonSize="sm"
+                                >
+                                  Replace
+                                </ObjectUploader>
+                              </div>
+                            </div>
+                          ) : (
+                            <ObjectUploader
+                              onGetUploadParameters={getUploadURL}
+                              onComplete={(result) => handleDocumentUpload("public_liability_insurance", "Public Liability Insurance", result)}
+                              allowedFileTypes={["application/pdf", "image/*"]}
+                              maxFileSize={10485760}
+                              buttonVariant="default"
+                            >
+                              <Upload className="h-4 w-4 mr-2" />
+                              Upload Public Liability Insurance Document
+                            </ObjectUploader>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* B. Environmental Liability Insurance (Optional) */}
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <h3 className="text-lg font-semibold text-primary">B. Environmental Liability Insurance (Optional)</h3>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="env_insurance_number"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Environmental Insurance Number</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter insurance number" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={complianceForm.control}
+                          name="env_insurance_expiry_date"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Environmental Insurance Expiry Date</FormLabel>
+                              <FormControl>
+                                <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      {/* Environmental Liability Insurance Document Upload */}
+                      <div className="pt-4 border-t border-border">
+                        <h4 className="text-sm font-semibold mb-3">Environmental Liability Insurance Document Upload</h4>
+                        {(() => {
+                          const existingDoc = findDocument("env_liability_insurance");
+                          return existingDoc ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm text-muted-foreground">
+                                  Uploaded: {formatDate(existingDoc.created_at)}
+                                  {existingDoc.expiry_date && ` | Expires: ${formatDate(existingDoc.expiry_date)}`}
+                                </p>
+                                {getDocumentStatusBadge(existingDoc.verification_status)}
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
+                                    if (normalizedPath) {
+                                      window.open(normalizedPath, "_blank");
+                                    } else {
+                                      toast({
+                                        title: "Error",
+                                        description: "Document file path is missing or invalid",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                >
+                                  View Document
+                                </Button>
+                                <ObjectUploader
+                                  onGetUploadParameters={getUploadURL}
+                                  onComplete={(result) => handleDocumentUpload("env_liability_insurance", "Environmental Liability Insurance", result)}
+                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  maxFileSize={10485760}
+                                  buttonVariant="outline"
+                                  buttonSize="sm"
+                                >
+                                  Replace
+                                </ObjectUploader>
+                              </div>
+                            </div>
+                          ) : (
+                            <ObjectUploader
+                              onGetUploadParameters={getUploadURL}
+                              onComplete={(result) => handleDocumentUpload("env_liability_insurance", "Environmental Liability Insurance", result)}
+                              allowedFileTypes={["application/pdf", "image/*"]}
+                              maxFileSize={10485760}
+                              buttonVariant="default"
+                            >
+                              <Upload className="h-4 w-4 mr-2" />
+                              Upload Environmental Liability Insurance Document
+                            </ObjectUploader>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-6 border-t-2 border-primary/20">
+                    <Button type="submit" size="lg" disabled={updateComplianceMutation.isPending} className="w-full md:w-auto">
+                      {updateComplianceMutation.isPending ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        "Save Compliance Information"
+                      )}
+                    </Button>
+                  </div>
                 </form>
               </Form>
-            </CardContent>
-          </Card>
-
-          {/* Required Documents */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="h-5 w-5" />
-                Required Documents
-              </CardTitle>
-              <CardDescription>
-                Upload your compliance documents
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {[
-                { type: "cipc_certificate", label: "CIPC Certificate", required: true },
-                { type: "vat_certificate", label: "VAT Certificate", required: true },
-                { type: "tax_clearance", label: "SARS Tax Clearance Certificate", required: true },
-                { type: "dmre_license", label: "DMRE Wholesale Fuel License", required: true },
-                { type: "site_license", label: "Site/Depot License", required: true },
-                { type: "environmental_authorisation", label: "Environmental Authorisation", required: true },
-                { type: "fire_certificate", label: "Fire Department Certificate", required: true },
-                { type: "sabs_certificate", label: "SABS Fuel Quality Certificate", required: true },
-                { type: "calibration_certificate", label: "Pump/Meter Calibration Certificate", required: true },
-                { type: "public_liability_insurance", label: "Public Liability Insurance", required: true },
-                { type: "env_liability_insurance", label: "Environmental Liability Insurance", required: false },
-              ].map((doc) => {
-                const existingDoc = documents.find((d) => d.doc_type === doc.type);
-                return (
-                  <div key={doc.type} className="border rounded-lg p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h4 className="font-medium">{doc.label}</h4>
-                        {doc.required && (
-                          <Badge variant="outline" className="mt-1">Required</Badge>
-                        )}
-                      </div>
-                      {existingDoc && getDocumentStatusBadge(existingDoc.verification_status)}
-                    </div>
-                    
-                    {existingDoc ? (
-                      <div className="space-y-2">
-                        <p className="text-sm text-muted-foreground">
-                          Uploaded: {new Date(existingDoc.created_at).toLocaleDateString()}
-                        </p>
-                        {existingDoc.expiry_date && (
-                          <p className="text-sm text-muted-foreground">
-                            Expires: {new Date(existingDoc.expiry_date).toLocaleDateString()}
-                          </p>
-                        )}
-                        <div className="flex gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => window.open(`/objects/${existingDoc.file_path}`, "_blank")}
-                          >
-                            View Document
-                          </Button>
-                          <ObjectUploader
-                            onGetUploadParameters={getUploadURL}
-                            onComplete={(result) => handleDocumentUpload(doc.type, doc.label, result)}
-                            allowedFileTypes={["application/pdf", "image/*"]}
-                            maxFileSize={10485760}
-                            buttonVariant="outline"
-                            buttonSize="sm"
-                          >
-                            Replace
-                          </ObjectUploader>
-                        </div>
-                      </div>
-                    ) : (
-                      <ObjectUploader
-                        onGetUploadParameters={getUploadURL}
-                        onComplete={(result) => handleDocumentUpload(doc.type, doc.label, result)}
-                        allowedFileTypes={["application/pdf", "image/*"]}
-                        maxFileSize={10485760}
-                        buttonVariant="default"
-                      >
-                        <Upload className="h-4 w-4 mr-2" />
-                        Upload {doc.label}
-                      </ObjectUploader>
-                    )}
-                  </div>
-                );
-              })}
             </CardContent>
           </Card>
         </div>

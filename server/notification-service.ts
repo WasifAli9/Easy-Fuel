@@ -46,6 +46,26 @@ export type NotificationType =
   | "driver_depot_order_confirmed"
   | "driver_depot_order_fulfilled"
   | "driver_depot_order_cancelled"
+  | "driver_depot_order_accepted"
+  | "driver_depot_order_rejected"
+  | "driver_depot_payment_verified"
+  | "driver_depot_payment_rejected"
+  | "driver_depot_order_released"
+  | "driver_depot_order_completed"
+  // Supplier depot order notifications
+  | "supplier_depot_order_placed"
+  | "supplier_payment_received"
+  | "supplier_signature_required"
+  | "supplier_order_completed"
+  // Admin notifications
+  | "admin_document_uploaded"
+  | "admin_kyc_submitted"
+  | "admin_vehicle_approved"
+  | "admin_vehicle_rejected"
+  | "admin_document_approved"
+  | "admin_document_rejected"
+  | "admin_kyc_approved"
+  | "admin_kyc_rejected"
   // Driver specific
   | "driver_rating_received"
   | "shift_reminder"
@@ -555,6 +575,330 @@ class NotificationService {
       message: `Your order for ${litres}L of ${fuelType} from ${depotName} has been cancelled${reason ? `. Reason: ${reason}` : ""}`,
       data: { orderId, depotName, fuelType, litres, reason },
       priority: "medium",
+    });
+  }
+
+  async notifyDriverDepotOrderAccepted(
+    driverId: string,
+    orderId: string,
+    depotName: string,
+    fuelType: string,
+    litres: number,
+    pickupDate: string
+  ) {
+    const formattedDate = new Date(pickupDate).toLocaleString("en-ZA", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+    
+    return this.createAndSend({
+      userId: driverId,
+      type: "driver_depot_order_accepted",
+      title: "Order Accepted",
+      message: `Your order for ${litres}L of ${fuelType} from ${depotName} has been accepted. Please proceed with payment. Pickup: ${formattedDate}`,
+      data: { orderId, depotName, fuelType, litres, pickupDate },
+      priority: "high",
+    });
+  }
+
+  async notifyDriverDepotOrderRejected(
+    driverId: string,
+    orderId: string,
+    depotName: string,
+    fuelType: string,
+    litres: number,
+    reason?: string
+  ) {
+    return this.createAndSend({
+      userId: driverId,
+      type: "driver_depot_order_rejected",
+      title: "Order Rejected",
+      message: `Your order for ${litres}L of ${fuelType} from ${depotName} has been rejected${reason ? `. Reason: ${reason}` : ""}`,
+      data: { orderId, depotName, fuelType, litres, reason },
+      priority: "high",
+    });
+  }
+
+  async notifyDriverDepotPaymentVerified(
+    driverId: string,
+    orderId: string,
+    depotName: string,
+    fuelType: string,
+    litres: number
+  ) {
+    return this.createAndSend({
+      userId: driverId,
+      type: "driver_depot_payment_verified",
+      title: "Payment Verified",
+      message: `Payment for your order of ${litres}L of ${fuelType} from ${depotName} has been verified. Order is ready for pickup.`,
+      data: { orderId, depotName, fuelType, litres },
+      priority: "urgent",
+      requireInteraction: true,
+    });
+  }
+
+  async notifyDriverDepotPaymentRejected(
+    driverId: string,
+    orderId: string,
+    depotName: string,
+    fuelType: string,
+    litres: number,
+    reason?: string
+  ) {
+    return this.createAndSend({
+      userId: driverId,
+      type: "driver_depot_payment_rejected",
+      title: "Payment Rejected",
+      message: `Payment for your order of ${litres}L of ${fuelType} from ${depotName} has been rejected${reason ? `. Reason: ${reason}` : ""}. Please contact the supplier.`,
+      data: { orderId, depotName, fuelType, litres, reason },
+      priority: "urgent",
+      requireInteraction: true,
+    });
+  }
+
+  async notifyDriverDepotOrderReleased(
+    driverId: string,
+    orderId: string,
+    depotName: string,
+    fuelType: string,
+    litres: number
+  ) {
+    return this.createAndSend({
+      userId: driverId,
+      type: "driver_depot_order_released",
+      title: "Fuel Released - Signature Required",
+      message: `Fuel for your order of ${litres}L of ${fuelType} from ${depotName} has been released. Please sign to complete the order.`,
+      data: { orderId, depotName, fuelType, litres },
+      priority: "urgent",
+      requireInteraction: true,
+    });
+  }
+
+  async notifyDriverDepotOrderCompleted(
+    driverId: string,
+    orderId: string,
+    depotName: string,
+    fuelType: string,
+    litres: number
+  ) {
+    return this.createAndSend({
+      userId: driverId,
+      type: "driver_depot_order_completed",
+      title: "Order Completed",
+      message: `Your order for ${litres}L of ${fuelType} from ${depotName} has been completed. Receipt is ready.`,
+      data: { orderId, depotName, fuelType, litres },
+      priority: "high",
+    });
+  }
+
+  async notifySupplierDepotOrderPlaced(
+    supplierId: string,
+    orderId: string,
+    depotName: string,
+    fuelType: string,
+    litres: number,
+    totalPrice: number,
+    currency: string,
+    pickupDate: string,
+    driverName: string
+  ) {
+    const formattedDate = new Date(pickupDate).toLocaleString("en-ZA", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+    
+    return this.createAndSend({
+      userId: supplierId,
+      type: "supplier_depot_order_placed",
+      title: "New Driver Order",
+      message: `${driverName} placed an order for ${litres}L of ${fuelType} from ${depotName}. Total: ${currency} ${totalPrice.toFixed(2)}. Pickup: ${formattedDate}`,
+      data: { orderId, depotName, fuelType, litres, totalPrice, currency, pickupDate, driverName },
+      priority: "high",
+      requireInteraction: true,
+    });
+  }
+
+  async notifySupplierPaymentReceived(
+    supplierId: string,
+    orderId: string,
+    depotName: string,
+    fuelType: string,
+    litres: number,
+    amount: number,
+    currency: string,
+    paymentMethod: string,
+    driverName: string
+  ) {
+    return this.createAndSend({
+      userId: supplierId,
+      type: "supplier_payment_received",
+      title: "Payment Received",
+      message: `${driverName} submitted payment of ${currency} ${amount.toFixed(2)} for order of ${litres}L ${fuelType} from ${depotName}. Payment method: ${paymentMethod}. Please verify payment.`,
+      data: { orderId, depotName, fuelType, litres, amount, currency, paymentMethod, driverName },
+      priority: "high",
+      requireInteraction: true,
+    });
+  }
+
+  async notifySupplierSignatureRequired(
+    supplierId: string,
+    orderId: string,
+    depotName: string,
+    fuelType: string,
+    litres: number,
+    driverName: string
+  ) {
+    return this.createAndSend({
+      userId: supplierId,
+      type: "supplier_signature_required",
+      title: "Driver Signature Required",
+      message: `${driverName} has signed for order of ${litres}L ${fuelType} from ${depotName}. Please add your signature to complete the order.`,
+      data: { orderId, depotName, fuelType, litres, driverName },
+      priority: "urgent",
+      requireInteraction: true,
+    });
+  }
+
+  async notifySupplierOrderCompleted(
+    supplierId: string,
+    orderId: string,
+    depotName: string,
+    fuelType: string,
+    litres: number,
+    driverName: string
+  ) {
+    return this.createAndSend({
+      userId: supplierId,
+      type: "supplier_order_completed",
+      title: "Order Completed",
+      message: `Order for ${litres}L of ${fuelType} from ${depotName} has been completed by ${driverName}. Receipt is ready.`,
+      data: { orderId, depotName, fuelType, litres, driverName },
+      priority: "high",
+    });
+  }
+
+  // ===== ADMIN NOTIFICATIONS =====
+
+  async notifyAdminDocumentUploaded(
+    adminUserIds: string[],
+    documentId: string,
+    documentType: string,
+    ownerType: string,
+    ownerName: string
+  ) {
+    return this.sendToMultipleUsers(adminUserIds, {
+      type: "admin_document_uploaded",
+      title: "New Document Uploaded",
+      message: `${ownerName} uploaded a new ${documentType} document (${ownerType}). Please review.`,
+      data: { documentId, documentType, ownerType, ownerName },
+      priority: "medium",
+    });
+  }
+
+  async notifyAdminKycSubmitted(
+    adminUserIds: string[],
+    userId: string,
+    userName: string,
+    userType: "driver" | "supplier"
+  ) {
+    return this.sendToMultipleUsers(adminUserIds, {
+      type: "admin_kyc_submitted",
+      title: "New KYC Submission",
+      message: `${userName} (${userType}) has submitted KYC documents. Please review.`,
+      data: { userId, userName, userType },
+      priority: "high",
+      requireInteraction: true,
+    });
+  }
+
+  async notifyAdminVehicleApproved(
+    driverId: string,
+    vehicleId: string,
+    registrationNumber: string
+  ) {
+    return this.createAndSend({
+      userId: driverId,
+      type: "admin_vehicle_approved",
+      title: "Vehicle Approved",
+      message: `Your vehicle ${registrationNumber} has been approved by admin. You can now use it for deliveries.`,
+      data: { vehicleId, registrationNumber },
+      priority: "high",
+    });
+  }
+
+  async notifyAdminVehicleRejected(
+    driverId: string,
+    vehicleId: string,
+    registrationNumber: string,
+    reason?: string
+  ) {
+    return this.createAndSend({
+      userId: driverId,
+      type: "admin_vehicle_rejected",
+      title: "Vehicle Rejected",
+      message: `Your vehicle ${registrationNumber} has been rejected${reason ? `. Reason: ${reason}` : ""}. Please review and resubmit documents.`,
+      data: { vehicleId, registrationNumber, reason },
+      priority: "high",
+    });
+  }
+
+  async notifyAdminDocumentApproved(
+    userId: string,
+    documentId: string,
+    documentType: string
+  ) {
+    return this.createAndSend({
+      userId,
+      type: "admin_document_approved",
+      title: "Document Approved",
+      message: `Your ${documentType} document has been approved by admin.`,
+      data: { documentId, documentType },
+      priority: "high",
+    });
+  }
+
+  async notifyAdminDocumentRejected(
+    userId: string,
+    documentId: string,
+    documentType: string,
+    reason?: string
+  ) {
+    return this.createAndSend({
+      userId,
+      type: "admin_document_rejected",
+      title: "Document Rejected",
+      message: `Your ${documentType} document has been rejected${reason ? `. Reason: ${reason}` : ""}. Please upload a new document.`,
+      data: { documentId, documentType, reason },
+      priority: "high",
+    });
+  }
+
+  async notifyAdminKycApproved(
+    userId: string,
+    userType: "driver" | "supplier"
+  ) {
+    return this.createAndSend({
+      userId,
+      type: "admin_kyc_approved",
+      title: "KYC Approved",
+      message: `Your ${userType} KYC has been approved. Your account is now active.`,
+      data: { userType },
+      priority: "high",
+    });
+  }
+
+  async notifyAdminKycRejected(
+    userId: string,
+    userType: "driver" | "supplier",
+    reason?: string
+  ) {
+    return this.createAndSend({
+      userId,
+      type: "admin_kyc_rejected",
+      title: "KYC Rejected",
+      message: `Your ${userType} KYC has been rejected${reason ? `. Reason: ${reason}` : ""}. Please review and resubmit.`,
+      data: { userType, reason },
+      priority: "high",
     });
   }
 

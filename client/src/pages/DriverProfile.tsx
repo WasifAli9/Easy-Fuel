@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -18,7 +19,8 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/contexts/AuthContext";
-import { User, Lock, Upload, FileText, AlertTriangle, CheckCircle2, XCircle, Shield, Building, MapPin } from "lucide-react";
+import { User, Lock, Upload, FileText, AlertTriangle, CheckCircle2, XCircle, Shield, Building, MapPin, Loader2 } from "lucide-react";
+import { normalizeFilePath } from "@/lib/utils";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +30,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { ChevronRight, ArrowLeft } from "lucide-react";
 import { Link } from "wouter";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useWebSocket } from "@/hooks/useWebSocket";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
@@ -66,6 +69,7 @@ export default function DriverProfile() {
 
   const { data: profile, isLoading } = useQuery<any>({
     queryKey: ["/api/driver/profile"],
+    refetchInterval: 5000, // Refetch every 5 seconds to get updated status
   });
   
   // Debug: Log profile data to see what we're getting
@@ -74,6 +78,19 @@ export default function DriverProfile() {
 
   const { data: documents = [] } = useQuery<DriverDocument[]>({
     queryKey: ["/api/driver/documents"],
+    refetchInterval: 5000, // Refetch every 5 seconds to get updated status
+  });
+
+  // Listen for document status updates and KYC approval via WebSocket
+  useWebSocket((message) => {
+    if (message.type === "document_approved" || message.type === "document_rejected" || 
+        message.type === "kyc_approved" || message.type === "compliance_approved") {
+      console.log("[DriverProfile] Received WebSocket message:", message.type);
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/documents"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
+      queryClient.refetchQueries({ queryKey: ["/api/driver/documents"] });
+      queryClient.refetchQueries({ queryKey: ["/api/driver/profile"] });
+    }
   });
 
   // Get compliance status
@@ -81,68 +98,155 @@ export default function DriverProfile() {
     queryKey: ["/api/driver/compliance/status"],
   });
 
+  // Helper function to find document by type
+  const findDocument = (docType: string, title?: string) => {
+    return documents.find((d) => {
+      if (d.doc_type !== docType) return false;
+      if (title && d.title !== title) return false;
+      return true;
+    });
+  };
+
   // Compliance form
   const complianceForm = useForm<any>({
     defaultValues: {
+      // Basic Profile
       driver_type: profile?.driver_type || "",
+      mobile_number: profile?.mobile_number || "",
+      // SA ID / Passport
       id_type: profile?.id_type || "",
+      id_number: profile?.id_number || "",
       id_issue_country: profile?.id_issue_country || "",
-      license_code: profile?.license_code || "",
-      prdp_required: profile?.prdp_required || false,
-      prdp_category: profile?.prdp_category || "",
-      dg_training_required: profile?.dg_training_required || false,
-      dg_training_provider: profile?.dg_training_provider || "",
-      dg_training_certificate_number: profile?.dg_training_certificate_number || "",
-      criminal_check_done: profile?.criminal_check_done || false,
-      criminal_check_reference: profile?.criminal_check_reference || "",
-      is_company_driver: profile?.is_company_driver || false,
-      role_in_company: profile?.role_in_company || "",
+      // Proof of Address
       address_line_1: profile?.address_line_1 || "",
       address_line_2: profile?.address_line_2 || "",
       city: profile?.city || "",
       province: profile?.province || "",
       postal_code: profile?.postal_code || "",
       country: profile?.country || "South Africa",
+      // Driver's Licence
+      license_number: profile?.license_number || "",
+      license_code: profile?.license_code || "",
+      license_issue_date: profile?.license_issue_date || "",
+      license_expiry_date: profile?.license_expiry_date || "",
+      // PrDP
+      prdp_required: profile?.prdp_required || false,
+      prdp_number: profile?.prdp_number || "",
+      prdp_category: profile?.prdp_category || "",
+      prdp_issue_date: profile?.prdp_issue_date || "",
+      prdp_expiry_date: profile?.prdp_expiry_date || "",
+      // Dangerous Goods Training
+      dg_training_required: profile?.dg_training_required || false,
+      dg_training_provider: profile?.dg_training_provider || "",
+      dg_training_certificate_number: profile?.dg_training_certificate_number || "",
+      dg_training_issue_date: profile?.dg_training_issue_date || "",
+      dg_training_expiry_date: profile?.dg_training_expiry_date || "",
+      // Criminal Check
+      criminal_check_done: profile?.criminal_check_done || false,
+      criminal_check_reference: profile?.criminal_check_reference || "",
+      criminal_check_date: profile?.criminal_check_date || "",
+      // Bank & Payment
+      bank_account_holder: profile?.bank_account_holder || "",
+      bank_name: profile?.bank_name || "",
+      account_number: profile?.account_number || "",
+      branch_code: profile?.branch_code || "",
+      // Company Link
+      is_company_driver: profile?.is_company_driver || false,
+      company_id: profile?.company_id || "",
+      role_in_company: profile?.role_in_company || "",
     },
     values: profile ? {
       driver_type: profile.driver_type || "",
+      mobile_number: profile.mobile_number || "",
       id_type: profile.id_type || "",
+      id_number: profile.id_number || "",
       id_issue_country: profile.id_issue_country || "",
-      license_code: profile.license_code || "",
-      prdp_required: profile.prdp_required || false,
-      prdp_category: profile.prdp_category || "",
-      dg_training_required: profile.dg_training_required || false,
-      dg_training_provider: profile.dg_training_provider || "",
-      dg_training_certificate_number: profile.dg_training_certificate_number || "",
-      criminal_check_done: profile.criminal_check_done || false,
-      criminal_check_reference: profile.criminal_check_reference || "",
-      is_company_driver: profile.is_company_driver || false,
-      role_in_company: profile.role_in_company || "",
       address_line_1: profile.address_line_1 || "",
       address_line_2: profile.address_line_2 || "",
       city: profile.city || "",
       province: profile.province || "",
       postal_code: profile.postal_code || "",
       country: profile.country || "South Africa",
+      license_number: profile.license_number || "",
+      license_code: profile.license_code || "",
+      license_issue_date: profile.license_issue_date || "",
+      license_expiry_date: profile.license_expiry_date || "",
+      prdp_required: profile.prdp_required || false,
+      prdp_number: profile.prdp_number || "",
+      prdp_category: profile.prdp_category || "",
+      prdp_issue_date: profile.prdp_issue_date || "",
+      prdp_expiry_date: profile.prdp_expiry_date || "",
+      dg_training_required: profile.dg_training_required || false,
+      dg_training_provider: profile.dg_training_provider || "",
+      dg_training_certificate_number: profile.dg_training_certificate_number || "",
+      dg_training_issue_date: profile.dg_training_issue_date || "",
+      dg_training_expiry_date: profile.dg_training_expiry_date || "",
+      criminal_check_done: profile.criminal_check_done || false,
+      criminal_check_reference: profile.criminal_check_reference || "",
+      criminal_check_date: profile.criminal_check_date || "",
+      bank_account_holder: profile.bank_account_holder || "",
+      bank_name: profile.bank_name || "",
+      account_number: profile.account_number || "",
+      branch_code: profile.branch_code || "",
+      is_company_driver: profile.is_company_driver || false,
+      company_id: profile.company_id || "",
+      role_in_company: profile.role_in_company || "",
     } : undefined,
   });
 
   const updateComplianceMutation = useMutation({
     mutationFn: async (data: any) => {
+      // Debug: Log what we're sending, especially company_id
+      console.log("[DriverProfile] Sending compliance data:", {
+        company_id: data.company_id,
+        company_id_type: typeof data.company_id,
+        company_id_length: typeof data.company_id === 'string' ? data.company_id.length : 'N/A',
+        has_company_id: data.hasOwnProperty('company_id'),
+        full_data_keys: Object.keys(data).filter(k => k.includes('company') || k.includes('prdp'))
+      });
       return apiRequest("PUT", "/api/driver/compliance", data);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/driver/compliance/status"] });
+    onSuccess: async (responseData) => {
+      // Update the query cache with the response data if available
+      if (responseData) {
+        queryClient.setQueryData(["/api/driver/profile"], (oldData: any) => {
+          if (!oldData) return responseData;
+          return {
+            ...oldData,
+            ...responseData,
+            mobile_number: responseData.mobile_number || oldData.mobile_number || oldData.phone || "",
+            id_number: responseData.id_number || oldData.id_number || "",
+            license_number: responseData.license_number || oldData.license_number || "",
+            license_issue_date: responseData.license_issue_date || oldData.license_issue_date || "",
+            license_expiry_date: responseData.license_expiry_date || oldData.license_expiry_date || "",
+            prdp_number: responseData.prdp_number || oldData.prdp_number || "",
+            prdp_issue_date: responseData.prdp_issue_date || oldData.prdp_issue_date || "",
+            prdp_expiry_date: responseData.prdp_expiry_date || oldData.prdp_expiry_date || oldData.prdp_expiry || "",
+            dg_training_issue_date: responseData.dg_training_issue_date || oldData.dg_training_issue_date || "",
+            dg_training_expiry_date: responseData.dg_training_expiry_date || oldData.dg_training_expiry_date || "",
+            criminal_check_date: responseData.criminal_check_date || oldData.criminal_check_date || "",
+            company_id: responseData.company_id || oldData.company_id || "",
+            bank_account_holder: responseData.bank_account_holder || oldData.bank_account_holder || oldData.bank_account_name || "",
+          };
+        });
+      }
+      
+      // Invalidate and refetch to get updated data
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/compliance/status"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/driver/profile"] });
+      
       toast({
         title: "Success",
         description: "Compliance information updated successfully",
       });
     },
     onError: (error: any) => {
+      console.error("Compliance update error:", error);
+      const errorMessage = error.details?.join?.(", ") || error.message || "Failed to update compliance information";
       toast({
         title: "Error",
-        description: error.message || "Failed to update compliance information",
+        description: errorMessage,
         variant: "destructive",
       });
     },
@@ -480,9 +584,12 @@ export default function DriverProfile() {
   const getDocumentStatusBadge = (status: string) => {
     switch (status) {
       case "verified":
-        return <Badge variant="default" className="bg-green-600"><CheckCircle2 className="h-3 w-3 mr-1" />Verified</Badge>;
+      case "approved":
+        return <Badge variant="default" className="bg-green-600"><CheckCircle2 className="h-3 w-3 mr-1" />Approved</Badge>;
       case "rejected":
         return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Rejected</Badge>;
+      case "pending":
+      case "pending_review":
       default:
         return <Badge variant="secondary">Pending</Badge>;
     }
@@ -496,17 +603,13 @@ export default function DriverProfile() {
       passport: "Passport",
       dangerous_goods_training: "Dangerous Goods Training Certificate",
       medical_fitness: "Medical Fitness Certificate",
+      proof_of_address: "Proof of Address",
+      criminal_check: "Criminal Clearance",
+      banking_proof: "Banking Proof",
       other: "Other Document",
     };
     return labels[docType] || docType;
   };
-
-  const requiredDocuments = [
-    { type: "prdp", label: "Professional Driving Permit (PrDP-D)", required: true },
-    { type: "safety_certificate", label: "Dangerous Goods Training Certificate", required: true, title: "Dangerous Goods Training Certificate" },
-    { type: "other", label: "Medical Fitness Certificate", required: true, title: "Medical Fitness Certificate" },
-    { type: "drivers_license", label: "Driver's License", required: true },
-  ];
 
   if (isLoading) {
     return (
@@ -909,327 +1012,210 @@ export default function DriverProfile() {
               <Form {...complianceForm}>
                 <form 
                   onSubmit={complianceForm.handleSubmit((data) => updateComplianceMutation.mutate(data))} 
-                  className="space-y-6"
+                  className="space-y-8"
                 >
-                  {/* Driver Type */}
-                  <FormField
-                    control={complianceForm.control}
-                    name="driver_type"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Driver Type</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value}>
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select driver type" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="individual">Individual</SelectItem>
-                            <SelectItem value="company_driver">Company Driver</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  {/* ID Type */}
-                  <FormField
-                    control={complianceForm.control}
-                    name="id_type"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>ID Type</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value}>
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select ID type" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="SA_ID">South African ID</SelectItem>
-                            <SelectItem value="Passport">Passport</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  {complianceForm.watch("id_type") === "Passport" && (
-                    <FormField
-                      control={complianceForm.control}
-                      name="id_issue_country"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Passport Issue Country</FormLabel>
-                          <FormControl>
-                            <Input {...field} placeholder="Enter country" />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  )}
-
-                  {/* License Code */}
-                  <FormField
-                    control={complianceForm.control}
-                    name="license_code"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>License Code</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="e.g., B, EB, C1, EC" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  {/* PrDP Required */}
-                  <FormField
-                    control={complianceForm.control}
-                    name="prdp_required"
-                    render={({ field }) => (
-                      <FormItem className="flex flex-row items-start space-x-3 space-y-0">
-                        <FormControl>
-                          <Checkbox
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                          />
-                        </FormControl>
-                        <div className="space-y-1 leading-none">
-                          <FormLabel>Professional Driving Permit (PrDP) Required</FormLabel>
-                          <p className="text-sm text-muted-foreground">
-                            Required for transporting dangerous goods (fuel)
-                          </p>
-                        </div>
-                      </FormItem>
-                    )}
-                  />
-
-                  {complianceForm.watch("prdp_required") && (
-                    <>
-                      <FormField
-                        control={complianceForm.control}
-                        name="prdp_category"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>PrDP Category</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="e.g., Dangerous Goods" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </>
-                  )}
-
-                  {/* Dangerous Goods Training */}
-                  <FormField
-                    control={complianceForm.control}
-                    name="dg_training_required"
-                    render={({ field }) => (
-                      <FormItem className="flex flex-row items-start space-x-3 space-y-0">
-                        <FormControl>
-                          <Checkbox
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                          />
-                        </FormControl>
-                        <div className="space-y-1 leading-none">
-                          <FormLabel>Dangerous Goods Training Required</FormLabel>
-                          <p className="text-sm text-muted-foreground">
-                            Required for transporting fuel
-                          </p>
-                        </div>
-                      </FormItem>
-                    )}
-                  />
-
-                  {complianceForm.watch("dg_training_required") && (
-                    <>
-                      <FormField
-                        control={complianceForm.control}
-                        name="dg_training_provider"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Training Provider</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="Enter training provider name" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={complianceForm.control}
-                        name="dg_training_certificate_number"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Certificate Number</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="Enter certificate number" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </>
-                  )}
-
-                  {/* Criminal Check */}
-                  <FormField
-                    control={complianceForm.control}
-                    name="criminal_check_done"
-                    render={({ field }) => (
-                      <FormItem className="flex flex-row items-start space-x-3 space-y-0">
-                        <FormControl>
-                          <Checkbox
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                          />
-                        </FormControl>
-                        <div className="space-y-1 leading-none">
-                          <FormLabel>Criminal Check Completed</FormLabel>
-                        </div>
-                      </FormItem>
-                    )}
-                  />
-
-                  {complianceForm.watch("criminal_check_done") && (
-                    <FormField
-                      control={complianceForm.control}
-                      name="criminal_check_reference"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Criminal Check Reference</FormLabel>
-                          <FormControl>
-                            <Input {...field} placeholder="Enter reference number" />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  )}
-
-                  {/* Company Driver */}
-                  <FormField
-                    control={complianceForm.control}
-                    name="is_company_driver"
-                    render={({ field }) => (
-                      <FormItem className="flex flex-row items-start space-x-3 space-y-0">
-                        <FormControl>
-                          <Checkbox
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                          />
-                        </FormControl>
-                        <div className="space-y-1 leading-none">
-                          <FormLabel>Company Driver</FormLabel>
-                          <p className="text-sm text-muted-foreground">
-                            Check if you are a company driver
-                          </p>
-                        </div>
-                      </FormItem>
-                    )}
-                  />
-
-                  {complianceForm.watch("is_company_driver") && (
-                    <FormField
-                      control={complianceForm.control}
-                      name="role_in_company"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Role in Company</FormLabel>
-                          <FormControl>
-                            <Input {...field} placeholder="e.g., Driver, Owner-Driver" />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  )}
-
-                  <Separator />
-
-                  {/* Address Section */}
-                  <div className="space-y-4">
-                    <h3 className="text-sm font-semibold flex items-center gap-2">
-                      <MapPin className="h-4 w-4" />
-                      Address
-                    </h3>
-                    
-                    <FormField
-                      control={complianceForm.control}
-                      name="address_line_1"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Address Line 1</FormLabel>
-                          <FormControl>
-                            <Input {...field} placeholder="Street address" />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={complianceForm.control}
-                      name="address_line_2"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Address Line 2 (Optional)</FormLabel>
-                          <FormControl>
-                            <Input {...field} placeholder="Apartment, suite, etc." />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <FormField
-                        control={complianceForm.control}
-                        name="city"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>City</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="City" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={complianceForm.control}
-                        name="province"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Province</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="Province" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                  {/* ========== SECTION 1: DRIVER (PERSON) – IDENTITY & LEGAL ========== */}
+                  <div className="space-y-6">
+                    <div className="border-b-2 border-primary/20 pb-3">
+                      <h2 className="text-xl font-bold flex items-center gap-2">
+                        <User className="h-5 w-5 text-primary" />
+                        1. Driver (Person) – Identity & Legal
+                      </h2>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* A. Basic Profile */}
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <h3 className="text-lg font-semibold text-primary">A. Basic Profile</h3>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="driver_type"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Driver Type *</FormLabel>
+                              <Select onValueChange={field.onChange} value={field.value}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select driver type" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="individual">Individual</SelectItem>
+                                  <SelectItem value="company_driver">Company Driver</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={complianceForm.control}
+                          name="mobile_number"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Mobile Number *</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter mobile number" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-sm font-medium">Email</label>
+                        <Input
+                          value={profile?.email || ""}
+                          disabled
+                          className="mt-1 bg-muted"
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Email cannot be changed
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* B. SA ID / Passport */}
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <h3 className="text-lg font-semibold text-primary">B. SA ID / Passport</h3>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="id_type"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>ID Type *</FormLabel>
+                              <Select onValueChange={field.onChange} value={field.value}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select ID type" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="SA_ID">South African ID</SelectItem>
+                                  <SelectItem value="Passport">Passport</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={complianceForm.control}
+                          name="id_number"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>ID Number / Passport Number *</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter ID or passport number" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      {complianceForm.watch("id_type") === "Passport" && (
+                        <FormField
+                          control={complianceForm.control}
+                          name="id_issue_country"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Passport Issue Country *</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter country" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      )}
+
+                      {/* ID Document Upload */}
+                      <div className="pt-4 border-t border-border">
+                        <h4 className="text-sm font-semibold mb-3">ID Document Upload *</h4>
+                        {(() => {
+                          const existingDoc = findDocument(complianceForm.watch("id_type") === "SA_ID" ? "za_id" : "passport");
+                          return existingDoc ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm text-muted-foreground">
+                                  Uploaded: {new Date(existingDoc.created_at).toLocaleDateString()}
+                                </p>
+                                {getDocumentStatusBadge(existingDoc.verification_status)}
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
+                                    if (normalizedPath) {
+                                      window.open(normalizedPath, "_blank");
+                                    } else {
+                                      toast({
+                                        title: "Error",
+                                        description: "Document file path is missing or invalid",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                >
+                                  View Document
+                                </Button>
+                                <ObjectUploader
+                                  onGetUploadParameters={getUploadURL}
+                                  onComplete={(result) => handleDocumentUpload(
+                                    complianceForm.watch("id_type") === "SA_ID" ? "za_id" : "passport",
+                                    complianceForm.watch("id_type") === "SA_ID" ? "South African ID" : "Passport",
+                                    result
+                                  )}
+                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  maxFileSize={10485760}
+                                  buttonVariant="outline"
+                                  buttonSize="sm"
+                                >
+                                  Replace
+                                </ObjectUploader>
+                              </div>
+                            </div>
+                          ) : (
+                            <ObjectUploader
+                              onGetUploadParameters={getUploadURL}
+                              onComplete={(result) => handleDocumentUpload(
+                                complianceForm.watch("id_type") === "SA_ID" ? "za_id" : "passport",
+                                complianceForm.watch("id_type") === "SA_ID" ? "South African ID" : "Passport",
+                                result
+                              )}
+                              allowedFileTypes={["application/pdf", "image/*"]}
+                              maxFileSize={10485760}
+                              buttonVariant="default"
+                            >
+                              <Upload className="h-4 w-4 mr-2" />
+                              Upload {complianceForm.watch("id_type") === "SA_ID" ? "SA ID" : "Passport"} Document
+                            </ObjectUploader>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* C. Proof of Address */}
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <h3 className="text-lg font-semibold text-primary">C. Proof of Address</h3>
+                      
                       <FormField
                         control={complianceForm.control}
-                        name="postal_code"
+                        name="address_line_1"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Postal Code</FormLabel>
+                            <FormLabel>Address Line 1 *</FormLabel>
                             <FormControl>
-                              <Input {...field} placeholder="Postal code" />
+                              <Input {...field} placeholder="Street address" />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -1238,104 +1224,844 @@ export default function DriverProfile() {
 
                       <FormField
                         control={complianceForm.control}
-                        name="country"
+                        name="address_line_2"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Country</FormLabel>
+                            <FormLabel>Address Line 2 (Optional)</FormLabel>
                             <FormControl>
-                              <Input {...field} placeholder="Country" />
+                              <Input {...field} placeholder="Apartment, suite, etc." />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
                         )}
                       />
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="city"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>City *</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="City" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={complianceForm.control}
+                          name="province"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Province *</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Province" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="postal_code"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Postal Code *</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Postal code" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={complianceForm.control}
+                          name="country"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Country *</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Country" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    </div>
+
+                    {/* D. Driver's Licence */}
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <h3 className="text-lg font-semibold text-primary">D. Driver's Licence</h3>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="license_number"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>License Number *</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter license number" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={complianceForm.control}
+                          name="license_code"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>License Code *</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="e.g., B, EB, C1, EC" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="license_issue_date"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>License Issue Date *</FormLabel>
+                              <FormControl>
+                                <Input type="date" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={complianceForm.control}
+                          name="license_expiry_date"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>License Expiry Date *</FormLabel>
+                              <FormControl>
+                                <Input type="date" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      {/* License Document Upload */}
+                      <div className="pt-4 border-t border-border">
+                        <h4 className="text-sm font-semibold mb-3">Driver's License Document Upload *</h4>
+                        {(() => {
+                          const existingDoc = findDocument("drivers_license");
+                          return existingDoc ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm text-muted-foreground">
+                                  Uploaded: {new Date(existingDoc.created_at).toLocaleDateString()}
+                                  {existingDoc.expiry_date && ` | Expires: ${new Date(existingDoc.expiry_date).toLocaleDateString()}`}
+                                </p>
+                                {getDocumentStatusBadge(existingDoc.verification_status)}
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
+                                    if (normalizedPath) {
+                                      window.open(normalizedPath, "_blank");
+                                    } else {
+                                      toast({
+                                        title: "Error",
+                                        description: "Document file path is missing or invalid",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                >
+                                  View Document
+                                </Button>
+                                <ObjectUploader
+                                  onGetUploadParameters={getUploadURL}
+                                  onComplete={(result) => handleDocumentUpload("drivers_license", "Driver's License", result)}
+                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  maxFileSize={10485760}
+                                  buttonVariant="outline"
+                                  buttonSize="sm"
+                                >
+                                  Replace
+                                </ObjectUploader>
+                              </div>
+                            </div>
+                          ) : (
+                            <ObjectUploader
+                              onGetUploadParameters={getUploadURL}
+                              onComplete={(result) => handleDocumentUpload("drivers_license", "Driver's License", result)}
+                              allowedFileTypes={["application/pdf", "image/*"]}
+                              maxFileSize={10485760}
+                              buttonVariant="default"
+                            >
+                              <Upload className="h-4 w-4 mr-2" />
+                              Upload Driver's License Document
+                            </ObjectUploader>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* E. Professional Driving Permit (PrDP) */}
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <h3 className="text-lg font-semibold text-primary">E. Professional Driving Permit (PrDP – Dangerous Goods)</h3>
+                      <p className="text-sm text-muted-foreground">For fuel transport, this is critical.</p>
+                      
+                      <FormField
+                        control={complianceForm.control}
+                        name="prdp_required"
+                        render={({ field }) => (
+                          <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                            <FormControl>
+                              <Checkbox
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
+                              />
+                            </FormControl>
+                            <div className="space-y-1 leading-none">
+                              <FormLabel>PrDP Required</FormLabel>
+                              <p className="text-sm text-muted-foreground">
+                                Required if you will transport fuel
+                              </p>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+
+                      {complianceForm.watch("prdp_required") && (
+                        <>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <FormField
+                              control={complianceForm.control}
+                              name="prdp_number"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>PrDP Number *</FormLabel>
+                                  <FormControl>
+                                    <Input {...field} placeholder="Enter PrDP number" />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+
+                            <FormField
+                              control={complianceForm.control}
+                              name="prdp_category"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>PrDP Category *</FormLabel>
+                                  <FormControl>
+                                    <Input {...field} placeholder="e.g., Dangerous Goods" />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <FormField
+                              control={complianceForm.control}
+                              name="prdp_issue_date"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>PrDP Issue Date *</FormLabel>
+                                  <FormControl>
+                                    <Input type="date" {...field} />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+
+                            <FormField
+                              control={complianceForm.control}
+                              name="prdp_expiry_date"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>PrDP Expiry Date *</FormLabel>
+                                  <FormControl>
+                                    <Input type="date" {...field} />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+
+                          {/* PrDP Document Upload */}
+                          <div className="pt-4 border-t border-border">
+                            <h4 className="text-sm font-semibold mb-3">PrDP Document Upload *</h4>
+                            {(() => {
+                              const existingDoc = findDocument("prdp");
+                              return existingDoc ? (
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <p className="text-sm text-muted-foreground">
+                                      Uploaded: {new Date(existingDoc.created_at).toLocaleDateString()}
+                                      {existingDoc.expiry_date && ` | Expires: ${new Date(existingDoc.expiry_date).toLocaleDateString()}`}
+                                    </p>
+                                    {getDocumentStatusBadge(existingDoc.verification_status)}
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => {
+                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
+                                    if (normalizedPath) {
+                                      window.open(normalizedPath, "_blank");
+                                    } else {
+                                      toast({
+                                        title: "Error",
+                                        description: "Document file path is missing or invalid",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                    >
+                                      View Document
+                                    </Button>
+                                    <ObjectUploader
+                                      onGetUploadParameters={getUploadURL}
+                                      onComplete={(result) => handleDocumentUpload("prdp", "Professional Driving Permit (PrDP-D)", result)}
+                                      allowedFileTypes={["application/pdf", "image/*"]}
+                                      maxFileSize={10485760}
+                                      buttonVariant="outline"
+                                      buttonSize="sm"
+                                    >
+                                      Replace
+                                    </ObjectUploader>
+                                  </div>
+                                </div>
+                              ) : (
+                                <ObjectUploader
+                                  onGetUploadParameters={getUploadURL}
+                                  onComplete={(result) => handleDocumentUpload("prdp", "Professional Driving Permit (PrDP-D)", result)}
+                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  maxFileSize={10485760}
+                                  buttonVariant="default"
+                                >
+                                  <Upload className="h-4 w-4 mr-2" />
+                                  Upload PrDP Document
+                                </ObjectUploader>
+                              );
+                            })()}
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    {/* F. Dangerous Goods / Hazchem Training */}
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <h3 className="text-lg font-semibold text-primary">F. Dangerous Goods / Hazchem Training</h3>
+                      
+                      <FormField
+                        control={complianceForm.control}
+                        name="dg_training_required"
+                        render={({ field }) => (
+                          <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                            <FormControl>
+                              <Checkbox
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
+                              />
+                            </FormControl>
+                            <div className="space-y-1 leading-none">
+                              <FormLabel>Dangerous Goods Training Required</FormLabel>
+                              <p className="text-sm text-muted-foreground">
+                                Required for transporting fuel
+                              </p>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+
+                      {complianceForm.watch("dg_training_required") && (
+                        <>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <FormField
+                              control={complianceForm.control}
+                              name="dg_training_provider"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Training Provider *</FormLabel>
+                                  <FormControl>
+                                    <Input {...field} placeholder="Enter training provider name" />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+
+                            <FormField
+                              control={complianceForm.control}
+                              name="dg_training_certificate_number"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Certificate Number *</FormLabel>
+                                  <FormControl>
+                                    <Input {...field} placeholder="Enter certificate number" />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <FormField
+                              control={complianceForm.control}
+                              name="dg_training_issue_date"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Training Issue Date *</FormLabel>
+                                  <FormControl>
+                                    <Input type="date" {...field} />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+
+                            <FormField
+                              control={complianceForm.control}
+                              name="dg_training_expiry_date"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Training Expiry Date (if applicable)</FormLabel>
+                                  <FormControl>
+                                    <Input type="date" {...field} />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+
+                          {/* DG Training Document Upload */}
+                          <div className="pt-4 border-t border-border">
+                            <h4 className="text-sm font-semibold mb-3">Dangerous Goods Training Certificate Upload *</h4>
+                            {(() => {
+                              const existingDoc = findDocument("dangerous_goods_training", "Dangerous Goods Training Certificate");
+                              return existingDoc ? (
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <p className="text-sm text-muted-foreground">
+                                      Uploaded: {new Date(existingDoc.created_at).toLocaleDateString()}
+                                      {existingDoc.expiry_date && ` | Expires: ${new Date(existingDoc.expiry_date).toLocaleDateString()}`}
+                                    </p>
+                                    {getDocumentStatusBadge(existingDoc.verification_status)}
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => {
+                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
+                                    if (normalizedPath) {
+                                      window.open(normalizedPath, "_blank");
+                                    } else {
+                                      toast({
+                                        title: "Error",
+                                        description: "Document file path is missing or invalid",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                    >
+                                      View Document
+                                    </Button>
+                                    <ObjectUploader
+                                      onGetUploadParameters={getUploadURL}
+                                      onComplete={(result) => handleDocumentUpload("dangerous_goods_training", "Dangerous Goods Training Certificate", result)}
+                                      allowedFileTypes={["application/pdf", "image/*"]}
+                                      maxFileSize={10485760}
+                                      buttonVariant="outline"
+                                      buttonSize="sm"
+                                    >
+                                      Replace
+                                    </ObjectUploader>
+                                  </div>
+                                </div>
+                              ) : (
+                                <ObjectUploader
+                                  onGetUploadParameters={getUploadURL}
+                                  onComplete={(result) => handleDocumentUpload("dangerous_goods_training", "Dangerous Goods Training Certificate", result)}
+                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  maxFileSize={10485760}
+                                  buttonVariant="default"
+                                >
+                                  <Upload className="h-4 w-4 mr-2" />
+                                  Upload Dangerous Goods Training Certificate
+                                </ObjectUploader>
+                              );
+                            })()}
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    {/* G. Criminal / Clearance */}
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <h3 className="text-lg font-semibold text-primary">G. Criminal / Clearance</h3>
+                      
+                      <FormField
+                        control={complianceForm.control}
+                        name="criminal_check_done"
+                        render={({ field }) => (
+                          <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                            <FormControl>
+                              <Checkbox
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
+                              />
+                            </FormControl>
+                            <div className="space-y-1 leading-none">
+                              <FormLabel>Criminal Check Completed</FormLabel>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+
+                      {complianceForm.watch("criminal_check_done") && (
+                        <>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <FormField
+                              control={complianceForm.control}
+                              name="criminal_check_reference"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Criminal Check Reference *</FormLabel>
+                                  <FormControl>
+                                    <Input {...field} placeholder="Enter reference number" />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+
+                            <FormField
+                              control={complianceForm.control}
+                              name="criminal_check_date"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Criminal Check Date *</FormLabel>
+                                  <FormControl>
+                                    <Input type="date" {...field} />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+
+                          {/* Criminal Check Document Upload */}
+                          <div className="pt-4 border-t border-border">
+                            <h4 className="text-sm font-semibold mb-3">Criminal Clearance Document Upload *</h4>
+                            {(() => {
+                              const existingDoc = findDocument("criminal_check");
+                              return existingDoc ? (
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <p className="text-sm text-muted-foreground">
+                                      Uploaded: {new Date(existingDoc.created_at).toLocaleDateString()}
+                                    </p>
+                                    {getDocumentStatusBadge(existingDoc.verification_status)}
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => {
+                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
+                                    if (normalizedPath) {
+                                      window.open(normalizedPath, "_blank");
+                                    } else {
+                                      toast({
+                                        title: "Error",
+                                        description: "Document file path is missing or invalid",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                    >
+                                      View Document
+                                    </Button>
+                                    <ObjectUploader
+                                      onGetUploadParameters={getUploadURL}
+                                      onComplete={(result) => handleDocumentUpload("criminal_check", "Criminal Clearance", result)}
+                                      allowedFileTypes={["application/pdf", "image/*"]}
+                                      maxFileSize={10485760}
+                                      buttonVariant="outline"
+                                      buttonSize="sm"
+                                    >
+                                      Replace
+                                    </ObjectUploader>
+                                  </div>
+                                </div>
+                              ) : (
+                                <ObjectUploader
+                                  onGetUploadParameters={getUploadURL}
+                                  onComplete={(result) => handleDocumentUpload("criminal_check", "Criminal Clearance", result)}
+                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  maxFileSize={10485760}
+                                  buttonVariant="default"
+                                >
+                                  <Upload className="h-4 w-4 mr-2" />
+                                  Upload Criminal Clearance Document
+                                </ObjectUploader>
+                              );
+                            })()}
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
 
-                  <Button type="submit" disabled={updateComplianceMutation.isPending}>
-                    {updateComplianceMutation.isPending ? "Saving..." : "Save Compliance Information"}
-                  </Button>
+                  {/* ========== SECTION 2: DRIVER – BANK & PAYMENT DETAILS ========== */}
+                  <div className="space-y-6 pt-4 border-t-2 border-primary/20">
+                    <div className="border-b-2 border-primary/20 pb-3">
+                      <h2 className="text-xl font-bold flex items-center gap-2">
+                        <Building className="h-5 w-5 text-primary" />
+                        2. Driver – Bank & Payment Details
+                      </h2>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        If you ever receive incentives, rebates, or commissions
+                      </p>
+                    </div>
+
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="bank_account_holder"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Account Holder Name</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter account holder name" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={complianceForm.control}
+                          name="bank_name"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Bank Name</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter bank name" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="account_number"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Account Number</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter account number" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={complianceForm.control}
+                          name="branch_code"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Branch Code</FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter branch code" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      {/* Banking Proof Document Upload */}
+                      <div className="pt-4 border-t border-border">
+                        <h4 className="text-sm font-semibold mb-3">Banking Proof Document Upload</h4>
+                        {(() => {
+                          const existingDoc = findDocument("banking_proof");
+                          return existingDoc ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm text-muted-foreground">
+                                  Uploaded: {new Date(existingDoc.created_at).toLocaleDateString()}
+                                </p>
+                                {getDocumentStatusBadge(existingDoc.verification_status)}
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
+                                    if (normalizedPath) {
+                                      window.open(normalizedPath, "_blank");
+                                    } else {
+                                      toast({
+                                        title: "Error",
+                                        description: "Document file path is missing or invalid",
+                                        variant: "destructive",
+                                      });
+                                    }
+                                  }}
+                                >
+                                  View Document
+                                </Button>
+                                <ObjectUploader
+                                  onGetUploadParameters={getUploadURL}
+                                  onComplete={(result) => handleDocumentUpload("banking_proof", "Banking Proof", result)}
+                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  maxFileSize={10485760}
+                                  buttonVariant="outline"
+                                  buttonSize="sm"
+                                >
+                                  Replace
+                                </ObjectUploader>
+                              </div>
+                            </div>
+                          ) : (
+                            <ObjectUploader
+                              onGetUploadParameters={getUploadURL}
+                              onComplete={(result) => handleDocumentUpload("banking_proof", "Banking Proof", result)}
+                              allowedFileTypes={["application/pdf", "image/*"]}
+                              maxFileSize={10485760}
+                              buttonVariant="default"
+                            >
+                              <Upload className="h-4 w-4 mr-2" />
+                              Upload Banking Proof Document
+                            </ObjectUploader>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ========== SECTION 3: COMPANY LINK ========== */}
+                  <div className="space-y-6 pt-4 border-t-2 border-primary/20">
+                    <div className="border-b-2 border-primary/20 pb-3">
+                      <h2 className="text-xl font-bold flex items-center gap-2">
+                        <Building className="h-5 w-5 text-primary" />
+                        3. Company Link
+                      </h2>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        If driver is attached to a business
+                      </p>
+                    </div>
+
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <FormField
+                        control={complianceForm.control}
+                        name="is_company_driver"
+                        render={({ field }) => (
+                          <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                            <FormControl>
+                              <Checkbox
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
+                              />
+                            </FormControl>
+                            <div className="space-y-1 leading-none">
+                              <FormLabel>Company Driver</FormLabel>
+                              <p className="text-sm text-muted-foreground">
+                                Check if you work for a transport company or fuel buyer
+                              </p>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+
+                      {complianceForm.watch("is_company_driver") && (
+                        <>
+                          <FormField
+                            control={complianceForm.control}
+                            name="company_id"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Company ID</FormLabel>
+                                <FormControl>
+                                  <Input 
+                                    {...field} 
+                                    placeholder="Enter company UUID (e.g., a3d27256-cf59-447a-81c2-ce9babde91d5)" 
+                                  />
+                                </FormControl>
+                                <FormDescription className="text-xs text-muted-foreground">
+                                  Must be a valid UUID format. This should reference a customer/company ID from the system.
+                                </FormDescription>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            control={complianceForm.control}
+                            name="role_in_company"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Role in Company</FormLabel>
+                                <FormControl>
+                                  <Input {...field} placeholder="e.g., Driver, Owner-Driver" />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="pt-6 border-t-2 border-primary/20">
+                    <Button type="submit" size="lg" disabled={updateComplianceMutation.isPending} className="w-full md:w-auto">
+                      {updateComplianceMutation.isPending ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        "Save Compliance Information"
+                      )}
+                    </Button>
+                  </div>
                 </form>
               </Form>
-            </CardContent>
-          </Card>
-
-          {/* Required Documents */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="h-5 w-5" />
-                Required Documents
-              </CardTitle>
-              <CardDescription>
-                Upload your compliance documents for diesel transport &gt;1000L
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {requiredDocuments.map((doc) => {
-                // Find existing document by type and title (if title is specified)
-                const existingDoc = documents.find((d) => {
-                  if (d.doc_type !== doc.type) return false;
-                  if (doc.title && d.title !== doc.title) return false;
-                  return true;
-                });
-                return (
-                  <div key={doc.type} className="border rounded-lg p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h4 className="font-medium">{doc.label}</h4>
-                        {doc.required && (
-                          <Badge variant="outline" className="mt-1">Required</Badge>
-                        )}
-                      </div>
-                      {existingDoc && getDocumentStatusBadge(existingDoc.verification_status)}
-                    </div>
-                    
-                    {existingDoc ? (
-                      <div className="space-y-2">
-                        <p className="text-sm text-muted-foreground">
-                          Uploaded: {new Date(existingDoc.created_at).toLocaleDateString()}
-                        </p>
-                        {existingDoc.expiry_date && (
-                          <p className="text-sm text-muted-foreground">
-                            Expires: {new Date(existingDoc.expiry_date).toLocaleDateString()}
-                          </p>
-                        )}
-                        <div className="flex gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => window.open(`/objects/${existingDoc.file_path}`, "_blank")}
-                          >
-                            View Document
-                          </Button>
-                          <ObjectUploader
-                            onGetUploadParameters={getUploadURL}
-                            onComplete={(result) => handleDocumentUpload(doc.type, doc.title || doc.label, result)}
-                            allowedFileTypes={["application/pdf", "image/*"]}
-                            maxFileSize={10485760} // 10MB
-                            buttonVariant="outline"
-                            buttonSize="sm"
-                          >
-                            Replace
-                          </ObjectUploader>
-                        </div>
-                      </div>
-                    ) : (
-                          <ObjectUploader
-                            onGetUploadParameters={getUploadURL}
-                            onComplete={(result) => handleDocumentUpload(doc.type, doc.title || doc.label, result)}
-                            allowedFileTypes={["application/pdf", "image/*"]}
-                            maxFileSize={10485760} // 10MB
-                            buttonVariant="default"
-                          >
-                            <Upload className="h-4 w-4 mr-2" />
-                            Upload {doc.label}
-                          </ObjectUploader>
-                    )}
-                  </div>
-                );
-              })}
             </CardContent>
           </Card>
         </div>

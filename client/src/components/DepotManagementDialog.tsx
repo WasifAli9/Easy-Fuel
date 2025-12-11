@@ -9,6 +9,7 @@ import { MapPin, Loader2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -275,6 +276,11 @@ export function DepotManagementDialog({
           <DialogTitle data-testid="dialog-title-depot">
             {depot ? "Edit Depot" : "Add New Depot"}
           </DialogTitle>
+          <DialogDescription>
+            {depot 
+              ? "Update the depot information below. Changes will be saved immediately."
+              : "Fill in the details below to create a new depot. Make sure to provide accurate location coordinates."}
+          </DialogDescription>
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
