@@ -25,7 +25,7 @@ export default function Landing() {
         <ThemeToggle />
       </div>
       <LandingHero 
-        onGetStarted={() => setLocation("/signup")}
+        onGetStarted={() => setLocation("/auth")}
         onLearnMore={() => setLocation("/auth")}
       />
     </div>

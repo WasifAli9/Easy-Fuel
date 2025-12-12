@@ -1683,13 +1683,7 @@ router.get("/compliance/pending", async (req, res) => {
     // Get drivers pending compliance
     const { data: pendingDrivers, error: driversError } = await supabaseAdmin
       .from("drivers")
-      .select(`
-        id,
-        user_id,
-        status,
-        compliance_status,
-        profiles!inner(full_name, email, phone)
-      `)
+      .select("id, user_id, status, compliance_status")
       .in("status", ["pending_compliance"])
       .in("compliance_status", ["pending", "incomplete"]);
 
@@ -1700,15 +1694,7 @@ router.get("/compliance/pending", async (req, res) => {
     // Get suppliers pending compliance
     const { data: pendingSuppliers, error: suppliersError } = await supabaseAdmin
       .from("suppliers")
-      .select(`
-        id,
-        owner_id,
-        status,
-        compliance_status,
-        name,
-        registered_name,
-        profiles!inner(full_name, email, phone)
-      `)
+      .select("id, owner_id, status, compliance_status, name, registered_name")
       .in("status", ["pending_compliance"])
       .in("compliance_status", ["pending", "incomplete"]);
 
@@ -1716,9 +1702,41 @@ router.get("/compliance/pending", async (req, res) => {
       console.error("Error fetching pending suppliers:", suppliersError);
     }
 
+    // Fetch profiles for drivers separately
+    const driversWithProfiles = await Promise.all(
+      (pendingDrivers || []).map(async (driver) => {
+        const { data: profile } = await supabaseAdmin
+          .from("profiles")
+          .select("id, full_name, email, phone")
+          .eq("id", driver.user_id)
+          .maybeSingle();
+        
+        return {
+          ...driver,
+          profiles: profile || null,
+        };
+      })
+    );
+
+    // Fetch profiles for suppliers separately
+    const suppliersWithProfiles = await Promise.all(
+      (pendingSuppliers || []).map(async (supplier) => {
+        const { data: profile } = await supabaseAdmin
+          .from("profiles")
+          .select("id, full_name, email, phone")
+          .eq("id", supplier.owner_id)
+          .maybeSingle();
+        
+        return {
+          ...supplier,
+          profiles: profile || null,
+        };
+      })
+    );
+
     res.json({
-      drivers: pendingDrivers || [],
-      suppliers: pendingSuppliers || [],
+      drivers: driversWithProfiles,
+      suppliers: suppliersWithProfiles,
     });
   } catch (error: any) {
     console.error("Error getting pending compliance:", error);

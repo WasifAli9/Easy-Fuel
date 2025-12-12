@@ -30,7 +30,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { geocodeAddress } from "@/lib/geocoding";
 import { MapPin, Loader2 } from "lucide-react";
 
@@ -101,8 +101,70 @@ export function EditAddressDialog({ open, onOpenChange, address }: EditAddressDi
     },
   });
 
+  // Helper function to get live location
+  const getLiveLocation = useCallback((showToast = true) => {
+    setIsGeocoding(true);
+
+    if (!navigator.geolocation) {
+      if (showToast) {
+        toast({
+          title: "Error",
+          description: "Geolocation is not supported by your browser",
+          variant: "destructive",
+        });
+      }
+      setIsGeocoding(false);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        form.setValue("lat", position.coords.latitude);
+        form.setValue("lng", position.coords.longitude);
+        if (showToast) {
+          toast({
+            title: "Success",
+            description: "Location updated successfully",
+          });
+        }
+        setIsGeocoding(false);
+      },
+      (error) => {
+        let errorMessage = "Failed to get location";
+        if (error.code === error.PERMISSION_DENIED) {
+          errorMessage = "Location permission denied. Please enable it in your browser settings.";
+        } else if (error.code === error.TIMEOUT) {
+          errorMessage = "Location request timed out. Please try again or enter coordinates manually.";
+        } else if (error.code === error.POSITION_UNAVAILABLE) {
+          errorMessage = "Location information unavailable. Please try again or enter coordinates manually.";
+        }
+
+        if (showToast) {
+          toast({
+            title: "Error",
+            description: errorMessage,
+            variant: "destructive",
+          });
+        }
+        setIsGeocoding(false);
+      },
+      { 
+        enableHighAccuracy: true, 
+        timeout: 30000, // Increased to 30 seconds
+        maximumAge: 60000 // Accept cached positions up to 1 minute old
+      }
+    );
+  }, [form, toast]);
+
+  const handleGetLiveLocation = () => {
+    getLiveLocation(true);
+  };
+
   // Update form when address changes
   useEffect(() => {
+    const isDefaultCoords = address.lat === -26.2041 && address.lng === 28.0473;
+    const hasNoCoords = !address.lat || !address.lng || address.lat === 0 || address.lng === 0;
+    
     form.reset({
       label: address.label,
       addressStreet: address.address_street,
@@ -115,49 +177,15 @@ export function EditAddressDialog({ open, onOpenChange, address }: EditAddressDi
       accessInstructions: address.access_instructions || "",
       isDefault: address.is_default,
     });
-  }, [address, form]);
 
-  const handleGetLiveLocation = () => {
-    setIsGeocoding(true);
-
-    if (!navigator.geolocation) {
-      toast({
-        title: "Error",
-        description: "Geolocation is not supported by your browser",
-        variant: "destructive",
-      });
-      setIsGeocoding(false);
-      return;
+    // Automatically fetch location if coordinates are default or missing
+    if (open && (isDefaultCoords || hasNoCoords)) {
+      const timer = setTimeout(() => {
+        getLiveLocation(false); // Don't show toast on auto-fetch
+      }, 100);
+      return () => clearTimeout(timer);
     }
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        form.setValue("lat", position.coords.latitude);
-        form.setValue("lng", position.coords.longitude);
-        toast({
-          title: "Success",
-          description: "Location updated successfully",
-        });
-        setIsGeocoding(false);
-      },
-      (error) => {
-        let errorMessage = "Failed to get location";
-        if (error.code === error.PERMISSION_DENIED) {
-          errorMessage = "Location permission denied. Please enable it in your browser settings.";
-        } else if (error.code === error.TIMEOUT) {
-          errorMessage = "Location request timed out.";
-        }
-
-        toast({
-          title: "Error",
-          description: errorMessage,
-          variant: "destructive",
-        });
-        setIsGeocoding(false);
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
-  };
+  }, [address, form, open, getLiveLocation]);
 
   const updateMutation = useMutation({
     mutationFn: async (data: AddressFormData) => {

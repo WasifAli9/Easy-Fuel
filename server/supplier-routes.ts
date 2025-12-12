@@ -2164,7 +2164,8 @@ router.post("/documents", async (req, res) => {
             data.id,
             doc_type,
             "supplier",
-            ownerName
+            ownerName,
+            user.id
           );
 
           // Check if this is a new KYC submission (supplier status is pending)

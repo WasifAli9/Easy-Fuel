@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "wouter";
+import { apiRequest } from "@/lib/queryClient";
 import { AppHeader } from "@/components/AppHeader";
 import { OrderCard } from "@/components/OrderCard";
 import { CreateOrderDialog } from "@/components/CreateOrderDialog";
@@ -21,6 +23,7 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { useToast } from "@/hooks/use-toast";
 
 export default function CustomerDashboard() {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
@@ -28,6 +31,9 @@ export default function CustomerDashboard() {
   const [selectedFuelTypeId, setSelectedFuelTypeId] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const queryClient = useQueryClient();
+  const [, setLocation] = useLocation();
+  const { toast } = useToast();
+  const processedOrderIdRef = useRef<string | null>(null);
 
   // Fetch orders from API
   const { data: orders = [], isLoading } = useQuery<any[]>({
@@ -35,6 +41,58 @@ export default function CustomerDashboard() {
     refetchInterval: 5000, // Poll every 5 seconds for real-time updates
     staleTime: 0, // Always consider data stale to allow immediate refetch
   });
+
+  // Handle orderId from URL query parameter (from notification clicks)
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const orderIdFromUrl = urlParams.get("orderId");
+    
+    // Skip if already processed or no orderId
+    if (!orderIdFromUrl || processedOrderIdRef.current === orderIdFromUrl) {
+      return;
+    }
+    
+    // Wait for orders to load, then check
+    if (!isLoading) {
+      processedOrderIdRef.current = orderIdFromUrl;
+      
+      // Check if order exists in the orders list
+      const orderExists = orders.some((order: any) => order.id === orderIdFromUrl);
+      
+      if (orderExists) {
+        // Order exists, open the dialog
+        setSelectedOrderId(orderIdFromUrl);
+        setViewDialogOpen(true);
+        // Clear the query parameter from URL
+        window.history.replaceState({}, "", "/customer");
+      } else {
+        // Order not found in list, try to fetch it directly
+        (async () => {
+          try {
+            const response = await apiRequest("GET", `/api/orders/${orderIdFromUrl}`);
+            if (response.ok) {
+              // Order found, open the dialog
+              setSelectedOrderId(orderIdFromUrl);
+              setViewDialogOpen(true);
+              // Clear the query parameter from URL
+              window.history.replaceState({}, "", "/customer");
+            } else {
+              throw new Error("Order not found");
+            }
+          } catch (error) {
+            // Order not found
+            toast({
+              title: "Order Not Found",
+              description: "The order you're looking for could not be found.",
+              variant: "destructive",
+            });
+            // Clear the query parameter from URL
+            window.history.replaceState({}, "", "/customer");
+          }
+        })();
+      }
+    }
+  }, [orders, isLoading, toast]);
 
   // Listen for real-time order updates via WebSocket
   useWebSocket((message) => {

@@ -13,11 +13,15 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Users, Truck, TrendingUp, Building2, UserCheck, Search, Shield, FileText, CheckCircle2, XCircle, Eye } from "lucide-react";
+import { Users, Truck, TrendingUp, Building2, UserCheck, Search, Shield, FileText, CheckCircle2, XCircle, Eye, Activity, BarChart3, ArrowUpRight, Filter, Bell } from "lucide-react";
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { useNotifications } from "@/hooks/useNotifications";
+import { formatDistanceToNow } from "date-fns";
 
 interface PendingKYC {
   drivers: Array<{
@@ -105,9 +109,8 @@ export default function AdminDashboard() {
   const queryClient = useQueryClient();
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [userDialogOpen, setUserDialogOpen] = useState(false);
-  const [customerSearch, setCustomerSearch] = useState("");
-  const [allDriversSearch, setAllDriversSearch] = useState("");
-  const [allSuppliersSearch, setAllSuppliersSearch] = useState("");
+  const [userSearch, setUserSearch] = useState("");
+  const [userRoleFilter, setUserRoleFilter] = useState<"all" | "customer" | "driver" | "supplier">("all");
   const [driverKycSearch, setDriverKycSearch] = useState("");
   const [supplierKycSearch, setSupplierKycSearch] = useState("");
   const [complianceSearch, setComplianceSearch] = useState("");
@@ -144,6 +147,72 @@ export default function AdminDashboard() {
     queryKey: ["/api/admin/compliance", selectedComplianceEntity?.type, selectedComplianceEntity?.id, "checklist"],
     enabled: !!selectedComplianceEntity,
   });
+
+  // Fetch notifications
+  const { data: notifications = [] } = useQuery<any[]>({
+    queryKey: ["/api/notifications"],
+    refetchInterval: 30000, // Refetch every 30 seconds
+  });
+
+  // Filter admin-related notifications
+  const adminNotifications = notifications.filter(
+    (n) => n.type === "admin_document_uploaded" || n.type === "admin_kyc_submitted"
+  );
+
+  // Handler for admin notification clicks
+  const handleAdminNotificationClick = async (notification: any) => {
+    try {
+      let userId: string | null = null;
+
+      if (notification.type === "admin_kyc_submitted") {
+        // For KYC submissions, userId is directly in the data
+        userId = notification.data?.userId;
+      } else if (notification.type === "admin_document_uploaded") {
+        // For document uploads, userId should now be in the data (after backend update)
+        userId = notification.data?.userId;
+        
+        // Fallback: if userId is not in data, try to find by name
+        if (!userId) {
+          const ownerType = notification.data?.ownerType;
+          const ownerName = notification.data?.ownerName;
+          
+          if (ownerType === "driver" && ownerName) {
+            const matchingDriver = allDrivers?.find(
+              (d) => d.profiles?.full_name === ownerName
+            );
+            if (matchingDriver) {
+              userId = matchingDriver.user_id;
+            }
+          } else if (ownerType === "supplier" && ownerName) {
+            const matchingSupplier = allSuppliers?.find(
+              (s) => s.profiles?.full_name === ownerName || s.name === ownerName
+            );
+            if (matchingSupplier) {
+              userId = matchingSupplier.owner_id;
+            }
+          }
+        }
+      }
+
+      if (userId) {
+        setSelectedUserId(userId);
+        setUserDialogOpen(true);
+      } else {
+        toast({
+          title: "Error",
+          description: "Could not find user information for this notification. Please search for the user manually.",
+          variant: "destructive",
+        });
+      }
+    } catch (error: any) {
+      console.error("[AdminDashboard] Error handling notification click:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to open user details",
+        variant: "destructive",
+      });
+    }
+  };
 
   // Listen for real-time updates via WebSocket
   useWebSocket((message) => {
@@ -291,23 +360,84 @@ export default function AdminDashboard() {
     setUserDialogOpen(true);
   };
 
-  // Filter customers based on search
-  const filteredCustomers = customers?.filter((customer) =>
-    customer.profiles?.full_name?.toLowerCase().includes(customerSearch.toLowerCase()) ||
-    customer.company_name?.toLowerCase().includes(customerSearch.toLowerCase())
-  ) || [];
+  // Filter customers based on search and ensure they have role "customer"
+  // Combine all users into a single array with role information
+  // Only include users where profiles.role matches their actual role
+  // Use a Map to deduplicate by user_id/owner_id to prevent showing the same user twice
+  const usersMap = new Map<string, any>();
+  
+  // Add customers (only those with role === "customer")
+  customers?.filter(customer => customer.profiles?.role === "customer").forEach(customer => {
+    const key = customer.user_id;
+    if (!usersMap.has(key)) {
+      usersMap.set(key, { ...customer, userRole: "customer" as const });
+    }
+  });
+  
+  // Add drivers (only those with role === "driver")
+  allDrivers?.filter(driver => driver.profiles?.role === "driver").forEach(driver => {
+    const key = driver.user_id;
+    // Only add if not already added as a customer
+    if (!usersMap.has(key)) {
+      usersMap.set(key, { ...driver, userRole: "driver" as const });
+    }
+  });
+  
+  // Add suppliers (only those with role === "supplier")
+  allSuppliers?.filter(supplier => supplier.profiles?.role === "supplier").forEach(supplier => {
+    const key = supplier.owner_id;
+    // Only add if not already added as a customer or driver
+    if (!usersMap.has(key)) {
+      usersMap.set(key, { ...supplier, userRole: "supplier" as const });
+    }
+  });
+  
+  const allUsers = Array.from(usersMap.values());
 
-  // Filter all drivers based on search
-  const filteredAllDrivers = allDrivers?.filter((driver) =>
-    driver.profiles?.full_name?.toLowerCase().includes(allDriversSearch.toLowerCase()) ||
-    driver.vehicle_registration?.toLowerCase().includes(allDriversSearch.toLowerCase())
-  ) || [];
+  // Filter users based on search and role filter
+  const filteredUsers = allUsers.filter((user) => {
+    // Apply role filter
+    if (userRoleFilter !== "all" && user.userRole !== userRoleFilter) {
+      return false;
+    }
 
-  // Filter all suppliers based on search
-  const filteredAllSuppliers = allSuppliers?.filter((supplier) =>
-    supplier.name.toLowerCase().includes(allSuppliersSearch.toLowerCase()) ||
-    supplier.profiles?.full_name?.toLowerCase().includes(allSuppliersSearch.toLowerCase())
-  ) || [];
+    // Apply search filter
+    const searchLower = userSearch.toLowerCase();
+    if (user.userRole === "customer") {
+      return (
+        user.profiles?.full_name?.toLowerCase().includes(searchLower) ||
+        user.company_name?.toLowerCase().includes(searchLower) ||
+        user.profiles?.email?.toLowerCase().includes(searchLower) ||
+        user.profiles?.phone?.toLowerCase().includes(searchLower)
+      );
+    } else if (user.userRole === "driver") {
+      return (
+        user.profiles?.full_name?.toLowerCase().includes(searchLower) ||
+        user.vehicle_registration?.toLowerCase().includes(searchLower) ||
+        user.profiles?.email?.toLowerCase().includes(searchLower) ||
+        user.profiles?.phone?.toLowerCase().includes(searchLower)
+      );
+    } else if (user.userRole === "supplier") {
+      return (
+        user.name?.toLowerCase().includes(searchLower) ||
+        user.profiles?.full_name?.toLowerCase().includes(searchLower) ||
+        user.profiles?.email?.toLowerCase().includes(searchLower) ||
+        user.profiles?.phone?.toLowerCase().includes(searchLower)
+      );
+    }
+    return false;
+  });
+
+  // Keep filteredCustomers for stats (legacy)
+  const filteredCustomers = customers?.filter((customer) => {
+    if (customer.profiles?.role !== "customer") {
+      return false;
+    }
+    return (
+      customer.profiles?.full_name?.toLowerCase().includes(userSearch.toLowerCase()) ||
+      customer.company_name?.toLowerCase().includes(userSearch.toLowerCase())
+    );
+  }) || [];
 
   // Filter driver KYC based on search
   const filteredDriverKYC = driverKYC.filter((driver) =>
@@ -332,7 +462,7 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-background">
-      <AppHeader notificationCount={driverKYC.length + supplierKYC.length} />
+      <AppHeader onAdminNotificationClick={handleAdminNotificationClick} />
       
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8 flex items-center justify-between">
@@ -345,8 +475,8 @@ export default function AdminDashboard() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           <StatsCard
-            title="Total Customers"
-            value={customers?.length || 0}
+            title="Total Users"
+            value={allUsers.length}
             description="Registered accounts"
             icon={Users}
           />
@@ -370,17 +500,14 @@ export default function AdminDashboard() {
           />
         </div>
 
-        <Tabs defaultValue="customers" className="space-y-6">
+        <Tabs defaultValue="activity" className="space-y-6">
           <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
             <TabsList className="min-w-max">
-              <TabsTrigger value="customers" data-testid="tab-customers">
-                Customers ({customers?.length || 0})
+              <TabsTrigger value="activity" data-testid="tab-activity">
+                Activity
               </TabsTrigger>
-              <TabsTrigger value="drivers" data-testid="tab-drivers">
-                Drivers ({allDrivers?.length || 0})
-              </TabsTrigger>
-              <TabsTrigger value="suppliers" data-testid="tab-suppliers">
-                Suppliers ({allSuppliers?.length || 0})
+              <TabsTrigger value="users" data-testid="tab-users">
+                Users ({allUsers.length})
               </TabsTrigger>
               <TabsTrigger value="driver-kyc" data-testid="tab-driver-kyc">
                 Driver KYC ({driverKYC.length})
@@ -395,130 +522,303 @@ export default function AdminDashboard() {
             </TabsList>
           </div>
 
-          <TabsContent value="customers" className="space-y-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search customers by name or company..."
-                className="pl-10"
-                value={customerSearch}
-                onChange={(e) => setCustomerSearch(e.target.value)}
-                data-testid="input-search-customers"
-              />
+          <TabsContent value="activity" className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <BarChart3 className="h-5 w-5" />
+                    User Activity by Role
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="h-[300px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={[
+                            {
+                              name: "Customers",
+                              value: filteredCustomers.length,
+                              fill: "hsl(var(--chart-1))",
+                            },
+                            {
+                              name: "Drivers",
+                              value: allDrivers?.filter(d => d.profiles?.role === "driver").length || 0,
+                              fill: "hsl(var(--chart-2))",
+                            },
+                            {
+                              name: "Suppliers",
+                              value: allSuppliers?.filter(s => s.profiles?.role === "supplier").length || 0,
+                              fill: "hsl(var(--chart-3))",
+                            },
+                          ]}
+                          cx="50%"
+                          cy="50%"
+                          labelLine={false}
+                          label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                          outerRadius={80}
+                          innerRadius={50}
+                          dataKey="value"
+                        >
+                          {[
+                            { fill: "hsl(var(--chart-1))" },
+                            { fill: "hsl(var(--chart-2))" },
+                            { fill: "hsl(var(--chart-3))" },
+                          ].map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.fill} />
+                          ))}
+                        </Pie>
+                        <Tooltip 
+                          contentStyle={{
+                            backgroundColor: "hsl(var(--background))",
+                            border: "1px solid hsl(var(--border))",
+                            borderRadius: "6px",
+                          }}
+                          labelStyle={{ color: "hsl(var(--foreground))" }}
+                        />
+                        <Legend 
+                          verticalAlign="bottom" 
+                          height={36}
+                          formatter={(value) => <span style={{ color: "hsl(var(--foreground))" }}>{value}</span>}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Activity className="h-5 w-5" />
+                    Platform Activity Overview
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between p-3 border rounded-lg">
+                      <div className="flex items-center gap-3">
+                        <Users className="h-5 w-5 text-blue-600" />
+                        <div>
+                          <p className="font-medium">User Registrations</p>
+                          <p className="text-sm text-muted-foreground">New users this month</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-bold text-lg">-</p>
+                        <p className="text-xs text-muted-foreground flex items-center gap-1">
+                          <ArrowUpRight className="h-3 w-3" />
+                          -
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between p-3 border rounded-lg">
+                      <div className="flex items-center gap-3">
+                        <Truck className="h-5 w-5 text-green-600" />
+                        <div>
+                          <p className="font-medium">Driver Activity</p>
+                          <p className="text-sm text-muted-foreground">Active drivers</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-bold text-lg">{allDrivers?.filter(d => d.profiles?.role === "driver").length || 0}</p>
+                        <p className="text-xs text-muted-foreground">Total drivers</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between p-3 border rounded-lg">
+                      <div className="flex items-center gap-3">
+                        <Building2 className="h-5 w-5 text-purple-600" />
+                        <div>
+                          <p className="font-medium">Supplier Activity</p>
+                          <p className="text-sm text-muted-foreground">Active suppliers</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-bold text-lg">{allSuppliers?.filter(s => s.profiles?.role === "supplier").length || 0}</p>
+                        <p className="text-xs text-muted-foreground">Total suppliers</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between p-3 border rounded-lg">
+                      <div className="flex items-center gap-3">
+                        <Users className="h-5 w-5 text-orange-600" />
+                        <div>
+                          <p className="font-medium">Customer Activity</p>
+                          <p className="text-sm text-muted-foreground">Active customers</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-bold text-lg">{allUsers.filter(u => u.userRole === "customer").length}</p>
+                        <p className="text-xs text-muted-foreground">Total users</p>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
             </div>
-            {!customers || customers.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                <p>No customers registered yet</p>
-              </div>
-            ) : filteredCustomers.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                <p>No customers match your search</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {filteredCustomers.map((customer) => (
-                  <CustomerCard
-                    key={customer.id}
-                    id={customer.id}
-                    name={customer.profiles?.full_name || 'N/A'}
-                    companyName={customer.company_name}
-                    email={customer.profiles?.email}
-                    vatNumber={customer.vat_number}
-                    phone={customer.profiles?.phone}
-                    registeredDate={new Date(customer.created_at).toLocaleDateString()}
-                    profilePhotoUrl={customer.profiles?.profile_photo_url}
-                    onView={() => handleView(customer.user_id, "customer")}
-                  />
-                ))}
-              </div>
-            )}
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <TrendingUp className="h-5 w-5" />
+                  Activity Trends
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {adminNotifications.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Bell className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                    <p>No recent activity</p>
+                    <p className="text-xs mt-1">Activity notifications will appear here</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3 max-h-[400px] overflow-y-auto">
+                    {adminNotifications.slice(0, 20).map((notification) => {
+                      const timeAgo = formatDistanceToNow(new Date(notification.created_at || notification.createdAt), { addSuffix: true });
+                      const isKYC = notification.type === "admin_kyc_submitted";
+                      const isDocument = notification.type === "admin_document_uploaded";
+                      
+                      return (
+                        <div
+                          key={notification.id}
+                          onClick={() => handleAdminNotificationClick(notification)}
+                          className={`p-4 border rounded-lg cursor-pointer transition-colors ${
+                            !notification.read
+                              ? "bg-primary/5 border-primary/20 hover:bg-primary/10"
+                              : "hover:bg-muted/50"
+                          }`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="text-2xl flex-shrink-0">
+                              {isKYC ? (
+                                <UserCheck className="h-5 w-5 text-blue-600" />
+                              ) : isDocument ? (
+                                <FileText className="h-5 w-5 text-green-600" />
+                              ) : (
+                                <Bell className="h-5 w-5 text-muted-foreground" />
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-start justify-between gap-2">
+                                <p className={`text-sm font-medium ${!notification.read ? "font-semibold" : ""}`}>
+                                  {notification.title}
+                                </p>
+                                {!notification.read && (
+                                  <div className="h-2 w-2 rounded-full bg-primary flex-shrink-0 mt-1.5" />
+                                )}
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                                {notification.message}
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-2">
+                                {timeAgo}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
 
-          <TabsContent value="drivers" className="space-y-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search drivers by name or vehicle..."
-                className="pl-10"
-                value={allDriversSearch}
-                onChange={(e) => setAllDriversSearch(e.target.value)}
-                data-testid="input-search-all-drivers"
-              />
-            </div>
-            {!allDrivers || allDrivers.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                <p>No drivers registered yet</p>
+          <TabsContent value="users" className="space-y-4">
+            <div className="flex flex-col sm:flex-row gap-4">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search users by name, email, phone, or company..."
+                  className="pl-10"
+                  value={userSearch}
+                  onChange={(e) => setUserSearch(e.target.value)}
+                  data-testid="input-search-users"
+                />
               </div>
-            ) : filteredAllDrivers.length === 0 ? (
+              <div className="flex items-center gap-2">
+                <Filter className="h-4 w-4 text-muted-foreground" />
+                <Select value={userRoleFilter} onValueChange={(value: "all" | "customer" | "driver" | "supplier") => setUserRoleFilter(value)}>
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Filter by role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Users</SelectItem>
+                    <SelectItem value="customer">Customers</SelectItem>
+                    <SelectItem value="driver">Drivers</SelectItem>
+                    <SelectItem value="supplier">Suppliers</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            {allUsers.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground">
-                <p>No drivers match your search</p>
+                <p>No users registered yet</p>
+              </div>
+            ) : filteredUsers.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <p>No users match your search or filter</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {filteredAllDrivers.map((driver) => {
-                  const primaryVehicle = driver.vehicles?.[0];
-                  const vehicleType = primaryVehicle 
-                    ? `${primaryVehicle.make || ''} ${primaryVehicle.model || ''}`.trim() || primaryVehicle.registration_number
-                    : undefined;
-                  
-                  return (
-                    <DriverCard
-                      key={driver.id}
-                      id={driver.id}
-                      name={driver.profiles?.full_name || 'N/A'}
-                      companyName={driver.company_name}
-                      email={driver.profiles?.email}
-                      vehicleRegistration={driver.vehicle_registration}
-                      vehicleType={vehicleType}
-                      fuelCapacity={primaryVehicle?.capacity_litres}
-                      kycStatus={driver.kyc_status}
-                      phone={driver.profiles?.phone}
-                      registeredDate={new Date(driver.created_at).toLocaleDateString()}
-                      profilePhotoUrl={driver.profiles?.profile_photo_url}
-                      onView={() => handleView(driver.user_id, "driver")}
-                    />
-                  );
+                {filteredUsers.map((user) => {
+                  if (user.userRole === "customer") {
+                    return (
+                      <CustomerCard
+                        key={user.id}
+                        id={user.id}
+                        name={user.profiles?.full_name || 'N/A'}
+                        companyName={user.company_name}
+                        email={user.profiles?.email}
+                        vatNumber={user.vat_number}
+                        phone={user.profiles?.phone}
+                        registeredDate={new Date(user.created_at).toLocaleDateString()}
+                        profilePhotoUrl={user.profiles?.profile_photo_url}
+                        onView={() => handleView(user.user_id, "customer")}
+                      />
+                    );
+                  } else if (user.userRole === "driver") {
+                    const primaryVehicle = user.vehicles?.[0];
+                    const vehicleType = primaryVehicle 
+                      ? `${primaryVehicle.make || ''} ${primaryVehicle.model || ''}`.trim() || primaryVehicle.registration_number
+                      : undefined;
+                    
+                    return (
+                      <DriverCard
+                        key={user.id}
+                        id={user.id}
+                        name={user.profiles?.full_name || 'N/A'}
+                        companyName={user.company_name}
+                        email={user.profiles?.email}
+                        vehicleRegistration={user.vehicle_registration}
+                        vehicleType={vehicleType}
+                        fuelCapacity={primaryVehicle?.capacity_litres}
+                        kycStatus={user.kyc_status}
+                        phone={user.profiles?.phone}
+                        registeredDate={new Date(user.created_at).toLocaleDateString()}
+                        profilePhotoUrl={user.profiles?.profile_photo_url}
+                        onView={() => handleView(user.user_id, "driver")}
+                      />
+                    );
+                  } else if (user.userRole === "supplier") {
+                    return (
+                      <SupplierCard
+                        key={user.id}
+                        id={user.id}
+                        name={user.profiles?.full_name || 'N/A'}
+                        companyName={user.name}
+                        email={user.profiles?.email}
+                        kybStatus={user.kyb_status}
+                        cipcNumber={user.cipc_number}
+                        phone={user.profiles?.phone}
+                        registeredDate={new Date(user.created_at).toLocaleDateString()}
+                        profilePhotoUrl={user.profiles?.profile_photo_url}
+                        onView={() => handleView(user.owner_id, "supplier")}
+                      />
+                    );
+                  }
+                  return null;
                 })}
-              </div>
-            )}
-          </TabsContent>
-
-          <TabsContent value="suppliers" className="space-y-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search suppliers by name or company..."
-                className="pl-10"
-                value={allSuppliersSearch}
-                onChange={(e) => setAllSuppliersSearch(e.target.value)}
-                data-testid="input-search-all-suppliers"
-              />
-            </div>
-            {!allSuppliers || allSuppliers.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                <p>No suppliers registered yet</p>
-              </div>
-            ) : filteredAllSuppliers.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                <p>No suppliers match your search</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {filteredAllSuppliers.map((supplier) => (
-                  <SupplierCard
-                    key={supplier.id}
-                    id={supplier.id}
-                    name={supplier.profiles?.full_name || 'N/A'}
-                    companyName={supplier.name}
-                    email={supplier.profiles?.email}
-                    kybStatus={supplier.kyb_status}
-                    cipcNumber={supplier.cipc_number}
-                    phone={supplier.profiles?.phone}
-                    registeredDate={new Date(supplier.created_at).toLocaleDateString()}
-                    profilePhotoUrl={supplier.profiles?.profile_photo_url}
-                    onView={() => handleView(supplier.owner_id, "supplier")}
-                  />
-                ))}
               </div>
             )}
           </TabsContent>

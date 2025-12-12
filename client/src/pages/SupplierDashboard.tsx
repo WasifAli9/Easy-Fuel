@@ -138,8 +138,13 @@ export default function SupplierDashboard() {
   };
 
   const handleAddDepot = () => {
-    // Check if KYC is approved
-    const isKYCApproved = supplierProfile?.status === "active" && supplierProfile?.compliance_status === "approved";
+    // Check if KYC/KYB is approved
+    // Suppliers need: status === "active" AND compliance_status === "approved"
+    // Also check kyb_status if available
+    const isKYCApproved = 
+      supplierProfile?.status === "active" && 
+      supplierProfile?.compliance_status === "approved" &&
+      (supplierProfile?.kyb_status === "approved" || supplierProfile?.kyb_status === undefined);
     
     if (!isKYCApproved) {
       // Show warning dialog
@@ -342,7 +347,7 @@ export default function SupplierDashboard() {
                       : "Click \"Add Depot\" to create your first depot"}
                   </p>
                   <Button 
-                    onClick={() => setDepotDialogOpen(true)}
+                    onClick={handleAddDepot}
                     variant="outline"
                   >
                     <Plus className="h-4 w-4 mr-2" />

@@ -212,9 +212,6 @@ export default function SupplierProfile() {
       wholesale_license_issue_date: "",
       wholesale_license_expiry_date: "",
       allowed_fuel_types: [],
-      // Depot / Site Licence
-      site_license_number: "",
-      depot_address: "",
       // Additional Fuel Trading Permit
       permit_number: "",
       permit_expiry_date: "",
@@ -268,9 +265,6 @@ export default function SupplierProfile() {
         wholesale_license_issue_date: profile.wholesale_license_issue_date ? formatDateForInput(profile.wholesale_license_issue_date) : "",
         wholesale_license_expiry_date: profile.dmre_license_expiry ? formatDateForInput(profile.dmre_license_expiry) : (profile.wholesale_license_expiry_date ? formatDateForInput(profile.wholesale_license_expiry_date) : ""),
         allowed_fuel_types: Array.isArray(profile.allowed_fuel_types) ? profile.allowed_fuel_types : (profile.allowed_fuel_types ? [profile.allowed_fuel_types] : []),
-        // Depot / Site Licence
-        site_license_number: profile.site_license_number || "",
-        depot_address: profile.depot_address || "",
         // Additional Fuel Trading Permit
         permit_number: profile.permit_number || "",
         permit_expiry_date: profile.permit_expiry_date ? formatDateForInput(profile.permit_expiry_date) : "",
@@ -1330,103 +1324,9 @@ export default function SupplierProfile() {
                       </div>
                     </div>
 
-                    {/* B. Depot / Site Licence */}
+                    {/* B. Additional Fuel Trading Permit */}
                     <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
-                      <h3 className="text-lg font-semibold text-primary">B. Depot / Site Licence</h3>
-                      
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <FormField
-                          control={complianceForm.control}
-                          name="site_license_number"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Site License Number *</FormLabel>
-                              <FormControl>
-                                <Input {...field} placeholder="Enter site license number" />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      </div>
-
-                      <FormField
-                        control={complianceForm.control}
-                        name="depot_address"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Depot Address *</FormLabel>
-                            <FormControl>
-                              <Textarea {...field} placeholder="Enter depot address" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      {/* Site License Document Upload */}
-                      <div className="pt-4 border-t border-border">
-                        <h4 className="text-sm font-semibold mb-3">Site/Depot License Document Upload *</h4>
-                        {(() => {
-                          const existingDoc = findDocument("site_license");
-                          return existingDoc ? (
-                            <div className="space-y-2">
-                              <div className="flex items-center justify-between">
-                                <p className="text-sm text-muted-foreground">
-                                  Uploaded: {formatDate(existingDoc.created_at)}
-                                </p>
-                                {getDocumentStatusBadge(existingDoc.verification_status)}
-                              </div>
-                              <div className="flex gap-2">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
-                                    if (normalizedPath) {
-                                      window.open(normalizedPath, "_blank");
-                                    } else {
-                                      toast({
-                                        title: "Error",
-                                        description: "Document file path is missing or invalid",
-                                        variant: "destructive",
-                                      });
-                                    }
-                                  }}
-                                >
-                                  View Document
-                                </Button>
-                                <ObjectUploader
-                                  onGetUploadParameters={getUploadURL}
-                                  onComplete={(result) => handleDocumentUpload("site_license", "Site/Depot License", result)}
-                                  allowedFileTypes={["application/pdf", "image/*"]}
-                                  maxFileSize={10485760}
-                                  buttonVariant="outline"
-                                  buttonSize="sm"
-                                >
-                                  Replace
-                                </ObjectUploader>
-                              </div>
-                            </div>
-                          ) : (
-                            <ObjectUploader
-                              onGetUploadParameters={getUploadURL}
-                              onComplete={(result) => handleDocumentUpload("site_license", "Site/Depot License", result)}
-                              allowedFileTypes={["application/pdf", "image/*"]}
-                              maxFileSize={10485760}
-                              buttonVariant="default"
-                            >
-                              <Upload className="h-4 w-4 mr-2" />
-                              Upload Site/Depot License Document
-                            </ObjectUploader>
-                          );
-                        })()}
-                      </div>
-                    </div>
-
-                    {/* C. Additional Fuel Trading Permit */}
-                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
-                      <h3 className="text-lg font-semibold text-primary">C. Additional Fuel Trading Permit (If required)</h3>
+                      <h3 className="text-lg font-semibold text-primary">B. Additional Fuel Trading Permit (If required)</h3>
                       
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <FormField

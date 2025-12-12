@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -80,22 +80,25 @@ export function AddAddressDialog({ open, onOpenChange, onSuccess }: AddAddressDi
       addressProvince: "",
       addressPostalCode: "",
       addressCountry: "South Africa",
-      lat: -26.2041, // Johannesburg default
-      lng: 28.0473,
+      lat: 0, // Will be set automatically
+      lng: 0, // Will be set automatically
       accessInstructions: "",
       isDefault: false,
     },
   });
 
-  const handleGetLiveLocation = () => {
+  // Helper function to get live location
+  const getLiveLocation = (showToast = true) => {
     setIsGeocoding(true);
 
     if (!navigator.geolocation) {
-      toast({
-        title: "Error",
-        description: "Geolocation is not supported by your browser",
-        variant: "destructive",
-      });
+      if (showToast) {
+        toast({
+          title: "Error",
+          description: "Geolocation is not supported by your browser",
+          variant: "destructive",
+        });
+      }
       setIsGeocoding(false);
       return;
     }
@@ -104,10 +107,12 @@ export function AddAddressDialog({ open, onOpenChange, onSuccess }: AddAddressDi
       (position) => {
         form.setValue("lat", position.coords.latitude);
         form.setValue("lng", position.coords.longitude);
-        toast({
-          title: "Success",
-          description: "Location updated successfully",
-        });
+        if (showToast) {
+          toast({
+            title: "Success",
+            description: "Location updated successfully",
+          });
+        }
         setIsGeocoding(false);
       },
       (error) => {
@@ -115,19 +120,42 @@ export function AddAddressDialog({ open, onOpenChange, onSuccess }: AddAddressDi
         if (error.code === error.PERMISSION_DENIED) {
           errorMessage = "Location permission denied. Please enable it in your browser settings.";
         } else if (error.code === error.TIMEOUT) {
-          errorMessage = "Location request timed out.";
+          errorMessage = "Location request timed out. Please try again or enter coordinates manually.";
+        } else if (error.code === error.POSITION_UNAVAILABLE) {
+          errorMessage = "Location information unavailable. Please try again or enter coordinates manually.";
         }
 
-        toast({
-          title: "Error",
-          description: errorMessage,
-          variant: "destructive",
-        });
+        if (showToast) {
+          toast({
+            title: "Error",
+            description: errorMessage,
+            variant: "destructive",
+          });
+        }
         setIsGeocoding(false);
       },
-      { enableHighAccuracy: true, timeout: 10000 }
+      { 
+        enableHighAccuracy: true, 
+        timeout: 30000, // Increased to 30 seconds
+        maximumAge: 60000 // Accept cached positions up to 1 minute old
+      }
     );
   };
+
+  const handleGetLiveLocation = () => {
+    getLiveLocation(true);
+  };
+
+  // Automatically fetch location when dialog opens
+  useEffect(() => {
+    if (open) {
+      // Small delay to ensure dialog is fully rendered
+      const timer = setTimeout(() => {
+        getLiveLocation(false); // Don't show toast on auto-fetch
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [open]);
 
   const createMutation = useMutation({
     mutationFn: async (data: AddressFormData) => {

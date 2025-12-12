@@ -2638,7 +2638,8 @@ router.post("/documents", async (req, res) => {
             document.id,
             doc_type,
             finalOwnerType,
-            ownerName
+            ownerName,
+            user.id
           );
 
           // Check if this is a new KYC submission (driver status is pending)

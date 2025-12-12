@@ -60,7 +60,7 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
   // Listen for KYC/compliance approval to refresh user details
   useWebSocket((message) => {
     const payload = (message as any).payload || {};
-    const messageUserId = payload.userId;
+    const messageUserId = payload.userId || payload.driverId;
     
     // Check if this message is for the current user
     const isForCurrentUser = messageUserId === userId;
@@ -81,8 +81,14 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
         userRole: userDetails?.profile?.role,
         isForCurrentUser
       });
-      refetchUserDetails();
+      // Invalidate queries first, then refetch
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users", userId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/customers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/kyc/pending"] });
+      // Refetch user details after a short delay to ensure backend has updated
+      setTimeout(() => {
+        refetchUserDetails();
+      }, 500);
     }
   });
 
@@ -304,8 +310,15 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
               </DialogDescription>
               <div className="flex items-center gap-2 mt-2">
                 <Badge variant="outline" className="capitalize">{userDetails.profile.role}</Badge>
-                <Badge variant={userDetails.profile.is_active ? "default" : "secondary"}>
-                  {userDetails.profile.is_active ? "Active" : "Inactive"}
+                <Badge variant={
+                  // For drivers, if approved, they should be active
+                  (userDetails.driver && userDetails.profile.approval_status === "approved") || userDetails.profile.is_active
+                    ? "default" 
+                    : "secondary"
+                }>
+                  {(userDetails.driver && userDetails.profile.approval_status === "approved") || userDetails.profile.is_active
+                    ? "Active" 
+                    : "Inactive"}
                 </Badge>
                 <Badge variant={
                   userDetails.profile.approval_status === "approved" ? "default" :
@@ -681,19 +694,19 @@ function DriverDetails({ driver, formData, setFormData, isEditing }: any) {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <Label>Driver Type</Label>
-            <p className="text-sm mt-1 capitalize">{driver.driver_type || "N/A"}</p>
+            <p className="text-sm mt-1 capitalize">{driver.driver_type || driver.driverType || "N/A"}</p>
           </div>
           <div>
             <Label>ID Type</Label>
-            <p className="text-sm mt-1">{driver.id_type || "N/A"}</p>
+            <p className="text-sm mt-1">{driver.id_type || driver.idType || "N/A"}</p>
           </div>
           <div>
             <Label>ID Number</Label>
-            <p className="text-sm mt-1">{driver.id_number || "N/A"}</p>
+            <p className="text-sm mt-1">{driver.id_number || driver.za_id_number || driver.zaIdNumber || driver.passport_number || driver.passportNumber || "N/A"}</p>
           </div>
           <div>
             <Label>ID Issue Country</Label>
-            <p className="text-sm mt-1">{driver.id_issue_country || "N/A"}</p>
+            <p className="text-sm mt-1">{driver.id_issue_country || driver.idIssueCountry || driver.passport_country || driver.passportCountry || "South Africa"}</p>
           </div>
         </div>
       </div>
@@ -704,43 +717,43 @@ function DriverDetails({ driver, formData, setFormData, isEditing }: any) {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <Label>License Number</Label>
-            <p className="text-sm mt-1">{driver.license_number || "N/A"}</p>
+            <p className="text-sm mt-1">{driver.license_number || driver.drivers_license_number || driver.driversLicenseNumber || "N/A"}</p>
           </div>
           <div>
             <Label>License Code</Label>
-            <p className="text-sm mt-1">{driver.license_code || "N/A"}</p>
+            <p className="text-sm mt-1">{driver.license_code || driver.licenseCode || "N/A"}</p>
           </div>
           <div>
             <Label>Issue Date</Label>
-            <p className="text-sm mt-1">{driver.license_issue_date ? new Date(driver.license_issue_date).toLocaleDateString() : "N/A"}</p>
+            <p className="text-sm mt-1">{(driver.license_issue_date || driver.drivers_license_issue_date || driver.driversLicenseIssueDate) ? new Date(driver.license_issue_date || driver.drivers_license_issue_date || driver.driversLicenseIssueDate).toLocaleDateString() : "N/A"}</p>
           </div>
           <div>
             <Label>Expiry Date</Label>
-            <p className="text-sm mt-1">{driver.license_expiry_date ? new Date(driver.license_expiry_date).toLocaleDateString() : "N/A"}</p>
+            <p className="text-sm mt-1">{(driver.license_expiry_date || driver.drivers_license_expiry || driver.driversLicenseExpiry) ? new Date(driver.license_expiry_date || driver.drivers_license_expiry || driver.driversLicenseExpiry).toLocaleDateString() : "N/A"}</p>
           </div>
         </div>
       </div>
 
       {/* Professional Driving Permit (PrDP) */}
-      {driver.prdp_required && (
+      {(driver.prdp_required || driver.prdpRequired) && (
         <div>
           <h3 className="font-semibold text-sm text-muted-foreground mb-4">Professional Driving Permit (PrDP)</h3>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>PrDP Number</Label>
-              <p className="text-sm mt-1">{driver.prdp_number || "N/A"}</p>
+              <p className="text-sm mt-1">{driver.prdp_number || driver.prdpNumber || "N/A"}</p>
             </div>
             <div>
               <Label>Category</Label>
-              <p className="text-sm mt-1">{driver.prdp_category || "N/A"}</p>
+              <p className="text-sm mt-1">{driver.prdp_category || driver.prdpCategory || "N/A"}</p>
             </div>
             <div>
               <Label>Issue Date</Label>
-              <p className="text-sm mt-1">{driver.prdp_issue_date ? new Date(driver.prdp_issue_date).toLocaleDateString() : "N/A"}</p>
+              <p className="text-sm mt-1">{(driver.prdp_issue_date || driver.prdpIssueDate) ? new Date(driver.prdp_issue_date || driver.prdpIssueDate).toLocaleDateString() : "N/A"}</p>
             </div>
             <div>
               <Label>Expiry Date</Label>
-              <p className="text-sm mt-1">{driver.prdp_expiry_date ? new Date(driver.prdp_expiry_date).toLocaleDateString() : "N/A"}</p>
+              <p className="text-sm mt-1">{(driver.prdp_expiry_date || driver.prdpExpiry) ? new Date(driver.prdp_expiry_date || driver.prdpExpiry).toLocaleDateString() : "N/A"}</p>
             </div>
           </div>
         </div>

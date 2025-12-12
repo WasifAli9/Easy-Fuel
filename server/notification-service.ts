@@ -784,13 +784,14 @@ class NotificationService {
     documentId: string,
     documentType: string,
     ownerType: string,
-    ownerName: string
+    ownerName: string,
+    userId?: string
   ) {
     return this.sendToMultipleUsers(adminUserIds, {
       type: "admin_document_uploaded",
       title: "New Document Uploaded",
       message: `${ownerName} uploaded a new ${documentType} document (${ownerType}). Please review.`,
-      data: { documentId, documentType, ownerType, ownerName },
+      data: { documentId, documentType, ownerType, ownerName, userId },
       priority: "medium",
     });
   }

@@ -17,6 +17,7 @@ import {
   SheetContent,
   SheetHeader,
   SheetTitle,
+  SheetDescription,
   SheetClose,
 } from "@/components/ui/sheet";
 import { useAuth } from "@/contexts/AuthContext";
@@ -33,9 +34,10 @@ interface AppHeaderProps {
   onMenuClick?: () => void;
   notificationCount?: number;
   showMenu?: boolean;
+  onAdminNotificationClick?: (notification: any) => void;
 }
 
-export function AppHeader({ onMenuClick, notificationCount: propNotificationCount, showMenu = true }: AppHeaderProps) {
+export function AppHeader({ onMenuClick, notificationCount: propNotificationCount, showMenu = true, onAdminNotificationClick }: AppHeaderProps) {
   const { profile, signOut } = useAuth();
   const [, setLocation] = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -339,18 +341,50 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
     setLocation("/");
   }
 
-  function handleNotificationClick(notification: any) {
+  async function handleNotificationClick(notification: any) {
     try {
       if (!notification.read) {
         markAsReadMutation.mutate(notification.id);
       }
       
+      // Handle admin notifications (document uploads, KYC submissions)
+      if (notification.type === "admin_document_uploaded" || notification.type === "admin_kyc_submitted") {
+        if (onAdminNotificationClick) {
+          onAdminNotificationClick(notification);
+          setNotificationsOpen(false);
+          return;
+        }
+      }
+      
       // Navigate based on notification type
       if (notification.data?.orderId) {
+        const orderId = notification.data.orderId;
+        
         if (profile?.role === "driver") {
           setLocation("/driver");
         } else if (profile?.role === "customer") {
-          setLocation(`/customer/orders/${notification.data.orderId}`);
+          // Verify order exists before navigating
+          try {
+            const response = await apiRequest("GET", `/api/orders/${orderId}`);
+            if (response.ok) {
+              // Order exists, navigate to customer dashboard with orderId parameter
+              setLocation(`/customer?orderId=${orderId}`);
+            } else {
+              // Order not found
+              toast({
+                title: "Order Not Found",
+                description: "The order associated with this notification could not be found.",
+                variant: "destructive",
+              });
+            }
+          } catch (error) {
+            // Error fetching order
+            toast({
+              title: "Error",
+              description: "Unable to verify order. Please try again later.",
+              variant: "destructive",
+            });
+          }
         }
         setNotificationsOpen(false);
       }
@@ -361,6 +395,11 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
         message: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
         notification,
+      });
+      toast({
+        title: "Error",
+        description: "Failed to handle notification. Please try again.",
+        variant: "destructive",
       });
     }
   }
@@ -565,6 +604,9 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
         <SheetContent side="left" className="w-[300px] sm:w-[400px]">
           <SheetHeader>
             <SheetTitle>Menu</SheetTitle>
+            <SheetDescription>
+              Navigation menu for accessing different sections of the application
+            </SheetDescription>
           </SheetHeader>
           <nav className="flex flex-col gap-4 mt-6">
             {profile?.role === "customer" && (
@@ -668,6 +710,9 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
                 </Button>
               )}
             </div>
+            <SheetDescription>
+              View and manage your notifications
+            </SheetDescription>
           </SheetHeader>
           <div className="mt-6 flex-1 overflow-y-auto">
             {notifications.length === 0 ? (

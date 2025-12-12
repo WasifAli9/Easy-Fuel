@@ -745,54 +745,64 @@ export default function DriverProfile() {
                     <div className="relative">
                       {profile?.profile_photo_url ? (
                         (() => {
-                          let imageSrc: string;
                           const photoUrl = profile.profile_photo_url;
+                          let imageSrc: string;
                           
-                          // Handle Supabase Storage format: bucket/path (e.g., "private-objects/uploads/uuid")
-                          if (photoUrl.includes('/') && !photoUrl.startsWith('/') && !photoUrl.startsWith('http')) {
-                            // Check if it's a private bucket (private-objects)
-                            if (photoUrl.startsWith('private-objects/')) {
-                              // Use our server endpoint for private objects (handles authentication)
-                              const pathOnly = photoUrl.replace('private-objects/', '');
-                              imageSrc = `/objects/${pathOnly}`;
-                            } else {
-                              // For public buckets, use Supabase public URL
-                              imageSrc = `${import.meta.env.VITE_SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co'}/storage/v1/object/public/${photoUrl}`;
-                            }
-                          }
-                          // Handle /objects/ path format
-                          else if (photoUrl.startsWith('/objects/')) {
+                          // Handle full URLs (http/https) - use as-is
+                          if (photoUrl.startsWith('http://') || photoUrl.startsWith('https://')) {
                             imageSrc = photoUrl;
                           }
-                          // Handle full URLs
-                          else if (photoUrl.startsWith('http://') || photoUrl.startsWith('https://')) {
-                            imageSrc = photoUrl;
-                          }
-                          // Default: assume it's a relative path
+                          // Use normalizeFilePath for all other formats
                           else {
-                            imageSrc = `/objects/${photoUrl}`;
+                            // Ensure bucket name is included if missing
+                            let pathToNormalize = photoUrl;
+                            
+                            // If path doesn't include a bucket name and starts with uploads/, add private-objects/
+                            if (pathToNormalize.startsWith('uploads/') && !pathToNormalize.startsWith('private-objects/') && !pathToNormalize.startsWith('public-objects/')) {
+                              pathToNormalize = `private-objects/${pathToNormalize}`;
+                            }
+                            
+                            const normalized = normalizeFilePath(pathToNormalize);
+                            if (normalized) {
+                              imageSrc = normalized;
+                            } else {
+                              // Fallback: try to construct a path
+                              // Check if it's a public bucket that should use Supabase public URL
+                              if (photoUrl.includes('/') && !photoUrl.startsWith('/') && !photoUrl.startsWith('http')) {
+                                // For public buckets, use Supabase public URL
+                                imageSrc = `${import.meta.env.VITE_SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co'}/storage/v1/object/public/${photoUrl}`;
+                              } else {
+                                // Default: assume private-objects bucket
+                                const pathWithBucket = photoUrl.startsWith('private-objects/') || photoUrl.startsWith('public-objects/') 
+                                  ? photoUrl 
+                                  : `private-objects/${photoUrl}`;
+                                imageSrc = `/objects/${pathWithBucket}`;
+                              }
+                            }
                           }
                           
                           console.log("Profile photo URL:", photoUrl);
                           console.log("Constructed image src:", imageSrc);
                           
                           return (
-                            <img
-                              src={imageSrc}
-                              alt="Profile"
-                              className="h-24 w-24 rounded-full object-cover border-2 border-border"
-                              onError={(e) => {
-                                console.error("Failed to load profile image:", imageSrc);
-                                console.error("Image error:", e);
-                              }}
-                              onLoad={() => {
-                                console.log("Profile image loaded successfully:", imageSrc);
-                              }}
-                            />
+                            <div className="h-24 w-24 rounded-full overflow-hidden border-2 border-border flex-shrink-0">
+                              <img
+                                src={imageSrc}
+                                alt="Profile"
+                                className="w-full h-full object-cover object-center"
+                                onError={(e) => {
+                                  console.error("Failed to load profile image:", imageSrc);
+                                  console.error("Image error:", e);
+                                }}
+                                onLoad={() => {
+                                  console.log("Profile image loaded successfully:", imageSrc);
+                                }}
+                              />
+                            </div>
                           );
                         })()
                       ) : (
-                        <div className="h-24 w-24 rounded-full bg-muted flex items-center justify-center border-2 border-border">
+                        <div className="h-24 w-24 rounded-full bg-muted flex items-center justify-center border-2 border-border flex-shrink-0">
                           <User className="h-12 w-12 text-muted-foreground" />
                         </div>
                       )}
