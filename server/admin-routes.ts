@@ -2118,4 +2118,94 @@ router.post("/compliance/documents/:id/reject", async (req, res) => {
   }
 });
 
+// ============== APP SETTINGS ROUTES ==============
+
+// Get app settings
+router.get("/settings", async (req, res) => {
+  try {
+    const { data: settings, error } = await supabaseAdmin
+      .from("app_settings")
+      .select("*")
+      .eq("id", 1)
+      .single();
+
+    if (error) {
+      // If settings don't exist, return defaults
+      if (error.code === "PGRST116") {
+        return res.json({
+          id: 1,
+          service_fee_percent: "5",
+          service_fee_min_cents: 10000,
+          base_delivery_fee_cents: 35000,
+          price_per_km_cents: 5000,
+          dispatch_radius_km: "50",
+          dispatch_sla_seconds: 120,
+        });
+      }
+      throw error;
+    }
+
+    res.json(settings);
+  } catch (error: any) {
+    console.error("Error fetching app settings:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update app settings
+router.put("/settings", async (req, res) => {
+  try {
+    const { price_per_km_cents, service_fee_percent, service_fee_min_cents, base_delivery_fee_cents, dispatch_radius_km, dispatch_sla_seconds } = req.body;
+
+    const updateData: any = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (price_per_km_cents !== undefined) {
+      if (price_per_km_cents < 0) {
+        return res.status(400).json({ error: "Price per km must be positive" });
+      }
+      updateData.price_per_km_cents = price_per_km_cents;
+    }
+
+    if (service_fee_percent !== undefined) {
+      updateData.service_fee_percent = service_fee_percent;
+    }
+
+    if (service_fee_min_cents !== undefined) {
+      updateData.service_fee_min_cents = service_fee_min_cents;
+    }
+
+    if (base_delivery_fee_cents !== undefined) {
+      updateData.base_delivery_fee_cents = base_delivery_fee_cents;
+    }
+
+    if (dispatch_radius_km !== undefined) {
+      updateData.dispatch_radius_km = dispatch_radius_km;
+    }
+
+    if (dispatch_sla_seconds !== undefined) {
+      updateData.dispatch_sla_seconds = dispatch_sla_seconds;
+    }
+
+    const { data: updatedSettings, error } = await supabaseAdmin
+      .from("app_settings")
+      .upsert({
+        id: 1,
+        ...updateData,
+      }, {
+        onConflict: "id"
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.json({ success: true, settings: updatedSettings });
+  } catch (error: any) {
+    console.error("Error updating app settings:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;

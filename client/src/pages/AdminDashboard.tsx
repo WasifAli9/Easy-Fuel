@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AppHeader } from "@/components/AppHeader";
 import { KYCDocumentCard } from "@/components/KYCDocumentCard";
@@ -9,14 +9,16 @@ import { StatsCard } from "@/components/StatsCard";
 import { CreateUserDialog } from "@/components/CreateUserDialog";
 import { UserDetailsDialogEnhanced } from "@/components/UserDetailsDialogEnhanced";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Users, Truck, TrendingUp, Building2, UserCheck, Search, Shield, FileText, CheckCircle2, XCircle, Eye, Activity, BarChart3, ArrowUpRight, Filter, Bell } from "lucide-react";
+import { Users, Truck, TrendingUp, Building2, UserCheck, Search, Shield, FileText, CheckCircle2, XCircle, Eye, Activity, BarChart3, ArrowUpRight, Filter, Bell, DollarSign, Save, Edit2 } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useWebSocket } from "@/hooks/useWebSocket";
@@ -102,6 +104,228 @@ interface Supplier {
     role: string;
     profile_photo_url?: string;
   } | null;
+}
+
+// Delivery Fee Settings Component
+function DeliveryFeeSettings() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [isEditing, setIsEditing] = useState(false);
+  const [pricePerKm, setPricePerKm] = useState<number>(0);
+
+  // Fetch app settings
+  const { data: settings, isLoading } = useQuery<any>({
+    queryKey: ["/api/admin/settings"],
+  });
+
+  // Update price per km when settings load
+  useEffect(() => {
+    if (settings?.price_per_km_cents) {
+      setPricePerKm(settings.price_per_km_cents / 100); // Convert cents to rands
+    }
+  }, [settings]);
+
+  // Update mutation
+  const updateMutation = useMutation({
+    mutationFn: async (newPricePerKm: number) => {
+      const response = await apiRequest("PUT", "/api/admin/settings", {
+        price_per_km_cents: Math.round(newPricePerKm * 100), // Convert rands to cents
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/settings"] });
+      toast({
+        title: "Success",
+        description: "Delivery fee per km updated successfully",
+      });
+      setIsEditing(false);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update delivery fee",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSave = () => {
+    if (pricePerKm <= 0) {
+      toast({
+        title: "Invalid Value",
+        description: "Price per km must be greater than 0",
+        variant: "destructive",
+      });
+      return;
+    }
+    updateMutation.mutate(pricePerKm);
+  };
+
+  const handleCancel = () => {
+    if (settings?.price_per_km_cents) {
+      setPricePerKm(settings.price_per_km_cents / 100);
+    }
+    setIsEditing(false);
+  };
+
+  if (isLoading) {
+    return (
+      <Card>
+        <CardContent className="py-8">
+          <div className="text-center text-muted-foreground">Loading settings...</div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="border-2">
+      <CardHeader className="bg-gradient-to-r from-primary/5 to-primary/10 border-b">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-primary/10 rounded-lg">
+              <DollarSign className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <CardTitle className="text-xl">Delivery Fee Configuration</CardTitle>
+              <p className="text-sm text-muted-foreground mt-1">
+                Set the default delivery fee per kilometer for all orders
+              </p>
+            </div>
+          </div>
+          {!isEditing && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsEditing(true)}
+            >
+              <Edit2 className="h-4 w-4 mr-2" />
+              Edit
+            </Button>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="pt-6">
+        <div className="space-y-6">
+          <div className="flex items-center justify-between p-6 bg-muted/50 rounded-lg border">
+            <div className="flex-1">
+              <Label htmlFor="price-per-km" className="text-base font-semibold">
+                Delivery Fee Per Kilometer
+              </Label>
+              <p className="text-sm text-muted-foreground mt-1">
+                This rate is used to calculate delivery fees for customer orders based on distance
+              </p>
+            </div>
+            <div className="flex items-center gap-4">
+              {isEditing ? (
+                <>
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl font-bold">R</span>
+                    <Input
+                      id="price-per-km"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={pricePerKm}
+                      onChange={(e) => setPricePerKm(parseFloat(e.target.value) || 0)}
+                      className="w-32 text-2xl font-bold text-center"
+                    />
+                    <span className="text-lg text-muted-foreground">/ km</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={handleCancel}
+                      disabled={updateMutation.isPending}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={handleSave}
+                      disabled={updateMutation.isPending}
+                    >
+                      <Save className="h-4 w-4 mr-2" />
+                      {updateMutation.isPending ? "Saving..." : "Save"}
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <div className="text-right">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-4xl font-bold text-primary">
+                      R{settings?.price_per_km_cents ? (settings.price_per_km_cents / 100).toFixed(2) : "0.00"}
+                    </span>
+                    <span className="text-xl text-muted-foreground">/ km</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Current rate
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Card className="bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-900">
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-3 mb-2">
+                  <Truck className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                  <CardTitle className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                    Example Calculation
+                  </CardTitle>
+                </div>
+                <p className="text-sm text-blue-700 dark:text-blue-300">
+                  For a 10km delivery:
+                </p>
+                <p className="text-2xl font-bold text-blue-900 dark:text-blue-100 mt-2">
+                  R{settings?.price_per_km_cents ? ((settings.price_per_km_cents / 100) * 10).toFixed(2) : "0.00"}
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-900">
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-3 mb-2">
+                  <TrendingUp className="h-5 w-5 text-green-600 dark:text-green-400" />
+                  <CardTitle className="text-sm font-medium text-green-900 dark:text-green-100">
+                    Impact
+                  </CardTitle>
+                </div>
+                <p className="text-sm text-green-700 dark:text-green-300">
+                  Applied to all new orders
+                </p>
+                <p className="text-xs text-green-600 dark:text-green-400 mt-2">
+                  Changes take effect immediately
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-purple-50 dark:bg-purple-950/20 border-purple-200 dark:border-purple-900">
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-3 mb-2">
+                  <Activity className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                  <CardTitle className="text-sm font-medium text-purple-900 dark:text-purple-100">
+                    Last Updated
+                  </CardTitle>
+                </div>
+                <p className="text-sm text-purple-700 dark:text-purple-300">
+                  {settings?.updated_at
+                    ? new Date(settings.updated_at).toLocaleDateString()
+                    : "Never"}
+                </p>
+                <p className="text-xs text-purple-600 dark:text-purple-400 mt-2">
+                  {settings?.updated_at
+                    ? formatDistanceToNow(new Date(settings.updated_at), { addSuffix: true })
+                    : ""}
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 export default function AdminDashboard() {
@@ -1040,10 +1264,13 @@ export default function AdminDashboard() {
             )}
           </TabsContent>
 
-          <TabsContent value="settings" className="space-y-4">
-            <div className="text-center py-12 text-muted-foreground">
-              <p>Settings configuration will be available here</p>
+          <TabsContent value="settings" className="space-y-6">
+            <div>
+              <h2 className="text-2xl font-bold mb-2">Platform Settings</h2>
+              <p className="text-muted-foreground">Manage system-wide configuration and pricing</p>
             </div>
+
+            <DeliveryFeeSettings />
           </TabsContent>
         </Tabs>
       </main>
