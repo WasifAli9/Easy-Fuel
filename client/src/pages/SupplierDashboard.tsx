@@ -26,8 +26,10 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useLocation } from "wouter";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function SupplierDashboard() {
+  const { profile } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [location, setLocation] = useLocation();
@@ -41,9 +43,10 @@ export default function SupplierDashboard() {
   // Fetch supplier profile to check KYC status
   const { data: supplierProfile, refetch: refetchProfile } = useQuery<any>({
     queryKey: ["/api/supplier/profile"],
-    refetchInterval: 5000, // Poll every 5 seconds
-    staleTime: 0,
-    gcTime: 0, // Don't cache, always fetch fresh data
+    enabled: !!profile && profile.role === "supplier", // Only fetch if supplier is logged in
+    refetchInterval: 30000, // Poll every 30 seconds (WebSocket handles real-time)
+    staleTime: 15 * 1000, // Consider data fresh for 15 seconds
+    retry: false, // Don't retry on errors
   });
 
   // Debug: Log supplier profile status
@@ -61,16 +64,10 @@ export default function SupplierDashboard() {
 
   const { data: depots, isLoading: depotsLoading, error: depotsError } = useQuery<any[]>({
     queryKey: ["/api/supplier/depots"],
-    refetchInterval: 5000, // Poll every 5 seconds for real-time updates
-    staleTime: 0,
-    retry: (failureCount, error: any) => {
-      // Don't retry on 403 errors (compliance not approved)
-      if (error?.status === 403 || error?.response?.status === 403) {
-        return false;
-      }
-      return failureCount < 2;
-    },
-    retryDelay: 1000,
+    enabled: !!profile && profile.role === "supplier", // Only fetch if supplier is logged in
+    refetchInterval: 30000, // Poll every 30 seconds (WebSocket handles real-time)
+    staleTime: 15 * 1000, // Consider data fresh for 15 seconds
+    retry: false, // Don't retry on errors (including 403 compliance errors)
     // Return empty array on error instead of throwing
     select: (data) => data || [],
   });
@@ -78,7 +75,10 @@ export default function SupplierDashboard() {
   // Fetch driver depot orders to count active orders
   const { data: orders } = useQuery<any[]>({
     queryKey: ["/api/supplier/driver-depot-orders"],
-    refetchInterval: 10000, // Refresh every 10 seconds
+    enabled: !!profile && profile.role === "supplier", // Only fetch if supplier is logged in
+    refetchInterval: 60000, // Refresh every 60 seconds (WebSocket handles real-time)
+    staleTime: 30 * 1000, // Consider data fresh for 30 seconds
+    retry: false, // Don't retry on errors
   });
 
 

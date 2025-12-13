@@ -24,8 +24,10 @@ import {
 import { Label } from "@/components/ui/label";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function CustomerDashboard() {
+  const { profile } = useAuth();
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [selectedFuelTypeId, setSelectedFuelTypeId] = useState<string | null>(null);
@@ -38,8 +40,10 @@ export default function CustomerDashboard() {
   // Fetch orders from API
   const { data: orders = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/orders"],
-    refetchInterval: 5000, // Poll every 5 seconds for real-time updates
-    staleTime: 0, // Always consider data stale to allow immediate refetch
+    enabled: !!profile && profile.role === "customer", // Only fetch if customer is logged in
+    refetchInterval: 30000, // Poll every 30 seconds (WebSocket handles real-time updates)
+    staleTime: 15 * 1000, // Consider data fresh for 15 seconds
+    retry: false, // Don't retry on errors
   });
 
   // Handle orderId from URL query parameter (from notification clicks)
@@ -139,6 +143,8 @@ export default function CustomerDashboard() {
   // Fetch fuel types for filter
   const { data: fuelTypes = [] } = useQuery<any[]>({
     queryKey: ["/api/fuel-types"],
+    enabled: !!profile && profile.role === "customer", // Only fetch if customer is logged in
+    retry: false, // Don't retry on errors
   });
 
   // Helper function to format delivery address

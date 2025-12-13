@@ -119,9 +119,10 @@ export default function DriverDashboard() {
   // Fetch driver profile to check availability status
   const { data: driverProfile, refetch: refetchProfile } = useQuery<any>({
     queryKey: ["/api/driver/profile"],
-    refetchInterval: 5000, // Poll every 5 seconds
-    staleTime: 0,
-    gcTime: 0, // Don't cache, always fetch fresh data (React Query v5)
+    enabled: !!profile && profile.role === "driver", // Only fetch if driver is logged in
+    refetchInterval: 30000, // Poll every 30 seconds (WebSocket handles real-time)
+    staleTime: 15 * 1000, // Consider data fresh for 15 seconds
+    retry: false, // Don't retry on errors
   });
 
   // Debug: Log driver profile status
@@ -139,13 +140,15 @@ export default function DriverDashboard() {
   // Fetch pricing to check if any pricing is set
   const { data: pricingData = [] } = useQuery<any[]>({
     queryKey: ["/api/driver/pricing"],
-    retry: false,
+    enabled: !!profile && profile.role === "driver", // Only fetch if driver is logged in
+    retry: false, // Don't retry on errors
   });
 
   // Fetch vehicles to check if any vehicle is added
   const { data: vehiclesData = [] } = useQuery<any[]>({
     queryKey: ["/api/driver/vehicles"],
-    retry: false,
+    enabled: !!profile && profile.role === "driver", // Only fetch if driver is logged in
+    retry: false, // Don't retry on errors
   });
 
   const [, setLocation] = useLocation();
@@ -158,22 +161,28 @@ export default function DriverDashboard() {
     totalDeliveries: number;
   }>({
     queryKey: ["/api/driver/stats"],
-    refetchInterval: 5000, // Poll every 5 seconds
-    staleTime: 0,
+    enabled: !!profile && profile.role === "driver", // Only fetch if driver is logged in
+    refetchInterval: 30000, // Poll every 30 seconds (WebSocket handles real-time)
+    staleTime: 15 * 1000, // Consider data fresh for 15 seconds
+    retry: false, // Don't retry on errors
   });
 
   // Fetch assigned orders (accepted deliveries)
   const { data: assignedOrders = [], isLoading: loadingAssigned } = useQuery<any[]>({
     queryKey: ["/api/driver/assigned-orders"],
-    refetchInterval: 5000, // Poll every 5 seconds for real-time updates
-    staleTime: 0,
+    enabled: !!profile && profile.role === "driver", // Only fetch if driver is logged in
+    refetchInterval: 30000, // Poll every 30 seconds (WebSocket handles real-time)
+    staleTime: 15 * 1000, // Consider data fresh for 15 seconds
+    retry: false, // Don't retry on errors
   });
 
   // Fetch completed orders (last week)
   const { data: completedOrders = [], isLoading: loadingCompleted } = useQuery<any[]>({
     queryKey: ["/api/driver/completed-orders"],
-    refetchInterval: 5000, // Poll every 5 seconds for real-time updates
-    staleTime: 0,
+    enabled: !!profile && profile.role === "driver", // Only fetch if driver is logged in
+    refetchInterval: 30000, // Poll every 30 seconds (WebSocket handles real-time)
+    staleTime: 15 * 1000, // Consider data fresh for 15 seconds
+    retry: false, // Don't retry on errors
   });
 
   const { currency } = useCurrency();

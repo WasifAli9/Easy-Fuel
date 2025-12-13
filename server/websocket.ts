@@ -20,9 +20,13 @@ class WebSocketService {
   private clients: Map<string, Set<AuthenticatedWebSocket>> = new Map();
 
   initialize(server: Server) {
-    this.wss = new WebSocketServer({ server, path: "/ws" });
+    try {
+      this.wss = new WebSocketServer({ server, path: "/ws" });
 
-    this.wss.on("connection", async (ws: AuthenticatedWebSocket, req: IncomingMessage) => {
+      // Log WebSocket server initialization
+      console.log("[WebSocket] Server initialized on path /ws");
+
+      this.wss.on("connection", async (ws: AuthenticatedWebSocket, req: IncomingMessage) => {
       try {
         // Extract token from query params
         const { query } = parse(req.url || "", true);
@@ -37,9 +41,10 @@ class WebSocketService {
         const { data: { user }, error } = await supabaseAuth.auth.getUser(token);
 
         if (error || !user) {
-          // Only log in development, and only for non-expired token errors
-          if (process.env.NODE_ENV === "development" && error?.message && !error.message.includes("expired")) {
-            console.error("WebSocket auth error:", error.message);
+          // Log auth errors for debugging (but not for expired tokens in production)
+          const isExpiredToken = error?.message?.includes("expired") || error?.message?.includes("JWT");
+          if (process.env.NODE_ENV === "development" || !isExpiredToken) {
+            console.error("[WebSocket] Auth error:", error?.message || "User not found");
           }
           ws.close(1008, "Invalid authentication token");
           return;
@@ -100,11 +105,28 @@ class WebSocketService {
           type: "connected",
           payload: { userId: user.id, timestamp: new Date().toISOString() },
         });
+
+        // Log successful connection (only in development)
+        if (process.env.NODE_ENV === "development") {
+          console.log(`[WebSocket] User ${user.id} connected`);
+        }
       } catch (error) {
-        console.error("Error in WebSocket connection handler:", error);
-        ws.close(1011, "Internal server error");
+        console.error("[WebSocket] Error in connection handler:", error);
+        // Only close if not already closed
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close(1011, "Internal server error");
+        }
       }
     });
+
+    this.wss.on("error", (error) => {
+      console.error("[WebSocket] Server error:", error);
+    });
+
+    } catch (error) {
+      console.error("[WebSocket] Failed to initialize WebSocket server:", error);
+      // Don't throw - allow server to continue without WebSocket
+    }
 
     // Heartbeat to detect broken connections
     const heartbeatInterval = setInterval(() => {

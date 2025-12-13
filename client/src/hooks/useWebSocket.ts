@@ -133,9 +133,10 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
         };
 
         ws.onerror = (error) => {
-          // Only log in development
+          // Suppress WebSocket errors - they're handled by onclose
+          // Only log in development for debugging
           if (process.env.NODE_ENV === "development") {
-            console.error("WebSocket error:", error);
+            console.warn("[useWebSocket] Connection error (handled by onclose):", error);
           }
         };
 
@@ -143,17 +144,20 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
           setIsConnected(false);
           wsRef.current = null;
 
+          // Don't reconnect if user logged out (no session)
+          if (!session?.access_token) {
+            return; // User logged out - don't attempt reconnection
+          }
+
           // Only log errors or max attempts, not normal reconnections
           if (event.code === 1008 && event.reason === "Invalid authentication token") {
             // Token expired or invalid - don't reconnect, wait for new session
-            if (process.env.NODE_ENV === "development") {
-              console.warn("[useWebSocket] Authentication failed - waiting for new session");
-            }
+            // Suppress console errors for expected auth failures
             return; // Don't attempt to reconnect with invalid token
           }
 
-          // Attempt to reconnect only for non-auth errors
-          if (event.code !== 1008 && reconnectAttempts.current < maxReconnectAttempts) {
+          // Attempt to reconnect only for non-auth errors and if we still have a session
+          if (event.code !== 1008 && session?.access_token && reconnectAttempts.current < maxReconnectAttempts) {
             reconnectAttempts.current++;
             const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
             
@@ -163,10 +167,16 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
             }
             
             reconnectTimeoutRef.current = setTimeout(() => {
-              connect();
+              // Check session again before reconnecting
+              if (session?.access_token) {
+                connect();
+              }
             }, delay);
-          } else if (reconnectAttempts.current >= maxReconnectAttempts) {
-            console.error("[useWebSocket] Max reconnection attempts reached");
+          } else if (reconnectAttempts.current >= maxReconnectAttempts && session?.access_token) {
+            // Only log if we still have a session (not logged out)
+            if (process.env.NODE_ENV === "development") {
+              console.warn("[useWebSocket] Max reconnection attempts reached");
+            }
           }
         };
 

@@ -129,7 +129,8 @@ export default function SupplierProfile() {
   // Get supplier documents
   const { data: documents = [] } = useQuery<any[]>({
     queryKey: ["/api/supplier/documents"],
-    refetchInterval: 5000, // Refetch every 5 seconds to get updated status
+    refetchInterval: 30000, // Refetch every 30 seconds (WebSocket handles real-time)
+    staleTime: 15 * 1000, // Consider data fresh for 15 seconds
   });
 
   // Listen for document status updates and KYC approval via WebSocket

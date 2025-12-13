@@ -116,6 +116,16 @@ export const getQueryFn: <T>(options: {
       return null;
     }
 
+    // Don't throw for 401 errors - they're expected when logged out
+    if (res.status === 401) {
+      // Check if we have auth headers - if not, user is logged out (expected)
+      const hasAuth = headers["Authorization"] || headers["authorization"];
+      if (!hasAuth) {
+        // User is logged out - return null instead of throwing
+        return null;
+      }
+    }
+
     await throwIfResNotOk(res);
     return await res.json();
   };

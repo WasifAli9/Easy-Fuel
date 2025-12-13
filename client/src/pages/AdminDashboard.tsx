@@ -23,6 +23,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useNotifications } from "@/hooks/useNotifications";
+import { useAuth } from "@/contexts/AuthContext";
 import { formatDistanceToNow } from "date-fns";
 
 interface PendingKYC {
@@ -110,14 +111,15 @@ interface Supplier {
 function DeliveryFeeSettings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { profile } = useAuth(); // Get profile from auth context
   const [isEditing, setIsEditing] = useState(false);
   const [pricePerKm, setPricePerKm] = useState<number>(0);
 
   // Fetch app settings
   const { data: settings, isLoading, error: settingsError } = useQuery<any>({
     queryKey: ["/api/admin/settings"],
-    retry: 1, // Only retry once
-    retryDelay: 1000,
+    enabled: !!profile && profile.role === "admin", // Only fetch if admin is logged in
+    retry: false, // Don't retry on errors
   });
 
   // Update price per km when settings load
@@ -392,26 +394,31 @@ export default function AdminDashboard() {
   // Fetch pending KYC/KYB applications
   const { data: pendingKYC, isLoading } = useQuery<PendingKYC>({
     queryKey: ["/api/admin/kyc/pending"],
+    enabled: !!profile && profile.role === "admin", // Only fetch if admin is logged in
   });
 
   // Fetch all customers
   const { data: customers, isLoading: customersLoading } = useQuery<Customer[]>({
     queryKey: ["/api/admin/customers"],
+    enabled: !!profile && profile.role === "admin", // Only fetch if admin is logged in
   });
 
   // Fetch all suppliers
   const { data: allSuppliers, isLoading: suppliersLoading } = useQuery<Supplier[]>({
     queryKey: ["/api/admin/suppliers"],
+    enabled: !!profile && profile.role === "admin", // Only fetch if admin is logged in
   });
 
   // Fetch all drivers
   const { data: allDrivers, isLoading: driversLoading } = useQuery<Driver[]>({
     queryKey: ["/api/admin/drivers"],
+    enabled: !!profile && profile.role === "admin", // Only fetch if admin is logged in
   });
 
   // Fetch pending compliance reviews
   const { data: pendingCompliance } = useQuery<any>({
     queryKey: ["/api/admin/compliance/pending"],
+    enabled: !!profile && profile.role === "admin", // Only fetch if admin is logged in
   });
 
   // Fetch compliance checklist for selected entity

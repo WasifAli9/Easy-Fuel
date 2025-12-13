@@ -49,15 +49,14 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
   const { data: notifications = [], refetch: refetchNotifications, error: notificationsError } = useQuery<any[]>({
     queryKey: ["/api/notifications"],
     enabled: !!profile, // Only fetch if user is logged in
-    refetchInterval: 60000, // Refetch every 60 seconds (WebSocket handles real-time)
-    staleTime: 0, // Always consider data stale to allow immediate refetch
-    onError: (error) => {
-      console.error("[AppHeader] Error fetching notifications:", error);
-      console.error("[AppHeader] Error details:", {
-        error,
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+    refetchInterval: 120000, // Refetch every 2 minutes (WebSocket handles real-time)
+    staleTime: 60 * 1000, // Consider data fresh for 60 seconds
+    retry: false, // Don't retry on errors
+    onError: (error: any) => {
+      // Only log errors if user is actually logged in (not expected 401s after logout)
+      if (profile && error?.status !== 401) {
+        console.error("[AppHeader] Error fetching notifications:", error);
+      }
     },
   });
 
@@ -65,14 +64,14 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
   const { data: unreadData, refetch: refetchUnreadCount, error: unreadCountError } = useQuery<{ count: number }>({
     queryKey: ["/api/notifications/unread-count"],
     enabled: !!profile,
-    refetchInterval: 60000, // Refetch every 60 seconds (WebSocket handles real-time)
-    onError: (error) => {
-      console.error("[AppHeader] Error fetching unread count:", error);
-      console.error("[AppHeader] Error details:", {
-        error,
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+    refetchInterval: 120000, // Refetch every 2 minutes (WebSocket handles real-time)
+    staleTime: 60 * 1000, // Consider data fresh for 60 seconds
+    retry: false, // Don't retry on errors
+    onError: (error: any) => {
+      // Only log errors if user is actually logged in (not expected 401s after logout)
+      if (profile && error?.status !== 401) {
+        console.error("[AppHeader] Error fetching unread count:", error);
+      }
     },
   });
 

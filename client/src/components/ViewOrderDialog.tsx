@@ -72,15 +72,15 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
   const { data: order, isLoading: loadingOrder } = useQuery<any>({
     queryKey: ["/api/orders", orderId],
     enabled: open && !!orderId,
-    refetchInterval: 5000, // Poll every 5 seconds for real-time updates
-    staleTime: 0,
+    refetchInterval: 30000, // Poll every 30 seconds (WebSocket handles real-time updates)
+    staleTime: 15 * 1000, // Consider data fresh for 15 seconds
   });
 
   const { data: driverQuotes = [], isLoading: loadingQuotes } = useQuery<any[]>({
     queryKey: ["/api/orders", orderId, "offers"],
     enabled: open && !!orderId,
-    refetchInterval: 5000, // Poll every 5 seconds for real-time updates
-    staleTime: 0,
+    refetchInterval: 30000, // Poll every 30 seconds (WebSocket handles real-time updates)
+    staleTime: 15 * 1000, // Consider data fresh for 15 seconds
   });
 
   // Listen for real-time order updates via WebSocket

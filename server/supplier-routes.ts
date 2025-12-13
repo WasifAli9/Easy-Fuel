@@ -2117,48 +2117,81 @@ router.get("/documents", async (req, res) => {
 // Create supplier document
 router.post("/documents", async (req, res) => {
   const user = (req as any).user;
+  
+  if (!user || !user.id) {
+    return res.status(401).json({ error: "User not authenticated" });
+  }
+
   const { owner_type, doc_type, title, file_path, file_size, mime_type, document_issue_date, expiry_date } = req.body;
   
+  // Validate required fields
+  if (!doc_type || !file_path) {
+    return res.status(400).json({ error: "doc_type and file_path are required" });
+  }
+  
   try {
+    // Insert document first
     const { data, error } = await supabaseAdmin
       .from("documents")
       .insert({
         owner_type: owner_type || "supplier",
         owner_id: user.id,
         doc_type,
-        title,
+        title: title || doc_type,
         file_path,
-        file_size,
-        mime_type,
-        document_issue_date,
-        expiry_date,
+        file_size: file_size || null,
+        mime_type: mime_type || null,
+        document_issue_date: document_issue_date || null,
+        expiry_date: expiry_date || null,
         uploaded_by: user.id,
       })
       .select()
       .single();
     
-    if (error) throw error;
+    if (error) {
+      console.error("[supplier/documents] Database error:", error);
+      return res.status(500).json({ 
+        error: error.message || "Failed to create document",
+        code: error.code 
+      });
+    }
 
-    // Notify all admins about the new document upload
-    if (data) {
+    if (!data) {
+      return res.status(500).json({ error: "Document created but no data returned" });
+    }
+
+    // Send notifications asynchronously (don't block response)
+    setImmediate(async () => {
       try {
         const { notificationService } = await import("./notification-service");
-        const { data: adminProfiles } = await supabaseAdmin
-          .from("profiles")
-          .select("id")
-          .eq("role", "admin");
         
-        if (adminProfiles && adminProfiles.length > 0) {
-          const adminUserIds = adminProfiles.map(p => p.id);
-          
-          // Get supplier name for notification
-          const { data: supplierProfile } = await supabaseAdmin
+        // Fetch admin profiles and supplier data in parallel
+        const [adminProfilesResult, supplierProfileResult, supplierResult] = await Promise.all([
+          supabaseAdmin
+            .from("profiles")
+            .select("id")
+            .eq("role", "admin"),
+          supabaseAdmin
             .from("profiles")
             .select("full_name")
             .eq("id", user.id)
-            .maybeSingle();
+            .maybeSingle(),
+          supabaseAdmin
+            .from("suppliers")
+            .select("kyb_status, status")
+            .eq("owner_id", user.id)
+            .maybeSingle()
+        ]);
+        
+        const adminProfiles = adminProfilesResult.data;
+        const supplierProfile = supplierProfileResult.data;
+        const supplier = supplierResult.data;
+        
+        if (adminProfiles && adminProfiles.length > 0) {
+          const adminUserIds = adminProfiles.map(p => p.id);
           const ownerName = supplierProfile?.full_name || "Supplier";
           
+          // Send document upload notification
           await notificationService.notifyAdminDocumentUploaded(
             adminUserIds,
             data.id,
@@ -2166,17 +2199,10 @@ router.post("/documents", async (req, res) => {
             "supplier",
             ownerName,
             user.id
-          );
+          ).catch(err => console.error("[supplier/documents] Notification error:", err));
 
-          // Check if this is a new KYC submission (supplier status is pending)
-          const { data: supplier } = await supabaseAdmin
-            .from("suppliers")
-            .select("kyb_status, status")
-            .eq("owner_id", user.id)
-            .single();
-          
+          // Check if this is a new KYC submission
           if (supplier && (supplier.kyb_status === "pending" || supplier.status === "pending_compliance")) {
-            // Check if this is the first document (new KYC submission)
             const { data: existingDocs } = await supabaseAdmin
               .from("documents")
               .select("id")
@@ -2185,27 +2211,29 @@ router.post("/documents", async (req, res) => {
               .neq("id", data.id)
               .limit(1);
             
-            // If no other documents exist, this is a new KYC submission
             if (!existingDocs || existingDocs.length === 0) {
               await notificationService.notifyAdminKycSubmitted(
                 adminUserIds,
                 user.id,
                 ownerName,
                 "supplier"
-              );
+              ).catch(err => console.error("[supplier/documents] KYC notification error:", err));
             }
           }
         }
       } catch (notifError) {
-        console.error("Error sending admin notification for document upload:", notifError);
+        console.error("[supplier/documents] Error in notification handler:", notifError);
         // Don't fail the upload if notification fails
       }
-    }
+    });
 
     res.json(data);
   } catch (error: any) {
-    console.error("Error creating supplier document:", error);
-    res.status(500).json({ error: error.message });
+    console.error("[supplier/documents] Unexpected error:", error);
+    res.status(500).json({ 
+      error: error.message || "Internal server error",
+      details: process.env.NODE_ENV === "development" ? error.stack : undefined
+    });
   }
 });
 
