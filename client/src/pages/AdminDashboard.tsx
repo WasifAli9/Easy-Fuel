@@ -379,6 +379,7 @@ function DeliveryFeeSettings() {
 }
 
 export default function AdminDashboard() {
+  const { profile } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
