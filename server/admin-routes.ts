@@ -2145,9 +2145,27 @@ router.get("/settings", async (req, res) => {
       throw error;
     }
 
-    res.json(settings);
+    // Ensure price_per_km_cents exists (handle case where column doesn't exist yet)
+    const response = {
+      ...settings,
+      price_per_km_cents: settings.price_per_km_cents ?? 5000, // Default R50 per km if column doesn't exist
+    };
+
+    res.json(response);
   } catch (error: any) {
     console.error("Error fetching app settings:", error);
+    // If column doesn't exist, return defaults instead of error
+    if (error.message?.includes("column") || error.message?.includes("price_per_km_cents")) {
+      return res.json({
+        id: 1,
+        service_fee_percent: "5",
+        service_fee_min_cents: 10000,
+        base_delivery_fee_cents: 35000,
+        price_per_km_cents: 5000,
+        dispatch_radius_km: "50",
+        dispatch_sla_seconds: 120,
+      });
+    }
     res.status(500).json({ error: error.message });
   }
 });
@@ -2167,6 +2185,9 @@ router.put("/settings", async (req, res) => {
       }
       updateData.price_per_km_cents = price_per_km_cents;
     }
+
+    // Only include fields that exist in the request to avoid errors if column doesn't exist
+    // We'll try to update, and if it fails due to missing column, we'll handle it gracefully
 
     if (service_fee_percent !== undefined) {
       updateData.service_fee_percent = service_fee_percent;
@@ -2199,9 +2220,25 @@ router.put("/settings", async (req, res) => {
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      // If error is due to missing column, return success with message
+      if (error.message?.includes("column") || error.message?.includes("price_per_km_cents")) {
+        console.warn("price_per_km_cents column doesn't exist yet. Please run the migration script.");
+        return res.status(400).json({ 
+          error: "price_per_km_cents column doesn't exist. Please run the migration: server/add-price-per-km-column.sql",
+          requiresMigration: true
+        });
+      }
+      throw error;
+    }
 
-    res.json({ success: true, settings: updatedSettings });
+    // Ensure price_per_km_cents is included in response
+    const response = {
+      ...updatedSettings,
+      price_per_km_cents: updatedSettings.price_per_km_cents ?? 5000,
+    };
+
+    res.json({ success: true, settings: response });
   } catch (error: any) {
     console.error("Error updating app settings:", error);
     res.status(500).json({ error: error.message });

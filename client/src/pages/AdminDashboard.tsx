@@ -114,16 +114,21 @@ function DeliveryFeeSettings() {
   const [pricePerKm, setPricePerKm] = useState<number>(0);
 
   // Fetch app settings
-  const { data: settings, isLoading } = useQuery<any>({
+  const { data: settings, isLoading, error: settingsError } = useQuery<any>({
     queryKey: ["/api/admin/settings"],
+    retry: 1, // Only retry once
+    retryDelay: 1000,
   });
 
   // Update price per km when settings load
   useEffect(() => {
     if (settings?.price_per_km_cents) {
       setPricePerKm(settings.price_per_km_cents / 100); // Convert cents to rands
+    } else if (!isLoading && !settingsError) {
+      // Set default if settings loaded but price_per_km_cents is missing
+      setPricePerKm(50); // Default R50 per km
     }
-  }, [settings]);
+  }, [settings, isLoading, settingsError]);
 
   // Update mutation
   const updateMutation = useMutation({
@@ -174,6 +179,49 @@ function DeliveryFeeSettings() {
       <Card>
         <CardContent className="py-8">
           <div className="text-center text-muted-foreground">Loading settings...</div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Handle error gracefully - show default values
+  if (settingsError) {
+    console.error("Error loading settings:", settingsError);
+    // Use default values if API fails
+    const defaultSettings = {
+      price_per_km_cents: 5000, // R50 per km
+      updated_at: null,
+    };
+    return (
+      <Card className="border-2">
+        <CardHeader className="bg-gradient-to-r from-primary/5 to-primary/10 border-b">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-primary/10 rounded-lg">
+                <DollarSign className="h-6 w-6 text-primary" />
+              </div>
+              <div>
+                <CardTitle className="text-xl">Delivery Fee Configuration</CardTitle>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Set the default delivery fee per kilometer for all orders
+                </p>
+              </div>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-6">
+          <Alert variant="destructive" className="mb-4">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Database Migration Required</AlertTitle>
+            <AlertDescription>
+              The price_per_km_cents column is missing from the app_settings table. 
+              Please run the migration script: <code className="text-xs">server/add-price-per-km-column.sql</code>
+            </AlertDescription>
+          </Alert>
+          <div className="text-center py-8 text-muted-foreground">
+            <p>Using default value: R50.00 per km</p>
+            <p className="text-xs mt-2">Settings will be available after running the migration.</p>
+          </div>
         </CardContent>
       </Card>
     );
