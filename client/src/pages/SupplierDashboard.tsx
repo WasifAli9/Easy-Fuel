@@ -62,24 +62,26 @@ export default function SupplierDashboard() {
     }
   }, [supplierProfile]);
 
-  const { data: depots, isLoading: depotsLoading, error: depotsError } = useQuery<any[]>({
+  const { data: depotsData, isLoading: depotsLoading, error: depotsError } = useQuery<any[]>({
     queryKey: ["/api/supplier/depots"],
     enabled: !!profile && profile.role === "supplier", // Only fetch if supplier is logged in
     refetchInterval: 30000, // Poll every 30 seconds (WebSocket handles real-time)
     staleTime: 15 * 1000, // Consider data fresh for 15 seconds
     retry: false, // Don't retry on errors (including 403 compliance errors)
-    // Return empty array on error instead of throwing
-    select: (data) => data || [],
   });
 
   // Fetch driver depot orders to count active orders
-  const { data: orders } = useQuery<any[]>({
+  const { data: ordersData } = useQuery<any[]>({
     queryKey: ["/api/supplier/driver-depot-orders"],
     enabled: !!profile && profile.role === "supplier", // Only fetch if supplier is logged in
     refetchInterval: 60000, // Refresh every 60 seconds (WebSocket handles real-time)
     staleTime: 30 * 1000, // Consider data fresh for 30 seconds
     retry: false, // Don't retry on errors
   });
+
+  // Ensure arrays are always arrays (never null/undefined)
+  const depots = depotsData || [];
+  const orders = ordersData || [];
 
 
   // Listen for real-time updates via WebSocket

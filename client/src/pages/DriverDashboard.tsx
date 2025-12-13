@@ -138,18 +138,22 @@ export default function DriverDashboard() {
   }, [driverProfile]);
 
   // Fetch pricing to check if any pricing is set
-  const { data: pricingData = [] } = useQuery<any[]>({
+  const { data: pricingDataRaw } = useQuery<any[]>({
     queryKey: ["/api/driver/pricing"],
     enabled: !!profile && profile.role === "driver", // Only fetch if driver is logged in
     retry: false, // Don't retry on errors
   });
 
   // Fetch vehicles to check if any vehicle is added
-  const { data: vehiclesData = [] } = useQuery<any[]>({
+  const { data: vehiclesDataRaw } = useQuery<any[]>({
     queryKey: ["/api/driver/vehicles"],
     enabled: !!profile && profile.role === "driver", // Only fetch if driver is logged in
     retry: false, // Don't retry on errors
   });
+
+  // Ensure arrays are always arrays (never null/undefined)
+  const pricingData = pricingDataRaw || [];
+  const vehiclesData = vehiclesDataRaw || [];
 
   const [, setLocation] = useLocation();
 
@@ -168,7 +172,7 @@ export default function DriverDashboard() {
   });
 
   // Fetch assigned orders (accepted deliveries)
-  const { data: assignedOrders = [], isLoading: loadingAssigned } = useQuery<any[]>({
+  const { data: assignedOrdersData, isLoading: loadingAssigned } = useQuery<any[]>({
     queryKey: ["/api/driver/assigned-orders"],
     enabled: !!profile && profile.role === "driver", // Only fetch if driver is logged in
     refetchInterval: 30000, // Poll every 30 seconds (WebSocket handles real-time)
@@ -177,13 +181,17 @@ export default function DriverDashboard() {
   });
 
   // Fetch completed orders (last week)
-  const { data: completedOrders = [], isLoading: loadingCompleted } = useQuery<any[]>({
+  const { data: completedOrdersData, isLoading: loadingCompleted } = useQuery<any[]>({
     queryKey: ["/api/driver/completed-orders"],
     enabled: !!profile && profile.role === "driver", // Only fetch if driver is logged in
     refetchInterval: 30000, // Poll every 30 seconds (WebSocket handles real-time)
     staleTime: 15 * 1000, // Consider data fresh for 15 seconds
     retry: false, // Don't retry on errors
   });
+
+  // Ensure arrays are always arrays (never null/undefined)
+  const assignedOrders = assignedOrdersData || [];
+  const completedOrders = completedOrdersData || [];
 
   const { currency } = useCurrency();
 

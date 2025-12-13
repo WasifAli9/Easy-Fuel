@@ -507,13 +507,14 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
                       src={
                         (() => {
                           const photoUrl = profile.profilePhotoUrl;
+                          if (!photoUrl) return undefined;
+                          
                           // Handle Supabase Storage format: bucket/path (e.g., "private-objects/uploads/uuid")
                           if (photoUrl.includes('/') && !photoUrl.startsWith('/') && !photoUrl.startsWith('http')) {
                             // Check if it's a private bucket (private-objects)
                             if (photoUrl.startsWith('private-objects/')) {
-                              // Use our server endpoint for private objects (handles authentication)
-                              const pathOnly = photoUrl.replace('private-objects/', '');
-                              return `/objects/${pathOnly}`;
+                              // Keep the full path including bucket name - server will extract it
+                              return `/objects/${photoUrl}`;
                             } else {
                               // For public buckets, use Supabase public URL
                               return `${import.meta.env.VITE_SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co'}/storage/v1/object/public/${photoUrl}`;
@@ -527,13 +528,19 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
                           else if (photoUrl.startsWith('http://') || photoUrl.startsWith('https://')) {
                             return photoUrl;
                           }
-                          // Default: assume it's a relative path
+                          // Default: assume it's a relative path (add /objects/ prefix)
                           else {
                             return `/objects/${photoUrl}`;
                           }
                         })()
                       } 
-                      alt={profile?.fullName || "User"} 
+                      alt={profile?.fullName || "User"}
+                      onError={(e) => {
+                        // Suppress image load errors - they're expected if file doesn't exist
+                        if (process.env.NODE_ENV === 'development') {
+                          console.warn('Failed to load profile image:', profile.profilePhotoUrl);
+                        }
+                      }} 
                     />
                     <AvatarFallback className="bg-primary text-primary-foreground text-sm">
                       {profile?.fullName?.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || "U"}

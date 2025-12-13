@@ -38,13 +38,16 @@ export default function CustomerDashboard() {
   const processedOrderIdRef = useRef<string | null>(null);
 
   // Fetch orders from API
-  const { data: orders = [], isLoading } = useQuery<any[]>({
+  const { data: ordersData, isLoading } = useQuery<any[]>({
     queryKey: ["/api/orders"],
     enabled: !!profile && profile.role === "customer", // Only fetch if customer is logged in
     refetchInterval: 30000, // Poll every 30 seconds (WebSocket handles real-time updates)
     staleTime: 15 * 1000, // Consider data fresh for 15 seconds
     retry: false, // Don't retry on errors
   });
+
+  // Ensure orders is always an array (never null/undefined)
+  const orders = ordersData || [];
 
   // Handle orderId from URL query parameter (from notification clicks)
   useEffect(() => {
@@ -57,11 +60,11 @@ export default function CustomerDashboard() {
     }
     
     // Wait for orders to load, then check
-    if (!isLoading) {
+    if (!isLoading && orders) {
       processedOrderIdRef.current = orderIdFromUrl;
       
       // Check if order exists in the orders list
-      const orderExists = orders.some((order: any) => order.id === orderIdFromUrl);
+      const orderExists = (orders || []).some((order: any) => order.id === orderIdFromUrl);
       
       if (orderExists) {
         // Order exists, open the dialog
@@ -141,11 +144,14 @@ export default function CustomerDashboard() {
   });
 
   // Fetch fuel types for filter
-  const { data: fuelTypes = [] } = useQuery<any[]>({
+  const { data: fuelTypesData } = useQuery<any[]>({
     queryKey: ["/api/fuel-types"],
     enabled: !!profile && profile.role === "customer", // Only fetch if customer is logged in
     retry: false, // Don't retry on errors
   });
+
+  // Ensure fuelTypes is always an array (never null/undefined)
+  const fuelTypes = fuelTypesData || [];
 
   // Helper function to format delivery address
   const formatAddress = (order: any) => {
@@ -164,7 +170,7 @@ export default function CustomerDashboard() {
   };
 
   // Helper function to filter out old orders
-  const filterOutOldOrders = (ordersToFilter: any[]) => {
+  const filterOutOldOrders = (ordersToFilter: any[] = []) => {
     const twoDaysAgo = new Date();
     twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
     
@@ -212,7 +218,7 @@ export default function CustomerDashboard() {
   };
 
   // Helper function to filter orders by fuel type
-  const filterOrdersByFuelType = (ordersToFilter: any[]) => {
+  const filterOrdersByFuelType = (ordersToFilter: any[] = []) => {
     if (!selectedFuelTypeId) {
       return ordersToFilter;
     }
@@ -303,7 +309,7 @@ export default function CustomerDashboard() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All Fuel Types</SelectItem>
-                      {fuelTypes.map((fuelType) => (
+                      {(fuelTypes || []).map((fuelType) => (
                         <SelectItem key={fuelType.id} value={fuelType.id}>
                           {fuelType.label}
                         </SelectItem>
@@ -319,7 +325,8 @@ export default function CustomerDashboard() {
             {isLoading ? (
               <div className="text-center py-8 text-muted-foreground">Loading orders...</div>
             ) : (() => {
-              const recentOrders = filterOutOldOrders(orders);
+              const safeOrders = orders || [];
+              const recentOrders = filterOutOldOrders(safeOrders);
               const filteredOrders = filterOrdersByFuelType(recentOrders);
               return filteredOrders.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
@@ -327,11 +334,11 @@ export default function CustomerDashboard() {
                 </div>
               ) : (
                 <>
-                  {(selectedFuelTypeId || recentOrders.length !== orders.length) && (
+                  {(selectedFuelTypeId || recentOrders.length !== safeOrders.length) && (
                     <div className="text-sm text-muted-foreground mb-2">
                       Showing {filteredOrders.length} of {recentOrders.length} orders
                       {selectedFuelTypeLabel && ` (filtered by ${selectedFuelTypeLabel})`}
-                      {recentOrders.length !== orders.length && (
+                      {recentOrders.length !== safeOrders.length && (
                         <span>
                           {" "}
                           (completed orders older than 2 days and cancelled orders older than 1 day are hidden)
@@ -366,7 +373,8 @@ export default function CustomerDashboard() {
             {isLoading ? (
               <div className="text-center py-8 text-muted-foreground">Loading orders...</div>
             ) : (() => {
-              const activeOrders = orders.filter(o => !["delivered", "cancelled"].includes(o.state));
+              const safeOrders = orders || [];
+              const activeOrders = safeOrders.filter(o => !["delivered", "cancelled"].includes(o.state));
               const recentActiveOrders = filterOutOldOrders(activeOrders);
               const filteredOrders = filterOrdersByFuelType(recentActiveOrders);
               return filteredOrders.length === 0 ? (
@@ -400,7 +408,8 @@ export default function CustomerDashboard() {
             {isLoading ? (
               <div className="text-center py-8 text-muted-foreground">Loading orders...</div>
             ) : (() => {
-              const completedOrders = orders.filter(o => o.state === "delivered");
+              const safeOrders = orders || [];
+              const completedOrders = safeOrders.filter(o => o.state === "delivered");
               const recentCompletedOrders = filterOutOldOrders(completedOrders);
               const filteredOrders = filterOrdersByFuelType(recentCompletedOrders);
               return filteredOrders.length === 0 ? (
