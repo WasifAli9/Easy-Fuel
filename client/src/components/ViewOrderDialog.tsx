@@ -38,7 +38,7 @@ import { DriverLocationMap } from "./DriverLocationMap";
 import { OrderChat } from "./OrderChat";
 import { useCurrency } from "@/hooks/use-currency";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, normalizeProfilePhotoUrl } from "@/lib/utils";
 import { useWebSocket } from "@/hooks/useWebSocket";
 
 const orderEditSchema = z.object({
@@ -452,16 +452,11 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                                 <div className="flex items-start gap-3 flex-1">
                                   <Avatar className="h-10 w-10 flex-shrink-0">
                                     <AvatarImage 
-                                      src={
-                                        driverProfilePhotoUrl 
-                                          ? driverProfilePhotoUrl.includes('/') && !driverProfilePhotoUrl.startsWith('/') && !driverProfilePhotoUrl.startsWith('http')
-                                            ? `${import.meta.env.VITE_SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co'}/storage/v1/object/public/${driverProfilePhotoUrl}`
-                                            : driverProfilePhotoUrl.startsWith('/')
-                                              ? driverProfilePhotoUrl
-                                              : `/objects/${driverProfilePhotoUrl}`
-                                          : undefined
-                                      } 
-                                      alt={driverName} 
+                                      src={normalizeProfilePhotoUrl(driverProfilePhotoUrl) || undefined}
+                                      alt={driverName}
+                                      onError={() => {
+                                        // Suppress image load errors
+                                      }} 
                                     />
                                     <AvatarFallback className="bg-primary text-primary-foreground text-xs">
                                       {driverName.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)}
@@ -595,15 +590,10 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                     <div className="flex items-center gap-3">
                       <Avatar className="h-10 w-10 flex-shrink-0">
                         <AvatarImage 
-                          src={
-                            order.driver_details.profile_photo_url
-                              ? order.driver_details.profile_photo_url.includes('/') && !order.driver_details.profile_photo_url.startsWith('/') && !order.driver_details.profile_photo_url.startsWith('http')
-                                ? `${import.meta.env.VITE_SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co'}/storage/v1/object/public/${order.driver_details.profile_photo_url}`
-                                : order.driver_details.profile_photo_url.startsWith('/')
-                                  ? order.driver_details.profile_photo_url
-                                  : `/objects/${order.driver_details.profile_photo_url}`
-                              : undefined
-                          } 
+                          src={normalizeProfilePhotoUrl(order.driver_details.profile_photo_url) || undefined}
+                          onError={() => {
+                            // Suppress image load errors
+                          }} 
                           alt={order.driver_details.full_name || "Driver"} 
                         />
                         <AvatarFallback className="bg-primary text-primary-foreground text-xs">

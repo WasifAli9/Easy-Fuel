@@ -431,7 +431,13 @@ export default function AdminDashboard() {
   // Fetch notifications
   const { data: notifications = [] } = useQuery<any[]>({
     queryKey: ["/api/notifications"],
-    refetchInterval: 30000, // Refetch every 30 seconds
+    enabled: !!profile && profile.role === "admin", // Only fetch if admin is logged in
+    refetchInterval: 30000, // Refetch every 30 seconds as fallback (WebSocket handles real-time)
+    staleTime: 0, // Always consider data stale - refetch immediately when invalidated
+    gcTime: 0, // Don't cache - always fetch fresh data
+    refetchOnMount: true, // Always refetch when component mounts (e.g., after login)
+    refetchOnWindowFocus: true, // Refetch when window regains focus
+    retry: false, // Don't retry on errors
   });
 
   // Filter admin-related notifications

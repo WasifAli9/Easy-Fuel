@@ -23,10 +23,14 @@ export function useNotifications() {
   const [latestNotification, setLatestNotification] = useState<Notification | null>(null);
 
   // Fetch notifications from API
-  const { data: notifications = [], isLoading } = useQuery<Notification[]>({
+  const { data: notifications = [], isLoading, refetch: refetchNotifications } = useQuery<Notification[]>({
     queryKey: ["/api/notifications"],
     enabled: !!session,
-    refetchInterval: 30000, // Refetch every 30 seconds as fallback
+    refetchInterval: 30000, // Refetch every 30 seconds as fallback (WebSocket handles real-time)
+    staleTime: 0, // Always consider data stale - refetch immediately when invalidated
+    gcTime: 0, // Don't cache - always fetch fresh data
+    refetchOnMount: true, // Always refetch when component mounts (e.g., after login)
+    refetchOnWindowFocus: true, // Refetch when window regains focus
     onError: (error) => {
       console.error("[useNotifications] Error fetching notifications:", error);
       console.error("[useNotifications] Error details:", {
@@ -38,10 +42,14 @@ export function useNotifications() {
   });
 
   // Fetch unread count
-  const { data: unreadData } = useQuery<{ count: number }>({
+  const { data: unreadData, refetch: refetchUnreadCount } = useQuery<{ count: number }>({
     queryKey: ["/api/notifications/unread-count"],
     enabled: !!session,
-    refetchInterval: 30000, // Refetch every 30 seconds as fallback
+    refetchInterval: 30000, // Refetch every 30 seconds as fallback (WebSocket handles real-time)
+    staleTime: 0, // Always consider data stale - refetch immediately when invalidated
+    gcTime: 0, // Don't cache - always fetch fresh data
+    refetchOnMount: true, // Always refetch when component mounts (e.g., after login)
+    refetchOnWindowFocus: true, // Refetch when window regains focus
     onError: (error) => {
       console.error("[useNotifications] Error fetching unread count:", error);
       console.error("[useNotifications] Error details:", {
@@ -135,6 +143,15 @@ export function useNotifications() {
 
   // Set up WebSocket listener
   const { isConnected } = useWebSocket(handleWebSocketMessage);
+
+  // Refetch notifications immediately when user logs in (session changes)
+  useEffect(() => {
+    if (session?.access_token) {
+      // User just logged in - refetch notifications immediately
+      refetchNotifications();
+      refetchUnreadCount();
+    }
+  }, [session?.access_token]); // Only refetch when session token changes (login/logout)
 
   const markAsRead = useCallback((notificationId: string) => {
     markAsReadMutation.mutate(notificationId);

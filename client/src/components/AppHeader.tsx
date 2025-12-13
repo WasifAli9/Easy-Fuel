@@ -29,6 +29,7 @@ import { formatDistanceToNow } from "date-fns";
 import { Check, CheckCheck } from "lucide-react";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useToast } from "@/hooks/use-toast";
+import { normalizeProfilePhotoUrl } from "@/lib/utils";
 
 interface AppHeaderProps {
   onMenuClick?: () => void;
@@ -49,8 +50,11 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
   const { data: notifications = [], refetch: refetchNotifications, error: notificationsError } = useQuery<any[]>({
     queryKey: ["/api/notifications"],
     enabled: !!profile, // Only fetch if user is logged in
-    refetchInterval: 120000, // Refetch every 2 minutes (WebSocket handles real-time)
-    staleTime: 60 * 1000, // Consider data fresh for 60 seconds
+    refetchInterval: 30000, // Refetch every 30 seconds as fallback (WebSocket handles real-time)
+    staleTime: 0, // Always consider data stale - refetch immediately when invalidated
+    gcTime: 0, // Don't cache - always fetch fresh data
+    refetchOnMount: true, // Always refetch when component mounts (e.g., after login)
+    refetchOnWindowFocus: true, // Refetch when window regains focus
     retry: false, // Don't retry on errors
     onError: (error: any) => {
       // Only log errors if user is actually logged in (not expected 401s after logout)
@@ -64,8 +68,11 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
   const { data: unreadData, refetch: refetchUnreadCount, error: unreadCountError } = useQuery<{ count: number }>({
     queryKey: ["/api/notifications/unread-count"],
     enabled: !!profile,
-    refetchInterval: 120000, // Refetch every 2 minutes (WebSocket handles real-time)
-    staleTime: 60 * 1000, // Consider data fresh for 60 seconds
+    refetchInterval: 30000, // Refetch every 30 seconds as fallback (WebSocket handles real-time)
+    staleTime: 0, // Always consider data stale - refetch immediately when invalidated
+    gcTime: 0, // Don't cache - always fetch fresh data
+    refetchOnMount: true, // Always refetch when component mounts (e.g., after login)
+    refetchOnWindowFocus: true, // Refetch when window regains focus
     retry: false, // Don't retry on errors
     onError: (error: any) => {
       // Only log errors if user is actually logged in (not expected 401s after logout)
@@ -77,43 +84,31 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
 
   const notificationCount = propNotificationCount ?? (unreadData?.count || 0);
 
+  // Refetch notifications immediately when user logs in (profile changes)
+  useEffect(() => {
+    if (profile) {
+      // User just logged in - refetch notifications immediately
+      refetchNotifications();
+      refetchUnreadCount();
+    }
+  }, [profile?.id]); // Only refetch when user ID changes (login/logout)
+
   // Set up WebSocket for real-time notifications
   useWebSocket((message) => {
     try {
       if (message.type === "notification") {
         try {
-          // New notification received via WebSocket
-          queryClient.setQueryData<any[]>(["/api/notifications"], (old = []) => {
-            try {
-              // Check if notification already exists (avoid duplicates)
-              const exists = old?.some((n: any) => n.id === message.payload?.id);
-              if (exists) {
-                return old;
-              }
-              // Add new notification to the beginning of the list
-              return [message.payload, ...(old || [])];
-            } catch (error) {
-              console.error("[AppHeader] Error updating notifications query data:", error);
-              console.error("[AppHeader] Error details:", {
-                error,
-                message: error instanceof Error ? error.message : String(error),
-                stack: error instanceof Error ? error.stack : undefined,
-                payload: message.payload,
-                oldData: old,
-              });
-              // Return old data on error to prevent blank screen
-              return old || [];
-            }
+          // Invalidate and refetch notifications immediately when WebSocket message received
+          // This ensures fresh data is always displayed
+          queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
+          refetchNotifications().catch((error) => {
+            console.error("[AppHeader] Error refetching notifications:", error);
           });
           
           // Update unread count
+          queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
           refetchUnreadCount().catch((error) => {
             console.error("[AppHeader] Error refetching unread count:", error);
-            console.error("[AppHeader] Error details:", {
-              error,
-              message: error instanceof Error ? error.message : String(error),
-              stack: error instanceof Error ? error.stack : undefined,
-            });
           });
           
           // Show toast notification
@@ -504,43 +499,11 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
                 {profile?.profilePhotoUrl ? (
                   <Avatar className="h-8 w-8">
                     <AvatarImage 
-                      src={
-                        (() => {
-                          const photoUrl = profile.profilePhotoUrl;
-                          if (!photoUrl) return undefined;
-                          
-                          // Handle Supabase Storage format: bucket/path (e.g., "private-objects/uploads/uuid")
-                          if (photoUrl.includes('/') && !photoUrl.startsWith('/') && !photoUrl.startsWith('http')) {
-                            // Check if it's a private bucket (private-objects)
-                            if (photoUrl.startsWith('private-objects/')) {
-                              // Keep the full path including bucket name - server will extract it
-                              return `/objects/${photoUrl}`;
-                            } else {
-                              // For public buckets, use Supabase public URL
-                              return `${import.meta.env.VITE_SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co'}/storage/v1/object/public/${photoUrl}`;
-                            }
-                          }
-                          // Handle /objects/ path format
-                          else if (photoUrl.startsWith('/objects/')) {
-                            return photoUrl;
-                          }
-                          // Handle full URLs
-                          else if (photoUrl.startsWith('http://') || photoUrl.startsWith('https://')) {
-                            return photoUrl;
-                          }
-                          // Default: assume it's a relative path (add /objects/ prefix)
-                          else {
-                            return `/objects/${photoUrl}`;
-                          }
-                        })()
-                      } 
-                      alt={profile?.fullName || "User"}
+                      src={normalizeProfilePhotoUrl(profile.profilePhotoUrl) || undefined}
+                      alt={profile?.fullName || "User"} 
                       onError={(e) => {
                         // Suppress image load errors - they're expected if file doesn't exist
-                        if (process.env.NODE_ENV === 'development') {
-                          console.warn('Failed to load profile image:', profile.profilePhotoUrl);
-                        }
-                      }} 
+                      }}
                     />
                     <AvatarFallback className="bg-primary text-primary-foreground text-sm">
                       {profile?.fullName?.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || "U"}

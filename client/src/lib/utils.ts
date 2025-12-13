@@ -51,7 +51,7 @@ export function formatCurrency(amount: number, currencyCode: string = 'ZAR'): st
  * Handles different path formats:
  * - Full URLs: http://localhost:5002/api/storage/upload/private-objects/uploads/...
  * - Paths with /api/storage/upload/: /api/storage/upload/private-objects/uploads/...
- * - Bucket/path format: private-objects/uploads/...
+ * - Bucket/path format: private-objects/uploads/... or uploads/...
  * - Already normalized: /objects/private-objects/uploads/...
  * 
  * @param filePath - The file path to normalize
@@ -99,8 +99,23 @@ export function normalizeFilePath(filePath: string | null | undefined): string |
     return `/objects/${path}`;
   }
 
-  // If it's already a relative path (bucket/path format), prepend /objects/
+  // If it's a bucket/path format (e.g., "private-objects/uploads/..." or "uploads/...")
+  // Keep the full path including bucket name - server will extract it
   // Remove leading slash if present
   const cleanPath = filePath.startsWith('/') ? filePath.slice(1) : filePath;
   return `/objects/${cleanPath}`;
+}
+
+/**
+ * Normalizes a profile photo URL for display
+ * This is a convenience wrapper around normalizeFilePath specifically for profile photos
+ * 
+ * @param photoUrl - The profile photo URL to normalize
+ * @returns Normalized path for use with /objects/ endpoint, or null if invalid
+ */
+export function normalizeProfilePhotoUrl(photoUrl: string | null | undefined): string | null {
+  if (!photoUrl) return null;
+  
+  // Use the general normalizeFilePath function
+  return normalizeFilePath(photoUrl);
 }

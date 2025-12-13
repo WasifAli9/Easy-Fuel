@@ -25,7 +25,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { Loader2, User, FileText, Truck, Building2, ShieldCheck, Upload, Camera, Eye, CheckCircle2, XCircle } from "lucide-react";
-import { normalizeFilePath } from "@/lib/utils";
+import { normalizeFilePath, normalizeProfilePhotoUrl } from "@/lib/utils";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
 import type { UploadResult } from "@uppy/core";
@@ -252,37 +252,10 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
             <div className="relative">
               <Avatar className="h-16 w-16">
                 <AvatarImage 
-                  src={
-                    userDetails.profile.profile_photo_url 
-                      ? (() => {
-                          const photoUrl = userDetails.profile.profile_photo_url;
-                          // Handle Supabase Storage format: bucket/path (e.g., "private-objects/uploads/uuid")
-                          if (photoUrl.includes('/') && !photoUrl.startsWith('/') && !photoUrl.startsWith('http')) {
-                            // Check if it's a private bucket (private-objects)
-                            if (photoUrl.startsWith('private-objects/')) {
-                              // Use our server endpoint for private objects (handles authentication)
-                              const pathOnly = photoUrl.replace('private-objects/', '');
-                              return `/objects/${pathOnly}`;
-                            } else {
-                              // For public buckets, use Supabase public URL
-                              return `${import.meta.env.VITE_SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co'}/storage/v1/object/public/${photoUrl}`;
-                            }
-                          }
-                          // Handle /objects/ path format
-                          else if (photoUrl.startsWith('/objects/')) {
-                            return photoUrl;
-                          }
-                          // Handle full URLs
-                          else if (photoUrl.startsWith('http://') || photoUrl.startsWith('https://')) {
-                            return photoUrl;
-                          }
-                          // Default: assume it's a relative path
-                          else {
-                            return `/objects/${photoUrl}`;
-                          }
-                        })()
-                      : undefined
-                  } 
+                  src={normalizeProfilePhotoUrl(userDetails.profile.profile_photo_url) || undefined}
+                  onError={() => {
+                    // Suppress image load errors
+                  }} 
                 />
                 <AvatarFallback className="bg-primary text-primary-foreground text-lg">
                   {userDetails.profile.full_name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)}

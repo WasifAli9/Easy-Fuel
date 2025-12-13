@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Building2, Phone, Calendar, User, CheckCircle2, XCircle, Clock, Mail } from "lucide-react";
+import { normalizeProfilePhotoUrl } from "@/lib/utils";
 
 interface SupplierCardProps {
   id: string;
@@ -43,7 +44,12 @@ export function SupplierCard({
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-3 flex-1 min-w-0">
             <Avatar className="h-10 w-10 flex-shrink-0">
-              <AvatarImage src={profilePhotoUrl || undefined} />
+              <AvatarImage 
+                src={normalizeProfilePhotoUrl(profilePhotoUrl) || undefined}
+                onError={() => {
+                  // Suppress image load errors
+                }}
+              />
               <AvatarFallback className="bg-primary text-primary-foreground">
                 {companyName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
               </AvatarFallback>

@@ -20,7 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { User, Lock, Upload, FileText, AlertTriangle, CheckCircle2, XCircle, Shield, Building, MapPin, Loader2 } from "lucide-react";
-import { normalizeFilePath } from "@/lib/utils";
+import { normalizeFilePath, normalizeProfilePhotoUrl } from "@/lib/utils";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
 import { Badge } from "@/components/ui/badge";
@@ -745,44 +745,11 @@ export default function DriverProfile() {
                     <div className="relative">
                       {profile?.profile_photo_url ? (
                         (() => {
-                          const photoUrl = profile.profile_photo_url;
-                          let imageSrc: string;
+                          const imageSrc = normalizeProfilePhotoUrl(profile.profile_photo_url);
                           
-                          // Handle full URLs (http/https) - use as-is
-                          if (photoUrl.startsWith('http://') || photoUrl.startsWith('https://')) {
-                            imageSrc = photoUrl;
+                          if (!imageSrc) {
+                            return null;
                           }
-                          // Use normalizeFilePath for all other formats
-                          else {
-                            // Ensure bucket name is included if missing
-                            let pathToNormalize = photoUrl;
-                            
-                            // If path doesn't include a bucket name and starts with uploads/, add private-objects/
-                            if (pathToNormalize.startsWith('uploads/') && !pathToNormalize.startsWith('private-objects/') && !pathToNormalize.startsWith('public-objects/')) {
-                              pathToNormalize = `private-objects/${pathToNormalize}`;
-                            }
-                            
-                            const normalized = normalizeFilePath(pathToNormalize);
-                            if (normalized) {
-                              imageSrc = normalized;
-                            } else {
-                              // Fallback: try to construct a path
-                              // Check if it's a public bucket that should use Supabase public URL
-                              if (photoUrl.includes('/') && !photoUrl.startsWith('/') && !photoUrl.startsWith('http')) {
-                                // For public buckets, use Supabase public URL
-                                imageSrc = `${import.meta.env.VITE_SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co'}/storage/v1/object/public/${photoUrl}`;
-                              } else {
-                                // Default: assume private-objects bucket
-                                const pathWithBucket = photoUrl.startsWith('private-objects/') || photoUrl.startsWith('public-objects/') 
-                                  ? photoUrl 
-                                  : `private-objects/${photoUrl}`;
-                                imageSrc = `/objects/${pathWithBucket}`;
-                              }
-                            }
-                          }
-                          
-                          console.log("Profile photo URL:", photoUrl);
-                          console.log("Constructed image src:", imageSrc);
                           
                           return (
                             <div className="h-24 w-24 rounded-full overflow-hidden border-2 border-border flex-shrink-0">
@@ -791,7 +758,7 @@ export default function DriverProfile() {
                                 alt="Profile"
                                 className="w-full h-full object-cover object-center"
                                 onError={(e) => {
-                                  console.error("Failed to load profile image:", imageSrc);
+                                  // Suppress image load errors
                                   console.error("Image error:", e);
                                 }}
                                 onLoad={() => {
