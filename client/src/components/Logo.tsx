@@ -4,9 +4,10 @@ import { Fuel } from "lucide-react";
 interface LogoProps {
   size?: "sm" | "md" | "lg" | "xl";
   showText?: boolean;
+  variant?: "default" | "light";
 }
 
-export function Logo({ size = "md", showText = true }: LogoProps) {
+export function Logo({ size = "md", showText = true, variant = "default" }: LogoProps) {
   const sizeClasses = {
     sm: "h-6 w-6",
     md: "h-8 w-8",
@@ -25,9 +26,14 @@ export function Logo({ size = "md", showText = true }: LogoProps) {
   const logoSrc = "/logo.png";
   const [logoError, setLogoError] = useState(false);
 
+  const isLight = variant === "light";
+  const bgClass = isLight ? "bg-slate-50/15 backdrop-blur-sm" : "bg-primary";
+  const textClass = isLight ? "text-slate-50" : "";
+  const iconClass = isLight ? "text-slate-50" : "text-primary-foreground";
+
   return (
     <div className="flex items-center gap-2">
-      <div className="rounded-lg bg-primary p-1.5 flex items-center justify-center">
+      <div className={`rounded-lg ${bgClass} p-1.5 flex items-center justify-center`}>
         {!logoError ? (
           <img
             src={logoSrc}
@@ -37,11 +43,11 @@ export function Logo({ size = "md", showText = true }: LogoProps) {
             style={{ objectFit: "contain" }}
           />
         ) : (
-          <Fuel className={`${sizeClasses[size]} text-primary-foreground`} />
+          <Fuel className={`${sizeClasses[size]} ${iconClass}`} />
         )}
       </div>
       {showText && (
-        <span className={`${textSizeClasses[size]} font-bold tracking-tight`}>
+        <span className={`${textSizeClasses[size]} font-bold tracking-tight ${textClass}`}>
           Easy Fuel
         </span>
       )}

@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLocation } from "wouter";
+import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, KeyRound, User as UserIcon, Eye, EyeOff } from "lucide-react";
+import { Mail, KeyRound, User as UserIcon, Eye, EyeOff, Fuel, Shield, MapPin, CheckCircle2, Clock, Truck } from "lucide-react";
 
 export default function Signup() {
 	const [fullName, setFullName] = useState("");
@@ -55,12 +56,19 @@ export default function Signup() {
 	}
 
 	return (
-		<div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/20 via-background to-background p-4">
-			<Card className="w-full max-w-md">
-				<CardHeader className="space-y-1">
-					<CardTitle className="text-2xl">Create your account</CardTitle>
-					<CardDescription>Sign up to Easy Fuel and start your setup</CardDescription>
-				</CardHeader>
+		<div className="min-h-screen flex">
+			{/* Left Side - Signup Form */}
+			<div className="flex-1 flex items-center justify-center p-4 bg-gradient-to-br from-primary/20 via-background to-background">
+				<Card className="w-full max-w-md">
+					<CardHeader className="space-y-4">
+						<div className="flex justify-center">
+							<Logo size="lg" />
+						</div>
+						<div className="text-center space-y-1">
+							<CardTitle className="text-2xl">Create your account</CardTitle>
+							<CardDescription>Sign up to Easy Fuel and start your setup</CardDescription>
+						</div>
+					</CardHeader>
 				<CardContent>
 					<form className="space-y-4" onSubmit={handleSignup}>
 						<div className="space-y-2">
@@ -130,6 +138,79 @@ export default function Signup() {
 					</form>
 				</CardContent>
 			</Card>
+			</div>
+
+			{/* Right Side - Features Section */}
+			<div className="hidden lg:flex lg:flex-1 bg-gradient-to-br from-primary via-primary/95 to-primary/90 p-8 flex-col justify-center relative">
+				<div className="absolute inset-0 bg-slate-900/20"></div>
+				<div className="max-w-lg mx-auto space-y-8 relative z-10">
+					{/* Logo */}
+					<div className="flex items-center gap-3">
+						<Logo size="lg" variant="light" />
+					</div>
+
+					{/* Main Heading */}
+					<div className="space-y-4">
+						<h1 className="text-4xl font-bold leading-tight text-slate-50">
+							Join Easy Fuel Today
+						</h1>
+						<p className="text-lg text-slate-100/90 leading-relaxed">
+							Become part of South Africa's leading fuel delivery marketplace. Whether you're a customer, driver, or supplier, we have the tools you need.
+						</p>
+					</div>
+
+					{/* Features List */}
+					<div className="space-y-6 pt-4">
+						<div className="flex items-start gap-4">
+							<div className="p-2 rounded-lg bg-slate-50/15 backdrop-blur-sm flex-shrink-0">
+								<Truck className="h-6 w-6 text-slate-50" />
+							</div>
+							<div>
+								<h3 className="font-semibold text-lg mb-1 text-slate-50">For Drivers</h3>
+								<p className="text-slate-100/85 text-sm">
+									Accept delivery jobs, track routes, and earn with our intelligent dispatch system.
+								</p>
+							</div>
+						</div>
+
+						<div className="flex items-start gap-4">
+							<div className="p-2 rounded-lg bg-slate-50/15 backdrop-blur-sm flex-shrink-0">
+								<Fuel className="h-6 w-6 text-slate-50" />
+							</div>
+							<div>
+								<h3 className="font-semibold text-lg mb-1 text-slate-50">For Suppliers</h3>
+								<p className="text-slate-100/85 text-sm">
+									Manage depots, set prices, and fulfill orders from verified customers.
+								</p>
+							</div>
+						</div>
+
+						<div className="flex items-start gap-4">
+							<div className="p-2 rounded-lg bg-slate-50/15 backdrop-blur-sm flex-shrink-0">
+								<Clock className="h-6 w-6 text-slate-50" />
+							</div>
+							<div>
+								<h3 className="font-semibold text-lg mb-1 text-slate-50">Fast Onboarding</h3>
+								<p className="text-slate-100/85 text-sm">
+									Quick KYC verification process to get you started in minutes.
+								</p>
+							</div>
+						</div>
+
+						<div className="flex items-start gap-4">
+							<div className="p-2 rounded-lg bg-slate-50/15 backdrop-blur-sm flex-shrink-0">
+								<Shield className="h-6 w-6 text-slate-50" />
+							</div>
+							<div>
+								<h3 className="font-semibold text-lg mb-1 text-slate-50">Secure Platform</h3>
+								<p className="text-slate-100/85 text-sm">
+									Bank-level security with encrypted payments and verified users.
+								</p>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
 		</div>
 	);
 }

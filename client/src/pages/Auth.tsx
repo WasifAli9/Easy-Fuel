@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, KeyRound, Eye, EyeOff } from "lucide-react";
+import { Mail, KeyRound, Eye, EyeOff, Fuel, Shield, MapPin, CheckCircle2 } from "lucide-react";
 
 export default function Auth() {
   const [email, setEmail] = useState("");
@@ -107,21 +107,23 @@ export default function Auth() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/20 via-background to-background p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center space-y-4">
-          <div className="flex justify-center">
-            <Logo size="lg" />
-          </div>
-          <div>
-            <CardTitle className="text-2xl">Welcome to Easy Fuel</CardTitle>
-            <CardDescription>
-              {otpSent
-                ? "Check your email for the magic link"
-                : "Sign in to access your account"}
-            </CardDescription>
-          </div>
-        </CardHeader>
+    <div className="min-h-screen flex">
+      {/* Left Side - Login Form */}
+      <div className="flex-1 flex items-center justify-center p-4 bg-gradient-to-br from-primary/20 via-background to-background">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center space-y-4">
+            <div className="flex justify-center">
+              <Logo size="lg" />
+            </div>
+            <div>
+              <CardTitle className="text-2xl">Welcome to Easy Fuel</CardTitle>
+              <CardDescription>
+                {otpSent
+                  ? "Check your email for the magic link"
+                  : "Sign in to access your account"}
+              </CardDescription>
+            </div>
+          </CardHeader>
         <CardContent>
           <Tabs defaultValue="password" className="w-full">
             <TabsList className="grid w-full grid-cols-2">
@@ -329,6 +331,79 @@ export default function Auth() {
           </Tabs>
         </CardContent>
       </Card>
+      </div>
+
+      {/* Right Side - Features Section */}
+      <div className="hidden lg:flex lg:flex-1 bg-gradient-to-br from-primary via-primary/95 to-primary/90 p-8 flex-col justify-center relative">
+        <div className="absolute inset-0 bg-slate-900/20"></div>
+        <div className="max-w-lg mx-auto space-y-8 relative z-10">
+          {/* Logo */}
+          <div className="flex items-center gap-3">
+            <Logo size="lg" variant="light" />
+          </div>
+
+          {/* Main Heading */}
+          <div className="space-y-4">
+            <h1 className="text-4xl font-bold leading-tight text-slate-50">
+              Fuel Delivery Made Easy
+            </h1>
+            <p className="text-lg text-slate-100/90 leading-relaxed">
+              Streamline your fuel delivery operations with real-time tracking, vetted drivers, and seamless payment processing. Get fuel delivered to your location on demand.
+            </p>
+          </div>
+
+          {/* Features List */}
+          <div className="space-y-6 pt-4">
+            <div className="flex items-start gap-4">
+              <div className="p-2 rounded-lg bg-slate-50/15 backdrop-blur-sm flex-shrink-0">
+                <Fuel className="h-6 w-6 text-slate-50" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-lg mb-1 text-slate-50">Any Fuel Type</h3>
+                <p className="text-slate-100/85 text-sm">
+                  Diesel, Petrol 95/93, Paraffin - all available on demand from verified suppliers.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-start gap-4">
+              <div className="p-2 rounded-lg bg-slate-50/15 backdrop-blur-sm flex-shrink-0">
+                <Shield className="h-6 w-6 text-slate-50" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-lg mb-1 text-slate-50">Vetted Drivers</h3>
+                <p className="text-slate-100/85 text-sm">
+                  All drivers undergo comprehensive KYC verification for your safety and peace of mind.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-start gap-4">
+              <div className="p-2 rounded-lg bg-slate-50/15 backdrop-blur-sm flex-shrink-0">
+                <MapPin className="h-6 w-6 text-slate-50" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-lg mb-1 text-slate-50">Real-Time Tracking</h3>
+                <p className="text-slate-100/85 text-sm">
+                  Track your fuel delivery in real-time from dispatch to your doorstep.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-start gap-4">
+              <div className="p-2 rounded-lg bg-slate-50/15 backdrop-blur-sm flex-shrink-0">
+                <CheckCircle2 className="h-6 w-6 text-slate-50" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-lg mb-1 text-slate-50">Secure Payments</h3>
+                <p className="text-slate-100/85 text-sm">
+                  Safe and secure payment processing with PayFast integration and instant confirmations.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
