@@ -14,9 +14,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Users, Truck, TrendingUp, Building2, UserCheck, Search, Shield, FileText, CheckCircle2, XCircle, Eye, Activity, BarChart3, ArrowUpRight, Filter, Bell, DollarSign, Save, Edit2 } from "lucide-react";
+import { Users, Truck, TrendingUp, Building2, UserCheck, Search, Shield, FileText, CheckCircle2, XCircle, Eye, Activity, BarChart3, ArrowUpRight, Filter, Bell, DollarSign, Save, Edit2, MapPin, Menu, Settings as SettingsIcon } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +25,8 @@ import { useWebSocket } from "@/hooks/useWebSocket";
 import { useNotifications } from "@/hooks/useNotifications";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatDistanceToNow } from "date-fns";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { cn } from "@/lib/utils";
 
 interface PendingKYC {
   drivers: Array<{
@@ -379,6 +380,158 @@ function DeliveryFeeSettings() {
   );
 }
 
+// Driver subscription radius limits (admin-editable)
+function DriverRadiusSettings() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { profile } = useAuth();
+  const [isEditing, setIsEditing] = useState(false);
+  const [standardMiles, setStandardMiles] = useState<number>(200);
+  const [extendedMiles, setExtendedMiles] = useState<number>(500);
+  const [unlimitedMiles, setUnlimitedMiles] = useState<number>(999);
+
+  const { data: settings, isLoading, error: settingsError } = useQuery<any>({
+    queryKey: ["/api/admin/settings"],
+    enabled: !!profile && profile.role === "admin",
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (settings) {
+      setStandardMiles(settings.driver_radius_standard_miles ?? 200);
+      setExtendedMiles(settings.driver_radius_extended_miles ?? 500);
+      setUnlimitedMiles(settings.driver_radius_unlimited_miles ?? 999);
+    }
+  }, [settings]);
+
+  const updateMutation = useMutation({
+    mutationFn: async (payload: { driver_radius_standard_miles: number; driver_radius_extended_miles: number; driver_radius_unlimited_miles: number }) => {
+      const response = await apiRequest("PUT", "/api/admin/settings", payload);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/settings"] });
+      toast({
+        title: "Success",
+        description: "Driver radius limits updated successfully",
+      });
+      setIsEditing(false);
+    },
+    onError: (err: any) => {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: err?.message ?? "Failed to update radius limits",
+      });
+    },
+  });
+
+  const handleSave = () => {
+    const s = Math.max(1, Math.min(9999, Math.round(standardMiles)));
+    const e = Math.max(1, Math.min(9999, Math.round(extendedMiles)));
+    const u = Math.max(1, Math.min(9999, Math.round(unlimitedMiles)));
+    updateMutation.mutate({
+      driver_radius_standard_miles: s,
+      driver_radius_extended_miles: e,
+      driver_radius_unlimited_miles: u,
+    });
+  };
+
+  const handleCancel = () => {
+    setStandardMiles(settings?.driver_radius_standard_miles ?? 200);
+    setExtendedMiles(settings?.driver_radius_extended_miles ?? 500);
+    setUnlimitedMiles(settings?.driver_radius_unlimited_miles ?? 999);
+    setIsEditing(false);
+  };
+
+  if (isLoading || settingsError) {
+    return null;
+  }
+
+  return (
+    <Card className="border-2">
+      <CardHeader className="bg-gradient-to-r from-primary/5 to-primary/10 border-b">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-primary/10 rounded-lg">
+              <MapPin className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <CardTitle className="text-xl">Driver Subscription Radius Limits</CardTitle>
+              <p className="text-sm text-muted-foreground mt-1">
+                Max job pickup radius (miles) per plan: Starter, Professional, Premium
+              </p>
+            </div>
+          </div>
+          {!isEditing && (
+            <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
+              <Edit2 className="h-4 w-4 mr-2" />
+              Edit
+            </Button>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="pt-6">
+        <div className="grid gap-4 sm:grid-cols-3">
+          <div className="space-y-2 rounded-lg border p-4">
+            <Label className="text-sm font-medium">Starter (Standard)</Label>
+            {isEditing ? (
+              <Input
+                type="number"
+                min={1}
+                max={9999}
+                value={standardMiles}
+                onChange={(e) => setStandardMiles(parseInt(e.target.value, 10) || 200)}
+              />
+            ) : (
+              <p className="text-2xl font-bold">{settings?.driver_radius_standard_miles ?? 200} miles</p>
+            )}
+          </div>
+          <div className="space-y-2 rounded-lg border p-4">
+            <Label className="text-sm font-medium">Professional (Extended)</Label>
+            {isEditing ? (
+              <Input
+                type="number"
+                min={1}
+                max={9999}
+                value={extendedMiles}
+                onChange={(e) => setExtendedMiles(parseInt(e.target.value, 10) || 500)}
+              />
+            ) : (
+              <p className="text-2xl font-bold">{settings?.driver_radius_extended_miles ?? 500} miles</p>
+            )}
+          </div>
+          <div className="space-y-2 rounded-lg border p-4">
+            <Label className="text-sm font-medium">Premium (Unlimited)</Label>
+            {isEditing ? (
+              <Input
+                type="number"
+                min={1}
+                max={9999}
+                value={unlimitedMiles}
+                onChange={(e) => setUnlimitedMiles(parseInt(e.target.value, 10) || 999)}
+              />
+            ) : (
+              <p className="text-2xl font-bold">{settings?.driver_radius_unlimited_miles ?? 999} miles</p>
+            )}
+          </div>
+        </div>
+        {isEditing && (
+          <div className="mt-4 flex gap-2">
+            <Button variant="outline" onClick={handleCancel} disabled={updateMutation.isPending}>
+              Cancel
+            </Button>
+            <Button onClick={handleSave} disabled={updateMutation.isPending}>
+              <Save className="h-4 w-4 mr-2" />
+              {updateMutation.isPending ? "Saving..." : "Save"}
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function AdminDashboard() {
   const { profile } = useAuth();
   const { toast } = useToast();
@@ -392,6 +545,9 @@ export default function AdminDashboard() {
   const [complianceSearch, setComplianceSearch] = useState("");
   const [selectedComplianceEntity, setSelectedComplianceEntity] = useState<{ type: "driver" | "supplier"; id: string } | null>(null);
   const [complianceDialogOpen, setComplianceDialogOpen] = useState(false);
+  type AdminTab = "activity" | "users" | "driver-kyc" | "supplier-kyc" | "compliance-review" | "settings";
+  const [activeTab, setActiveTab] = useState<AdminTab>("activity");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Fetch pending KYC/KYB applications
   const { data: pendingKYC, isLoading } = useQuery<PendingKYC>({
@@ -747,11 +903,65 @@ export default function AdminDashboard() {
     );
   }
 
+  const navItems: { value: AdminTab; label: string; icon: typeof Activity }[] = [
+    { value: "activity", label: "Activity", icon: Activity },
+    { value: "users", label: `Users (${allUsers.length})`, icon: Users },
+    { value: "driver-kyc", label: `Driver KYC (${driverKYC.length})`, icon: Truck },
+    { value: "supplier-kyc", label: `Supplier KYC (${supplierKYC.length})`, icon: Building2 },
+    { value: "compliance-review", label: `Compliance Review (${pendingCompliance ? (pendingCompliance.drivers?.length || 0) + (pendingCompliance.suppliers?.length || 0) : 0})`, icon: Shield },
+    { value: "settings", label: "Settings", icon: SettingsIcon },
+  ];
+
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background flex flex-col">
       <AppHeader onAdminNotificationClick={handleAdminNotificationClick} />
-      
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+      <div className="flex flex-1 min-h-0">
+        <aside className="hidden md:flex flex-col w-52 min-w-[208px] shrink-0 border-r border-border bg-muted/30 min-h-0 z-10" aria-label="Admin navigation">
+          <nav className="sticky top-0 flex flex-col p-3 gap-0.5 overflow-y-auto">
+            <div className="px-3 py-2 mb-1">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Menu</p>
+            </div>
+            {navItems.map(({ value, label, icon: Icon }) => (
+              <button
+                key={value}
+                onClick={() => setActiveTab(value)}
+                className={cn(
+                  "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left",
+                  activeTab === value ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                )}
+                data-testid={value === "activity" ? "tab-activity" : value === "users" ? "tab-users" : value === "driver-kyc" ? "tab-driver-kyc" : value === "supplier-kyc" ? "tab-supplier-kyc" : value === "compliance-review" ? "tab-compliance-review" : "tab-settings"}
+              >
+                <Icon className="h-5 w-5 shrink-0" />
+                {label}
+              </button>
+            ))}
+          </nav>
+        </aside>
+
+        <Button variant="outline" size="icon" className="md:hidden fixed bottom-4 right-4 z-40 rounded-full shadow-lg" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
+          <Menu className="h-5 w-5" />
+        </Button>
+
+        <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+          <SheetContent side="left" className="w-72 p-0">
+            <nav className="flex flex-col h-full py-4">
+              <div className="px-4 pb-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Menu</p>
+              </div>
+              <div className="flex-1 overflow-y-auto space-y-1 px-2">
+                {navItems.map(({ value, label, icon: Icon }) => (
+                  <button key={value} onClick={() => { setActiveTab(value); setSidebarOpen(false); }} className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left", activeTab === value ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}>
+                    <Icon className="h-5 w-5 shrink-0" /> {label}
+                  </button>
+                ))}
+              </div>
+            </nav>
+          </SheetContent>
+        </Sheet>
+
+        <main className="flex-1 min-w-0 overflow-auto">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8 flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold mb-2">Admin Dashboard</h1>
@@ -787,29 +997,9 @@ export default function AdminDashboard() {
           />
         </div>
 
-        <Tabs defaultValue="activity" className="space-y-6">
-          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-            <TabsList className="min-w-max">
-              <TabsTrigger value="activity" data-testid="tab-activity">
-                Activity
-              </TabsTrigger>
-              <TabsTrigger value="users" data-testid="tab-users">
-                Users ({allUsers.length})
-              </TabsTrigger>
-              <TabsTrigger value="driver-kyc" data-testid="tab-driver-kyc">
-                Driver KYC ({driverKYC.length})
-              </TabsTrigger>
-              <TabsTrigger value="supplier-kyc" data-testid="tab-supplier-kyc">
-                Supplier KYC ({supplierKYC.length})
-              </TabsTrigger>
-              <TabsTrigger value="compliance-review" data-testid="tab-compliance-review">
-                Compliance Review ({pendingCompliance ? (pendingCompliance.drivers?.length || 0) + (pendingCompliance.suppliers?.length || 0) : 0})
-              </TabsTrigger>
-              <TabsTrigger value="settings" data-testid="tab-settings">Settings</TabsTrigger>
-            </TabsList>
-          </div>
-
-          <TabsContent value="activity" className="space-y-6">
+        <div className="space-y-6">
+          {activeTab === "activity" && (
+          <div className="space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <Card>
                 <CardHeader>
@@ -1009,9 +1199,11 @@ export default function AdminDashboard() {
                 )}
               </CardContent>
             </Card>
-          </TabsContent>
+          </div>
+          )}
 
-          <TabsContent value="users" className="space-y-4">
+          {activeTab === "users" && (
+            <div className="space-y-4">
             <div className="flex flex-col sm:flex-row gap-4">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -1108,9 +1300,11 @@ export default function AdminDashboard() {
                 })}
               </div>
             )}
-          </TabsContent>
+            </div>
+          )}
 
-          <TabsContent value="driver-kyc" className="space-y-4">
+          {activeTab === "driver-kyc" && (
+            <div className="space-y-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
@@ -1142,9 +1336,11 @@ export default function AdminDashboard() {
                 ))}
               </div>
             )}
-          </TabsContent>
+            </div>
+          )}
 
-          <TabsContent value="supplier-kyc" className="space-y-4">
+          {activeTab === "supplier-kyc" && (
+            <div className="space-y-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
@@ -1176,9 +1372,11 @@ export default function AdminDashboard() {
                 ))}
               </div>
             )}
-          </TabsContent>
+            </div>
+          )}
 
-          <TabsContent value="compliance-review" className="space-y-4">
+          {activeTab === "compliance-review" && (
+            <div className="space-y-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
@@ -1325,18 +1523,24 @@ export default function AdminDashboard() {
                 <p>No pending compliance reviews</p>
               </div>
             )}
-          </TabsContent>
+            </div>
+          )}
 
-          <TabsContent value="settings" className="space-y-6">
+          {activeTab === "settings" && (
+            <div className="space-y-6">
             <div>
               <h2 className="text-2xl font-bold mb-2">Platform Settings</h2>
               <p className="text-muted-foreground">Manage system-wide configuration and pricing</p>
             </div>
 
             <DeliveryFeeSettings />
-          </TabsContent>
-        </Tabs>
-      </main>
+            <DriverRadiusSettings />
+            </div>
+          )}
+        </div>
+          </div>
+        </main>
+      </div>
 
       <UserDetailsDialogEnhanced
         userId={selectedUserId}

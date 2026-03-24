@@ -7,8 +7,7 @@ import { OrderCard } from "@/components/OrderCard";
 import { CreateOrderDialog } from "@/components/CreateOrderDialog";
 import { ViewOrderDialog } from "@/components/ViewOrderDialog";
 import { Button } from "@/components/ui/button";
-import { Filter, X } from "lucide-react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Filter, X, ListOrdered, Clock, CheckCircle, Menu } from "lucide-react";
 import {
   Popover,
   PopoverContent,
@@ -25,9 +24,15 @@ import { Label } from "@/components/ui/label";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { cn } from "@/lib/utils";
+
+type CustomerTab = "all" | "active" | "completed";
 
 export default function CustomerDashboard() {
   const { profile } = useAuth();
+  const [activeTab, setActiveTab] = useState<CustomerTab>("all");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [selectedFuelTypeId, setSelectedFuelTypeId] = useState<string | null>(null);
@@ -234,34 +239,77 @@ export default function CustomerDashboard() {
     ? fuelTypes.find((ft) => ft.id === selectedFuelTypeId)?.label || null
     : null;
 
-  return (
-    <div className="min-h-screen bg-background">
-      <AppHeader />
-      
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-3xl font-bold">My Orders</h1>
-            <p className="text-muted-foreground">Track and manage your fuel deliveries</p>
-          </div>
-          <CreateOrderDialog 
-            onOrderCreated={(orderId) => {
-              setSelectedOrderId(orderId);
-              setViewDialogOpen(true);
-            }}
-          />
-        </div>
+  const navItems: { value: CustomerTab; label: string; icon: typeof ListOrdered }[] = [
+    { value: "all", label: "All Orders", icon: ListOrdered },
+    { value: "active", label: "Active", icon: Clock },
+    { value: "completed", label: "Completed", icon: CheckCircle },
+  ];
 
-        <Tabs defaultValue="all" className="space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-              <TabsList className="min-w-max">
-                <TabsTrigger value="all" data-testid="tab-all">All Orders</TabsTrigger>
-                <TabsTrigger value="active" data-testid="tab-active">Active</TabsTrigger>
-                <TabsTrigger value="completed" data-testid="tab-completed">Completed</TabsTrigger>
-              </TabsList>
+  return (
+    <div className="min-h-screen bg-background flex flex-col">
+      <AppHeader />
+
+      <div className="flex flex-1 min-h-0">
+        <aside className="hidden md:flex flex-col w-52 min-w-[208px] shrink-0 border-r border-border bg-muted/30 min-h-0 z-10" aria-label="Orders navigation">
+          <nav className="sticky top-0 flex flex-col p-3 gap-0.5 overflow-y-auto">
+            <div className="px-3 py-2 mb-1">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Menu</p>
             </div>
-            <Popover open={filterOpen} onOpenChange={setFilterOpen}>
+            {navItems.map(({ value, label, icon: Icon }) => (
+              <button
+                key={value}
+                onClick={() => setActiveTab(value)}
+                className={cn(
+                  "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left",
+                  activeTab === value ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                )}
+                data-testid={value === "all" ? "tab-all" : value === "active" ? "tab-active" : "tab-completed"}
+              >
+                <Icon className="h-5 w-5 shrink-0" />
+                {label}
+              </button>
+            ))}
+          </nav>
+        </aside>
+
+        <Button variant="outline" size="icon" className="md:hidden fixed bottom-4 right-4 z-40 rounded-full shadow-lg" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
+          <Menu className="h-5 w-5" />
+        </Button>
+
+        <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+          <SheetContent side="left" className="w-72 p-0">
+            <nav className="flex flex-col h-full py-4">
+              <div className="px-4 pb-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Menu</p>
+              </div>
+              <div className="flex-1 overflow-y-auto space-y-1 px-2">
+                {navItems.map(({ value, label, icon: Icon }) => (
+                  <button key={value} onClick={() => { setActiveTab(value); setSidebarOpen(false); }} className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left", activeTab === value ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}>
+                    <Icon className="h-5 w-5 shrink-0" /> {label}
+                  </button>
+                ))}
+              </div>
+            </nav>
+          </SheetContent>
+        </Sheet>
+
+        <main className="flex-1 min-w-0 overflow-auto">
+          <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <h1 className="text-3xl font-bold">My Orders</h1>
+                <p className="text-muted-foreground">Track and manage your fuel deliveries</p>
+              </div>
+              <CreateOrderDialog
+                onOrderCreated={(orderId) => {
+                  setSelectedOrderId(orderId);
+                  setViewDialogOpen(true);
+                }}
+              />
+            </div>
+
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+              <Popover open={filterOpen} onOpenChange={setFilterOpen}>
               <PopoverTrigger asChild>
                 <Button variant="outline" size="sm" data-testid="button-filter" className="self-start sm:self-auto">
                   <Filter className="h-4 w-4 mr-2" />
@@ -319,9 +367,10 @@ export default function CustomerDashboard() {
                 </div>
               </PopoverContent>
             </Popover>
-          </div>
+            </div>
 
-          <TabsContent value="all" className="space-y-4">
+            {activeTab === "all" && (
+            <div className="space-y-4">
             {isLoading ? (
               <div className="text-center py-8 text-muted-foreground">Loading orders...</div>
             ) : (() => {
@@ -367,9 +416,11 @@ export default function CustomerDashboard() {
                 </>
               );
             })()}
-          </TabsContent>
+            </div>
+            )}
 
-          <TabsContent value="active" className="space-y-4">
+            {activeTab === "active" && (
+            <div className="space-y-4">
             {isLoading ? (
               <div className="text-center py-8 text-muted-foreground">Loading orders...</div>
             ) : (() => {
@@ -402,9 +453,11 @@ export default function CustomerDashboard() {
                 </div>
               );
             })()}
-          </TabsContent>
+            </div>
+            )}
 
-          <TabsContent value="completed" className="space-y-4">
+            {activeTab === "completed" && (
+            <div className="space-y-4">
             {isLoading ? (
               <div className="text-center py-8 text-muted-foreground">Loading orders...</div>
             ) : (() => {
@@ -437,9 +490,11 @@ export default function CustomerDashboard() {
                 </div>
               );
             })()}
-          </TabsContent>
-        </Tabs>
-      </main>
+            </div>
+            )}
+          </div>
+        </main>
+      </div>
 
       {/* View/Edit Order Dialog */}
       {selectedOrderId && (

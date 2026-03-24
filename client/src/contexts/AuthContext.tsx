@@ -5,7 +5,7 @@ import { queryClient } from "@/lib/queryClient";
 
 interface Profile {
   id: string;
-  role: "customer" | "driver" | "supplier" | "admin";
+  role: "customer" | "driver" | "supplier" | "admin" | "company";
   fullName: string;
   phone?: string;
   profilePhotoUrl?: string;
@@ -22,7 +22,7 @@ interface AuthContextType {
   resetPassword: (email: string) => Promise<void>;
   updatePassword: (newPassword: string) => Promise<void>;
   signOut: () => Promise<void>;
-  setUserRole: (role: "customer" | "driver" | "supplier" | "admin", fullName: string, phone?: string) => Promise<void>;
+  setUserRole: (role: "customer" | "driver" | "supplier" | "admin" | "company", fullName: string, phone?: string) => Promise<void>;
   refetchProfile: () => Promise<void>;
 }
 
@@ -89,6 +89,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await queryClient.invalidateQueries({ queryKey: ["/api/customer/profile"] });
         await queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
         await queryClient.invalidateQueries({ queryKey: ["/api/supplier/profile"] });
+        await queryClient.invalidateQueries({ queryKey: ["/api/company/overview"] });
       }
     } catch (error) {
       console.error("Error fetching profile:", error);
@@ -191,7 +192,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function setUserRole(
-    role: "customer" | "driver" | "supplier" | "admin",
+    role: "customer" | "driver" | "supplier" | "admin" | "company",
     fullName: string,
     phone?: string
   ) {
@@ -221,6 +222,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { error } = await supabase.from("suppliers").insert({
         owner_id: user.id,
         name: fullName,
+      });
+      if (error) throw error;
+    } else if (role === "company") {
+      const { error } = await supabase.from("companies").insert({
+        owner_user_id: user.id,
+        name: fullName,
+        status: "active",
       });
       if (error) throw error;
     }

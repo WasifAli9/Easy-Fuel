@@ -17,14 +17,8 @@ This means the **token extraction or validation** is failing.
 
 The server now logs detailed information about token validation failures:
 
-### Success Message:
-```
-✅ User authenticated: {
-  userId: '...',
-  email: 'user@example.com',
-  path: '/api/driver/profile'
-}
-```
+### Success:
+Successful authentication is **not** logged (to reduce terminal noise).
 
 ### Failure Messages:
 ```

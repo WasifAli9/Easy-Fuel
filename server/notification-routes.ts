@@ -72,10 +72,7 @@ router.get("/", async (req, res) => {
         .lt("created_at", oldestKeptDate);
 
       if (deleteError) {
-        console.error("[notification-routes] Error deleting old read notifications:", deleteError);
-        // Don't fail the request if cleanup fails, just log it
-      } else {
-        console.log(`[notification-routes] Cleaned up old read notifications for user ${user.id}`);
+        // Don't fail the request if cleanup fails
       }
     }
 
@@ -222,8 +219,6 @@ router.patch("/:id/read", async (req, res) => {
           .eq("user_id", user.id)
           .eq("read", true)
           .lt("created_at", oldestKeptDate);
-        
-        console.log(`[notification-routes] Cleaned up old read notifications after marking ${notificationId} as read`);
       }
     } catch (cleanupError) {
       console.error("[notification-routes] Error cleaning up old notifications:", cleanupError);
@@ -304,11 +299,9 @@ router.patch("/read-all", async (req, res) => {
           .eq("user_id", user.id)
           .eq("read", true)
           .lt("created_at", oldestKeptDate);
-        
-        console.log(`[notification-routes] Cleaned up old read notifications after marking all as read for user ${user.id}`);
       }
     } catch (cleanupError) {
-      console.error("[notification-routes] Error cleaning up old notifications after mark all as read:", cleanupError);
+      // Don't fail the request if cleanup fails
       // Don't fail the request if cleanup fails
     }
 

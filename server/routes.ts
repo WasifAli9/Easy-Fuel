@@ -4,11 +4,13 @@ import { storage } from "./storage";
 import adminRoutes from "./admin-routes";
 import customerRoutes from "./customer-routes";
 import driverRoutes from "./driver-routes";
+import companyRoutes from "./company-routes";
 import supplierRoutes from "./supplier-routes";
 import pushRoutes from "./push-routes";
 import locationRoutes from "./location-routes";
 import chatRoutes from "./chat-routes";
 import notificationRoutes from "./notification-routes";
+import { handleOzowSubscriptionWebhook, handleOzowSupplierSubscriptionWebhook } from "./webhooks";
 import { supabaseAdmin, supabaseAuth } from "./supabase";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { ObjectPermission } from "./objectAcl";
@@ -97,12 +99,6 @@ export async function getSupabaseUser(req: Request) {
       return null;
     }
 
-    // Success! User authenticated
-    console.log("✅ User authenticated:", {
-      userId: user.id,
-      email: user.email,
-      path: req.path
-    });
     return user;
   } catch (error: any) {
     // Handle DNS resolution errors (Supabase instance may be paused or network issues)
@@ -140,6 +136,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return res.status(401).json({ error: "Unauthorized" });
   }
   (req as any).user = user;
+  // Do not log successful auth (reduces terminal noise)
   next();
 }
 
@@ -667,6 +664,12 @@ Then try uploading again.`,
     }
   });
 
+  // Public webhook: OZOW subscription payment callback (no auth)
+  app.get("/api/webhooks/ozow-subscription", handleOzowSubscriptionWebhook);
+  app.post("/api/webhooks/ozow-subscription", handleOzowSubscriptionWebhook);
+  app.get("/api/webhooks/ozow-supplier-subscription", handleOzowSupplierSubscriptionWebhook);
+  app.post("/api/webhooks/ozow-supplier-subscription", handleOzowSupplierSubscriptionWebhook);
+
   // Public route: Get all fuel types (no auth required)
   app.get("/api/fuel-types", async (req, res) => {
     try {
@@ -683,6 +686,32 @@ Then try uploading again.`,
       res.status(500).json({ error: error.message });
     }
   });
+
+  // Public: fleet companies for driver self-assignment (no auth)
+  app.get("/api/companies/public-list", async (req, res) => {
+    try {
+      const raw = typeof req.query.q === "string" ? req.query.q.trim() : "";
+      const q = raw.replace(/%/g, "").slice(0, 80);
+      let query = supabaseAdmin
+        .from("companies")
+        .select("id, name, status")
+        .eq("status", "active")
+        .order("name", { ascending: true })
+        .limit(100);
+      if (q.length > 0) {
+        query = query.ilike("name", `%${q}%`);
+      }
+      const { data, error } = await query;
+      if (error) throw error;
+      res.json(data || []);
+    } catch (error: any) {
+      console.error("Error fetching companies list:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Register company routes (protected)
+  app.use("/api/company", requireAuth, companyRoutes);
 
   // Register customer routes (protected with auth middleware)
   app.use("/api", requireAuth, customerRoutes);

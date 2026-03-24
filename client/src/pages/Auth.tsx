@@ -29,11 +29,12 @@ export default function Auth() {
         const dashboardPath = profile.role === 'customer' ? '/customer' :
                              profile.role === 'driver' ? '/driver' :
                              profile.role === 'supplier' ? '/supplier' :
-                             profile.role === 'admin' ? '/admin' : '/';
+                             profile.role === 'admin' ? '/admin' :
+                             profile.role === 'company' ? '/company' : '/';
         setLocation(dashboardPath);
       } else {
-        // No profile yet, redirect to setup
-        setLocation('/setup');
+        // No profile yet, redirect to signup (role selection happens there)
+        setLocation('/signup');
       }
     }
   }, [user, profile, authLoading, setLocation]);
@@ -51,11 +52,29 @@ export default function Auth() {
       });
     } catch (error: any) {
       console.error("Sign in error:", error);
-      toast({
-        title: "Authentication Error",
-        description: error.message || "Failed to send magic link. Please check Supabase configuration.",
-        variant: "destructive",
-      });
+      
+      // Check for network/DNS errors
+      const errorMessage = error.message || "";
+      const isNetworkError = 
+        errorMessage.includes("Failed to fetch") ||
+        errorMessage.includes("ERR_NAME_NOT_RESOLVED") ||
+        errorMessage.includes("NetworkError") ||
+        errorMessage.includes("ENOTFOUND");
+      
+      if (isNetworkError) {
+        toast({
+          title: "Connection Error",
+          description: "Cannot reach Supabase. This usually means your Supabase project is paused. Please visit https://supabase.com/dashboard to wake up your project, or check your internet connection.",
+          variant: "destructive",
+          duration: 10000,
+        });
+      } else {
+        toast({
+          title: "Authentication Error",
+          description: error.message || "Failed to send magic link. Please try again.",
+          variant: "destructive",
+        });
+      }
     } finally {
       setLoading(false);
     }
@@ -73,11 +92,29 @@ export default function Auth() {
       });
     } catch (error: any) {
       console.error("Sign in error:", error);
-      toast({
-        title: "Authentication Error",
-        description: error.message || "Invalid email or password",
-        variant: "destructive",
-      });
+      
+      // Check for network/DNS errors
+      const errorMessage = error.message || "";
+      const isNetworkError = 
+        errorMessage.includes("Failed to fetch") ||
+        errorMessage.includes("ERR_NAME_NOT_RESOLVED") ||
+        errorMessage.includes("NetworkError") ||
+        errorMessage.includes("ENOTFOUND");
+      
+      if (isNetworkError) {
+        toast({
+          title: "Connection Error",
+          description: "Cannot reach Supabase. This usually means your Supabase project is paused. Please visit https://supabase.com/dashboard to wake up your project, or check your internet connection.",
+          variant: "destructive",
+          duration: 10000,
+        });
+      } else {
+        toast({
+          title: "Authentication Error",
+          description: error.message || "Invalid email or password",
+          variant: "destructive",
+        });
+      }
     } finally {
       setLoading(false);
     }

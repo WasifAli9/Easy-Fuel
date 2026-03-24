@@ -4,40 +4,104 @@ import { useLocation } from "wouter";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, KeyRound, User as UserIcon, Eye, EyeOff, Fuel, Shield, MapPin, CheckCircle2, Clock, Truck } from "lucide-react";
+import { Mail, KeyRound, User as UserIcon, Eye, EyeOff, Fuel, Shield, MapPin, CheckCircle2, Clock, Truck, Loader2 } from "lucide-react";
 
 export default function Signup() {
 	const [fullName, setFullName] = useState("");
 	const [email, setEmail] = useState("");
 	const [password, setPassword] = useState("");
+	const [confirmPassword, setConfirmPassword] = useState("");
 	const [showPassword, setShowPassword] = useState(false);
+	const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 	const [loading, setLoading] = useState(false);
-	const { user, profile, loading: authLoading, signUpWithPassword } = useAuth();
+	const [profileLoading, setProfileLoading] = useState(false);
+	const [role, setRole] = useState<"customer" | "driver" | "supplier" | "admin" | "company">("driver");
+	const [signupSubmitted, setSignupSubmitted] = useState(false);
+	const { user, profile, loading: authLoading, signUpWithPassword, setUserRole } = useAuth();
 	const { toast } = useToast();
 	const [, setLocation] = useLocation();
 
-	// If already authenticated, route to dashboard or setup
+	const fullNameFromUser =
+		(user as any)?.user_metadata?.full_name ||
+		(user as any)?.app_metadata?.full_name ||
+		fullName;
+
+	// If already authenticated and profile exists, route to dashboard.
 	useEffect(() => {
 		if (!authLoading && user) {
 			if (profile) {
 				const dashboardPath = profile.role === "customer" ? "/customer" :
 					profile.role === "driver" ? "/driver" :
 					profile.role === "supplier" ? "/supplier" :
-					profile.role === "admin" ? "/admin" : "/";
+					profile.role === "admin" ? "/admin" :
+					profile.role === "company" ? "/company" : "/";
 				setLocation(dashboardPath);
-			} else {
-				setLocation("/setup");
 			}
 		}
 	}, [user, profile, authLoading, setLocation]);
 
+	// If user just signed up on this page, automatically create the profile once a session exists.
+	useEffect(() => {
+		if (authLoading) return;
+		if (!user || profile) return;
+		if (!signupSubmitted) return;
+		if (profileLoading) return;
+
+		const name = fullNameFromUser ? String(fullNameFromUser).trim() : "";
+		if (!name) return;
+
+		setSignupSubmitted(false);
+		(async () => {
+			setProfileLoading(true);
+			try {
+				await setUserRole(role, name);
+				toast({ title: "Profile created", description: "Your account is all set up!" });
+				setLocation(`/${role}`);
+			} catch (e: any) {
+				toast({ title: "Error", description: e?.message || "Failed to create profile", variant: "destructive" });
+			} finally {
+				setProfileLoading(false);
+			}
+		})();
+	}, [authLoading, user, profile, signupSubmitted, profileLoading, fullNameFromUser, role, setLocation, setUserRole, toast]);
+
+	async function handleCreateProfile() {
+		if (!user) return;
+		if (!fullNameFromUser || !String(fullNameFromUser).trim()) {
+			toast({ title: "Full name missing", description: "Please provide your full name to finish setup.", variant: "destructive" });
+			return;
+		}
+
+		setProfileLoading(true);
+		try {
+			await setUserRole(role, String(fullNameFromUser).trim());
+			toast({ title: "Profile created", description: "Your account is all set up!" });
+			setLocation(`/${role}`);
+		} catch (e: any) {
+			toast({ title: "Error", description: e?.message || "Failed to create profile", variant: "destructive" });
+		} finally {
+			setProfileLoading(false);
+		}
+	}
+
 	async function handleSignup(e: React.FormEvent) {
 		e.preventDefault();
+		if (password !== confirmPassword) {
+			toast({
+				title: "Passwords do not match",
+				description: "Please make sure your password and confirm password are the same.",
+				variant: "destructive",
+			});
+			return;
+		}
 		setLoading(true);
+		setSignupSubmitted(false);
 		try {
 			await signUpWithPassword(email, password, fullName);
+			setSignupSubmitted(true);
 			// Depending on Supabase settings, the user may need to confirm email before session exists.
 			toast({
 				title: "Check your email",
@@ -45,11 +109,29 @@ export default function Signup() {
 			});
 		} catch (error: any) {
 			console.error("Sign up error:", error);
-			toast({
-				title: "Signup Error",
-				description: error.message || "Failed to sign up",
-				variant: "destructive",
-			});
+			
+			// Check for network/DNS errors
+			const errorMessage = error.message || "";
+			const isNetworkError = 
+				errorMessage.includes("Failed to fetch") ||
+				errorMessage.includes("ERR_NAME_NOT_RESOLVED") ||
+				errorMessage.includes("NetworkError") ||
+				errorMessage.includes("ENOTFOUND");
+			
+			if (isNetworkError) {
+				toast({
+					title: "Connection Error",
+					description: "Cannot reach Supabase. This usually means your Supabase project is paused. Please visit https://supabase.com/dashboard to wake up your project, or check your internet connection.",
+					variant: "destructive",
+					duration: 10000, // Show for 10 seconds
+				});
+			} else {
+				toast({
+					title: "Signup Error",
+					description: error.message || "Failed to sign up. Please try again.",
+					variant: "destructive",
+				});
+			}
 		} finally {
 			setLoading(false);
 		}
@@ -65,11 +147,52 @@ export default function Signup() {
 							<Logo size="lg" />
 						</div>
 						<div className="text-center space-y-1">
-							<CardTitle className="text-2xl">Create your account</CardTitle>
-							<CardDescription>Sign up to Easy Fuel and start your setup</CardDescription>
+							<CardTitle className="text-2xl">{user && !profile ? "Complete setup" : "Create your account"}</CardTitle>
+							<CardDescription>
+								{user && !profile
+									? "Choose your role to activate your account"
+									: "Sign up to Easy Fuel and start your setup"}
+							</CardDescription>
 						</div>
 					</CardHeader>
 				<CardContent>
+					{user && !profile ? (
+						<form
+							className="space-y-4"
+							onSubmit={(e) => {
+								e.preventDefault();
+								handleCreateProfile();
+							}}
+						>
+							<div className="space-y-2">
+								<label className="text-sm font-medium">Role</label>
+								<Select value={role} onValueChange={(v) => setRole(v as any)}>
+									<SelectTrigger data-testid="select-role">
+										<SelectValue placeholder="Select role" />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectItem value="customer">Customer</SelectItem>
+										<SelectItem value="driver">Driver</SelectItem>
+										<SelectItem value="supplier">Supplier</SelectItem>
+										<SelectItem value="company">Fleet company</SelectItem>
+										<SelectItem value="admin">Admin</SelectItem>
+									</SelectContent>
+								</Select>
+							</div>
+
+							<Button type="submit" className="w-full" disabled={profileLoading} data-testid="button-create-profile">
+								{profileLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+								{profileLoading ? "Creating profile..." : "Continue"}
+							</Button>
+
+							<div className="text-sm text-center text-muted-foreground">
+								Already have an account?{" "}
+								<button type="button" className="underline" onClick={() => setLocation("/auth")} data-testid="link-to-signin">
+									Sign In
+								</button>
+							</div>
+						</form>
+					) : (
 					<form className="space-y-4" onSubmit={handleSignup}>
 						<div className="space-y-2">
 							<label htmlFor="fullName" className="text-sm font-medium">Full Name</label>
@@ -84,6 +207,21 @@ export default function Signup() {
 								/>
 								<UserIcon className="absolute right-3 top-3 h-4 w-4 text-muted-foreground" />
 							</div>
+						</div>
+						<div className="space-y-2">
+							<label className="text-sm font-medium">Role</label>
+							<Select value={role} onValueChange={(v) => setRole(v as any)}>
+								<SelectTrigger data-testid="select-role">
+									<SelectValue placeholder="Select role" />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value="customer">Customer</SelectItem>
+									<SelectItem value="driver">Driver</SelectItem>
+									<SelectItem value="supplier">Supplier</SelectItem>
+									<SelectItem value="company">Fleet company</SelectItem>
+									<SelectItem value="admin">Admin</SelectItem>
+								</SelectContent>
+							</Select>
 						</div>
 						<div className="space-y-2">
 							<label htmlFor="email" className="text-sm font-medium">Email</label>
@@ -125,6 +263,31 @@ export default function Signup() {
 								</button>
 							</div>
 						</div>
+						<div className="space-y-2">
+							<label htmlFor="confirmPassword" className="text-sm font-medium">Confirm Password</label>
+							<div className="relative">
+								<Input
+									id="confirmPassword"
+									type={showConfirmPassword ? "text" : "password"}
+									placeholder="Confirm your password"
+									value={confirmPassword}
+									onChange={(e) => setConfirmPassword(e.target.value)}
+									required
+									minLength={6}
+									data-testid="input-confirm-password"
+									className="pr-10"
+								/>
+								<button
+									type="button"
+									onClick={() => setShowConfirmPassword((prev) => !prev)}
+									className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground"
+									aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+									data-testid="toggle-confirm-password-visibility"
+								>
+									{showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+								</button>
+							</div>
+						</div>
 						<Button type="submit" className="w-full" disabled={loading} data-testid="button-signup">
 							<KeyRound className="h-4 w-4 mr-2" />
 							{loading ? "Creating account..." : "Sign Up"}
@@ -136,6 +299,7 @@ export default function Signup() {
 							</button>
 						</div>
 					</form>
+					)}
 				</CardContent>
 			</Card>
 			</div>

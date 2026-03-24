@@ -7,6 +7,10 @@ import { pushNotificationService } from "./push-service";
 import { cleanupChatForOrder, ensureChatThreadForAssignment } from "./chat-service";
 import { offerNotifications, orderNotifications } from "./notification-helpers";
 import { getDriverComplianceStatus, getVehicleComplianceStatus, canDriverAccessPlatform } from "./compliance-service";
+import { getDriverSubscription, getDriverActiveSubscription, driverHasActiveSubscription, getDriverMaxRadiusMiles } from "./subscription-service";
+import { buildPaymentRedirectUrl, isOzowConfigured } from "./ozow-service";
+import { vehicleToCamelCase, syncDriverVehicleCapacityLitres } from "./vehicle-utils";
+import { SUBSCRIPTION_PLANS, PLAN_CODES, getPlan, type PlanCode } from "@shared/subscription-plans";
 import { z } from "zod";
 import dotenv from "dotenv";
 dotenv.config();
@@ -74,14 +78,6 @@ router.get("/profile", async (req, res) => {
       });
     }
     
-    // Debug: Log profile data to see if profile_photo_url is included
-    console.log("Driver profile fetched:", {
-      id: profile.id,
-      full_name: profile.full_name,
-      profile_photo_url: profile.profile_photo_url,
-      has_photo_url: !!profile.profile_photo_url
-    });
-
     // Get driver-specific data
     const { data: driver, error: driverError } = await supabaseAdmin
       .from("drivers")
@@ -89,20 +85,6 @@ router.get("/profile", async (req, res) => {
       .eq("user_id", user.id)
       .maybeSingle();
     
-    // Debug: Log prdp_number and company_id to verify they're being fetched
-    if (driver) {
-      console.log("[Driver Profile API] Driver data fetched:", {
-        driverId: driver.id,
-        prdp_number: driver.prdp_number,
-        company_id: driver.company_id,
-        prdp_number_type: typeof driver.prdp_number,
-        company_id_type: typeof driver.company_id,
-        prdp_number_value: JSON.stringify(driver.prdp_number),
-        company_id_value: JSON.stringify(driver.company_id),
-        allKeys: Object.keys(driver).filter(k => k.includes('prdp') || k.includes('company'))
-      });
-    }
-
     if (driverError) {
       // If it's an API key error, it means the key is invalid
       if (driverError.message?.includes("Invalid API key")) {
@@ -315,14 +297,6 @@ router.get("/profile", async (req, res) => {
     delete cleanedDriver.dg_training_expiry_date;
     delete cleanedDriver.criminal_check_date;
     
-    // Debug: Check what's in cleanedDriver before creating response
-    console.log("[Driver Profile API] Before response creation:", {
-      cleanedDriver_prdp_number: cleanedDriver.prdp_number,
-      cleanedDriver_company_id: cleanedDriver.company_id,
-      driver_prdp_number: driver.prdp_number,
-      driver_company_id: driver.company_id
-    });
-    
     const response = {
       ...profile,
       ...cleanedDriver,
@@ -345,27 +319,6 @@ router.get("/profile", async (req, res) => {
       email: user.email || null
     };
     
-    // Debug: Check what's in the final response
-    console.log("[Driver Profile API] Final response includes:", {
-      response_prdp_number: response.prdp_number,
-      response_company_id: response.company_id,
-      response_prdp_number_type: typeof response.prdp_number,
-      response_company_id_type: typeof response.company_id
-    });
-    
-    // Debug: Log status fields to verify they're correct
-    console.log("[Driver Profile API] Returning driver profile:", {
-      userId: user.id,
-      driverId: driver.id,
-      status: driver.status,
-      compliance_status: driver.compliance_status,
-      kyc_status: driver.kyc_status,
-      mobile_number: profile.phone,
-      id_type: idType,
-      id_number: idNumber,
-      za_id_number: driver.za_id_number,
-      passport_number: driver.passport_number
-    });
     
     res.json(response);
   } catch (error: any) {
@@ -380,30 +333,6 @@ router.get("/profile", async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
-// Helper function to convert snake_case to camelCase for vehicle objects
-function vehicleToCamelCase(vehicle: any) {
-  if (!vehicle) return null;
-  return {
-    id: vehicle.id,
-    driverId: vehicle.driver_id,
-    registrationNumber: vehicle.registration_number,
-    make: vehicle.make,
-    model: vehicle.model,
-    year: vehicle.year,
-    capacityLitres: vehicle.capacity_litres,
-    fuelTypes: vehicle.fuel_types,
-    licenseDiskExpiry: vehicle.license_disk_expiry,
-    roadworthyExpiry: vehicle.roadworthy_expiry,
-    insuranceExpiry: vehicle.insurance_expiry,
-    trackerInstalled: vehicle.tracker_installed,
-    trackerProvider: vehicle.tracker_provider,
-    vehicleRegistrationCertDocId: vehicle.vehicle_registration_cert_doc_id,
-    vehicleStatus: vehicle.vehicle_status, // Include vehicle_status for compliance status
-    createdAt: vehicle.created_at,
-    updatedAt: vehicle.updated_at,
-  };
-}
 
 function formatDeliveryAddress(order: any): string {
   if (order?.delivery_addresses) {
@@ -782,15 +711,95 @@ router.get("/stats", async (req, res) => {
 
     const totalDeliveries = deliveredOrders?.length || 0;
 
-    res.json({
+    const detail = (req as any).query?.detail;
+    const activeSub = await getDriverActiveSubscription(driver.id);
+    const canAdvanced = activeSub && (activeSub.planCode === "professional" || activeSub.planCode === "premium");
+    const payload: any = {
       activeJobs: activeJobsCount || 0,
       todayEarningsCents,
       completedThisWeek,
       totalEarningsCents,
       totalDeliveries,
-    });
+    };
+    if (detail === "advanced" && canAdvanced) {
+      const { data: ordersWithFuel } = await supabaseAdmin
+        .from("orders")
+        .select("id, delivery_fee_cents, total_cents, fuel_price_cents, litres, delivered_at, fuel_types(label)")
+        .eq("assigned_driver_id", driver.id)
+        .eq("state", "delivered")
+        .order("delivered_at", { ascending: false });
+      const byWeek: Record<string, number> = {};
+      const byFuelType: Record<string, number> = {};
+      const fuelCostByDelivery: { id: string; deliveredAt: string; litres: number; fuelType: string; fuelCostCents: number; deliveryFeeCents: number }[] = [];
+      let totalFuelCostCents = 0;
+      (ordersWithFuel || []).forEach((o: any) => {
+        const cents = Number(o.delivery_fee_cents) || Number(o.total_cents) || 0;
+        const label = o.fuel_types?.label || "Other";
+        byFuelType[label] = (byFuelType[label] || 0) + cents;
+        if (o.delivered_at) {
+          const d = new Date(o.delivered_at);
+          const weekKey = `${d.getFullYear()}-W${String(Math.ceil(d.getDate() / 7)).padStart(2, "0")}`;
+          byWeek[weekKey] = (byWeek[weekKey] || 0) + cents;
+        }
+        const litresNum = parseFloat(o.litres) || 0;
+        const pricePerLitreCents = Number(o.fuel_price_cents) || 0;
+        const fuelCostCents = Math.round(pricePerLitreCents * litresNum);
+        totalFuelCostCents += fuelCostCents;
+        if (fuelCostByDelivery.length < 15) {
+          fuelCostByDelivery.push({
+            id: o.id,
+            deliveredAt: o.delivered_at,
+            litres: litresNum,
+            fuelType: label,
+            fuelCostCents,
+            deliveryFeeCents: Number(o.delivery_fee_cents) || 0,
+          });
+        }
+      });
+      payload.earningsByWeek = byWeek;
+      payload.earningsByFuelType = byFuelType;
+      payload.fuelCostByDelivery = fuelCostByDelivery;
+      payload.totalFuelCostCents = totalFuelCostCents;
+    }
+    res.json(payload);
   } catch (error: any) {
     res.status(500).json({ error: error.message || "Failed to fetch stats" });
+  }
+});
+
+// GET /api/driver/stats/export?format=csv – Premium only
+router.get("/stats/export", async (req, res) => {
+  const user = (req as any).user;
+  const format = (req as any).query?.format || "csv";
+  try {
+    const { data: driver } = await supabaseAdmin.from("drivers").select("id").eq("user_id", user.id).maybeSingle();
+    if (!driver) return res.status(404).json({ error: "Driver not found" });
+    const activeSub = await getDriverActiveSubscription(driver.id);
+    if (!activeSub || activeSub.planCode !== "premium") {
+      return res.status(403).json({ error: "Export is available on Premium only", code: "SUBSCRIPTION_REQUIRED" });
+    }
+    const { data: orders } = await supabaseAdmin
+      .from("orders")
+      .select("id, total_cents, delivery_fee_cents, litres, delivered_at, fuel_types(label)")
+      .eq("assigned_driver_id", driver.id)
+      .eq("state", "delivered")
+      .order("delivered_at", { ascending: false });
+    if (format === "csv") {
+      const header = "Date,Delivery fee (R),Total (R),Litres,Fuel type\n";
+      const rows = (orders || []).map((o: any) => {
+        const d = o.delivered_at ? new Date(o.delivered_at).toISOString().split("T")[0] : "";
+        const fee = ((Number(o.delivery_fee_cents) || 0) / 100).toFixed(2);
+        const total = ((Number(o.total_cents) || 0) / 100).toFixed(2);
+        const label = (o.fuel_types?.label || "").replace(/"/g, '""');
+        return `${d},${fee},${total},${o.litres || ""},"${label}"`;
+      });
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", "attachment; filename=earnings-export.csv");
+      return res.send(header + rows.join("\n"));
+    }
+    res.status(400).json({ error: "Unsupported format. Use format=csv" });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -984,7 +993,7 @@ router.get("/completed-orders", async (req, res) => {
 });
 
 // Mark order as en route (driver started delivery)
-router.post("/orders/:orderId/start", checkDriverCompliance, async (req, res) => {
+router.post("/orders/:orderId/start", checkDriverCompliance, requireActiveSubscription, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
 
@@ -1093,7 +1102,7 @@ router.post("/orders/:orderId/start", checkDriverCompliance, async (req, res) =>
 });
 
 // Mark order as picked up (fuel collected)
-router.post("/orders/:orderId/pickup", checkDriverCompliance, async (req, res) => {
+router.post("/orders/:orderId/pickup", checkDriverCompliance, requireActiveSubscription, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
 
@@ -1193,7 +1202,7 @@ router.post("/orders/:orderId/pickup", checkDriverCompliance, async (req, res) =
 });
 
 // Complete delivery with customer signature
-router.post("/orders/:orderId/complete", checkDriverCompliance, async (req, res) => {
+router.post("/orders/:orderId/complete", checkDriverCompliance, requireActiveSubscription, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
 
@@ -1412,7 +1421,7 @@ const driverOfferAcceptanceSchema = z.object({
     .nullable(),
 });
 
-router.post("/offers/:id/accept", async (req, res) => {
+router.post("/offers/:id/accept", checkDriverCompliance, requireActiveSubscription, async (req, res) => {
   const user = (req as any).user;
   const offerId = req.params.id;
 
@@ -1738,6 +1747,121 @@ router.get("/vehicles", async (req, res) => {
   }
 });
 
+/** Unassigned fleet vehicles for the driver's linked company (pool). Empty if independent or disabled by company. */
+router.get("/company-fleet/available-vehicles", async (req, res) => {
+  const user = (req as any).user;
+  try {
+    const { data: driver, error: dErr } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (dErr) throw dErr;
+    if (!driver) return res.status(404).json({ error: "Driver profile not found" });
+
+    const { data: mem, error: mErr } = await supabaseAdmin
+      .from("driver_company_memberships")
+      .select("company_id, is_disabled_by_company")
+      .eq("driver_id", driver.id)
+      .maybeSingle();
+    if (mErr) throw mErr;
+    if (!mem?.company_id || mem.is_disabled_by_company) {
+      return res.json([]);
+    }
+
+    const { data: pool, error: pErr } = await supabaseAdmin
+      .from("vehicles")
+      .select("*")
+      .eq("company_id", mem.company_id)
+      .is("driver_id", null)
+      .order("registration_number", { ascending: true });
+    if (pErr) throw pErr;
+    res.json((pool || []).map(vehicleToCamelCase));
+  } catch (error: any) {
+    console.error("GET /driver/company-fleet/available-vehicles:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Driver self-selects an unassigned company fleet vehicle.
+ * Clears any other company-fleet assignment for this driver under the same company first.
+ */
+router.post("/vehicles/:vehicleId/claim-company-vehicle", async (req, res) => {
+  const user = (req as any).user;
+  const { vehicleId } = req.params;
+  try {
+    const { data: driver, error: dErr } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (dErr) throw dErr;
+    if (!driver) return res.status(404).json({ error: "Driver profile not found" });
+
+    const { data: mem, error: mErr } = await supabaseAdmin
+      .from("driver_company_memberships")
+      .select("company_id, is_disabled_by_company")
+      .eq("driver_id", driver.id)
+      .maybeSingle();
+    if (mErr) throw mErr;
+    if (!mem?.company_id) {
+      return res.status(403).json({ error: "You are not linked to a fleet company" });
+    }
+    if (mem.is_disabled_by_company) {
+      return res.status(403).json({ error: "Your fleet company has disabled your access" });
+    }
+
+    const { data: vehicle, error: vErr } = await supabaseAdmin
+      .from("vehicles")
+      .select("id, company_id, driver_id")
+      .eq("id", vehicleId)
+      .maybeSingle();
+    if (vErr) throw vErr;
+    if (!vehicle?.company_id) {
+      return res.status(400).json({ error: "Not a company fleet vehicle" });
+    }
+    if (vehicle.company_id !== mem.company_id) {
+      return res.status(403).json({ error: "This vehicle belongs to another company" });
+    }
+    if (vehicle.driver_id != null) {
+      return res.status(400).json({ error: "This vehicle is already assigned" });
+    }
+
+    const { data: otherFleet, error: oErr } = await supabaseAdmin
+      .from("vehicles")
+      .select("id")
+      .eq("driver_id", driver.id)
+      .eq("company_id", mem.company_id);
+    if (oErr) throw oErr;
+    const now = new Date().toISOString();
+    for (const row of otherFleet || []) {
+      await supabaseAdmin.from("vehicles").update({ driver_id: null, updated_at: now }).eq("id", (row as any).id);
+    }
+    await syncDriverVehicleCapacityLitres(driver.id);
+
+    const { data: updated, error: uErr } = await supabaseAdmin
+      .from("vehicles")
+      .update({ driver_id: driver.id, updated_at: now })
+      .eq("id", vehicleId)
+      .select()
+      .single();
+    if (uErr) throw uErr;
+
+    await syncDriverVehicleCapacityLitres(driver.id);
+
+    websocketService.sendToUser(user.id, {
+      type: "vehicle_updated",
+      payload: { vehicleId },
+    });
+
+    res.json(vehicleToCamelCase(updated));
+  } catch (error: any) {
+    console.error("POST /driver/vehicles/claim-company-vehicle:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Add new vehicle for authenticated driver
 router.post("/vehicles", async (req, res) => {
   const user = (req as any).user;
@@ -1779,6 +1903,8 @@ router.post("/vehicles", async (req, res) => {
       .single();
 
     if (vehicleError) throw vehicleError;
+
+    await syncDriverVehicleCapacityLitres(driver.id);
 
     // Create notification for new vehicle
     try {
@@ -1833,10 +1959,10 @@ router.patch("/vehicles/:vehicleId", async (req, res) => {
       return res.status(404).json({ error: "Driver profile not found" });
     }
 
-    // Verify vehicle belongs to this driver
+    // Verify vehicle belongs to this driver (personal or company-assigned fleet)
     const { data: existingVehicle, error: checkError } = await supabaseAdmin
       .from("vehicles")
-      .select("id")
+      .select("id, company_id")
       .eq("id", vehicleId)
       .eq("driver_id", driver.id)
       .single();
@@ -1868,6 +1994,8 @@ router.patch("/vehicles/:vehicleId", async (req, res) => {
       .single();
 
     if (updateError) throw updateError;
+
+    await syncDriverVehicleCapacityLitres(driver.id);
 
     // Create notification for vehicle update
     try {
@@ -1922,14 +2050,28 @@ router.delete("/vehicles/:vehicleId", async (req, res) => {
       return res.status(404).json({ error: "Driver profile not found" });
     }
 
-    // Verify vehicle belongs to this driver and delete
-    const { error: deleteError } = await supabaseAdmin
+    const { data: existingV, error: checkErr } = await supabaseAdmin
       .from("vehicles")
-      .delete()
+      .select("id, company_id")
       .eq("id", vehicleId)
-      .eq("driver_id", driver.id);
+      .eq("driver_id", driver.id)
+      .maybeSingle();
+
+    if (checkErr) throw checkErr;
+    if (!existingV) {
+      return res.status(404).json({ error: "Vehicle not found or access denied" });
+    }
+    if (existingV.company_id) {
+      return res.status(403).json({
+        error: "Company fleet vehicles cannot be deleted by drivers. Ask your fleet manager to unassign or remove the vehicle.",
+      });
+    }
+
+    const { error: deleteError } = await supabaseAdmin.from("vehicles").delete().eq("id", vehicleId).eq("driver_id", driver.id);
 
     if (deleteError) throw deleteError;
+
+    await syncDriverVehicleCapacityLitres(driver.id);
 
     // Broadcast vehicle deletion
     websocketService.sendToUser(user.id, {
@@ -1952,12 +2094,11 @@ router.delete("/vehicles/:vehicleId", async (req, res) => {
   }
 });
 
-// Get driver preferences (radius and location)
+// Get driver preferences (radius and location); radius is capped by subscription tier
 router.get("/preferences", async (req, res) => {
   const user = (req as any).user;
 
   try {
-    // Get driver profile with preferences
     const { data: driver, error: driverError } = await supabaseAdmin
       .from("drivers")
       .select("id, job_radius_preference_miles, current_lat, current_lng")
@@ -1969,8 +2110,17 @@ router.get("/preferences", async (req, res) => {
       return res.status(404).json({ error: "Driver profile not found" });
     }
 
+    const activeSub = await getDriverActiveSubscription(driver.id);
+    const maxRadiusMiles = activeSub ? await getDriverMaxRadiusMiles(driver.id) : 0;
+    // Radius is set by subscription plan only (no driver-editable preference)
+    const effectiveRadiusMiles = maxRadiusMiles;
+
     res.json({
-      jobRadiusPreferenceMiles: driver.job_radius_preference_miles || 20,
+      jobRadiusPreferenceMiles: maxRadiusMiles,
+      effectiveRadiusMiles,
+      maxRadiusMiles,
+      subscriptionTier: activeSub?.plan.deliveryRadius ?? null,
+      subscriptionPlanName: activeSub?.plan.name ?? null,
       currentLat: driver.current_lat,
       currentLng: driver.current_lng,
     });
@@ -2001,13 +2151,22 @@ router.patch("/preferences", async (req, res) => {
     const updateData: any = {};
     
     if (jobRadiusPreferenceMiles !== undefined) {
-      const radius = parseFloat(jobRadiusPreferenceMiles);
-      if (isNaN(radius) || radius < 1 || radius > 500) {
-        return res.status(400).json({ 
-          error: "Radius must be between 1 and 500 miles" 
+      const activeSub = await getDriverActiveSubscription(driver.id);
+      if (!activeSub) {
+        return res.status(403).json({
+          error: "An active subscription is required to set job pickup radius.",
+          code: "SUBSCRIPTION_REQUIRED",
         });
       }
-      updateData.job_radius_preference_miles = radius;
+      const maxMiles = await getDriverMaxRadiusMiles(driver.id);
+      const radius = parseFloat(jobRadiusPreferenceMiles);
+      if (isNaN(radius) || radius < 1 || radius > maxMiles) {
+        return res.status(400).json({
+          error: `Radius must be between 1 and ${maxMiles} miles for your plan (${activeSub.plan.deliveryRadius})`,
+        });
+      }
+      const cappedRadius = Math.min(radius, maxMiles);
+      updateData.job_radius_preference_miles = cappedRadius;
     }
 
     if (currentLat !== undefined && currentLng !== undefined) {
@@ -2642,15 +2801,106 @@ router.post("/documents", async (req, res) => {
             user.id
           );
 
-          // Check if this is a new KYC submission (driver status is pending)
+          // Check if driver was rejected - if so, reset to pending for resubmission
           if (finalOwnerType === "driver") {
             const { data: driverStatus } = await supabaseAdmin
               .from("drivers")
-              .select("kyc_status, status")
+              .select("kyc_status, status, compliance_status")
               .eq("id", finalOwnerId)
               .single();
             
-            if (driverStatus && (driverStatus.kyc_status === "pending" || driverStatus.status === "pending_compliance")) {
+            // If driver was rejected, reset status to pending for resubmission
+            if (driverStatus && (driverStatus.kyc_status === "rejected" || driverStatus.status === "rejected" || driverStatus.compliance_status === "rejected")) {
+              try {
+                console.log(`[KYC Resubmission] Driver ${finalOwnerId} was rejected, resetting to pending status after document upload`);
+                
+                // Update driver status
+                const { error: driverUpdateError } = await supabaseAdmin
+                  .from("drivers")
+                  .update({
+                    kyc_status: "pending",
+                    status: "pending_compliance",
+                    compliance_status: "pending",
+                    compliance_rejection_reason: null,
+                    updated_at: new Date().toISOString()
+                  })
+                  .eq("id", finalOwnerId);
+                
+                if (driverUpdateError) {
+                  console.error(`[KYC Resubmission] Error updating driver ${finalOwnerId} status:`, driverUpdateError);
+                  throw driverUpdateError;
+                }
+                
+                // Also update profile approval status
+                const { error: profileUpdateError } = await supabaseAdmin
+                  .from("profiles")
+                  .update({ 
+                    approval_status: "pending",
+                    updated_at: new Date().toISOString()
+                  })
+                  .eq("id", user.id);
+                
+                if (profileUpdateError) {
+                  console.error(`[KYC Resubmission] Error updating profile for driver ${finalOwnerId}:`, profileUpdateError);
+                  // Continue with notifications even if profile update fails
+                }
+                
+                // Notify admins that driver has resubmitted KYC
+                const { data: driverProfile, error: profileError } = await supabaseAdmin
+                  .from("profiles")
+                  .select("full_name")
+                  .eq("id", user.id)
+                  .maybeSingle();
+                
+                if (profileError) {
+                  console.error(`[KYC Resubmission] Error fetching driver profile:`, profileError);
+                }
+                
+                const userName = driverProfile?.full_name || "Driver";
+                
+                try {
+                  await notificationService.notifyAdminKycSubmitted(
+                    adminUserIds,
+                    user.id,
+                    userName,
+                    "driver"
+                  );
+                } catch (notifyError) {
+                  console.error(`[KYC Resubmission] Error notifying admins:`, notifyError);
+                }
+                
+                // Broadcast resubmission to admins via WebSocket
+                try {
+                  websocketService.broadcastToRole("admin", {
+                    type: "kyc_submitted",
+                    payload: {
+                      driverId: finalOwnerId,
+                      userId: user.id,
+                      type: "driver",
+                      isResubmission: true
+                    },
+                  });
+                } catch (wsError) {
+                  console.error(`[KYC Resubmission] Error broadcasting WebSocket message:`, wsError);
+                }
+                
+                // Notify driver that resubmission was received
+                try {
+                  await notificationService.createNotification({
+                    user_id: user.id,
+                    type: "account_verification_required",
+                    title: "KYC Resubmission Received",
+                    message: "Your KYC resubmission has been received and is under review. You will be notified once it's been reviewed.",
+                    metadata: { driverId: finalOwnerId, type: "kyc_resubmission" }
+                  });
+                } catch (driverNotifError) {
+                  console.error(`[KYC Resubmission] Error notifying driver:`, driverNotifError);
+                }
+              } catch (resubmissionError) {
+                console.error(`[KYC Resubmission] Error in resubmission flow for driver ${finalOwnerId}:`, resubmissionError);
+                // Don't fail the document upload if resubmission logic fails
+              }
+            } else if (driverStatus && (driverStatus.kyc_status === "pending" || driverStatus.status === "pending_compliance")) {
               // Check if this is the first document (new KYC submission)
               const { data: existingDocs } = await supabaseAdmin
                 .from("documents")
@@ -2701,7 +2951,6 @@ router.get("/depots", async (req, res) => {
   try {
     // Check authentication
     if (!user || !user.id) {
-      console.error("GET /driver/depots: User not authenticated", { hasUser: !!user, userId: user?.id });
       return res.status(401).json({ error: "User not authenticated" });
     }
 
@@ -2726,15 +2975,11 @@ router.get("/depots", async (req, res) => {
     }
     
     if (!driver) {
-      // Return empty array instead of error - driver might not have created profile yet
-      console.warn(`[GET /driver/depots] Driver profile not found for user ${user.id}`);
       return res.json([]);
     }
 
     // Check compliance status - if not approved, return empty array (can view but no depots shown)
     if (driver.status !== "active" || driver.compliance_status !== "approved") {
-      // Return empty array instead of error - allows UI to load but shows no depots
-      console.log(`[GET /driver/depots] Driver ${driver.id} not compliant, returning empty array`);
       return res.json([]);
     }
 
@@ -2775,7 +3020,8 @@ router.get("/depots", async (req, res) => {
         ),
         suppliers (
           id,
-          name
+          name,
+          subscription_tier
         )
       `)
       .eq("is_active", true)
@@ -2784,8 +3030,6 @@ router.get("/depots", async (req, res) => {
     const resultWithActive = await queryWithActive;
     depots = resultWithActive.data || [];
     depotsError = resultWithActive.error;
-    
-    console.log(`[GET /driver/depots] Query with is_active: ${depots.length} depots found, error: ${depotsError ? depotsError.message : 'none'}`);
 
     // If error is about missing column, try without is_active filter
     if (depotsError && (depotsError.message?.includes("is_active") || depotsError.message?.includes("column") || depotsError.code === "42703" || depotsError.code === "PGRST116")) {
@@ -2820,7 +3064,8 @@ router.get("/depots", async (req, res) => {
           ),
           suppliers (
             id,
-            name
+            name,
+            subscription_tier
           )
         `)
         .order("name");
@@ -2843,9 +3088,33 @@ router.get("/depots", async (req, res) => {
       return depot.is_active !== false;
     });
 
+    // Platform listing: only depots whose supplier has an active subscription (Standard or Enterprise)
+    const supplierIds = [...new Set((activeDepots as any[]).map((d: any) => d.supplier_id).filter(Boolean))];
+    let subscribedSupplierIds: Set<string> = new Set();
+    if (supplierIds.length > 0) {
+      const now = new Date().toISOString();
+      const { data: activeSubs } = await supabaseAdmin
+        .from("supplier_subscriptions")
+        .select("supplier_id")
+        .in("supplier_id", supplierIds)
+        .eq("status", "active")
+        .gte("current_period_end", now);
+      if (activeSubs) subscribedSupplierIds = new Set(activeSubs.map((s: any) => s.supplier_id));
+    }
+    const listedDepots = (activeDepots as any[]).filter((d: any) => subscribedSupplierIds.has(d.supplier_id));
+
+    // Sort: Enterprise suppliers first (priority), then Standard, then by name
+    const tierOrder = (tier: string | null | undefined) => (tier === "enterprise" ? 0 : tier === "standard" ? 1 : 2);
+    listedDepots.sort((a: any, b: any) => {
+      const orderA = tierOrder(a.suppliers?.subscription_tier);
+      const orderB = tierOrder(b.suppliers?.subscription_tier);
+      if (orderA !== orderB) return orderA - orderB;
+      return (a.name || "").localeCompare(b.name || "");
+    });
+
     // Calculate distance for each depot if driver has location
     
-    const depotsWithDistance = activeDepots.map((depot: any) => {
+    const depotsWithDistance = listedDepots.map((depot: any) => {
       let distanceKm = null;
       let distanceMiles = null;
 
@@ -2866,7 +3135,6 @@ router.get("/depots", async (req, res) => {
       };
     });
 
-    console.log(`[GET /driver/depots] Returning ${depotsWithDistance.length} depots`);
     res.json(depotsWithDistance);
   } catch (error: any) {
     console.error("Error fetching depots:", error);
@@ -3026,7 +3294,7 @@ router.get("/depot-orders", async (req, res) => {
 });
 
 // Create order from depot
-router.post("/depot-orders", checkDriverCompliance, async (req, res) => {
+router.post("/depot-orders", checkDriverCompliance, requireActiveSubscription, async (req, res) => {
   const user = (req as any).user;
   const { depotId, fuelTypeId, litres, pickupDate, notes } = req.body;
 
@@ -3331,7 +3599,7 @@ router.post("/depot-orders/:orderId/cancel", async (req, res) => {
 // ============== DRIVER DEPOT ORDER PAYMENT & SIGNATURES ==============
 
 // Submit payment for depot order
-router.post("/depot-orders/:orderId/payment", checkDriverCompliance, async (req, res) => {
+router.post("/depot-orders/:orderId/payment", checkDriverCompliance, requireActiveSubscription, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
   const { paymentMethod, paymentProofUrl } = req.body;
@@ -3462,7 +3730,7 @@ router.post("/depot-orders/:orderId/payment", checkDriverCompliance, async (req,
 });
 
 // Add driver signature (before fuel release)
-router.post("/depot-orders/:orderId/driver-signature", checkDriverCompliance, async (req, res) => {
+router.post("/depot-orders/:orderId/driver-signature", checkDriverCompliance, requireActiveSubscription, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
   const { signatureUrl } = req.body;
@@ -3629,7 +3897,7 @@ router.post("/depot-orders/:orderId/driver-signature", checkDriverCompliance, as
 });
 
 // Confirm receipt (driver signs after receiving fuel)
-router.post("/depot-orders/:orderId/confirm-receipt", checkDriverCompliance, async (req, res) => {
+router.post("/depot-orders/:orderId/confirm-receipt", checkDriverCompliance, requireActiveSubscription, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
   const { signatureUrl } = req.body;
@@ -4138,6 +4406,34 @@ router.put("/compliance", async (req, res) => {
 
     updateData.updated_at = new Date().toISOString();
 
+    // Check if driver was rejected - if so, reset to pending for resubmission
+    if (driver.kyc_status === "rejected" || driver.status === "rejected" || driver.compliance_status === "rejected") {
+      try {
+        console.log(`[KYC Resubmission] Driver ${driver.id} was rejected, resetting to pending status for resubmission`);
+        updateData.kyc_status = "pending";
+        updateData.status = "pending_compliance";
+        updateData.compliance_status = "pending";
+        updateData.compliance_rejection_reason = null;
+        
+        // Also update profile approval status
+        const { error: profileUpdateError } = await supabaseAdmin
+          .from("profiles")
+          .update({ 
+            approval_status: "pending",
+            updated_at: new Date().toISOString()
+          })
+          .eq("id", user.id);
+        
+        if (profileUpdateError) {
+          console.error(`[KYC Resubmission] Error updating profile for driver ${driver.id}:`, profileUpdateError);
+          // Continue with driver update even if profile update fails
+        }
+      } catch (resubmissionError: any) {
+        console.error(`[KYC Resubmission] Error resetting driver ${driver.id} status:`, resubmissionError);
+        // Continue with the main update - don't fail the entire request
+      }
+    }
+
     // Debug: Log what we're about to update
     console.log("[Compliance Update] About to update driver with data:", {
       updateDataKeys: Object.keys(updateData),
@@ -4283,6 +4579,64 @@ router.put("/compliance", async (req, res) => {
       throw updateError;
     }
 
+    // If driver was rejected and we reset to pending, notify admins
+    if (driver.kyc_status === "rejected" || driver.status === "rejected" || driver.compliance_status === "rejected") {
+      try {
+        const { notificationService } = await import("./notification-service");
+        const { websocketService } = await import("./websocket");
+        
+        // Get admin user IDs
+        const { data: adminProfiles } = await supabaseAdmin
+          .from("profiles")
+          .select("id")
+          .eq("role", "admin");
+        
+        if (adminProfiles && adminProfiles.length > 0) {
+          const adminUserIds = adminProfiles.map(p => p.id);
+          
+          // Get driver name
+          const { data: driverProfile } = await supabaseAdmin
+            .from("profiles")
+            .select("full_name")
+            .eq("id", user.id)
+            .maybeSingle();
+          const userName = driverProfile?.full_name || "Driver";
+          
+          // Notify admins that driver has resubmitted KYC
+          await notificationService.notifyAdminKycSubmitted(
+            adminUserIds,
+            user.id,
+            userName,
+            "driver"
+          );
+          
+          // Broadcast resubmission to admins via WebSocket
+          websocketService.broadcastToRole("admin", {
+            type: "kyc_submitted",
+            payload: {
+              driverId: driver.id,
+              userId: user.id,
+              type: "driver",
+              isResubmission: true
+            },
+          });
+        }
+        
+        // Notify driver that resubmission was received
+        const { notificationService: notifService } = await import("./notification-service");
+        await notifService.createNotification({
+          user_id: user.id,
+          type: "account_verification_required",
+          title: "KYC Resubmission Received",
+          message: "Your KYC resubmission has been received and is under review. You will be notified once it's been reviewed.",
+          metadata: { driverId: driver.id, type: "kyc_resubmission" }
+        });
+      } catch (notifError) {
+        console.error("Error sending notifications for KYC resubmission:", notifError);
+        // Don't fail the update if notification fails
+      }
+    }
+
     // Fetch updated profile to include phone as mobile_number
     const { data: updatedProfile } = await supabaseAdmin
       .from("profiles")
@@ -4362,25 +4716,23 @@ router.post("/vehicles/:vehicleId/compliance", async (req, res) => {
   const { vehicleId } = req.params;
   
   try {
-    // Verify vehicle belongs to driver
     const { data: vehicle, error: vehicleError } = await supabaseAdmin
       .from("vehicles")
-      .select("driver_id, drivers!inner(user_id)")
+      .select("driver_id")
       .eq("id", vehicleId)
-      .single();
+      .maybeSingle();
 
-    if (vehicleError || !vehicle) {
+    if (vehicleError || !vehicle?.driver_id) {
       return res.status(404).json({ error: "Vehicle not found" });
     }
 
-    // Verify ownership
-    const { data: driver } = await supabaseAdmin
+    const { data: owner } = await supabaseAdmin
       .from("drivers")
       .select("user_id")
       .eq("id", vehicle.driver_id)
-      .single();
+      .maybeSingle();
 
-    if (!driver || driver.user_id !== user.id) {
+    if (!owner || owner.user_id !== user.id) {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
@@ -4429,6 +4781,8 @@ router.post("/vehicles/:vehicleId/compliance", async (req, res) => {
     if (updateError) {
       throw updateError;
     }
+
+    await syncDriverVehicleCapacityLitres(vehicle.driver_id);
 
     res.json(updatedVehicle);
   } catch (error: any) {
@@ -4501,25 +4855,23 @@ router.get("/vehicles/:vehicleId/compliance/status", async (req, res) => {
   const { vehicleId } = req.params;
   
   try {
-    // Verify vehicle belongs to driver
     const { data: vehicle, error: vehicleError } = await supabaseAdmin
       .from("vehicles")
-      .select("driver_id, drivers!inner(user_id)")
+      .select("driver_id")
       .eq("id", vehicleId)
-      .single();
+      .maybeSingle();
 
-    if (vehicleError || !vehicle) {
+    if (vehicleError || !vehicle?.driver_id) {
       return res.status(404).json({ error: "Vehicle not found" });
     }
 
-    // Verify ownership
-    const { data: driver } = await supabaseAdmin
+    const { data: owner } = await supabaseAdmin
       .from("drivers")
       .select("user_id")
       .eq("id", vehicle.driver_id)
-      .single();
+      .maybeSingle();
 
-    if (!driver || driver.user_id !== user.id) {
+    if (!owner || owner.user_id !== user.id) {
       return res.status(403).json({ error: "Unauthorized" });
     }
 
@@ -4528,6 +4880,363 @@ router.get("/vehicles/:vehicleId/compliance/status", async (req, res) => {
   } catch (error: any) {
     console.error("Error getting vehicle compliance status:", error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// ---- Driver subscription (OZOW) ----
+
+/** Middleware: require active subscription; return 403 SUBSCRIPTION_REQUIRED if none */
+async function requireActiveSubscription(req: any, res: any, next: any) {
+  try {
+    const driverId = req.driverId;
+    if (!driverId) return res.status(401).json({ error: "Driver not found", code: "UNAUTHORIZED" });
+    const hasActive = await driverHasActiveSubscription(driverId);
+    if (!hasActive) {
+      return res.status(403).json({
+        error: "An active subscription is required to use this feature.",
+        code: "SUBSCRIPTION_REQUIRED",
+        message: "Subscribe to start accepting orders and ordering from suppliers.",
+      });
+    }
+    next();
+  } catch (e: any) {
+    console.error("Error checking subscription:", e);
+    res.status(500).json({ error: e.message });
+  }
+}
+
+// GET /api/driver/subscription – current subscription (for dashboard / subscription page)
+router.get("/subscription", async (req, res) => {
+  const user = (req as any).user;
+  try {
+    const { data: driver } = await supabaseAdmin.from("drivers").select("id").eq("user_id", user.id).maybeSingle();
+    if (!driver) return res.status(404).json({ error: "Driver not found" });
+    const result = await getDriverSubscription(driver.id);
+    if (!result) return res.json({ subscription: null, plan: null });
+    const { subscription, latestRow } = result;
+    if (subscription) {
+      return res.json({
+        subscription: {
+          id: subscription.subscriptionId,
+          driverId: subscription.driverId,
+          planCode: subscription.planCode,
+          plan: subscription.plan,
+          status: subscription.status,
+          currentPeriodStart: subscription.currentPeriodStart,
+          currentPeriodEnd: subscription.currentPeriodEnd,
+          nextBillingAt: subscription.nextBillingAt,
+        },
+        hasActiveSubscription: true,
+      });
+    }
+    const plan = latestRow ? getPlan(latestRow.plan_code) : null;
+    return res.json({
+      subscription: latestRow ? { id: latestRow.id, planCode: latestRow.plan_code, status: latestRow.status, nextBillingAt: latestRow.next_billing_at, currentPeriodStart: latestRow.current_period_start, currentPeriodEnd: latestRow.current_period_end, plan: plan ?? undefined } : null,
+      plan: plan ?? null,
+      hasActiveSubscription: false,
+    });
+  } catch (e: any) {
+    console.error("Error fetching subscription:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/driver/subscription/plans – list plans for subscription page
+router.get("/subscription/plans", async (_req, res) => {
+  try {
+    const plans = PLAN_CODES.map((code) => SUBSCRIPTION_PLANS[code]);
+    const testMode = process.env.SUBSCRIPTION_TEST_MODE === "true";
+    return res.json({ plans, ozowConfigured: isOzowConfigured(), testMode });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+const createPaymentSchema = z.object({ planCode: z.enum(["starter", "professional", "premium"]) });
+
+// POST /api/driver/subscription/create-payment – create pending payment and return OZOW redirect URL (or activate immediately in test mode)
+router.post("/subscription/create-payment", async (req, res) => {
+  const user = (req as any).user;
+  try {
+    const parsed = createPaymentSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Invalid planCode", details: parsed.error.flatten() });
+    const { planCode } = parsed.data as { planCode: PlanCode };
+    const plan = getPlan(planCode);
+    if (!plan) return res.status(400).json({ error: "Unknown plan" });
+
+    const { data: driver } = await supabaseAdmin.from("drivers").select("id").eq("user_id", user.id).maybeSingle();
+    if (!driver) return res.status(404).json({ error: "Driver not found" });
+
+    // Test mode: activate subscription immediately without checkout redirect
+    if (process.env.SUBSCRIPTION_TEST_MODE === "true") {
+      const now = new Date();
+      const periodStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const periodEnd = new Date(periodStart);
+      periodEnd.setMonth(periodEnd.getMonth() + 1);
+      const nextBilling = new Date(periodEnd);
+
+      const { data: existingSub } = await supabaseAdmin
+        .from("driver_subscriptions")
+        .select("id")
+        .eq("driver_id", driver.id)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      let subscriptionId: string;
+      if (existingSub) {
+        await supabaseAdmin
+          .from("driver_subscriptions")
+          .update({
+            plan_code: planCode,
+            status: "active",
+            amount_cents: plan.priceCents,
+            currency: "ZAR",
+            current_period_start: periodStart.toISOString(),
+            current_period_end: periodEnd.toISOString(),
+            next_billing_at: nextBilling.toISOString(),
+            updated_at: now.toISOString(),
+          })
+          .eq("id", existingSub.id);
+        subscriptionId = existingSub.id;
+      } else {
+        const { data: newSub, error: insertErr } = await supabaseAdmin
+          .from("driver_subscriptions")
+          .insert({
+            driver_id: driver.id,
+            plan_code: planCode,
+            status: "active",
+            amount_cents: plan.priceCents,
+            currency: "ZAR",
+            current_period_start: periodStart.toISOString(),
+            current_period_end: periodEnd.toISOString(),
+            next_billing_at: nextBilling.toISOString(),
+          })
+          .select("id")
+          .single();
+        if (insertErr || !newSub) return res.status(500).json({ error: "Failed to create subscription", details: insertErr?.message });
+        subscriptionId = newSub.id;
+      }
+
+      await supabaseAdmin
+        .from("subscription_payments")
+        .insert({
+          driver_subscription_id: subscriptionId,
+          amount_cents: plan.priceCents,
+          currency: "ZAR",
+          status: "completed",
+          paid_at: now.toISOString(),
+        });
+
+      await supabaseAdmin
+        .from("drivers")
+        .update({
+          premium_status: "active",
+          subscription_tier: planCode,
+          updated_at: now.toISOString(),
+        })
+        .eq("id", driver.id);
+
+      return res.json({ success: true });
+    }
+
+    if (!isOzowConfigured()) return res.status(503).json({ error: "Payment gateway not configured", code: "OZOW_NOT_CONFIGURED" });
+
+    const baseUrl = process.env.PUBLIC_APP_URL || (req.protocol + "://" + req.get("host") || "http://localhost:5000");
+    const successUrl = `${baseUrl}/driver/subscription?success=true`;
+    const cancelUrl = `${baseUrl}/driver/subscription?cancelled=true`;
+    const notificationUrl = `${baseUrl}/api/webhooks/ozow-subscription`;
+
+    // Upsert driver_subscriptions row (one per driver; status pending until webhook)
+    const { data: existingSub } = await supabaseAdmin
+      .from("driver_subscriptions")
+      .select("id")
+      .eq("driver_id", driver.id)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    let subscriptionId: string;
+    if (existingSub) {
+      await supabaseAdmin
+        .from("driver_subscriptions")
+        .update({ plan_code: planCode, status: "pending", amount_cents: plan.priceCents, currency: "ZAR", updated_at: new Date().toISOString() })
+        .eq("id", existingSub.id);
+      subscriptionId = existingSub.id;
+    } else {
+      const { data: newSub, error: insertErr } = await supabaseAdmin
+        .from("driver_subscriptions")
+        .insert({ driver_id: driver.id, plan_code: planCode, status: "pending", amount_cents: plan.priceCents, currency: "ZAR" })
+        .select("id")
+        .single();
+      if (insertErr || !newSub) return res.status(500).json({ error: "Failed to create subscription", details: insertErr?.message });
+      subscriptionId = newSub.id;
+    }
+
+    // Create subscription_payments row (pending)
+    const { data: paymentRow, error: payErr } = await supabaseAdmin
+      .from("subscription_payments")
+      .insert({
+        driver_subscription_id: subscriptionId,
+        amount_cents: plan.priceCents,
+        currency: "ZAR",
+        status: "pending",
+      })
+      .select("id")
+      .single();
+    if (payErr || !paymentRow) return res.status(500).json({ error: "Failed to create payment record", details: payErr?.message });
+
+    const transactionReference = `sub_${paymentRow.id}`;
+    const redirectUrl = buildPaymentRedirectUrl({
+      amountRands: plan.priceZAR,
+      transactionReference,
+      successUrl,
+      cancelUrl,
+      notificationUrl,
+      customerEmail: user.email ?? undefined,
+      customerName: (user.user_metadata?.full_name as string) || (req.body?.customerName as string) || undefined,
+    });
+
+    return res.json({ redirectUrl, paymentId: paymentRow.id, subscriptionId });
+  } catch (e: any) {
+    console.error("Error creating subscription payment:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/driver/subscription/cancel – cancel at period end (optional)
+router.post("/subscription/cancel", async (req, res) => {
+  const user = (req as any).user;
+  try {
+    const { data: driver } = await supabaseAdmin.from("drivers").select("id").eq("user_id", user.id).maybeSingle();
+    if (!driver) return res.status(404).json({ error: "Driver not found" });
+    const { error } = await supabaseAdmin
+      .from("driver_subscriptions")
+      .update({ status: "cancelled", updated_at: new Date().toISOString() })
+      .eq("driver_id", driver.id)
+      .eq("status", "active");
+    if (error) return res.status(500).json({ error: error.message });
+    await supabaseAdmin.from("drivers").update({ premium_status: "inactive", subscription_tier: null }).eq("id", driver.id);
+    return res.json({ ok: true, message: "Subscription cancelled at period end." });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/driver/company-membership — current fleet company link (if any)
+router.get("/company-membership", async (req, res) => {
+  const user = (req as any).user;
+  try {
+    const { data: driver, error: dErr } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (dErr) return res.status(500).json({ error: dErr.message });
+    if (!driver) return res.status(404).json({ error: "Driver not found" });
+
+    const { data: row, error: mErr } = await supabaseAdmin
+      .from("driver_company_memberships")
+      .select("company_id, is_disabled_by_company, disabled_reason, updated_at")
+      .eq("driver_id", driver.id)
+      .maybeSingle();
+    if (mErr) return res.status(500).json({ error: mErr.message });
+
+    if (!row || !row.company_id) {
+      return res.json({
+        mode: "independent" as const,
+        companyId: null,
+        companyName: null,
+        isDisabledByCompany: false,
+        disabledReason: null,
+        updatedAt: row?.updated_at ?? null,
+      });
+    }
+
+    const { data: comp } = await supabaseAdmin
+      .from("companies")
+      .select("id, name")
+      .eq("id", row.company_id)
+      .maybeSingle();
+
+    return res.json({
+      mode: "company" as const,
+      companyId: row.company_id,
+      companyName: comp?.name ?? null,
+      isDisabledByCompany: row.is_disabled_by_company,
+      disabledReason: row.disabled_reason,
+      updatedAt: row.updated_at,
+    });
+  } catch (e: any) {
+    console.error("GET /driver/company-membership:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+const companyMembershipPutSchema = z.object({
+  companyId: z.string().uuid().nullable(),
+});
+
+// PUT /api/driver/company-membership — work independently or under one company
+router.put("/company-membership", async (req, res) => {
+  const user = (req as any).user;
+  const parsed = companyMembershipPutSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
+  }
+
+  try {
+    const { data: driver, error: dErr } = await supabaseAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (dErr) return res.status(500).json({ error: dErr.message });
+    if (!driver) return res.status(404).json({ error: "Driver not found" });
+
+    const { companyId } = parsed.data;
+    const now = new Date().toISOString();
+
+    if (companyId === null) {
+      const { error: upErr } = await supabaseAdmin.from("driver_company_memberships").upsert(
+        {
+          driver_id: driver.id,
+          company_id: null,
+          is_disabled_by_company: false,
+          disabled_reason: null,
+          updated_at: now,
+        },
+        { onConflict: "driver_id" }
+      );
+      if (upErr) return res.status(500).json({ error: upErr.message });
+      return res.json({ ok: true, mode: "independent" });
+    }
+
+    const { data: comp, error: cErr } = await supabaseAdmin
+      .from("companies")
+      .select("id, status")
+      .eq("id", companyId)
+      .maybeSingle();
+    if (cErr) return res.status(500).json({ error: cErr.message });
+    if (!comp || comp.status !== "active") {
+      return res.status(400).json({ error: "Company not found or not active" });
+    }
+
+    const { error: upErr } = await supabaseAdmin.from("driver_company_memberships").upsert(
+      {
+        driver_id: driver.id,
+        company_id: companyId,
+        is_disabled_by_company: false,
+        disabled_reason: null,
+        updated_at: now,
+      },
+      { onConflict: "driver_id" }
+    );
+    if (upErr) return res.status(500).json({ error: upErr.message });
+    return res.json({ ok: true, mode: "company", companyId });
+  } catch (e: any) {
+    console.error("PUT /driver/company-membership:", e);
+    res.status(500).json({ error: e.message });
   }
 });
 

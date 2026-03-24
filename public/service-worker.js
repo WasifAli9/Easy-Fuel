@@ -1,4 +1,4 @@
-const CACHE_NAME = "easy-fuel-v2";
+const CACHE_NAME = "easy-fuel-v3";
 const OFFLINE_FALLBACK_PAGE = "/";
 const STATIC_ASSETS = [
   "/",

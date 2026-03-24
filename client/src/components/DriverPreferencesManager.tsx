@@ -7,29 +7,31 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { MapPin, Save, Loader2 } from "lucide-react";
+import { Link } from "wouter";
 
 interface DriverPreferences {
   jobRadiusPreferenceMiles: number;
+  effectiveRadiusMiles?: number;
+  maxRadiusMiles: number;
+  subscriptionTier?: string | null;
+  subscriptionPlanName?: string | null;
   currentLat: number | null;
   currentLng: number | null;
 }
 
 export function DriverPreferencesManager() {
   const { toast } = useToast();
-  const [radius, setRadius] = useState<string>("");
   const [latitude, setLatitude] = useState<string>("");
   const [longitude, setLongitude] = useState<string>("");
   const [isGettingLocation, setIsGettingLocation] = useState(false);
 
-  // Fetch current preferences
+  // Fetch current preferences (radius is set by subscription plan, not editable)
   const { data: preferences, isLoading } = useQuery<DriverPreferences>({
     queryKey: ["/api/driver/preferences"],
   });
 
-  // Update state when preferences load
   useEffect(() => {
     if (preferences) {
-      setRadius(preferences.jobRadiusPreferenceMiles?.toString() || "20");
       setLatitude(preferences.currentLat?.toString() || "");
       setLongitude(preferences.currentLng?.toString() || "");
     }
@@ -93,18 +95,8 @@ export function DriverPreferencesManager() {
   };
 
   const handleSave = () => {
-    const radiusValue = parseFloat(radius);
     const latValue = parseFloat(latitude);
     const lngValue = parseFloat(longitude);
-
-    if (isNaN(radiusValue) || radiusValue < 1 || radiusValue > 500) {
-      toast({
-        title: "Invalid radius",
-        description: "Radius must be between 1 and 500 miles",
-        variant: "destructive",
-      });
-      return;
-    }
 
     if (isNaN(latValue) || isNaN(lngValue)) {
       toast({
@@ -116,7 +108,6 @@ export function DriverPreferencesManager() {
     }
 
     updatePreferencesMutation.mutate({
-      jobRadiusPreferenceMiles: radiusValue,
       currentLat: latValue,
       currentLng: lngValue,
     });
@@ -135,26 +126,30 @@ export function DriverPreferencesManager() {
       <CardHeader>
         <CardTitle>Job Preferences</CardTitle>
         <CardDescription>
-          Set your preferred job pickup radius and home location
+          Set your home location. Your job pickup radius is set automatically by your subscription plan.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        {/* Radius Preference */}
-        <div className="space-y-2">
-          <Label htmlFor="radius">Job Pickup Radius (miles)</Label>
-          <Input
-            id="radius"
-            type="number"
-            min="1"
-            max="500"
-            value={radius}
-            onChange={(e) => setRadius(e.target.value)}
-            placeholder="20"
-            data-testid="input-radius"
-          />
-          <p className="text-sm text-muted-foreground">
-            Only jobs within this distance from your location will be shown
-          </p>
+        {/* Read-only: radius is determined by subscription plan */}
+        <div className="rounded-lg border bg-muted/30 p-4">
+          <p className="text-sm font-medium">Job pickup radius</p>
+          {(preferences?.maxRadiusMiles ?? 0) > 0 ? (
+            <p className="text-sm text-muted-foreground mt-1">
+              <span className="font-semibold text-foreground">{preferences?.effectiveRadiusMiles ?? preferences?.maxRadiusMiles ?? 0} miles</span>
+              {" "}(based on your {preferences?.subscriptionPlanName ?? "subscription"} plan). Only jobs within this distance will be shown.
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground mt-1">
+              Subscribe to get a job pickup radius and accept orders.
+            </p>
+          )}
+          {(preferences?.maxRadiusMiles ?? 0) === 0 && (
+            <Link href="/driver/subscription">
+              <Button type="button" variant="outline" size="sm" className="mt-3">
+                View plans & subscribe
+              </Button>
+            </Link>
+          )}
         </div>
 
         {/* Location Settings */}

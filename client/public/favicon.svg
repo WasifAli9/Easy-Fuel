@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <circle cx="16" cy="16" r="15" fill="#374151"/>
+  <!-- Two curved mirrored shapes interlocking (stylized droplet / fuel) -->
+  <path d="M16 6v20c4-2 8-8 8-10s-2-6-6-8c-2-.5-2-2-2-2z" fill="#d1d5db"/>
+  <path d="M16 6v20c-4-2-8-8-8-10s2-6 6-8c2-.5 2-2 2-2z" fill="#d1d5db"/>
+</svg>

@@ -3,6 +3,7 @@ import { calculateDistance, milesToKm } from "./utils/distance";
 import { websocketService } from "./websocket";
 import { pushNotificationService } from "./push-service";
 import { offerNotifications } from "./notification-helpers";
+import { getSubscriptionRadiusMiles } from "./subscription-service";
 
 interface CreateDispatchOffersParams {
   orderId: string;
@@ -78,13 +79,52 @@ export async function createDispatchOffers({
       return;
     }
 
+    // Only drivers with active subscription can receive offers (§4.0)
+    const today = new Date().toISOString().split("T")[0];
+    const { data: activeSubs } = await supabaseAdmin
+      .from("driver_subscriptions")
+      .select("driver_id, plan_code")
+      .eq("status", "active")
+      .gte("current_period_end", today)
+      .in("driver_id", drivers.map((d: any) => d.id));
+    const subscribedDriverIds = new Set((activeSubs || []).map((s: any) => s.driver_id));
+    const driverTierMap = new Map((activeSubs || []).map((s: any) => [s.driver_id, s.plan_code]));
+    let driversWithSub = (drivers as any[]).filter((d) => subscribedDriverIds.has(d.id));
+    if (driversWithSub.length === 0) {
+      console.log(`[createDispatchOffers] Order ${orderId}: No drivers with active subscription`);
+      return;
+    }
+
+    // Company-scoped disable: still linked to a company but disabled by that company → not eligible for platform dispatch
+    const { data: companyBlockedRows } = await supabaseAdmin
+      .from("driver_company_memberships")
+      .select("driver_id")
+      .in(
+        "driver_id",
+        driversWithSub.map((d: any) => d.id)
+      )
+      .eq("is_disabled_by_company", true)
+      .not("company_id", "is", null);
+    const companyDisabledIds = new Set((companyBlockedRows || []).map((m: any) => m.driver_id));
+    const beforeCompany = driversWithSub.length;
+    driversWithSub = driversWithSub.filter((d: any) => !companyDisabledIds.has(d.id));
+    if (companyDisabledIds.size > 0) {
+      console.log(
+        `[createDispatchOffers] Order ${orderId}: Excluded ${beforeCompany - driversWithSub.length} driver(s) disabled by fleet company`
+      );
+    }
+    if (driversWithSub.length === 0) {
+      console.log(`[createDispatchOffers] Order ${orderId}: No drivers left after company disable filter`);
+      return;
+    }
+
     // Get driver pricing for this fuel type
     const { data: driverPricing, error: pricingError } = await supabaseAdmin
       .from("driver_pricing")
       .select("driver_id, fuel_price_per_liter_cents")
       .eq("fuel_type_id", fuelTypeId)
       .eq("active", true)
-      .in("driver_id", drivers.map(d => d.id));
+      .in("driver_id", driversWithSub.map((d: any) => d.id));
 
     if (pricingError) {
       console.error("Error fetching driver pricing:", pricingError);
@@ -95,13 +135,18 @@ export async function createDispatchOffers({
       (driverPricing || []).map((p: any) => [p.driver_id, p.fuel_price_per_liter_cents])
     );
 
-    console.log(`[createDispatchOffers] Order ${orderId}: Found ${drivers.length} drivers, ${driverPricing?.length || 0} with pricing for fuel type ${fuelTypeId}`);
+    console.log(`[createDispatchOffers] Order ${orderId}: Found ${driversWithSub.length} drivers with subscription, ${driverPricing?.length || 0} with pricing for fuel type ${fuelTypeId}`);
+
+    // Radius limits from app_settings (admin-editable)
+    const radiusLimits = await getSubscriptionRadiusMiles();
+    const tierToMiles = (planCode: string) =>
+      planCode === "premium" ? radiusLimits.unlimited : planCode === "professional" ? radiusLimits.extended : radiusLimits.standard;
 
     // Filter drivers by:
     // 1. Has pricing set for this fuel type
     // 2. Vehicle capacity (if set)
-    // 3. Within radius (if location is set)
-    const eligibleDrivers = (drivers as DriverWithLocation[]).filter((driver) => {
+    // 3. Within radius (if location is set); cap radius by subscription tier
+    const eligibleDrivers = (driversWithSub as DriverWithLocation[]).filter((driver) => {
       // Must have pricing set
       if (!pricingMap.has(driver.id)) {
         console.log(`[createDispatchOffers] Driver ${driver.id} filtered out: No pricing set for fuel type ${fuelTypeId}`);
@@ -114,7 +159,7 @@ export async function createDispatchOffers({
         return false;
       }
 
-      // Check radius if location is set
+      // Check radius if location is set; cap by subscription tier (standard / extended / unlimited)
       if (driver.current_lat && driver.current_lng) {
         const distanceMiles = calculateDistance(
           driver.current_lat,
@@ -122,9 +167,12 @@ export async function createDispatchOffers({
           dropLat,
           dropLng
         );
-        const radiusPreference = driver.job_radius_preference_miles || 50;
+        const planCode = driverTierMap.get(driver.id) || "starter";
+        const tierMaxMiles = tierToMiles(planCode);
+        // Radius is set by subscription plan only (no driver-editable preference)
+        const radiusPreference = tierMaxMiles;
         const distanceKm = milesToKm(distanceMiles);
-        console.log(`[createDispatchOffers] Driver ${driver.id}: Distance ${distanceKm.toFixed(2)}km (${distanceMiles.toFixed(2)} miles), Radius preference: ${radiusPreference} miles`);
+        console.log(`[createDispatchOffers] Driver ${driver.id}: Distance ${distanceKm.toFixed(2)}km (${distanceMiles.toFixed(2)} miles), Radius cap: ${radiusPreference} miles (tier ${planCode})`);
         if (distanceMiles > radiusPreference) {
           console.log(`[createDispatchOffers] Driver ${driver.id} filtered out: Distance ${distanceMiles.toFixed(2)} miles > radius ${radiusPreference} miles`);
           return false;
@@ -139,9 +187,13 @@ export async function createDispatchOffers({
     });
 
     if (eligibleDrivers.length === 0) {
-      console.log(`[createDispatchOffers] No eligible drivers found for order ${orderId}. Total drivers: ${drivers.length}, With pricing: ${pricingMap.size}, Fuel type: ${fuelTypeId}`);
+      console.log(`[createDispatchOffers] No eligible drivers found for order ${orderId}. Total drivers with sub: ${driversWithSub.length}, With pricing: ${pricingMap.size}, Fuel type: ${fuelTypeId}`);
       return;
     }
+
+    // Sort: Premium first (ratings boost), then Professional, then Starter
+    const tierOrder = (code: string) => (code === "premium" ? 0 : code === "professional" ? 1 : 2);
+    eligibleDrivers.sort((a, b) => tierOrder(driverTierMap.get(a.id) || "starter") - tierOrder(driverTierMap.get(b.id) || "starter"));
 
     console.log(`[createDispatchOffers] Found ${eligibleDrivers.length} eligible drivers for order ${orderId}`);
 

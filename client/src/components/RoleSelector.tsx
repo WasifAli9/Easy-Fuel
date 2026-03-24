@@ -1,9 +1,9 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { User, Truck, Building2, ShieldCheck } from "lucide-react";
+import { User, Truck, Building2, ShieldCheck, Briefcase } from "lucide-react";
 
 interface RoleSelectorProps {
-  onSelectRole: (role: "customer" | "driver" | "supplier" | "admin") => void;
+  onSelectRole: (role: "customer" | "driver" | "supplier" | "admin" | "company") => void;
 }
 
 export function RoleSelector({ onSelectRole }: RoleSelectorProps) {
@@ -28,6 +28,13 @@ export function RoleSelector({ onSelectRole }: RoleSelectorProps) {
       description: "Manage depots and fuel pricing",
       icon: Building2,
       color: "text-purple-600 dark:text-purple-400",
+    },
+    {
+      id: "company" as const,
+      title: "Fleet company",
+      description: "Manage drivers and fleet analytics",
+      icon: Briefcase,
+      color: "text-orange-600 dark:text-orange-400",
     },
     {
       id: "admin" as const,

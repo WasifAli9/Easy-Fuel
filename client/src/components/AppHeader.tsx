@@ -356,6 +356,8 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
         
         if (profile?.role === "driver") {
           setLocation("/driver");
+        } else if (profile?.role === "company") {
+          setLocation("/company");
         } else if (profile?.role === "customer") {
           // Verify order exists before navigating
           try {
@@ -465,6 +467,17 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
               </Link>
             </nav>
           )}
+
+          {profile?.role === "company" && (
+            <nav className="hidden md:flex items-center gap-2 ml-6">
+              <Link href="/company">
+                <Button variant="ghost" size="sm">
+                  <Home className="h-4 w-4 mr-2" />
+                  Dashboard
+                </Button>
+              </Link>
+            </nav>
+          )}
         </div>
         
         <div className="flex items-center gap-2">
@@ -555,6 +568,15 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
                   <DropdownMenuItem onClick={() => setLocation("/supplier/profile")} data-testid="menu-profile">
                     <UserCircle className="h-4 w-4 mr-2" />
                     My Profile
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
+              {profile?.role === "company" && (
+                <>
+                  <DropdownMenuItem onClick={() => setLocation("/company")} data-testid="menu-company-dashboard">
+                    <Home className="h-4 w-4 mr-2" />
+                    Dashboard
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                 </>
@@ -652,6 +674,20 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
                   >
                     <UserCircle className="h-4 w-4 mr-2" />
                     My Profile
+                  </Button>
+                </Link>
+              </>
+            )}
+            {profile?.role === "company" && (
+              <>
+                <Link href="/company">
+                  <Button 
+                    variant="ghost" 
+                    className="w-full justify-start" 
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    <Home className="h-4 w-4 mr-2" />
+                    Dashboard
                   </Button>
                 </Link>
               </>

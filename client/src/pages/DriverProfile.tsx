@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -10,7 +10,6 @@ import { Input } from "@/components/ui/input";
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -19,13 +18,14 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/contexts/AuthContext";
-import { User, Lock, Upload, FileText, AlertTriangle, CheckCircle2, XCircle, Shield, Building, MapPin, Loader2 } from "lucide-react";
-import { normalizeFilePath, normalizeProfilePhotoUrl } from "@/lib/utils";
+import { User, Lock, Upload, FileText, AlertTriangle, CheckCircle2, XCircle, Shield, Building, MapPin, Loader2, LayoutDashboard, Package, Car, DollarSign, Settings, History, Warehouse, Store, Menu, CreditCard } from "lucide-react";
+import { normalizeFilePath, normalizeProfilePhotoUrl, cn } from "@/lib/utils";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ChevronRight, ArrowLeft } from "lucide-react";
 import { Link } from "wouter";
@@ -34,6 +34,8 @@ import { useWebSocket } from "@/hooks/useWebSocket";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
 
 const profileSchema = z.object({
   fullName: z.string().min(2, "Full name is required"),
@@ -66,6 +68,7 @@ interface DriverDocument {
 export default function DriverProfile() {
   const { toast } = useToast();
   const { updatePassword, refetchProfile } = useAuth();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const { data: profile, isLoading } = useQuery<any>({
     queryKey: ["/api/driver/profile"],
@@ -96,6 +99,60 @@ export default function DriverProfile() {
   // Get compliance status
   const { data: complianceStatus } = useQuery<any>({
     queryKey: ["/api/driver/compliance/status"],
+  });
+
+  const { data: membership, isLoading: membershipLoading, refetch: refetchMembership } = useQuery<{
+    mode: "independent" | "company";
+    companyId: string | null;
+    companyName: string | null;
+    isDisabledByCompany: boolean;
+    disabledReason: string | null;
+  }>({
+    queryKey: ["/api/driver/company-membership"],
+  });
+
+  const [workMode, setWorkMode] = useState<"independent" | "company">("independent");
+  const [companySearch, setCompanySearch] = useState("");
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>("");
+
+  useEffect(() => {
+    if (!membership) return;
+    if (membership.mode === "independent") {
+      setWorkMode("independent");
+      setSelectedCompanyId("");
+    } else {
+      setWorkMode("company");
+      setSelectedCompanyId(membership.companyId || "");
+    }
+  }, [membership]);
+
+  const { data: companiesList = [] } = useQuery<Array<{ id: string; name: string; status: string }>>({
+    queryKey: ["/api/companies/public-list", companySearch],
+    enabled: workMode === "company",
+    queryFn: async () => {
+      const qs = companySearch.trim() ? `?q=${encodeURIComponent(companySearch.trim())}` : "";
+      const r = await fetch(`/api/companies/public-list${qs}`, { credentials: "include", cache: "no-store" });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    },
+  });
+
+  const saveMembershipMutation = useMutation({
+    mutationFn: async () => {
+      const companyId = workMode === "independent" ? null : selectedCompanyId || null;
+      if (workMode === "company" && !companyId) {
+        throw new Error("Select a fleet company");
+      }
+      await apiRequest("PUT", "/api/driver/company-membership", { companyId });
+    },
+    onSuccess: () => {
+      toast({ title: "Saved", description: "Fleet company settings updated." });
+      refetchMembership();
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/company-membership"] });
+    },
+    onError: (e: any) => {
+      toast({ title: "Error", description: e?.message || "Could not save", variant: "destructive" });
+    },
   });
 
   // Helper function to find document by type
@@ -150,10 +207,6 @@ export default function DriverProfile() {
       bank_name: profile?.bank_name || "",
       account_number: profile?.account_number || "",
       branch_code: profile?.branch_code || "",
-      // Company Link
-      is_company_driver: profile?.is_company_driver || false,
-      company_id: profile?.company_id || "",
-      role_in_company: profile?.role_in_company || "",
     },
     values: profile ? {
       driver_type: profile.driver_type || "",
@@ -188,22 +241,11 @@ export default function DriverProfile() {
       bank_name: profile.bank_name || "",
       account_number: profile.account_number || "",
       branch_code: profile.branch_code || "",
-      is_company_driver: profile.is_company_driver || false,
-      company_id: profile.company_id || "",
-      role_in_company: profile.role_in_company || "",
     } : undefined,
   });
 
   const updateComplianceMutation = useMutation({
     mutationFn: async (data: any) => {
-      // Debug: Log what we're sending, especially company_id
-      console.log("[DriverProfile] Sending compliance data:", {
-        company_id: data.company_id,
-        company_id_type: typeof data.company_id,
-        company_id_length: typeof data.company_id === 'string' ? data.company_id.length : 'N/A',
-        has_company_id: data.hasOwnProperty('company_id'),
-        full_data_keys: Object.keys(data).filter(k => k.includes('company') || k.includes('prdp'))
-      });
       return apiRequest("PUT", "/api/driver/compliance", data);
     },
     onSuccess: async (responseData) => {
@@ -225,7 +267,6 @@ export default function DriverProfile() {
             dg_training_issue_date: responseData.dg_training_issue_date || oldData.dg_training_issue_date || "",
             dg_training_expiry_date: responseData.dg_training_expiry_date || oldData.dg_training_expiry_date || "",
             criminal_check_date: responseData.criminal_check_date || oldData.criminal_check_date || "",
-            company_id: responseData.company_id || oldData.company_id || "",
             bank_account_holder: responseData.bank_account_holder || oldData.bank_account_holder || oldData.bank_account_name || "",
           };
         });
@@ -615,7 +656,7 @@ export default function DriverProfile() {
     return (
       <div className="min-h-screen bg-background">
         <AppHeader />
-        <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <main className="w-full min-w-0 px-5 sm:px-8 lg:px-10 py-4 sm:py-8">
           <div className="text-center py-8 text-muted-foreground">Loading profile...</div>
         </main>
       </div>
@@ -637,7 +678,156 @@ export default function DriverProfile() {
     <div className="min-h-screen bg-background">
       <AppHeader />
       
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="flex flex-1 min-h-0">
+        <aside className="hidden md:flex flex-col w-60 min-w-[240px] shrink-0 border-r border-border bg-muted/30 min-h-0 z-10" aria-label="Driver navigation">
+          <nav className="sticky top-0 flex flex-col p-3 gap-0.5 overflow-y-auto">
+            <div className="px-3 py-2 mb-1">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Menu</p>
+            </div>
+
+            <Link
+              href="/driver"
+              className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <LayoutDashboard className="h-5 w-5 shrink-0" /> Dashboard
+            </Link>
+            <Link
+              href="/driver"
+              className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <Package className="h-5 w-5 shrink-0" /> My Jobs
+            </Link>
+            <Link
+              href="/driver"
+              className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <Car className="h-5 w-5 shrink-0" /> Vehicles
+            </Link>
+            <Link
+              href="/driver"
+              className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <DollarSign className="h-5 w-5 shrink-0" /> Pricing
+            </Link>
+            <Link
+              href="/driver/subscription"
+              className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <CreditCard className="h-5 w-5 shrink-0" /> Billing
+            </Link>
+            <span className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium bg-primary/12 text-primary")}>
+              <Settings className="h-5 w-5 shrink-0" /> Settings
+            </span>
+            <Link
+              href="/driver"
+              className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <History className="h-5 w-5 shrink-0" /> History
+            </Link>
+
+            <Separator className="my-2" />
+
+            <Link
+              href="/driver"
+              className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <Warehouse className="h-5 w-5 shrink-0" /> My Depot Orders
+            </Link>
+            <Link
+              href="/driver"
+              className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <Store className="h-5 w-5 shrink-0" /> Available Depots
+            </Link>
+          </nav>
+        </aside>
+
+        <Button
+          variant="outline"
+          size="icon"
+          className="md:hidden fixed bottom-4 right-4 z-40 rounded-full shadow-lg"
+          onClick={() => setSidebarOpen(true)}
+          aria-label="Open menu"
+        >
+          <Menu className="h-5 w-5" />
+        </Button>
+
+        <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+          <SheetContent side="left" className="w-72 p-0">
+            <nav className="flex flex-col h-full py-4">
+              <div className="px-4 pb-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Menu</p>
+              </div>
+              <div className="flex-1 overflow-y-auto space-y-1 px-2">
+                <Link
+                  href="/driver"
+                  onClick={() => setSidebarOpen(false)}
+                  className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <LayoutDashboard className="h-5 w-5 shrink-0" /> Dashboard
+                </Link>
+                <Link
+                  href="/driver"
+                  onClick={() => setSidebarOpen(false)}
+                  className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <Package className="h-5 w-5 shrink-0" /> My Jobs
+                </Link>
+                <Link
+                  href="/driver"
+                  onClick={() => setSidebarOpen(false)}
+                  className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <Car className="h-5 w-5 shrink-0" /> Vehicles
+                </Link>
+                <Link
+                  href="/driver"
+                  onClick={() => setSidebarOpen(false)}
+                  className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <DollarSign className="h-5 w-5 shrink-0" /> Pricing
+                </Link>
+                <Link
+                  href="/driver/subscription"
+                  onClick={() => setSidebarOpen(false)}
+                  className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <CreditCard className="h-5 w-5 shrink-0" /> Billing
+                </Link>
+                <span className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium bg-primary/12 text-primary")}>
+                  <Settings className="h-5 w-5 shrink-0" /> Settings
+                </span>
+                <Link
+                  href="/driver"
+                  onClick={() => setSidebarOpen(false)}
+                  className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <History className="h-5 w-5 shrink-0" /> History
+                </Link>
+
+                <Separator className="my-2" />
+
+                <Link
+                  href="/driver"
+                  onClick={() => setSidebarOpen(false)}
+                  className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <Warehouse className="h-5 w-5 shrink-0" /> My Depot Orders
+                </Link>
+                <Link
+                  href="/driver"
+                  onClick={() => setSidebarOpen(false)}
+                  className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <Store className="h-5 w-5 shrink-0" /> Available Depots
+                </Link>
+              </div>
+            </nav>
+          </SheetContent>
+        </Sheet>
+
+        <main className="flex-1 min-w-0 overflow-auto">
+          <div className="w-full min-w-0 px-5 sm:px-8 lg:px-10 py-4 sm:py-8">
         <div className="mb-8">
           <Link href="/driver">
             <Button variant="ghost" className="mb-4 -ml-2">
@@ -726,6 +916,101 @@ export default function DriverProfile() {
             </CollapsibleContent>
           </Card>
         </Collapsible>
+
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Building className="h-5 w-5" />
+              Fleet company
+            </CardTitle>
+            <CardDescription>
+              Work independently on the platform or link to one fleet company. You can change this anytime.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {membershipLoading ? (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+              </div>
+            ) : (
+              <>
+                {membership?.isDisabledByCompany && (
+                  <Alert variant="destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>Disabled by your fleet company</AlertTitle>
+                    <AlertDescription>
+                      {membership.disabledReason || "Your company has disabled you for fleet operations. You will not receive dispatch offers until they re-enable you or you switch to independent."}
+                    </AlertDescription>
+                  </Alert>
+                )}
+                <RadioGroup
+                  value={workMode}
+                  onValueChange={(v) => setWorkMode(v as "independent" | "company")}
+                  className="space-y-3"
+                >
+                  <div className="flex items-start space-x-3 space-y-0 rounded-md border p-4">
+                    <RadioGroupItem value="independent" id="fleet-independent" className="mt-1" />
+                    <div className="flex-1">
+                      <Label htmlFor="fleet-independent" className="font-medium cursor-pointer">
+                        Work independently
+                      </Label>
+                      <p className="text-sm text-muted-foreground">Take platform jobs without a fleet company link.</p>
+                    </div>
+                  </div>
+                  <div className="flex items-start space-x-3 space-y-0 rounded-md border p-4">
+                    <RadioGroupItem value="company" id="fleet-company" className="mt-1" />
+                    <div className="flex-1 space-y-3">
+                      <Label htmlFor="fleet-company" className="font-medium cursor-pointer">
+                        Work under a fleet company
+                      </Label>
+                      <p className="text-sm text-muted-foreground">Link your driver account to one company. They can view your deliveries and disable fleet access (without closing your account).</p>
+                      {workMode === "company" && (
+                        <div className="space-y-2 max-w-md">
+                          <Label htmlFor="company-search">Search companies</Label>
+                          <Input
+                            id="company-search"
+                            placeholder="Type to filter…"
+                            value={companySearch}
+                            onChange={(e) => setCompanySearch(e.target.value)}
+                          />
+                          <Label htmlFor="company-select">Company</Label>
+                          <Select value={selectedCompanyId} onValueChange={setSelectedCompanyId}>
+                            <SelectTrigger id="company-select">
+                              <SelectValue placeholder="Select a company" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {companiesList.map((c) => (
+                                <SelectItem key={c.id} value={c.id}>
+                                  {c.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {companiesList.length === 0 && (
+                            <p className="text-xs text-muted-foreground">No companies match your search.</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </RadioGroup>
+                <Button
+                  type="button"
+                  disabled={saveMembershipMutation.isPending}
+                  onClick={() => saveMembershipMutation.mutate()}
+                >
+                  {saveMembershipMutation.isPending ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Saving…
+                    </>
+                  ) : (
+                    "Save fleet settings"
+                  )}
+                </Button>
+              </>
+            )}
+          </CardContent>
+        </Card>
 
         <div className="grid gap-6">
           {/* Profile Picture & Basic Info */}
@@ -1951,80 +2236,6 @@ export default function DriverProfile() {
                     </div>
                   </div>
 
-                  {/* ========== SECTION 3: COMPANY LINK ========== */}
-                  <div className="space-y-6 pt-4 border-t-2 border-primary/20">
-                    <div className="border-b-2 border-primary/20 pb-3">
-                      <h2 className="text-xl font-bold flex items-center gap-2">
-                        <Building className="h-5 w-5 text-primary" />
-                        3. Company Link
-                      </h2>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        If driver is attached to a business
-                      </p>
-                    </div>
-
-                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
-                      <FormField
-                        control={complianceForm.control}
-                        name="is_company_driver"
-                        render={({ field }) => (
-                          <FormItem className="flex flex-row items-start space-x-3 space-y-0">
-                            <FormControl>
-                              <Checkbox
-                                checked={field.value}
-                                onCheckedChange={field.onChange}
-                              />
-                            </FormControl>
-                            <div className="space-y-1 leading-none">
-                              <FormLabel>Company Driver</FormLabel>
-                              <p className="text-sm text-muted-foreground">
-                                Check if you work for a transport company or fuel buyer
-                              </p>
-                            </div>
-                          </FormItem>
-                        )}
-                      />
-
-                      {complianceForm.watch("is_company_driver") && (
-                        <>
-                          <FormField
-                            control={complianceForm.control}
-                            name="company_id"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Company ID</FormLabel>
-                                <FormControl>
-                                  <Input 
-                                    {...field} 
-                                    placeholder="Enter company UUID (e.g., a3d27256-cf59-447a-81c2-ce9babde91d5)" 
-                                  />
-                                </FormControl>
-                                <FormDescription className="text-xs text-muted-foreground">
-                                  Must be a valid UUID format. This should reference a customer/company ID from the system.
-                                </FormDescription>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-
-                          <FormField
-                            control={complianceForm.control}
-                            name="role_in_company"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Role in Company</FormLabel>
-                                <FormControl>
-                                  <Input {...field} placeholder="e.g., Driver, Owner-Driver" />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        </>
-                      )}
-                    </div>
-                  </div>
-
                   <div className="pt-6 border-t-2 border-primary/20">
                     <Button type="submit" size="lg" disabled={updateComplianceMutation.isPending} className="w-full md:w-auto">
                       {updateComplianceMutation.isPending ? (
@@ -2042,7 +2253,9 @@ export default function DriverProfile() {
             </CardContent>
           </Card>
         </div>
-      </main>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }

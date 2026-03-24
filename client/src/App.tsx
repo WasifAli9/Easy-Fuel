@@ -7,12 +7,12 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { NotificationPermissionBanner } from "@/components/NotificationPermissionBanner";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
+import { AutoLogoutHandler } from "@/components/AutoLogoutHandler";
 import { useRealtimeUpdates } from "@/hooks/useRealtimeUpdates";
 import Landing from "@/pages/Landing";
 import Auth from "@/pages/Auth";
 import AuthTest from "@/pages/AuthTest";
 import ResetPassword from "@/pages/ResetPassword";
-import RoleSetup from "@/pages/RoleSetup";
 import Signup from "@/pages/Signup";
 import CustomerDashboard from "@/pages/CustomerDashboard";
 import SavedAddresses from "@/pages/SavedAddresses";
@@ -20,9 +20,12 @@ import PaymentMethods from "@/pages/PaymentMethods";
 import CustomerProfile from "@/pages/CustomerProfile";
 import DriverDashboard from "@/pages/DriverDashboard";
 import DriverProfile from "@/pages/DriverProfile";
+import DriverSubscription from "@/pages/DriverSubscription";
 import SupplierDashboard from "@/pages/SupplierDashboard";
 import SupplierProfile from "@/pages/SupplierProfile";
+import SupplierSubscription from "@/pages/SupplierSubscription";
 import AdminDashboard from "@/pages/AdminDashboard";
+import CompanyDashboard from "@/pages/CompanyDashboard";
 import NotFound from "@/pages/not-found";
 
 function ProtectedRoute({ 
@@ -31,7 +34,7 @@ function ProtectedRoute({
   allowWithoutProfile = false
 }: { 
   component: React.ComponentType; 
-  role?: "customer" | "driver" | "supplier" | "admin";
+  role?: "customer" | "driver" | "supplier" | "admin" | "company";
   allowWithoutProfile?: boolean;
 }) {
   const { user, profile, loading } = useAuth();
@@ -53,7 +56,7 @@ function ProtectedRoute({
 
   // Allow access without profile for role setup
   if (!profile && !allowWithoutProfile) {
-    return <Redirect to="/setup" />;
+    return <Redirect to="/signup" />;
   }
 
   // Redirect to role-specific dashboard if profile exists and accessing setup
@@ -81,7 +84,7 @@ function Router() {
       <Switch>
       <Route path="/">
         {user ? (
-          profile ? <Redirect to={`/${profile.role}`} /> : <Redirect to="/setup" />
+          profile ? <Redirect to={`/${profile.role}`} /> : <Redirect to="/signup" />
         ) : (
           <Landing />
         )}
@@ -90,9 +93,6 @@ function Router() {
       <Route path="/auth-test" component={AuthTest} />
       <Route path="/signup" component={Signup} />
       <Route path="/reset-password" component={ResetPassword} />
-      <Route path="/setup">
-        {() => <ProtectedRoute component={RoleSetup} allowWithoutProfile={true} />}
-      </Route>
       <Route path="/customer">
         {() => <ProtectedRoute component={CustomerDashboard} role="customer" />}
       </Route>
@@ -111,14 +111,23 @@ function Router() {
       <Route path="/driver/profile">
         {() => <ProtectedRoute component={DriverProfile} role="driver" />}
       </Route>
+      <Route path="/driver/subscription">
+        {() => <ProtectedRoute component={DriverSubscription} role="driver" />}
+      </Route>
       <Route path="/supplier">
         {() => <ProtectedRoute component={SupplierDashboard} role="supplier" />}
       </Route>
       <Route path="/supplier/profile">
         {() => <ProtectedRoute component={SupplierProfile} role="supplier" />}
       </Route>
+      <Route path="/supplier/subscription">
+        {() => <ProtectedRoute component={SupplierSubscription} role="supplier" />}
+      </Route>
       <Route path="/admin">
         {() => <ProtectedRoute component={AdminDashboard} role="admin" />}
+      </Route>
+      <Route path="/company">
+        {() => <ProtectedRoute component={CompanyDashboard} role="company" />}
       </Route>
       <Route component={NotFound} />
     </Switch>
@@ -131,6 +140,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider defaultTheme="light">
         <AuthProvider>
+          <AutoLogoutHandler />
           <TooltipProvider>
             <Toaster />
             <Router />

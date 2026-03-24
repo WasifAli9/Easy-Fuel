@@ -7,12 +7,14 @@ import { StatsCard } from "@/components/StatsCard";
 import { SupplierPricingManager } from "@/components/SupplierPricingManagerTiered";
 import { DepotManagementDialog } from "@/components/DepotManagementDialog";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, MapPin, TrendingUp, Loader2, ShoppingCart } from "lucide-react";
+import { Plus, MapPin, TrendingUp, Loader2, ShoppingCart, BarChart3, Wallet, FileText, User, ExternalLink, DollarSign, CreditCard, Menu } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/utils";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { DriverDepotOrdersView } from "@/components/DriverDepotOrdersView";
+import { SupplierAnalyticsTab } from "@/components/SupplierAnalyticsTab";
+import { SupplierSettlementsTab } from "@/components/SupplierSettlementsTab";
+import { SupplierInvoicesTab } from "@/components/SupplierInvoicesTab";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
@@ -25,8 +27,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { cn } from "@/lib/utils";
+
+type SupplierTab = "driver-orders" | "depots" | "pricing" | "analytics" | "settlements" | "invoices";
 
 export default function SupplierDashboard() {
   const { profile } = useAuth();
@@ -35,7 +41,8 @@ export default function SupplierDashboard() {
   const [location, setLocation] = useLocation();
   const [depotDialogOpen, setDepotDialogOpen] = useState(false);
   const [selectedDepot, setSelectedDepot] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<string>("driver-orders");
+  const [activeTab, setActiveTab] = useState<SupplierTab>("driver-orders");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [orderStatusFilter, setOrderStatusFilter] = useState<string[] | null>(null);
   const [depotStatusFilter, setDepotStatusFilter] = useState<"all" | "active" | null>(null);
   const [kycWarningDialogOpen, setKycWarningDialogOpen] = useState(false);
@@ -70,18 +77,26 @@ export default function SupplierDashboard() {
     retry: false, // Don't retry on errors (including 403 compliance errors)
   });
 
-  // Fetch driver depot orders to count active orders
-  const { data: ordersData } = useQuery<any[]>({
+  // Fetch driver depot orders (API returns { orders, depots, summaryByDepot } or array)
+  const { data: ordersData } = useQuery<any>({
     queryKey: ["/api/supplier/driver-depot-orders"],
-    enabled: !!profile && profile.role === "supplier", // Only fetch if supplier is logged in
-    refetchInterval: 60000, // Refresh every 60 seconds (WebSocket handles real-time)
-    staleTime: 30 * 1000, // Consider data fresh for 30 seconds
-    retry: false, // Don't retry on errors
+    enabled: !!profile && profile.role === "supplier",
+    refetchInterval: 60000,
+    staleTime: 30 * 1000,
+    retry: false,
   });
 
-  // Ensure arrays are always arrays (never null/undefined)
+  // Fetch subscription for banner and plan display
+  const { data: subscriptionData } = useQuery<{ subscription: any; subscriptionTier: string | null }>({
+    queryKey: ["/api/supplier/subscription"],
+    enabled: !!profile && profile.role === "supplier",
+    retry: false,
+  });
+
+  // Ensure arrays; API may return { orders, depots, summaryByDepot }
   const depots = depotsData || [];
-  const orders = ordersData || [];
+  const orders = Array.isArray(ordersData) ? ordersData : (ordersData?.orders ?? []);
+  const hasActiveSubscription = !!subscriptionData?.subscriptionTier && (subscriptionData?.subscription?.isActive ?? subscriptionData?.subscription?.status === "active");
 
 
   // Listen for real-time updates via WebSocket
@@ -170,11 +185,96 @@ export default function SupplierDashboard() {
     (order: any) => order.status === "pending" || order.status === "confirmed"
   ).length;
 
+  const navItems: { value: SupplierTab; label: string; icon: typeof MapPin }[] = [
+    { value: "driver-orders", label: "Driver Orders", icon: ShoppingCart },
+    { value: "depots", label: "Depots", icon: MapPin },
+    { value: "pricing", label: "Pricing", icon: DollarSign },
+    { value: "analytics", label: "Analytics", icon: BarChart3 },
+    { value: "settlements", label: "Settlements", icon: Wallet },
+    { value: "invoices", label: "Invoices", icon: FileText },
+  ];
+
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background flex flex-col">
       <AppHeader />
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="flex flex-1 min-h-0">
+        <aside className="hidden md:flex flex-col w-52 min-w-[208px] shrink-0 border-r border-border bg-muted/30 min-h-0 z-10" aria-label="Supplier navigation">
+          <nav className="sticky top-0 flex flex-col p-3 gap-0.5 overflow-y-auto">
+            <div className="px-3 py-2 mb-1">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Menu</p>
+            </div>
+            {navItems.map(({ value, label, icon: Icon }) => (
+              <button
+                key={value}
+                onClick={() => setActiveTab(value)}
+                className={cn(
+                  "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left",
+                  activeTab === value ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                )}
+                data-testid={`tab-${value}`}
+              >
+                <Icon className="h-5 w-5 shrink-0" />
+                {label}
+              </button>
+            ))}
+            <Link
+              href="/supplier/subscription"
+              className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <CreditCard className="h-5 w-5 shrink-0" />
+              Billing
+            </Link>
+          </nav>
+        </aside>
+
+        <Button variant="outline" size="icon" className="md:hidden fixed bottom-4 right-4 z-40 rounded-full shadow-lg" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
+          <Menu className="h-5 w-5" />
+        </Button>
+
+        <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+          <SheetContent side="left" className="w-72 p-0">
+            <nav className="flex flex-col h-full py-4">
+              <div className="px-4 pb-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Menu</p>
+              </div>
+              <div className="flex-1 overflow-y-auto space-y-1 px-2">
+                {navItems.map(({ value, label, icon: Icon }) => (
+                  <button key={value} onClick={() => { setActiveTab(value); setSidebarOpen(false); }} className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left", activeTab === value ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}>
+                    <Icon className="h-5 w-5 shrink-0" /> {label}
+                  </button>
+                ))}
+                <Link href="/supplier/subscription" onClick={() => setSidebarOpen(false)} className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground">
+                  <CreditCard className="h-5 w-5 shrink-0" /> Billing
+                </Link>
+              </div>
+            </nav>
+          </SheetContent>
+        </Sheet>
+
+        <main className="flex-1 min-w-0 overflow-auto">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {!hasActiveSubscription && (
+          <div className="mb-6 p-4 rounded-lg border border-amber-500/50 bg-amber-500/10 flex items-center justify-between flex-wrap gap-4">
+            <p className="text-amber-800 dark:text-amber-200 font-medium">
+              Subscribe to list on the platform and receive driver depot orders.
+            </p>
+            <Button asChild variant="default" size="sm">
+              <Link href="/supplier/subscription">
+                <ExternalLink className="h-4 w-4 mr-2" />
+                View plans
+              </Link>
+            </Button>
+          </div>
+        )}
+
+        {hasActiveSubscription && subscriptionData?.subscriptionTier && (
+          <div className="mb-4 text-sm text-muted-foreground flex items-center gap-2">
+            <Badge variant="secondary">{subscriptionData.subscriptionTier === "enterprise" ? "Enterprise" : "Standard"}</Badge>
+            <Link href="/supplier/subscription" className="text-primary hover:underline">Manage subscription</Link>
+          </div>
+        )}
+
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-4">
             <div>
@@ -234,26 +334,28 @@ export default function SupplierDashboard() {
           />
         </div>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-            <TabsList className="min-w-max">
-              <TabsTrigger value="driver-orders" data-testid="tab-driver-orders">
-                Driver Orders
-              </TabsTrigger>
-              <TabsTrigger value="depots" data-testid="tab-depots">
-                Depots
-              </TabsTrigger>
-              <TabsTrigger value="pricing" data-testid="tab-pricing">
-                Pricing
-              </TabsTrigger>
-            </TabsList>
+        {supplierProfile?.subscription_tier === "enterprise" && supplierProfile?.accountManager && (
+          <div className="mb-6 p-4 rounded-lg border bg-muted/50 flex items-center gap-4">
+            <User className="h-10 w-10 text-muted-foreground" />
+            <div>
+              <p className="font-medium">Your account manager</p>
+              <p className="text-sm text-muted-foreground">
+                {supplierProfile.accountManager.name}
+                {supplierProfile.accountManager.email ? ` • ${supplierProfile.accountManager.email}` : ""}
+              </p>
+            </div>
           </div>
+        )}
 
-          <TabsContent value="driver-orders" className="space-y-4">
-            <DriverDepotOrdersView statusFilter={orderStatusFilter} />
-          </TabsContent>
+        <div className="space-y-6">
+          {activeTab === "driver-orders" && (
+            <div className="space-y-4">
+              <DriverDepotOrdersView statusFilter={orderStatusFilter} />
+            </div>
+          )}
 
-          <TabsContent value="depots" className="space-y-4">
+          {activeTab === "depots" && (
+            <div className="space-y-4">
             {depotsError ? (
               <div className="text-center py-12">
                 <div className="bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-6 max-w-md mx-auto">
@@ -358,13 +460,36 @@ export default function SupplierDashboard() {
                 </div>
               );
             })()}
-          </TabsContent>
+            </div>
+          )}
 
-          <TabsContent value="pricing" className="space-y-4">
-            <SupplierPricingManager />
-          </TabsContent>
-        </Tabs>
-      </main>
+          {activeTab === "pricing" && (
+            <div className="space-y-4">
+              <SupplierPricingManager />
+            </div>
+          )}
+
+          {activeTab === "analytics" && (
+            <div className="space-y-4">
+              <SupplierAnalyticsTab hasSubscription={hasActiveSubscription} />
+            </div>
+          )}
+
+          {activeTab === "settlements" && (
+            <div className="space-y-4">
+              <SupplierSettlementsTab hasSubscription={hasActiveSubscription} />
+            </div>
+          )}
+
+          {activeTab === "invoices" && (
+            <div className="space-y-4">
+              <SupplierInvoicesTab hasSubscription={hasActiveSubscription} />
+            </div>
+          )}
+        </div>
+          </div>
+        </main>
+      </div>
 
       <DepotManagementDialog
         open={depotDialogOpen}

@@ -19,7 +19,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // Enums
-export const roleEnum = pgEnum("role", ["customer", "driver", "supplier", "admin"]);
+export const roleEnum = pgEnum("role", ["customer", "driver", "supplier", "admin", "company"]);
 export const approvalStatusEnum = pgEnum("approval_status", ["pending", "approved", "rejected", "needs_more_info", "suspended"]);
 export const kycStatusEnum = pgEnum("kyc_status", ["pending", "approved", "rejected"]);
 export const orderStateEnum = pgEnum("order_state", [
@@ -195,6 +195,12 @@ export const appSettings = pgTable("app_settings", {
   pricePerKmCents: integer("price_per_km_cents").notNull().default(5000), // Fixed price per km set by admin
   dispatchRadiusKm: numeric("dispatch_radius_km").notNull().default("50"),
   dispatchSlaSeconds: integer("dispatch_sla_seconds").notNull().default(120),
+  /** Driver subscription tier max radius (miles): Starter/Standard */
+  driverRadiusStandardMiles: integer("driver_radius_standard_miles").default(200),
+  /** Driver subscription tier max radius (miles): Professional/Extended */
+  driverRadiusExtendedMiles: integer("driver_radius_extended_miles").default(500),
+  /** Driver subscription tier max radius (miles): Premium/Unlimited */
+  driverRadiusUnlimitedMiles: integer("driver_radius_unlimited_miles").default(999),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -274,6 +280,8 @@ export const suppliers = pgTable("suppliers", {
   complianceReviewerId: uuid("compliance_reviewer_id"),
   complianceReviewDate: timestamp("compliance_review_date"),
   complianceRejectionReason: text("compliance_rejection_reason"),
+  subscriptionTier: text("subscription_tier"), // standard | enterprise; synced from supplier_subscriptions
+  accountManagerId: uuid("account_manager_id"), // FK admins; Enterprise only
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -302,6 +310,18 @@ export const depotPrices = pgTable("depot_prices", {
   depotId: uuid("depot_id").notNull().references(() => depots.id),
   fuelTypeId: uuid("fuel_type_id").notNull().references(() => fuelTypes.id),
   priceCents: integer("price_cents").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+/** Transport / fleet company (employer of drivers). owner_user_id = profiles.id of company account. */
+export const companies = pgTable("companies", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ownerUserId: uuid("owner_user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  status: text("status").notNull().default("active"),
+  contactEmail: text("contact_email"),
+  contactPhone: text("contact_phone"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -370,6 +390,7 @@ export const drivers = pgTable("drivers", {
   vehicleCapacityLitres: integer("vehicle_capacity_litres"),
   insuranceDocUrl: text("insurance_doc_url"),
   premiumStatus: text("premium_status").default("inactive"),
+  subscriptionTier: text("subscription_tier"), // starter | professional | premium, synced from active driver_subscriptions
   jobRadiusPreferenceMiles: doublePrecision("job_radius_preference_miles").default(20),
   currentLat: doublePrecision("current_lat"),
   currentLng: doublePrecision("current_lng"),
@@ -381,10 +402,22 @@ export const drivers = pgTable("drivers", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-// Vehicles table - linked to drivers
+/** One row per driver: optional link to a transport company; company can disable driver for fleet context only. */
+export const driverCompanyMemberships = pgTable("driver_company_memberships", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  driverId: uuid("driver_id").notNull().references(() => drivers.id, { onDelete: "cascade" }).unique(),
+  companyId: uuid("company_id").references(() => companies.id, { onDelete: "set null" }),
+  isDisabledByCompany: boolean("is_disabled_by_company").notNull().default(false),
+  disabledReason: text("disabled_reason"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Vehicles: personal (driver_id set, company_id null) or company fleet (company_id set; driver_id null = pool)
 export const vehicles = pgTable("vehicles", {
   id: uuid("id").primaryKey().defaultRandom(),
-  driverId: uuid("driver_id").notNull().references(() => drivers.id),
+  driverId: uuid("driver_id").references(() => drivers.id, { onDelete: "set null" }),
+  companyId: uuid("company_id").references(() => companies.id, { onDelete: "cascade" }),
   registrationNumber: text("registration_number").notNull(),
   make: text("make"),
   model: text("model"),
@@ -632,8 +665,84 @@ export const driverSubscriptions = pgTable("driver_subscriptions", {
   driverId: uuid("driver_id").notNull().references(() => drivers.id),
   planCode: text("plan_code").notNull(),
   status: text("status").notNull(),
+  amountCents: integer("amount_cents"),
+  currency: text("currency").default("ZAR"),
+  ozowTransactionId: text("ozow_transaction_id"),
+  currentPeriodStart: timestamp("current_period_start"),
+  currentPeriodEnd: timestamp("current_period_end"),
   nextBillingAt: timestamp("next_billing_at"),
   raw: jsonb("raw"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Subscription Payments table – one row per OZOW payment (initial + renewals)
+export const subscriptionPayments = pgTable("subscription_payments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  driverSubscriptionId: uuid("driver_subscription_id").notNull().references(() => driverSubscriptions.id),
+  amountCents: integer("amount_cents").notNull(),
+  currency: text("currency").notNull().default("ZAR"),
+  status: text("status").notNull(), // pending | completed | failed | refunded
+  ozowTransactionId: text("ozow_transaction_id"),
+  paidAt: timestamp("paid_at"),
+  raw: jsonb("raw"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Supplier Subscriptions table
+export const supplierSubscriptions = pgTable("supplier_subscriptions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  supplierId: uuid("supplier_id").notNull().references(() => suppliers.id),
+  planCode: text("plan_code").notNull(), // standard | enterprise
+  status: text("status").notNull(), // active | past_due | cancelled | pending
+  amountCents: integer("amount_cents"),
+  currency: text("currency").default("ZAR"),
+  ozowTransactionId: text("ozow_transaction_id"),
+  currentPeriodStart: timestamp("current_period_start"),
+  currentPeriodEnd: timestamp("current_period_end"),
+  nextBillingAt: timestamp("next_billing_at"),
+  raw: jsonb("raw"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Supplier Subscription Payments table
+export const supplierSubscriptionPayments = pgTable("supplier_subscription_payments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  supplierSubscriptionId: uuid("supplier_subscription_id").notNull().references(() => supplierSubscriptions.id),
+  amountCents: integer("amount_cents").notNull(),
+  currency: text("currency").notNull().default("ZAR"),
+  status: text("status").notNull(),
+  ozowTransactionId: text("ozow_transaction_id"),
+  paidAt: timestamp("paid_at"),
+  raw: jsonb("raw"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Supplier Settlements table (payout batches: next-day vs same-day by tier)
+export const supplierSettlements = pgTable("supplier_settlements", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  supplierId: uuid("supplier_id").notNull().references(() => suppliers.id),
+  periodStart: timestamp("period_start").notNull(),
+  periodEnd: timestamp("period_end").notNull(),
+  totalCents: integer("total_cents").notNull(),
+  status: text("status").notNull(), // pending | processed | paid
+  settlementType: text("settlement_type").notNull(), // next_day | same_day
+  paidAt: timestamp("paid_at"),
+  reference: text("reference"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Supplier Invoice Templates table (Enterprise custom templates)
+export const supplierInvoiceTemplates = pgTable("supplier_invoice_templates", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  supplierId: uuid("supplier_id").notNull().references(() => suppliers.id),
+  name: text("name").notNull(),
+  templateType: text("template_type").notNull(), // invoice | compliance
+  content: jsonb("content").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -830,7 +939,34 @@ export const insertPaymentSchema = createInsertSchema(payments).omit({
   updatedAt: true 
 });
 
-export const insertDriverSubscriptionSchema = createInsertSchema(driverSubscriptions).omit({ 
+export const insertDriverSubscriptionSchema = createInsertSchema(driverSubscriptions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true
+});
+
+export const insertSupplierSubscriptionSchema = createInsertSchema(supplierSubscriptions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true
+});
+export const insertSupplierSubscriptionPaymentSchema = createInsertSchema(supplierSubscriptionPayments).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true
+});
+export const insertSupplierSettlementSchema = createInsertSchema(supplierSettlements).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true
+});
+export const insertSupplierInvoiceTemplateSchema = createInsertSchema(supplierInvoiceTemplates).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true
+});
+
+export const insertSubscriptionPaymentSchema = createInsertSchema(subscriptionPayments).omit({ 
   id: true, 
   createdAt: true, 
   updatedAt: true 
@@ -952,6 +1088,18 @@ export type Payment = typeof payments.$inferSelect;
 
 export type InsertDriverSubscription = z.infer<typeof insertDriverSubscriptionSchema>;
 export type DriverSubscription = typeof driverSubscriptions.$inferSelect;
+
+export type InsertSubscriptionPayment = z.infer<typeof insertSubscriptionPaymentSchema>;
+export type SubscriptionPayment = typeof subscriptionPayments.$inferSelect;
+
+export type InsertSupplierSubscription = z.infer<typeof insertSupplierSubscriptionSchema>;
+export type SupplierSubscription = typeof supplierSubscriptions.$inferSelect;
+export type InsertSupplierSubscriptionPayment = z.infer<typeof insertSupplierSubscriptionPaymentSchema>;
+export type SupplierSubscriptionPayment = typeof supplierSubscriptionPayments.$inferSelect;
+export type InsertSupplierSettlement = z.infer<typeof insertSupplierSettlementSchema>;
+export type SupplierSettlement = typeof supplierSettlements.$inferSelect;
+export type InsertSupplierInvoiceTemplate = z.infer<typeof insertSupplierInvoiceTemplateSchema>;
+export type SupplierInvoiceTemplate = typeof supplierInvoiceTemplates.$inferSelect;
 
 export type InsertVehicle = z.infer<typeof insertVehicleSchema>;
 export type Vehicle = typeof vehicles.$inferSelect;

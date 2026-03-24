@@ -2,6 +2,8 @@ import { Router } from "express";
 import { supabaseAdmin } from "./supabase";
 import { insertDepotSchema } from "../shared/schema";
 import { getSupplierComplianceStatus, canSupplierAccessPlatform } from "./compliance-service";
+import { buildPaymentRedirectUrl, isOzowConfigured } from "./ozow-service";
+import { getSupplierPlan, SUPPLIER_PLAN_CODES, SUPPLIER_SUBSCRIPTION_PLANS } from "../shared/supplier-subscription-plans";
 import { z } from "zod";
 
 const router = Router();
@@ -34,6 +36,44 @@ async function checkSupplierCompliance(req: any, res: any, next: any) {
     next();
   } catch (error: any) {
     console.error("Error checking supplier compliance:", error);
+    res.status(500).json({ error: error.message });
+  }
+}
+
+/** Require active supplier subscription (Standard or Enterprise). Use on depots write, driver-depot-orders, analytics, invoices. */
+async function requireSupplierSubscription(req: any, res: any, next: any) {
+  try {
+    const user = req.user;
+    if (!user?.id) return res.status(401).json({ error: "User not authenticated" });
+    const { data: supplier, error: supplierError } = await supabaseAdmin
+      .from("suppliers")
+      .select("id")
+      .eq("owner_id", user.id)
+      .maybeSingle();
+    if (supplierError || !supplier) return res.status(404).json({ error: "Supplier not found" });
+
+    const now = new Date().toISOString();
+    const { data: sub } = await supabaseAdmin
+      .from("supplier_subscriptions")
+      .select("id, status, current_period_end")
+      .eq("supplier_id", supplier.id)
+      .eq("status", "active")
+      .gte("current_period_end", now)
+      .order("current_period_end", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!sub) {
+      return res.status(403).json({
+        error: "Active subscription required",
+        code: "SUBSCRIPTION_REQUIRED",
+        message: "Subscribe to list on the platform and receive orders.",
+      });
+    }
+    req.supplierId = supplier.id;
+    next();
+  } catch (error: any) {
+    console.error("requireSupplierSubscription error:", error);
     res.status(500).json({ error: error.message });
   }
 }
@@ -223,7 +263,7 @@ router.get("/depots", async (req, res) => {
 });
 
 // Get pricing for a specific depot
-router.get("/depots/:depotId/pricing", checkSupplierCompliance, async (req, res) => {
+router.get("/depots/:depotId/pricing", requireSupplierSubscription, checkSupplierCompliance, async (req, res) => {
   const user = (req as any).user;
   const depotId = req.params.depotId;
 
@@ -304,7 +344,7 @@ router.get("/depots/:depotId/pricing", checkSupplierCompliance, async (req, res)
 });
 
 // Create a new pricing tier for a fuel type
-router.post("/depots/:depotId/pricing/:fuelTypeId/tiers", checkSupplierCompliance, async (req, res) => {
+router.post("/depots/:depotId/pricing/:fuelTypeId/tiers", requireSupplierSubscription, checkSupplierCompliance, async (req, res) => {
   const user = (req as any).user;
   const depotId = req.params.depotId;
   const fuelTypeId = req.params.fuelTypeId;
@@ -395,7 +435,7 @@ router.post("/depots/:depotId/pricing/:fuelTypeId/tiers", checkSupplierComplianc
 
 // Update stock for a fuel type (creates default tier if none exists)
 // This route must come BEFORE the tier update route to avoid route conflicts
-router.put("/depots/:depotId/pricing/:fuelTypeId/stock", async (req, res) => {
+router.put("/depots/:depotId/pricing/:fuelTypeId/stock", requireSupplierSubscription, async (req, res) => {
   const user = (req as any).user;
   const depotId = req.params.depotId;
   const fuelTypeId = req.params.fuelTypeId;
@@ -489,7 +529,7 @@ router.put("/depots/:depotId/pricing/:fuelTypeId/stock", async (req, res) => {
 });
 
 // Update a pricing tier
-router.put("/depots/:depotId/pricing/tiers/:tierId", async (req, res) => {
+router.put("/depots/:depotId/pricing/tiers/:tierId", requireSupplierSubscription, async (req, res) => {
   const user = (req as any).user;
   const depotId = req.params.depotId;
   const tierId = req.params.tierId;
@@ -617,7 +657,7 @@ router.put("/depots/:depotId/pricing/tiers/:tierId", async (req, res) => {
 });
 
 // Delete a pricing tier
-router.delete("/depots/:depotId/pricing/tiers/:tierId", async (req, res) => {
+router.delete("/depots/:depotId/pricing/tiers/:tierId", requireSupplierSubscription, async (req, res) => {
   const user = (req as any).user;
   const depotId = req.params.depotId;
   const tierId = req.params.tierId;
@@ -675,7 +715,7 @@ router.delete("/depots/:depotId/pricing/tiers/:tierId", async (req, res) => {
 });
 
 // Get pricing history for a depot
-router.get("/depots/:depotId/pricing/history", async (req, res) => {
+router.get("/depots/:depotId/pricing/history", requireSupplierSubscription, async (req, res) => {
   const user = (req as any).user;
   const depotId = req.params.depotId;
 
@@ -740,7 +780,7 @@ router.get("/depots/:depotId/pricing/history", async (req, res) => {
 });
 
 // Create new depot
-router.post("/depots", checkSupplierCompliance, async (req, res) => {
+router.post("/depots", requireSupplierSubscription, checkSupplierCompliance, async (req, res) => {
   const user = (req as any).user;
 
   try {
@@ -899,7 +939,7 @@ router.post("/depots", checkSupplierCompliance, async (req, res) => {
 });
 
 // Update depot
-router.patch("/depots/:depotId", async (req, res) => {
+router.patch("/depots/:depotId", requireSupplierSubscription, async (req, res) => {
   const user = (req as any).user;
   const depotId = req.params.depotId;
 
@@ -1012,7 +1052,7 @@ router.patch("/depots/:depotId", async (req, res) => {
 });
 
 // Delete depot
-router.delete("/depots/:depotId", async (req, res) => {
+router.delete("/depots/:depotId", requireSupplierSubscription, async (req, res) => {
   const user = (req as any).user;
   const depotId = req.params.depotId;
 
@@ -1223,11 +1263,33 @@ router.get("/profile", async (req, res) => {
       });
     }
 
+    // Account manager (Enterprise only): include when subscription_tier is enterprise and assigned
+    let accountManager: { name: string; email: string } | null = null;
+    if ((supplier as any).subscription_tier === "enterprise" && (supplier as any).account_manager_id) {
+      const { data: admin } = await supabaseAdmin
+        .from("admins")
+        .select("user_id")
+        .eq("id", (supplier as any).account_manager_id)
+        .maybeSingle();
+      if (admin?.user_id) {
+        const { data: amProfile } = await supabaseAdmin
+          .from("profiles")
+          .select("full_name")
+          .eq("id", admin.user_id)
+          .maybeSingle();
+        accountManager = {
+          name: (amProfile as any)?.full_name || "Account Manager",
+          email: "", // email may be on auth.users; omit unless we have it from profile
+        };
+      }
+    }
+
     // Combine profile, supplier, and email data
     res.json({
       ...profile,
       ...supplier,
-      email: user.email || null
+      email: user.email || null,
+      ...(accountManager && { accountManager }),
     });
   } catch (error: any) {
     // Handle PGRST116 error (no rows found) gracefully
@@ -1256,6 +1318,127 @@ router.put("/profile", async (req, res) => {
 
     if (!hasUpdates) {
       return res.status(400).json({ error: "At least one field must be provided for update" });
+    }
+
+    // Check if supplier was rejected - if so, reset to pending for resubmission
+    const { data: supplier } = await supabaseAdmin
+      .from("suppliers")
+      .select("id, kyb_status, status, compliance_status")
+      .eq("owner_id", user.id)
+      .maybeSingle();
+
+    if (supplier && (supplier.kyb_status === "rejected" || supplier.status === "rejected" || supplier.compliance_status === "rejected")) {
+      try {
+        console.log(`[KYB Resubmission] Supplier ${supplier.id} was rejected, resetting to pending status for resubmission`);
+        
+        // Update supplier status
+        const { error: supplierUpdateError } = await supabaseAdmin
+          .from("suppliers")
+          .update({
+            kyb_status: "pending",
+            status: "pending_compliance",
+            compliance_status: "pending",
+            compliance_rejection_reason: null,
+            updated_at: new Date().toISOString()
+          })
+          .eq("id", supplier.id);
+        
+        if (supplierUpdateError) {
+          console.error(`[KYB Resubmission] Error updating supplier ${supplier.id} status:`, supplierUpdateError);
+          throw supplierUpdateError;
+        }
+        
+        // Also update profile approval status
+        const { error: profileUpdateError } = await supabaseAdmin
+          .from("profiles")
+          .update({ 
+            approval_status: "pending",
+            updated_at: new Date().toISOString()
+          })
+          .eq("id", user.id);
+        
+        if (profileUpdateError) {
+          console.error(`[KYB Resubmission] Error updating profile for supplier ${supplier.id}:`, profileUpdateError);
+          // Continue with notifications even if profile update fails
+        }
+
+        // Notify admins and supplier
+        try {
+          const { notificationService } = await import("./notification-service");
+          const { websocketService } = await import("./websocket");
+          
+          // Get admin user IDs
+          const { data: adminProfiles, error: adminProfilesError } = await supabaseAdmin
+            .from("profiles")
+            .select("id")
+            .eq("role", "admin");
+          
+          if (adminProfilesError) {
+            console.error("[KYB Resubmission] Error fetching admin profiles:", adminProfilesError);
+          } else if (adminProfiles && adminProfiles.length > 0) {
+            const adminUserIds = adminProfiles.map(p => p.id);
+            
+            // Get supplier name
+            const { data: supplierProfile, error: profileError } = await supabaseAdmin
+              .from("profiles")
+              .select("full_name")
+              .eq("id", user.id)
+              .maybeSingle();
+            
+            if (profileError) {
+              console.error("[KYB Resubmission] Error fetching supplier profile:", profileError);
+            }
+            
+            const userName = supplierProfile?.full_name || "Supplier";
+            
+            // Notify admins that supplier has resubmitted KYB
+            try {
+              await notificationService.notifyAdminKycSubmitted(
+                adminUserIds,
+                user.id,
+                userName,
+                "supplier"
+              );
+            } catch (notifyError) {
+              console.error("[KYB Resubmission] Error notifying admins:", notifyError);
+            }
+            
+            // Broadcast resubmission to admins via WebSocket
+            try {
+              websocketService.broadcastToRole("admin", {
+                type: "kyc_submitted",
+                payload: {
+                  supplierId: supplier.id,
+                  userId: user.id,
+                  type: "supplier",
+                  isResubmission: true
+                },
+              });
+            } catch (wsError) {
+              console.error("[KYB Resubmission] Error broadcasting WebSocket message:", wsError);
+            }
+          }
+          
+          // Notify supplier that resubmission was received
+          try {
+            await notificationService.createNotification({
+              user_id: user.id,
+              type: "account_verification_required",
+              title: "KYB Resubmission Received",
+              message: "Your KYB resubmission has been received and is under review. You will be notified once it's been reviewed.",
+              metadata: { supplierId: supplier.id, type: "kyb_resubmission" }
+            });
+          } catch (supplierNotifError) {
+            console.error("[KYB Resubmission] Error notifying supplier:", supplierNotifError);
+          }
+        } catch (notifError) {
+          console.error("[KYB Resubmission] Error in notification flow:", notifError);
+          // Don't fail the update if notification fails
+        }
+      } catch (resubmissionError) {
+        console.error(`[KYB Resubmission] Error resetting supplier ${supplier.id} status:`, resubmissionError);
+        // Continue with the main update - don't fail the entire request
+      }
     }
 
     // Update profile table - only update fields that are provided
@@ -1312,11 +1495,600 @@ router.put("/profile", async (req, res) => {
   }
 });
 
+// ============== SUPPLIER SUBSCRIPTION ==============
+
+// GET /api/supplier/subscription – current subscription for authenticated supplier
+router.get("/subscription", async (req, res) => {
+  const user = (req as any).user;
+  try {
+    if (!user?.id) return res.status(401).json({ error: "User not authenticated" });
+    const { data: supplier, error: supplierError } = await supabaseAdmin
+      .from("suppliers")
+      .select("id, subscription_tier")
+      .eq("owner_id", user.id)
+      .maybeSingle();
+    if (supplierError || !supplier) return res.status(404).json({ error: "Supplier not found" });
+
+    const { data: sub, error: subError } = await supabaseAdmin
+      .from("supplier_subscriptions")
+      .select("id, plan_code, status, amount_cents, currency, current_period_start, current_period_end, next_billing_at")
+      .eq("supplier_id", supplier.id)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (subError) return res.status(500).json({ error: subError.message });
+    const now = new Date();
+    const isActive = sub?.status === "active" && sub?.current_period_end && new Date(sub.current_period_end) >= now;
+    return res.json({
+      subscription: sub ? { ...sub, isActive } : null,
+      subscriptionTier: supplier.subscription_tier,
+    });
+  } catch (e: any) {
+    console.error("GET /subscription error:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/supplier/subscription/plans – list plans (Standard R500, Enterprise custom)
+router.get("/subscription/plans", async (_req, res) => {
+  try {
+    const plans = SUPPLIER_PLAN_CODES.map((code) => SUPPLIER_SUBSCRIPTION_PLANS[code]);
+    return res.json({ plans, ozowConfigured: isOzowConfigured() });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+const createSupplierPaymentSchema = z.object({ planCode: z.enum(["standard"]) });
+
+// POST /api/supplier/subscription/create-payment – Standard only; create pending payment, return OZOW redirect URL
+router.post("/subscription/create-payment", async (req, res) => {
+  const user = (req as any).user;
+  try {
+    const parsed = createSupplierPaymentSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Invalid planCode", details: parsed.error.flatten() });
+    const { planCode } = parsed.data as { planCode: "standard" };
+    const plan = getSupplierPlan(planCode);
+    if (!plan || plan.isCustomPricing) return res.status(400).json({ error: "Only Standard plan can be paid via OZOW" });
+    if (!isOzowConfigured()) return res.status(503).json({ error: "Payment gateway not configured", code: "OZOW_NOT_CONFIGURED" });
+
+    const { data: supplier, error: supplierErr } = await supabaseAdmin
+      .from("suppliers")
+      .select("id")
+      .eq("owner_id", user.id)
+      .maybeSingle();
+    if (supplierErr || !supplier) return res.status(404).json({ error: "Supplier not found" });
+
+    const baseUrl = process.env.PUBLIC_APP_URL || (req.protocol + "://" + req.get("host") || "http://localhost:5000");
+    const successUrl = `${baseUrl}/supplier/subscription?success=true`;
+    const cancelUrl = `${baseUrl}/supplier/subscription?cancelled=true`;
+    const notificationUrl = `${baseUrl}/api/webhooks/ozow-supplier-subscription`;
+
+    const { data: existingSub } = await supabaseAdmin
+      .from("supplier_subscriptions")
+      .select("id")
+      .eq("supplier_id", supplier.id)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    let subscriptionId: string;
+    if (existingSub) {
+      await supabaseAdmin
+        .from("supplier_subscriptions")
+        .update({
+          plan_code: planCode,
+          status: "pending",
+          amount_cents: plan.priceCents!,
+          currency: "ZAR",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", existingSub.id);
+      subscriptionId = existingSub.id;
+    } else {
+      const { data: newSub, error: insertErr } = await supabaseAdmin
+        .from("supplier_subscriptions")
+        .insert({
+          supplier_id: supplier.id,
+          plan_code: planCode,
+          status: "pending",
+          amount_cents: plan.priceCents!,
+          currency: "ZAR",
+        })
+        .select("id")
+        .single();
+      if (insertErr || !newSub) return res.status(500).json({ error: "Failed to create subscription", details: insertErr?.message });
+      subscriptionId = newSub.id;
+    }
+
+    const { data: paymentRow, error: payErr } = await supabaseAdmin
+      .from("supplier_subscription_payments")
+      .insert({
+        supplier_subscription_id: subscriptionId,
+        amount_cents: plan.priceCents!,
+        currency: "ZAR",
+        status: "pending",
+      })
+      .select("id")
+      .single();
+    if (payErr || !paymentRow) return res.status(500).json({ error: "Failed to create payment record", details: payErr?.message });
+
+    const transactionReference = `supplier_sub_${paymentRow.id}`;
+    const redirectUrl = buildPaymentRedirectUrl({
+      amountRands: plan.priceZAR!,
+      transactionReference,
+      successUrl,
+      cancelUrl,
+      notificationUrl,
+      customerEmail: user.email ?? undefined,
+      customerName: (user.user_metadata?.full_name as string) || (req.body?.customerName as string) || undefined,
+    });
+
+    return res.json({ redirectUrl, paymentId: paymentRow.id, subscriptionId });
+  } catch (e: any) {
+    console.error("Error creating supplier subscription payment:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/supplier/subscription/cancel – cancel at period end
+router.post("/subscription/cancel", async (req, res) => {
+  const user = (req as any).user;
+  try {
+    if (!user?.id) return res.status(401).json({ error: "User not authenticated" });
+    const { data: supplier, error: supplierErr } = await supabaseAdmin
+      .from("suppliers")
+      .select("id")
+      .eq("owner_id", user.id)
+      .maybeSingle();
+    if (supplierErr || !supplier) return res.status(404).json({ error: "Supplier not found" });
+
+    const { error } = await supabaseAdmin
+      .from("supplier_subscriptions")
+      .update({ status: "cancelled", updated_at: new Date().toISOString() })
+      .eq("supplier_id", supplier.id)
+      .eq("status", "active");
+    if (error) return res.status(500).json({ error: error.message });
+    await supabaseAdmin
+      .from("suppliers")
+      .update({ subscription_tier: null, updated_at: new Date().toISOString() })
+      .eq("id", supplier.id);
+    return res.json({ ok: true, message: "Subscription cancelled at period end." });
+  } catch (e: any) {
+    console.error("POST /subscription/cancel error:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============== ANALYTICS ==============
+
+// GET /api/supplier/analytics – basic (Standard) or advanced (Enterprise via ?detail=advanced)
+router.get("/analytics", requireSupplierSubscription, async (req, res) => {
+  const user = (req as any).user;
+  const detail = (req.query.detail as string) || "";
+  const isAdvanced = detail === "advanced";
+
+  try {
+    const { data: supplier, error: supplierErr } = await supabaseAdmin
+      .from("suppliers")
+      .select("id, subscription_tier")
+      .eq("owner_id", user.id)
+      .maybeSingle();
+    if (supplierErr || !supplier) return res.status(404).json({ error: "Supplier not found" });
+
+    const tier = (supplier as any).subscription_tier;
+    if (isAdvanced && tier !== "enterprise") {
+      return res.status(403).json({ error: "Advanced analytics and API access are available on Enterprise plan.", code: "SUBSCRIPTION_TIER_REQUIRED" });
+    }
+
+    const { data: depots } = await supabaseAdmin
+      .from("depots")
+      .select("id, name")
+      .eq("supplier_id", supplier.id);
+    const depotIds = (depots || []).map((d: any) => d.id);
+    if (depotIds.length === 0) {
+      const base = { ordersToday: 0, ordersThisWeek: 0, byStatus: {}, totalLitres: 0, totalValueCents: 0 };
+      return res.json(isAdvanced ? { ...base, byDepot: [], byFuelType: [], byPeriod: [] } : base);
+    }
+
+    const { data: orders, error: ordersErr } = await supabaseAdmin
+      .from("driver_depot_orders")
+      .select("id, status, depot_id, fuel_type_id, litres, actual_litres_delivered, total_price_cents, created_at")
+      .in("depot_id", depotIds);
+
+    if (ordersErr) return res.status(500).json({ error: ordersErr.message });
+    const orderList = orders || [];
+
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
+    const startOfWeekIso = startOfWeek.toISOString();
+
+    const ordersToday = orderList.filter((o: any) => o.created_at >= startOfToday).length;
+    const ordersThisWeek = orderList.filter((o: any) => o.created_at >= startOfWeekIso).length;
+    const byStatus: Record<string, number> = {};
+    orderList.forEach((o: any) => {
+      const s = o.status || "unknown";
+      byStatus[s] = (byStatus[s] || 0) + 1;
+    });
+    const totalLitres = orderList.reduce((sum: number, o: any) => sum + (Number(o.actual_litres_delivered ?? o.litres ?? 0) || 0), 0);
+    const totalValueCents = orderList.reduce((sum: number, o: any) => sum + (Number(o.total_price_cents) || 0), 0);
+
+    const base = {
+      ordersToday,
+      ordersThisWeek,
+      byStatus,
+      totalLitres: Math.round(totalLitres * 100) / 100,
+      totalValueCents,
+    };
+
+    if (!isAdvanced) return res.json(base);
+
+    const depotMap = new Map((depots || []).map((d: any) => [d.id, d]));
+    const byDepot = depotIds.map((depotId: string) => {
+      const depotOrders = orderList.filter((o: any) => o.depot_id === depotId);
+      const litres = depotOrders.reduce((s: number, o: any) => s + (Number(o.actual_litres_delivered ?? o.litres ?? 0) || 0), 0);
+      const valueCents = depotOrders.reduce((s: number, o: any) => s + (Number(o.total_price_cents) || 0), 0);
+      return {
+        depotId,
+        depotName: depotMap.get(depotId)?.name || "",
+        orderCount: depotOrders.length,
+        totalLitres: Math.round(litres * 100) / 100,
+        totalValueCents: valueCents,
+      };
+    });
+
+    const fuelTypeIds = [...new Set(orderList.map((o: any) => o.fuel_type_id).filter(Boolean))];
+    const { data: fuelTypes } = fuelTypeIds.length
+      ? await supabaseAdmin.from("fuel_types").select("id, label, code").in("id", fuelTypeIds)
+      : { data: [] };
+    const fuelMap = new Map((fuelTypes || []).map((f: any) => [f.id, f]));
+    const byFuelType = fuelTypeIds.map((ftId: string) => {
+      const ftOrders = orderList.filter((o: any) => o.fuel_type_id === ftId);
+      const litres = ftOrders.reduce((s: number, o: any) => s + (Number(o.actual_litres_delivered ?? o.litres ?? 0) || 0), 0);
+      const valueCents = ftOrders.reduce((s: number, o: any) => s + (Number(o.total_price_cents) || 0), 0);
+      return {
+        fuelTypeId: ftId,
+        fuelTypeLabel: fuelMap.get(ftId)?.label || ftId,
+        orderCount: ftOrders.length,
+        totalLitres: Math.round(litres * 100) / 100,
+        totalValueCents: valueCents,
+      };
+    });
+
+    const byPeriod = [
+      { period: "today", orders: ordersToday, start: startOfToday, end: now.toISOString() },
+      { period: "this_week", orders: ordersThisWeek, start: startOfWeekIso, end: now.toISOString() },
+      { period: "all", orders: orderList.length, totalLitres: base.totalLitres, totalValueCents: base.totalValueCents },
+    ];
+
+    return res.json({ ...base, byDepot, byFuelType, byPeriod });
+  } catch (e: any) {
+    console.error("GET /analytics error:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/supplier/analytics/export – Enterprise only (JSON or CSV via ?format=csv)
+router.get("/analytics/export", requireSupplierSubscription, async (req, res) => {
+  const user = (req as any).user;
+  const format = (req.query.format as string) || "json";
+
+  try {
+    const { data: supplier, error: supplierErr } = await supabaseAdmin
+      .from("suppliers")
+      .select("id, subscription_tier")
+      .eq("owner_id", user.id)
+      .maybeSingle();
+    if (supplierErr || !supplier) return res.status(404).json({ error: "Supplier not found" });
+    if ((supplier as any).subscription_tier !== "enterprise") {
+      return res.status(403).json({ error: "Export and API access are available on Enterprise plan.", code: "SUBSCRIPTION_TIER_REQUIRED" });
+    }
+
+    const { data: depots } = await supabaseAdmin.from("depots").select("id, name").eq("supplier_id", supplier.id);
+    const depotIds = (depots || []).map((d: any) => d.id);
+    if (depotIds.length === 0) {
+      if (format === "csv") {
+        res.setHeader("Content-Type", "text/csv");
+        return res.send("depotId,depotName,orderCount,totalLitres,totalValueCents\n");
+      }
+      return res.json({ byDepot: [], byFuelType: [], byPeriod: [] });
+    }
+
+    const { data: orders } = await supabaseAdmin
+      .from("driver_depot_orders")
+      .select("id, status, depot_id, fuel_type_id, litres, actual_litres_delivered, total_price_cents, created_at")
+      .in("depot_id", depotIds);
+
+    const orderList = orders || [];
+    const depotMap = new Map((depots || []).map((d: any) => [d.id, d]));
+    const byDepot = depotIds.map((depotId: string) => {
+      const depotOrders = orderList.filter((o: any) => o.depot_id === depotId);
+      const litres = depotOrders.reduce((s: number, o: any) => s + (Number(o.actual_litres_delivered ?? o.litres ?? 0) || 0), 0);
+      const valueCents = depotOrders.reduce((s: number, o: any) => s + (Number(o.total_price_cents) || 0), 0);
+      return { depotId, depotName: depotMap.get(depotId)?.name || "", orderCount: depotOrders.length, totalLitres: Math.round(litres * 100) / 100, totalValueCents: valueCents };
+    });
+
+    const fuelTypeIds = [...new Set(orderList.map((o: any) => o.fuel_type_id).filter(Boolean))];
+    const { data: fuelTypes } = fuelTypeIds.length ? await supabaseAdmin.from("fuel_types").select("id, label").in("id", fuelTypeIds) : { data: [] };
+    const fuelMap = new Map((fuelTypes || []).map((f: any) => [f.id, f]));
+    const byFuelType = fuelTypeIds.map((ftId: string) => {
+      const ftOrders = orderList.filter((o: any) => o.fuel_type_id === ftId);
+      const litres = ftOrders.reduce((s: number, o: any) => s + (Number(o.actual_litres_delivered ?? o.litres ?? 0) || 0), 0);
+      const valueCents = ftOrders.reduce((s: number, o: any) => s + (Number(o.total_price_cents) || 0), 0);
+      return { fuelTypeId: ftId, fuelTypeLabel: fuelMap.get(ftId)?.label || ftId, orderCount: ftOrders.length, totalLitres: Math.round(litres * 100) / 100, totalValueCents: valueCents };
+    });
+
+    if (format === "csv") {
+      const rows: string[] = ["depotId,depotName,orderCount,totalLitres,totalValueCents"];
+      byDepot.forEach((r: any) => rows.push([r.depotId, r.depotName, r.orderCount, r.totalLitres, r.totalValueCents].join(",")));
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", "attachment; filename=analytics-by-depot.csv");
+      return res.send(rows.join("\n"));
+    }
+    return res.json({ byDepot, byFuelType, exportedAt: new Date().toISOString() });
+  } catch (e: any) {
+    console.error("GET /analytics/export error:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============== INVOICES ==============
+
+// GET /api/supplier/invoices – list invoices (completed driver_depot_orders)
+router.get("/invoices", requireSupplierSubscription, async (req, res) => {
+  const user = (req as any).user;
+  try {
+    const { data: supplier, error: supplierErr } = await supabaseAdmin
+      .from("suppliers")
+      .select("id")
+      .eq("owner_id", user.id)
+      .maybeSingle();
+    if (supplierErr || !supplier) return res.status(404).json({ error: "Supplier not found" });
+
+    const { data: depots } = await supabaseAdmin.from("depots").select("id, name").eq("supplier_id", supplier.id);
+    const depotIds = (depots || []).map((d: any) => d.id);
+    if (depotIds.length === 0) return res.json({ invoices: [] });
+
+    const { data: orders, error } = await supabaseAdmin
+      .from("driver_depot_orders")
+      .select(`
+        id,
+        status,
+        depot_id,
+        fuel_type_id,
+        litres,
+        actual_litres_delivered,
+        total_price_cents,
+        created_at,
+        completed_at,
+        depots ( id, name ),
+        fuel_types ( id, label, code )
+      `)
+      .in("depot_id", depotIds)
+      .eq("status", "completed")
+      .order("completed_at", { ascending: false })
+      .limit(200);
+
+    if (error) return res.status(500).json({ error: error.message });
+    const list = (orders || []).map((o: any) => ({
+      id: o.id,
+      depotName: o.depots?.name,
+      fuelType: o.fuel_types?.label,
+      litres: Number(o.actual_litres_delivered ?? o.litres ?? 0),
+      totalCents: o.total_price_cents,
+      completedAt: o.completed_at,
+      createdAt: o.created_at,
+    }));
+    return res.json({ invoices: list });
+  } catch (e: any) {
+    console.error("GET /invoices error:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/supplier/invoices/:id – single invoice data (for PDF or view)
+router.get("/invoices/:id", requireSupplierSubscription, async (req, res) => {
+  const user = (req as any).user;
+  const { id } = req.params;
+  try {
+    const { data: supplier } = await supabaseAdmin.from("suppliers").select("id").eq("owner_id", user.id).maybeSingle();
+    if (!supplier) return res.status(404).json({ error: "Supplier not found" });
+
+    const { data: order, error } = await supabaseAdmin
+      .from("driver_depot_orders")
+      .select(`
+        id, status, depot_id, fuel_type_id, litres, actual_litres_delivered, total_price_cents, created_at, completed_at,
+        depots ( id, name, supplier_id, address_street, address_city, address_province, address_postal_code ),
+        fuel_types ( id, label, code ),
+        drivers ( id, user_id )
+      `)
+      .eq("id", id)
+      .single();
+
+    if (error || !order) return res.status(404).json({ error: "Invoice not found" });
+    const depotSupplierId = (order as any).depots?.supplier_id;
+    if (!depotSupplierId || depotSupplierId !== supplier.id) return res.status(404).json({ error: "Invoice not found" });
+
+    const driverUserIds = [(order as any).drivers?.user_id].filter(Boolean);
+    const { data: profiles } = driverUserIds.length
+      ? await supabaseAdmin.from("profiles").select("id, full_name, phone").in("id", driverUserIds)
+      : { data: [] };
+    const driverName = profiles?.[0]?.full_name || "Driver";
+
+    const invoice = {
+      id: order.id,
+      depot: (order as any).depots,
+      fuelType: (order as any).fuel_types,
+      litres: Number((order as any).actual_litres_delivered ?? (order as any).litres ?? 0),
+      totalCents: (order as any).total_price_cents,
+      completedAt: (order as any).completed_at,
+      createdAt: (order as any).created_at,
+      driverName,
+    };
+    return res.json(invoice);
+  } catch (e: any) {
+    console.error("GET /invoices/:id error:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/supplier/invoices/:id/pdf – HTML invoice (print/save as PDF)
+router.get("/invoices/:id/pdf", requireSupplierSubscription, async (req, res) => {
+  const user = (req as any).user;
+  const { id } = req.params;
+  try {
+    const { data: supplier } = await supabaseAdmin.from("suppliers").select("id, name").eq("owner_id", user.id).maybeSingle();
+    if (!supplier) return res.status(404).json({ error: "Supplier not found" });
+
+    const { data: order } = await supabaseAdmin
+      .from("driver_depot_orders")
+      .select(`
+        id, depot_id, litres, actual_litres_delivered, total_price_cents, completed_at,
+        depots ( id, name, supplier_id ),
+        fuel_types ( id, label ),
+        drivers ( id, user_id )
+      `)
+      .eq("id", id)
+      .single();
+
+    if (!order || (order as any).depots?.supplier_id !== supplier.id) return res.status(404).send("Invoice not found");
+    if ((order as any).status !== "completed") return res.status(400).send("Order not completed");
+
+    const depotName = (order as any).depots?.name || "Depot";
+    const fuelLabel = (order as any).fuel_types?.label || "";
+    const litres = Number((order as any).actual_litres_delivered ?? (order as any).litres ?? 0);
+    const totalCents = (order as any).total_price_cents || 0;
+    const totalZAR = (totalCents / 100).toFixed(2);
+    const completedAt = (order as any).completed_at ? new Date((order as any).completed_at).toLocaleDateString() : "";
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Invoice ${order.id}</title><style>
+      body{font-family:system-ui,sans-serif;max-width:600px;margin:2rem auto;padding:1rem;}
+      h1{font-size:1.25rem;} table{width:100%;border-collapse:collapse;} th,td{text-align:left;padding:0.5rem;border-bottom:1px solid #eee;}
+    </style></head><body>
+      <h1>Invoice</h1>
+      <p><strong>Supplier:</strong> ${(supplier as any).name || "Supplier"}</p>
+      <p><strong>Depot:</strong> ${depotName}</p>
+      <p><strong>Invoice #:</strong> ${order.id}</p>
+      <p><strong>Date:</strong> ${completedAt}</p>
+      <table>
+        <tr><th>Description</th><th>Quantity</th><th>Amount (ZAR)</th></tr>
+        <tr><td>Fuel - ${fuelLabel}</td><td>${litres} L</td><td>${totalZAR}</td></tr>
+      </table>
+      <p><strong>Total:</strong> R ${totalZAR}</p>
+    </body></html>`;
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(html);
+  } catch (e: any) {
+    console.error("GET /invoices/:id/pdf error:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/supplier/invoice-templates – Enterprise only: list custom templates
+router.get("/invoice-templates", requireSupplierSubscription, async (req, res) => {
+  const user = (req as any).user;
+  try {
+    const { data: supplier, error: supplierErr } = await supabaseAdmin
+      .from("suppliers")
+      .select("id, subscription_tier")
+      .eq("owner_id", user.id)
+      .maybeSingle();
+    if (supplierErr || !supplier) return res.status(404).json({ error: "Supplier not found" });
+    if ((supplier as any).subscription_tier !== "enterprise") {
+      return res.status(403).json({ error: "Custom invoice templates are available on Enterprise plan.", code: "SUBSCRIPTION_TIER_REQUIRED" });
+    }
+    const { data: list, error } = await supabaseAdmin
+      .from("supplier_invoice_templates")
+      .select("id, name, template_type, content, updated_at")
+      .eq("supplier_id", supplier.id)
+      .order("updated_at", { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ templates: list || [] });
+  } catch (e: any) {
+    console.error("GET /invoice-templates error:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/supplier/invoice-templates – Enterprise only: create or update custom template
+router.put("/invoice-templates", requireSupplierSubscription, async (req, res) => {
+  const user = (req as any).user;
+  const { id, name, templateType, content } = req.body || {};
+  try {
+    const { data: supplier, error: supplierErr } = await supabaseAdmin
+      .from("suppliers")
+      .select("id, subscription_tier")
+      .eq("owner_id", user.id)
+      .maybeSingle();
+    if (supplierErr || !supplier) return res.status(404).json({ error: "Supplier not found" });
+    if ((supplier as any).subscription_tier !== "enterprise") {
+      return res.status(403).json({ error: "Custom invoice templates are available on Enterprise plan.", code: "SUBSCRIPTION_TIER_REQUIRED" });
+    }
+    if (!name || !templateType || content === undefined) {
+      return res.status(400).json({ error: "name, templateType, and content are required" });
+    }
+    if (id) {
+      const { data: updated, error } = await supabaseAdmin
+        .from("supplier_invoice_templates")
+        .update({ name, template_type: templateType, content, updated_at: new Date().toISOString() })
+        .eq("id", id)
+        .eq("supplier_id", supplier.id)
+        .select("id")
+        .single();
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json(updated);
+    }
+    const { data: created, error } = await supabaseAdmin
+      .from("supplier_invoice_templates")
+      .insert({ supplier_id: supplier.id, name, template_type: templateType, content })
+      .select("id")
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json(created);
+  } catch (e: any) {
+    console.error("PUT /invoice-templates error:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============== SETTLEMENTS ==============
+
+// GET /api/supplier/settlements – list settlements (period, amount, status)
+router.get("/settlements", requireSupplierSubscription, async (req, res) => {
+  const user = (req as any).user;
+  try {
+    const { data: supplier, error: supplierErr } = await supabaseAdmin
+      .from("suppliers")
+      .select("id")
+      .eq("owner_id", user.id)
+      .maybeSingle();
+    if (supplierErr || !supplier) return res.status(404).json({ error: "Supplier not found" });
+
+    const { data: list, error } = await supabaseAdmin
+      .from("supplier_settlements")
+      .select("id, period_start, period_end, total_cents, status, settlement_type, paid_at, reference, created_at")
+      .eq("supplier_id", supplier.id)
+      .order("period_end", { ascending: false })
+      .limit(100);
+
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ settlements: list || [] });
+  } catch (e: any) {
+    console.error("GET /settlements error:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ============== DRIVER DEPOT ORDERS ==============
 
-// Get all driver depot orders for supplier's depots
-router.get("/driver-depot-orders", async (req, res) => {
+// Get all driver depot orders for supplier's depots (optional ?depot_id= for multi-branch/Enterprise)
+router.get("/driver-depot-orders", requireSupplierSubscription, async (req, res) => {
   const user = (req as any).user;
+  const depotId = (req.query.depot_id as string) || undefined;
 
   try {
     if (!user || !user.id) {
@@ -1328,7 +2100,7 @@ router.get("/driver-depot-orders", async (req, res) => {
     // Use limit(1) to handle duplicate records gracefully
     const { data: suppliers, error: supplierError } = await supabaseAdmin
       .from("suppliers")
-      .select("id")
+      .select("id, subscription_tier")
       .eq("owner_id", user.id)
       .limit(1);
 
@@ -1347,19 +2119,25 @@ router.get("/driver-depot-orders", async (req, res) => {
       return res.status(404).json({ error: "Supplier profile not found" });
     }
 
-    // Get all depots for this supplier
+    // Get all depots for this supplier (id, name for branch selector and summary)
     const { data: depots, error: depotsError } = await supabaseAdmin
       .from("depots")
-      .select("id")
-      .eq("supplier_id", supplier.id);
+      .select("id, name")
+      .eq("supplier_id", supplier.id)
+      .order("name");
 
     if (depotsError) throw depotsError;
 
     if (!depots || depots.length === 0) {
-      return res.json([]);
+      return res.json({ orders: [], depots: [], summaryByDepot: [] });
     }
 
     const depotIds = depots.map(d => d.id);
+    if (depotId && !depotIds.includes(depotId)) {
+      return res.status(400).json({ error: "Invalid depot_id for this supplier" });
+    }
+    // Optional filter by branch (Enterprise multi-branch)
+    const filterDepotIds = depotId ? [depotId] : depotIds;
 
     // Get all driver depot orders for these depots (without nested suppliers to avoid relationship issues)
     const { data: orders, error: ordersError } = await supabaseAdmin
@@ -1385,7 +2163,7 @@ router.get("/driver-depot-orders", async (req, res) => {
           code
         )
       `)
-      .in("depot_id", depotIds)
+      .in("depot_id", filterDepotIds)
       .order("created_at", { ascending: false });
 
     if (ordersError) {
@@ -1393,10 +2171,20 @@ router.get("/driver-depot-orders", async (req, res) => {
       // If the table doesn't exist or has issues, return empty array
       if (ordersError.message?.includes("relation") || ordersError.message?.includes("does not exist")) {
         console.warn("driver_depot_orders table may not exist, returning empty array");
-        return res.json([]);
+        return res.json({ orders: [], depots: depots || [], summaryByDepot: [] });
       }
       throw ordersError;
     }
+
+    // Per-depot summary (order count, total litres) for multi-branch dashboard
+    const summaryByDepot = (depots || []).map((d: { id: string; name: string }) => {
+      const depotOrders = (orders || []).filter((o: any) => o.depot_id === d.id);
+      const totalLitres = depotOrders.reduce(
+        (sum: number, o: any) => sum + (Number(o.actual_litres_delivered ?? o.litres ?? 0) || 0),
+        0
+      );
+      return { depotId: d.id, depotName: d.name, orderCount: depotOrders.length, totalLitres };
+    });
 
     // Enrich with driver profile data and supplier information
     if (orders && orders.length > 0) {
@@ -1444,7 +2232,12 @@ router.get("/driver-depot-orders", async (req, res) => {
       }
     }
 
-    res.json(orders || []);
+    res.json({
+      orders: orders || [],
+      depots: depots || [],
+      summaryByDepot,
+      subscriptionTier: (supplier as any).subscription_tier,
+    });
   } catch (error: any) {
     console.error("Error fetching driver depot orders:", error);
     console.error("Error stack:", error.stack);
@@ -1490,7 +2283,7 @@ async function verifyOrderOwnership(orderId: string, supplierId: string) {
 }
 
 // Accept driver depot order (moves from pending to pending_payment)
-router.post("/driver-depot-orders/:orderId/accept", async (req, res) => {
+router.post("/driver-depot-orders/:orderId/accept", requireSupplierSubscription, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
 
@@ -1572,7 +2365,7 @@ router.post("/driver-depot-orders/:orderId/accept", async (req, res) => {
 });
 
 // Reject driver depot order
-router.post("/driver-depot-orders/:orderId/reject", async (req, res) => {
+router.post("/driver-depot-orders/:orderId/reject", requireSupplierSubscription, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
   const { reason } = req.body;
@@ -1640,7 +2433,7 @@ router.post("/driver-depot-orders/:orderId/reject", async (req, res) => {
 });
 
 // Verify payment (for bank transfer - supplier confirms payment received)
-router.post("/driver-depot-orders/:orderId/verify-payment", async (req, res) => {
+router.post("/driver-depot-orders/:orderId/verify-payment", requireSupplierSubscription, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
 
@@ -1733,7 +2526,7 @@ router.post("/driver-depot-orders/:orderId/verify-payment", async (req, res) => 
 });
 
 // Reject payment (supplier marks payment as not received)
-router.post("/driver-depot-orders/:orderId/reject-payment", async (req, res) => {
+router.post("/driver-depot-orders/:orderId/reject-payment", requireSupplierSubscription, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
   const { reason } = req.body;
@@ -1821,7 +2614,7 @@ router.post("/driver-depot-orders/:orderId/reject-payment", async (req, res) => 
 });
 
 // Add supplier signature (before fuel release)
-router.post("/driver-depot-orders/:orderId/supplier-signature", async (req, res) => {
+router.post("/driver-depot-orders/:orderId/supplier-signature", requireSupplierSubscription, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
   const { signatureUrl } = req.body;
@@ -1911,7 +2704,7 @@ router.post("/driver-depot-orders/:orderId/supplier-signature", async (req, res)
 });
 
 // Release fuel (moves from ready_for_pickup to released)
-router.post("/driver-depot-orders/:orderId/release", async (req, res) => {
+router.post("/driver-depot-orders/:orderId/release", requireSupplierSubscription, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
 
@@ -2018,7 +2811,7 @@ router.post("/driver-depot-orders/:orderId/release", async (req, res) => {
 });
 
 // Confirm delivery (supplier enters actual litres and driver signs)
-router.post("/driver-depot-orders/:orderId/confirm-delivery", async (req, res) => {
+router.post("/driver-depot-orders/:orderId/confirm-delivery", requireSupplierSubscription, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
   const { actualLitres } = req.body;
@@ -2178,10 +2971,21 @@ router.post("/documents", async (req, res) => {
             .maybeSingle(),
           supabaseAdmin
             .from("suppliers")
-            .select("kyb_status, status")
+            .select("id, kyb_status, status, compliance_status")
             .eq("owner_id", user.id)
             .maybeSingle()
         ]);
+        
+        // Check for errors in parallel queries
+        if (adminProfilesResult.error) {
+          console.error("[supplier/documents] Error fetching admin profiles:", adminProfilesResult.error);
+        }
+        if (supplierProfileResult.error) {
+          console.error("[supplier/documents] Error fetching supplier profile:", supplierProfileResult.error);
+        }
+        if (supplierResult.error) {
+          console.error("[supplier/documents] Error fetching supplier:", supplierResult.error);
+        }
         
         const adminProfiles = adminProfilesResult.data;
         const supplierProfile = supplierProfileResult.data;
@@ -2201,8 +3005,88 @@ router.post("/documents", async (req, res) => {
             user.id
           ).catch(err => console.error("[supplier/documents] Notification error:", err));
 
-          // Check if this is a new KYC submission
-          if (supplier && (supplier.kyb_status === "pending" || supplier.status === "pending_compliance")) {
+          // Check if supplier was rejected - if so, reset to pending for resubmission
+          if (supplier && (supplier.kyb_status === "rejected" || supplier.status === "rejected" || supplier.compliance_status === "rejected")) {
+            try {
+              console.log(`[KYB Resubmission] Supplier ${supplier.id} was rejected, resetting to pending status after document upload`);
+              
+              // Update supplier status
+              const { error: supplierUpdateError } = await supabaseAdmin
+                .from("suppliers")
+                .update({
+                  kyb_status: "pending",
+                  status: "pending_compliance",
+                  compliance_status: "pending",
+                  compliance_rejection_reason: null,
+                  updated_at: new Date().toISOString()
+                })
+                .eq("id", supplier.id);
+              
+              if (supplierUpdateError) {
+                console.error(`[KYB Resubmission] Error updating supplier ${supplier.id} status:`, supplierUpdateError);
+                throw supplierUpdateError;
+              }
+              
+              // Also update profile approval status
+              const { error: profileUpdateError } = await supabaseAdmin
+                .from("profiles")
+                .update({ 
+                  approval_status: "pending",
+                  updated_at: new Date().toISOString()
+                })
+                .eq("id", user.id);
+              
+              if (profileUpdateError) {
+                console.error(`[KYB Resubmission] Error updating profile for supplier ${supplier.id}:`, profileUpdateError);
+                // Continue with notifications even if profile update fails
+              }
+              
+              // Notify admins that supplier has resubmitted KYB
+              try {
+                await notificationService.notifyAdminKycSubmitted(
+                  adminUserIds,
+                  user.id,
+                  ownerName,
+                  "supplier"
+                );
+              } catch (notifyError) {
+                console.error("[KYB Resubmission] Error notifying admins:", notifyError);
+              }
+              
+              // Broadcast resubmission to admins via WebSocket
+              try {
+                const { websocketService } = await import("./websocket");
+                websocketService.broadcastToRole("admin", {
+                  type: "kyc_submitted",
+                  payload: {
+                    supplierId: supplier.id,
+                    userId: user.id,
+                    type: "supplier",
+                    isResubmission: true
+                  },
+                });
+              } catch (wsError) {
+                console.error("[KYB Resubmission] Error broadcasting WebSocket message:", wsError);
+              }
+              
+              // Notify supplier that resubmission was received
+              try {
+                await notificationService.createNotification({
+                  user_id: user.id,
+                  type: "account_verification_required",
+                  title: "KYB Resubmission Received",
+                  message: "Your KYB resubmission has been received and is under review. You will be notified once it's been reviewed.",
+                  metadata: { supplierId: supplier.id, type: "kyb_resubmission" }
+                });
+              } catch (supplierNotifError) {
+                console.error("[KYB Resubmission] Error notifying supplier:", supplierNotifError);
+              }
+            } catch (resubmissionError) {
+              console.error(`[KYB Resubmission] Error in resubmission flow for supplier ${supplier.id}:`, resubmissionError);
+              // Don't fail the document upload if resubmission logic fails
+            }
+          } else if (supplier && (supplier.kyb_status === "pending" || supplier.status === "pending_compliance")) {
+            // Check if this is the first document (new KYC submission)
             const { data: existingDocs } = await supabaseAdmin
               .from("documents")
               .select("id")
@@ -2270,10 +3154,10 @@ router.put("/compliance", async (req, res) => {
   try {
     console.log("PUT /compliance - Request body:", JSON.stringify(req.body, null, 2));
     
-    // Get supplier ID
+    // Get supplier ID and current status
     const { data: supplier, error: supplierError } = await supabaseAdmin
       .from("suppliers")
-      .select("id")
+      .select("id, kyb_status, status, compliance_status")
       .eq("owner_id", user.id)
       .maybeSingle();
 
@@ -2283,6 +3167,36 @@ router.put("/compliance", async (req, res) => {
     }
 
     console.log("Found supplier:", supplier.id);
+
+    // Check if supplier was rejected - if so, reset to pending for resubmission
+    if (supplier.kyb_status === "rejected" || supplier.status === "rejected" || supplier.compliance_status === "rejected") {
+      try {
+        console.log(`[KYB Resubmission] Supplier ${supplier.id} was rejected, resetting to pending status for resubmission`);
+        
+        // Update supplier status to pending (will be included in the main update)
+        updateData.kyb_status = "pending";
+        updateData.status = "pending_compliance";
+        updateData.compliance_status = "pending";
+        updateData.compliance_rejection_reason = null;
+        
+        // Also update profile approval status
+        const { error: profileUpdateError } = await supabaseAdmin
+          .from("profiles")
+          .update({ 
+            approval_status: "pending",
+            updated_at: new Date().toISOString()
+          })
+          .eq("id", user.id);
+        
+        if (profileUpdateError) {
+          console.error(`[KYB Resubmission] Error updating profile for supplier ${supplier.id}:`, profileUpdateError);
+          // Continue with supplier update even if profile update fails
+        }
+      } catch (resubmissionError) {
+        console.error(`[KYB Resubmission] Error resetting supplier ${supplier.id} status:`, resubmissionError);
+        // Continue with the main update - don't fail the entire request
+      }
+    }
 
     // Extract all fields from request body
     const bodyFields = req.body;
@@ -2438,6 +3352,83 @@ router.put("/compliance", async (req, res) => {
       .eq("id", supplier.id)
       .select()
       .single();
+
+    // If supplier was rejected and we reset to pending, notify admins
+    if (supplier.kyb_status === "rejected" || supplier.status === "rejected" || supplier.compliance_status === "rejected") {
+      try {
+        const { notificationService } = await import("./notification-service");
+        const { websocketService } = await import("./websocket");
+        
+        // Get admin user IDs
+        const { data: adminProfiles, error: adminProfilesError } = await supabaseAdmin
+          .from("profiles")
+          .select("id")
+          .eq("role", "admin");
+        
+        if (adminProfilesError) {
+          console.error("[KYB Resubmission] Error fetching admin profiles:", adminProfilesError);
+        } else if (adminProfiles && adminProfiles.length > 0) {
+          const adminUserIds = adminProfiles.map(p => p.id);
+          
+          // Get supplier name
+          const { data: supplierProfile, error: profileError } = await supabaseAdmin
+            .from("profiles")
+            .select("full_name")
+            .eq("id", user.id)
+            .maybeSingle();
+          
+          if (profileError) {
+            console.error("[KYB Resubmission] Error fetching supplier profile:", profileError);
+          }
+          
+          const userName = supplierProfile?.full_name || "Supplier";
+          
+          // Notify admins that supplier has resubmitted KYB
+          try {
+            await notificationService.notifyAdminKycSubmitted(
+              adminUserIds,
+              user.id,
+              userName,
+              "supplier"
+            );
+          } catch (notifyError) {
+            console.error("[KYB Resubmission] Error notifying admins:", notifyError);
+          }
+          
+          // Broadcast resubmission to admins via WebSocket
+          try {
+            websocketService.broadcastToRole("admin", {
+              type: "kyc_submitted",
+              payload: {
+                supplierId: supplier.id,
+                userId: user.id,
+                type: "supplier",
+                isResubmission: true
+              },
+            });
+          } catch (wsError) {
+            console.error("[KYB Resubmission] Error broadcasting WebSocket message:", wsError);
+          }
+        }
+        
+        // Notify supplier that resubmission was received
+        try {
+          const { notificationService: notifService } = await import("./notification-service");
+          await notifService.createNotification({
+            user_id: user.id,
+            type: "account_verification_required",
+            title: "KYB Resubmission Received",
+            message: "Your KYB resubmission has been received and is under review. You will be notified once it's been reviewed.",
+            metadata: { supplierId: supplier.id, type: "kyb_resubmission" }
+          });
+        } catch (supplierNotifError) {
+          console.error("[KYB Resubmission] Error notifying supplier:", supplierNotifError);
+        }
+      } catch (notifError) {
+        console.error("[KYB Resubmission] Error in notification flow:", notifError);
+        // Don't fail the update if notification fails
+      }
+    }
 
     if (updateError) {
       console.error("Database update error:", updateError);

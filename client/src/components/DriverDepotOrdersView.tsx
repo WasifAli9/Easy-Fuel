@@ -108,10 +108,13 @@ export function DriverDepotOrdersView({ statusFilter }: DriverDepotOrdersViewPro
   const [receiptDialogOpen, setReceiptDialogOpen] = useState(false);
   const [selectedOrderForReceipt, setSelectedOrderForReceipt] = useState<any>(null);
 
-  const { data: orders, isLoading } = useQuery<any[]>({
+  const { data: ordersResponse, isLoading } = useQuery<any>({
     queryKey: ["/api/supplier/driver-depot-orders"],
     refetchInterval: 10000, // Refresh every 10 seconds
   });
+
+  // API returns { orders, depots, summaryByDepot } or legacy array
+  const orders = Array.isArray(ordersResponse) ? ordersResponse : (ordersResponse?.orders ?? []);
 
   // Filter orders based on statusFilter
   // Also include completed orders from the last week when no filter is applied

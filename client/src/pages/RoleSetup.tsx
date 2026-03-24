@@ -52,7 +52,7 @@ export default function RoleSetup() {
     fetchUserMetadata();
   }, [user, session]);
 
-  async function handleRoleSelection(role: "customer" | "driver" | "supplier" | "admin") {
+  async function handleRoleSelection(role: "customer" | "driver" | "supplier" | "admin" | "company") {
     if (!user || loading) return;
 
     setLoading(true);

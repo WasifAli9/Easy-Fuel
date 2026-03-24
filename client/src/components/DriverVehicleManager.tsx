@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Truck, Plus, Edit, Trash2, Calendar, Gauge, Shield, Upload, FileText, CheckCircle2, XCircle, AlertTriangle, Eye } from "lucide-react";
+import { Truck, Plus, Edit, Trash2, Calendar, Gauge, Shield, Upload, FileText, CheckCircle2, XCircle, AlertTriangle, Eye, Loader2, Building2 } from "lucide-react";
 import { normalizeFilePath } from "@/lib/utils";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
@@ -31,6 +31,47 @@ export function DriverVehicleManager() {
   // Fetch vehicles
   const { data: vehicles = [], isLoading } = useQuery<Vehicle[]>({
     queryKey: ["/api/driver/vehicles"],
+  });
+
+  const { data: membership } = useQuery<{
+    mode: "independent" | "company";
+    companyId: string | null;
+    companyName: string | null;
+    isDisabledByCompany: boolean;
+  }>({
+    queryKey: ["/api/driver/company-membership"],
+    retry: false,
+  });
+
+  const linkedToCompany =
+    membership?.mode === "company" &&
+    !!membership?.companyId &&
+    !membership?.isDisabledByCompany;
+
+  const { data: availableCompanyVehicles = [], isLoading: availablePoolLoading } = useQuery<Vehicle[]>({
+    queryKey: ["/api/driver/company-fleet/available-vehicles"],
+    enabled: linkedToCompany,
+  });
+
+  const claimCompanyVehicleMutation = useMutation({
+    mutationFn: async (vehicleId: string) => {
+      await apiRequest("POST", `/api/driver/vehicles/${vehicleId}/claim-company-vehicle`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/company-fleet/available-vehicles"] });
+      toast({
+        title: "Vehicle selected",
+        description: "This company vehicle is now assigned to you.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Could not select vehicle",
+        description: error.message || "Try again or contact your fleet manager.",
+        variant: "destructive",
+      });
+    },
   });
 
   // Fetch fuel types for selection
@@ -298,6 +339,72 @@ export function DriverVehicleManager() {
 
   return (
     <>
+      {membership?.mode === "company" && membership?.isDisabledByCompany && (
+        <Alert variant="destructive" className="mb-6">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription>
+            Your fleet company has disabled your access. You cannot select a company vehicle until they re-enable you.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {linkedToCompany && (
+        <Card className="mb-6 border-primary/20">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Building2 className="h-5 w-5" />
+              Available company vehicles
+            </CardTitle>
+            <CardDescription>
+              {membership?.companyName
+                ? `Unassigned vehicles from ${membership.companyName}. Selecting one assigns it to you and releases any other company vehicle you had selected.`
+                : "Unassigned vehicles from your fleet company. Select one to use for deliveries."}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {availablePoolLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
+            ) : availableCompanyVehicles.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">
+                No unassigned vehicles in the pool right now. Ask your company to add vehicles or unassign one from another driver.
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {availableCompanyVehicles.map((v) => (
+                  <Card key={v.id} className="border-dashed">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base">{v.registrationNumber}</CardTitle>
+                      <CardDescription>
+                        {[v.make, v.model, v.year].filter(Boolean).join(" ") || "Fleet vehicle"}
+                        {v.capacityLitres ? ` · ${v.capacityLitres.toLocaleString()} L` : ""}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="pt-0">
+                      <Button
+                        className="w-full"
+                        onClick={() => claimCompanyVehicleMutation.mutate(v.id)}
+                        disabled={claimCompanyVehicleMutation.isPending}
+                      >
+                        {claimCompanyVehicleMutation.isPending ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Selecting…
+                          </>
+                        ) : (
+                          "Use this vehicle"
+                        )}
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
           <div className="flex-1">
@@ -306,7 +413,8 @@ export function DriverVehicleManager() {
               My Vehicles
             </CardTitle>
             <CardDescription>
-              Manage your delivery vehicles and their compliance documents
+              Manage your delivery vehicles and their compliance documents. Vehicles owned by your fleet company cannot be deleted here.
+              {linkedToCompany ? " Company pool vehicles appear above until you select one — then they show here." : ""}
             </CardDescription>
           </div>
           <Button
@@ -334,8 +442,13 @@ export function DriverVehicleManager() {
                 <Card key={vehicle.id} className="relative" data-testid={`vehicle-card-${vehicle.id}`}>
                   <CardHeader>
                     <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1">
-                        <CardTitle className="text-lg">{vehicle.registrationNumber}</CardTitle>
+                      <div className="flex-1 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <CardTitle className="text-lg">{vehicle.registrationNumber}</CardTitle>
+                          {vehicle.companyId ? (
+                            <Badge variant="secondary">Company fleet</Badge>
+                          ) : null}
+                        </div>
                         <CardDescription>
                           {vehicle.make} {vehicle.model} {vehicle.year ? `(${vehicle.year})` : ""}
                         </CardDescription>
@@ -349,14 +462,16 @@ export function DriverVehicleManager() {
                         >
                           <Edit className="h-4 w-4" />
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleDelete(vehicle.id)}
-                          data-testid={`button-delete-${vehicle.id}`}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        {!vehicle.companyId ? (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleDelete(vehicle.id)}
+                            data-testid={`button-delete-${vehicle.id}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        ) : null}
                       </div>
                     </div>
                   </CardHeader>

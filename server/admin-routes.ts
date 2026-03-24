@@ -177,6 +177,35 @@ router.get("/suppliers", async (req, res) => {
   }
 });
 
+// PATCH /api/admin/suppliers/:id – update supplier (e.g. account_manager_id for Enterprise)
+router.patch("/suppliers/:id", async (req, res) => {
+  const { id } = req.params;
+  const { account_manager_id, subscription_tier } = req.body || {};
+  try {
+    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (account_manager_id !== undefined) updates.account_manager_id = account_manager_id || null;
+    if (subscription_tier !== undefined) updates.subscription_tier = subscription_tier || null;
+
+    if (account_manager_id === undefined && subscription_tier === undefined) {
+      return res.status(400).json({ error: "Provide at least one of account_manager_id, subscription_tier" });
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from("suppliers")
+      .update(updates)
+      .eq("id", id)
+      .select("id, account_manager_id, subscription_tier")
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: "Supplier not found" });
+    res.json(data);
+  } catch (error: any) {
+    console.error("PATCH /suppliers/:id error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get all drivers
 router.get("/drivers", async (req, res) => {
   try {
@@ -2140,15 +2169,21 @@ router.get("/settings", async (req, res) => {
           price_per_km_cents: 5000,
           dispatch_radius_km: "50",
           dispatch_sla_seconds: 120,
+          driver_radius_standard_miles: 200,
+          driver_radius_extended_miles: 500,
+          driver_radius_unlimited_miles: 999,
         });
       }
       throw error;
     }
 
-    // Ensure price_per_km_cents exists (handle case where column doesn't exist yet)
+    // Ensure price_per_km_cents and driver radius columns exist (handle case where columns don't exist yet)
     const response = {
       ...settings,
-      price_per_km_cents: settings.price_per_km_cents ?? 5000, // Default R50 per km if column doesn't exist
+      price_per_km_cents: settings.price_per_km_cents ?? 5000,
+      driver_radius_standard_miles: settings.driver_radius_standard_miles ?? 200,
+      driver_radius_extended_miles: settings.driver_radius_extended_miles ?? 500,
+      driver_radius_unlimited_miles: settings.driver_radius_unlimited_miles ?? 999,
     };
 
     res.json(response);
@@ -2164,6 +2199,9 @@ router.get("/settings", async (req, res) => {
         price_per_km_cents: 5000,
         dispatch_radius_km: "50",
         dispatch_sla_seconds: 120,
+        driver_radius_standard_miles: 200,
+        driver_radius_extended_miles: 500,
+        driver_radius_unlimited_miles: 999,
       });
     }
     res.status(500).json({ error: error.message });
@@ -2173,7 +2211,7 @@ router.get("/settings", async (req, res) => {
 // Update app settings
 router.put("/settings", async (req, res) => {
   try {
-    const { price_per_km_cents, service_fee_percent, service_fee_min_cents, base_delivery_fee_cents, dispatch_radius_km, dispatch_sla_seconds } = req.body;
+    const { price_per_km_cents, service_fee_percent, service_fee_min_cents, base_delivery_fee_cents, dispatch_radius_km, dispatch_sla_seconds, driver_radius_standard_miles, driver_radius_extended_miles, driver_radius_unlimited_miles } = req.body;
 
     const updateData: any = {
       updated_at: new Date().toISOString(),
@@ -2209,6 +2247,28 @@ router.put("/settings", async (req, res) => {
       updateData.dispatch_sla_seconds = dispatch_sla_seconds;
     }
 
+    if (driver_radius_standard_miles !== undefined) {
+      const v = parseInt(driver_radius_standard_miles, 10);
+      if (isNaN(v) || v < 1 || v > 9999) {
+        return res.status(400).json({ error: "Driver radius (Standard) must be between 1 and 9999 miles" });
+      }
+      updateData.driver_radius_standard_miles = v;
+    }
+    if (driver_radius_extended_miles !== undefined) {
+      const v = parseInt(driver_radius_extended_miles, 10);
+      if (isNaN(v) || v < 1 || v > 9999) {
+        return res.status(400).json({ error: "Driver radius (Extended) must be between 1 and 9999 miles" });
+      }
+      updateData.driver_radius_extended_miles = v;
+    }
+    if (driver_radius_unlimited_miles !== undefined) {
+      const v = parseInt(driver_radius_unlimited_miles, 10);
+      if (isNaN(v) || v < 1 || v > 9999) {
+        return res.status(400).json({ error: "Driver radius (Unlimited) must be between 1 and 9999 miles" });
+      }
+      updateData.driver_radius_unlimited_miles = v;
+    }
+
     const { data: updatedSettings, error } = await supabaseAdmin
       .from("app_settings")
       .upsert({
@@ -2232,10 +2292,13 @@ router.put("/settings", async (req, res) => {
       throw error;
     }
 
-    // Ensure price_per_km_cents is included in response
+    // Ensure price_per_km_cents and driver radius are included in response
     const response = {
       ...updatedSettings,
       price_per_km_cents: updatedSettings.price_per_km_cents ?? 5000,
+      driver_radius_standard_miles: updatedSettings.driver_radius_standard_miles ?? 200,
+      driver_radius_extended_miles: updatedSettings.driver_radius_extended_miles ?? 500,
+      driver_radius_unlimited_miles: updatedSettings.driver_radius_unlimited_miles ?? 999,
     };
 
     res.json({ success: true, settings: response });

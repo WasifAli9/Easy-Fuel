@@ -56,6 +56,27 @@ export async function apiRequest(
     cache: "no-store", // Ensure browser doesn't cache API responses
   });
 
+  // Handle 401 Unauthorized - auto logout if user was authenticated
+  if (res.status === 401) {
+    const hasAuth = !!(headers["Authorization"] || headers["authorization"]);
+    if (hasAuth) {
+      // User had auth headers but got 401 - token expired/invalid
+      // Create error with flag so it can be caught by error handler
+      const error = new Error("401: Unauthorized - Session expired");
+      (error as any).status = 401;
+      (error as any).hasAuthHeaders = true;
+      
+      // Try to trigger auto-logout handler directly (for mutations that use apiRequest)
+      // The handler will be set by AutoLogoutHandler component
+      if (typeof window !== 'undefined') {
+        // Dispatch a custom event that AutoLogoutHandler can listen to
+        window.dispatchEvent(new CustomEvent('unauthorized', { detail: error }));
+      }
+      
+      throw error;
+    }
+  }
+
   await throwIfResNotOk(res);
 
   // Automatically invalidate related queries for successful mutations
@@ -116,7 +137,7 @@ export const getQueryFn: <T>(options: {
       return null;
     }
 
-    // Don't throw for 401 errors - they're expected when logged out
+    // Handle 401 Unauthorized - auto logout if user was authenticated
     if (res.status === 401) {
       // Check if we have auth headers - if not, user is logged out (expected)
       const hasAuth = headers["Authorization"] || headers["authorization"];
@@ -124,11 +145,36 @@ export const getQueryFn: <T>(options: {
         // User is logged out - return null instead of throwing
         return null;
       }
+      
+      // User had auth headers but got 401 - token expired/invalid, trigger auto logout
+      const error = new Error("401: Unauthorized - Session expired");
+      (error as any).status = 401;
+      (error as any).hasAuthHeaders = true;
+      
+      // Dispatch custom event for immediate handling
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('unauthorized', { detail: error }));
+      }
+      
+      // Also throw so React Query's onError handler can catch it
+      throw error;
     }
 
-    await throwIfResNotOk(res);
+    // Only throw if not 401 (we already handled 401 above)
+    if (!res.ok) {
+      const text = (await res.text()) || res.statusText;
+      throw new Error(`${res.status}: ${text}`);
+    }
+    
     return await res.json();
   };
+
+// Global error handler for auto-logout on 401
+let autoLogoutHandler: ((error: any) => void) | null = null;
+
+export function setAutoLogoutHandler(handler: (error: any) => void) {
+  autoLogoutHandler = handler;
+}
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -141,9 +187,49 @@ export const queryClient = new QueryClient({
       staleTime: 30 * 1000, // Consider data fresh for 30 seconds (prevents constant refetching)
       gcTime: 5 * 60 * 1000, // Keep unused data in cache for 5 minutes (renamed from cacheTime in v5)
       retry: false,
+      onError: (error: any) => {
+        // Handle 401 errors with auth headers - trigger auto logout
+        console.log("[QueryClient] Query error:", {
+          status: error?.status,
+          hasAuthHeaders: error?.hasAuthHeaders,
+          message: error?.message,
+          hasHandler: !!autoLogoutHandler
+        });
+        
+        if (error?.status === 401 && error?.hasAuthHeaders && autoLogoutHandler) {
+          console.log("[QueryClient] Triggering auto-logout from query error");
+          autoLogoutHandler(error);
+        } else if (error?.status === 401 && error?.hasAuthHeaders) {
+          // Handler not set yet, dispatch event as fallback
+          console.log("[QueryClient] Handler not set, dispatching unauthorized event");
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('unauthorized', { detail: error }));
+          }
+        }
+      },
     },
     mutations: {
       retry: false,
+      onError: (error: any) => {
+        // Handle 401 errors with auth headers - trigger auto logout
+        console.log("[QueryClient] Mutation error:", {
+          status: error?.status,
+          hasAuthHeaders: error?.hasAuthHeaders,
+          message: error?.message,
+          hasHandler: !!autoLogoutHandler
+        });
+        
+        if (error?.status === 401 && error?.hasAuthHeaders && autoLogoutHandler) {
+          console.log("[QueryClient] Triggering auto-logout from mutation error");
+          autoLogoutHandler(error);
+        } else if (error?.status === 401 && error?.hasAuthHeaders) {
+          // Handler not set yet, dispatch event as fallback
+          console.log("[QueryClient] Handler not set, dispatching unauthorized event");
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('unauthorized', { detail: error }));
+          }
+        }
+      },
       // Automatically invalidate related queries after successful mutations
       // This ensures state is always updated after CRUD operations
       onSuccess: async (data, variables, context) => {
