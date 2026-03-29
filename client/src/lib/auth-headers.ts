@@ -1,9 +1,19 @@
 import { supabase } from "./supabase";
 
+async function getSessionWithRetry() {
+  const read = () => supabase.auth.getSession();
+  let { data: { session }, error } = await read();
+  // Brief race: Supabase may not have rehydrated from cookie storage on first tick
+  if (!session?.access_token && !error) {
+    await new Promise((r) => setTimeout(r, 50));
+    ({ data: { session }, error } = await read());
+  }
+  return { session, error };
+}
+
 export async function getAuthHeaders(): Promise<HeadersInit> {
-  // Get current session (reads from cookie storage)
-  const { data: { session }, error } = await supabase.auth.getSession();
-  
+  const { session, error } = await getSessionWithRetry();
+
   // If no session or error, try to refresh the session
   if (!session || error) {
     const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.refreshSession();

@@ -10,11 +10,11 @@ interface UserProfile {
  * Defaults to 'ZAR' (South African Rand) if not set or user not logged in
  */
 export function useCurrency() {
-  const { user } = useAuth();
-  
+  const { session, loading } = useAuth();
+
   const { data: profile } = useQuery<UserProfile>({
     queryKey: ["/api/profile"],
-    enabled: !!user,
+    enabled: !loading && !!session?.access_token,
   });
   
   const currency = profile?.currency || 'ZAR';

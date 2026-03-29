@@ -30,12 +30,19 @@ import {
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
+import {
+  DashboardSidebarAside,
+  DashboardSidebarInner,
+  DashboardNavSection,
+  DashboardNavButton,
+  DashboardNavLink,
+} from "@/components/dashboard/DashboardSidebar";
 import { cn } from "@/lib/utils";
 
 type SupplierTab = "driver-orders" | "depots" | "pricing" | "analytics" | "settlements" | "invoices";
 
 export default function SupplierDashboard() {
-  const { profile } = useAuth();
+  const { profile, session, loading } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [location, setLocation] = useLocation();
@@ -50,7 +57,7 @@ export default function SupplierDashboard() {
   // Fetch supplier profile to check KYC status
   const { data: supplierProfile, refetch: refetchProfile } = useQuery<any>({
     queryKey: ["/api/supplier/profile"],
-    enabled: !!profile && profile.role === "supplier", // Only fetch if supplier is logged in
+    enabled: !loading && !!session?.access_token && !!profile && profile.role === "supplier",
     refetchInterval: 30000, // Poll every 30 seconds (WebSocket handles real-time)
     staleTime: 15 * 1000, // Consider data fresh for 15 seconds
     retry: false, // Don't retry on errors
@@ -71,7 +78,7 @@ export default function SupplierDashboard() {
 
   const { data: depotsData, isLoading: depotsLoading, error: depotsError } = useQuery<any[]>({
     queryKey: ["/api/supplier/depots"],
-    enabled: !!profile && profile.role === "supplier", // Only fetch if supplier is logged in
+    enabled: !loading && !!session?.access_token && !!profile && profile.role === "supplier",
     refetchInterval: 30000, // Poll every 30 seconds (WebSocket handles real-time)
     staleTime: 15 * 1000, // Consider data fresh for 15 seconds
     retry: false, // Don't retry on errors (including 403 compliance errors)
@@ -80,7 +87,7 @@ export default function SupplierDashboard() {
   // Fetch driver depot orders (API returns { orders, depots, summaryByDepot } or array)
   const { data: ordersData } = useQuery<any>({
     queryKey: ["/api/supplier/driver-depot-orders"],
-    enabled: !!profile && profile.role === "supplier",
+    enabled: !loading && !!session?.access_token && !!profile && profile.role === "supplier",
     refetchInterval: 60000,
     staleTime: 30 * 1000,
     retry: false,
@@ -89,7 +96,7 @@ export default function SupplierDashboard() {
   // Fetch subscription for banner and plan display
   const { data: subscriptionData } = useQuery<{ subscription: any; subscriptionTier: string | null }>({
     queryKey: ["/api/supplier/subscription"],
-    enabled: !!profile && profile.role === "supplier",
+    enabled: !loading && !!session?.access_token && !!profile && profile.role === "supplier",
     retry: false,
   });
 
@@ -233,26 +240,40 @@ export default function SupplierDashboard() {
         </Button>
 
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-          <SheetContent side="left" className="w-72 p-0">
-            <nav className="flex flex-col h-full py-4">
-              <div className="px-4 pb-2">
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Menu</p>
-              </div>
-              <div className="flex-1 overflow-y-auto space-y-1 px-2">
-                {navItems.map(({ value, label, icon: Icon }) => (
-                  <button key={value} onClick={() => { setActiveTab(value); setSidebarOpen(false); }} className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left", activeTab === value ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}>
-                    <Icon className="h-5 w-5 shrink-0" /> {label}
-                  </button>
-                ))}
-                <Link href="/supplier/subscription" onClick={() => setSidebarOpen(false)} className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground">
-                  <CreditCard className="h-5 w-5 shrink-0" /> Billing
-                </Link>
-              </div>
-            </nav>
+          <SheetContent
+            side="left"
+            className="w-[min(100vw-2rem,288px)] p-0 overflow-hidden flex flex-col bg-sidebar border-r border-sidebar-border"
+          >
+            <div className="flex flex-col h-full min-h-0">
+              <DashboardSidebarInner label="Menu">
+                <DashboardNavSection>
+                  {navItems.map(({ value, label, icon: Icon }) => (
+                    <DashboardNavButton
+                      key={value}
+                      active={activeTab === value}
+                      icon={Icon}
+                      onClick={() => {
+                        setActiveTab(value);
+                        setSidebarOpen(false);
+                      }}
+                    >
+                      {label}
+                    </DashboardNavButton>
+                  ))}
+                  <DashboardNavLink
+                    href="/supplier/subscription"
+                    icon={CreditCard}
+                    onNavigate={() => setSidebarOpen(false)}
+                  >
+                    Billing
+                  </DashboardNavLink>
+                </DashboardNavSection>
+              </DashboardSidebarInner>
+            </div>
           </SheetContent>
         </Sheet>
 
-        <main className="flex-1 min-w-0 overflow-auto">
+        <main className="flex-1 min-w-0 overflow-auto dashboard-main-area">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {!hasActiveSubscription && (
           <div className="mb-6 p-4 rounded-lg border border-amber-500/50 bg-amber-500/10 flex items-center justify-between flex-wrap gap-4">
@@ -275,29 +296,34 @@ export default function SupplierDashboard() {
           </div>
         )}
 
-        <div className="flex items-center justify-between mb-8">
-          <div className="flex items-center gap-4">
-            <div>
-              <div className="flex items-center gap-3">
-                <h1 className="text-3xl font-bold">My Depots</h1>
+        <div className="mb-8 rounded-2xl border border-border/60 bg-gradient-to-br from-card/95 via-card/80 to-primary/[0.05] p-6 sm:p-7 shadow-lg shadow-primary/[0.06] backdrop-blur-sm">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-widest text-primary/90">Supplier</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">My depots</h1>
                 {supplierProfile && (
                   <Badge
-                    variant={supplierProfile.status === "active" && supplierProfile.compliance_status === "approved" ? "default" : "secondary"}
-                    className="text-sm px-3 py-1"
+                    variant={
+                      supplierProfile.status === "active" && supplierProfile.compliance_status === "approved"
+                        ? "default"
+                        : "secondary"
+                    }
+                    className="text-sm px-3 py-1 rounded-full"
                   >
-                    {supplierProfile.status === "active" && supplierProfile.compliance_status === "approved" ? "Active" : "Inactive"}
+                    {supplierProfile.status === "active" && supplierProfile.compliance_status === "approved"
+                      ? "Active"
+                      : "Inactive"}
                   </Badge>
                 )}
               </div>
-              <p className="text-muted-foreground">
-                Manage your fuel supply locations
-              </p>
+              <p className="text-sm text-muted-foreground">Manage your fuel supply locations and depot pricing</p>
             </div>
+            <Button onClick={handleAddDepot} data-testid="button-add-depot" className="rounded-full shadow-md shrink-0">
+              <Plus className="h-4 w-4 mr-2" />
+              Add depot
+            </Button>
           </div>
-          <Button onClick={handleAddDepot} data-testid="button-add-depot">
-            <Plus className="h-4 w-4 mr-2" />
-            Add Depot
-          </Button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">

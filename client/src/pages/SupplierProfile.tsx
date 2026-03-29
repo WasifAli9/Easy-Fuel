@@ -26,7 +26,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { useWebSocket } from "@/hooks/useWebSocket";
-import { User, Lock, ArrowLeft, Shield, Building, FileText, Upload, AlertTriangle, CheckCircle2, XCircle, Loader2 } from "lucide-react";
+import { User, Lock, ArrowLeft, Shield, Building, FileText, Upload, AlertTriangle, CheckCircle2, XCircle, Loader2, Menu } from "lucide-react";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -39,6 +39,9 @@ import { getAuthHeaders } from "@/lib/auth-headers";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { normalizeFilePath } from "@/lib/utils";
 import { ChevronRight } from "lucide-react";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { DashboardSidebarAside } from "@/components/dashboard/DashboardSidebar";
+import { SupplierWorkspaceSidebar } from "@/components/dashboard/SupplierWorkspaceSidebar";
 
 const profileSchema = z.object({
   fullName: z.string().optional(),
@@ -116,6 +119,7 @@ const formatDateForInput = (dateString: string | null | undefined): string => {
 export default function SupplierProfile() {
   const { toast } = useToast();
   const { updatePassword, refetchProfile } = useAuth();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const { data: profile, isLoading } = useQuery<any>({
     queryKey: ["/api/supplier/profile"],
@@ -526,20 +530,55 @@ export default function SupplierProfile() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen flex flex-col bg-background">
         <AppHeader />
-        <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="text-center py-8 text-muted-foreground">Loading profile...</div>
-        </main>
+        <div className="flex flex-1 min-h-0">
+          <DashboardSidebarAside aria-label="Supplier navigation">
+            <SupplierWorkspaceSidebar active="profile" />
+          </DashboardSidebarAside>
+          <main className="flex-1 flex items-center justify-center dashboard-main-area">
+            <div className="text-muted-foreground">Loading profile...</div>
+          </main>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen flex flex-col bg-background">
       <AppHeader />
-      
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+      <div className="flex flex-1 min-h-0">
+        <DashboardSidebarAside aria-label="Supplier navigation">
+          <SupplierWorkspaceSidebar active="profile" />
+        </DashboardSidebarAside>
+
+        <Button
+          variant="outline"
+          size="icon"
+          className="md:hidden fixed bottom-4 right-4 z-40 rounded-full shadow-lg"
+          onClick={() => setSidebarOpen(true)}
+          aria-label="Open menu"
+        >
+          <Menu className="h-5 w-5" />
+        </Button>
+
+        <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+          <SheetContent
+            side="left"
+            className="w-[min(100vw-2rem,288px)] p-0 overflow-hidden flex flex-col bg-sidebar border-r border-sidebar-border"
+          >
+            <div className="flex flex-col h-full min-h-0">
+              <SupplierWorkspaceSidebar
+                active="profile"
+                onNavigate={() => setSidebarOpen(false)}
+              />
+            </div>
+          </SheetContent>
+        </Sheet>
+
+        <main className="flex-1 min-w-0 overflow-auto dashboard-main-area">
+          <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
           <Link href="/supplier">
             <Button variant="ghost" className="mb-4 -ml-2">
@@ -2235,7 +2274,9 @@ export default function SupplierProfile() {
             </CardContent>
           </Card>
         </div>
-      </main>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }

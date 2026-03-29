@@ -8,9 +8,10 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Link } from "wouter";
-import { ArrowLeft, CheckCircle2, XCircle, Loader2, CreditCard, Mail, ShoppingCart, MapPin, DollarSign, BarChart3, Wallet, FileText, Menu } from "lucide-react";
+import { ArrowLeft, CheckCircle2, XCircle, Loader2, CreditCard, Mail, Menu } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
-import { cn } from "@/lib/utils";
+import { DashboardSidebarAside } from "@/components/dashboard/DashboardSidebar";
+import { SupplierWorkspaceSidebar } from "@/components/dashboard/SupplierWorkspaceSidebar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 interface SupplierPlan {
@@ -81,30 +82,15 @@ export default function SupplierSubscription() {
     },
   });
 
-  const navItems: { value: string; label: string; icon: typeof MapPin }[] = [
-    { value: "driver-orders", label: "Driver Orders", icon: ShoppingCart },
-    { value: "depots", label: "Depots", icon: MapPin },
-    { value: "pricing", label: "Pricing", icon: DollarSign },
-    { value: "analytics", label: "Analytics", icon: BarChart3 },
-    { value: "settlements", label: "Settlements", icon: Wallet },
-    { value: "invoices", label: "Invoices", icon: FileText },
-  ];
-
   if (subLoading) {
     return (
       <div className="min-h-screen flex flex-col">
         <AppHeader />
         <div className="flex flex-1 min-h-0">
-          <aside className="hidden md:flex flex-col w-60 min-w-[240px] shrink-0 border-r border-border bg-muted/30 min-h-0 z-10" aria-label="Supplier navigation">
-            <nav className="sticky top-0 flex flex-col p-3 gap-0.5 overflow-y-auto">
-              <div className="px-3 py-2 mb-1"><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Menu</p></div>
-              {navItems.map(({ label, icon: Icon }) => (
-                <Link key={label} href="/supplier" className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"><Icon className="h-5 w-5 shrink-0" /> {label}</Link>
-              ))}
-              <span className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium bg-primary/12 text-primary")}><CreditCard className="h-5 w-5 shrink-0" /> Billing</span>
-            </nav>
-          </aside>
-          <div className="flex-1 flex items-center justify-center p-4">
+          <DashboardSidebarAside aria-label="Supplier navigation">
+            <SupplierWorkspaceSidebar active="billing" />
+          </DashboardSidebarAside>
+          <div className="flex-1 flex items-center justify-center p-4 dashboard-main-area">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
           </div>
         </div>
@@ -124,41 +110,34 @@ export default function SupplierSubscription() {
       <AppHeader />
 
       <div className="flex flex-1 min-h-0">
-        {/* Side menu - same as SupplierDashboard so it stays visible on Billing */}
-        <aside className="hidden md:flex flex-col w-60 min-w-[240px] shrink-0 border-r border-border bg-muted/30 min-h-0 z-10" aria-label="Supplier navigation">
-          <nav className="sticky top-0 flex flex-col p-3 gap-0.5 overflow-y-auto">
-            <div className="px-3 py-2 mb-1">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Menu</p>
-            </div>
-            {navItems.map(({ label, icon: Icon }) => (
-              <Link key={label} href="/supplier" className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground">
-                <Icon className="h-5 w-5 shrink-0" /> {label}
-              </Link>
-            ))}
-            <span className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium bg-primary/12 text-primary")}>
-              <CreditCard className="h-5 w-5 shrink-0" /> Billing
-            </span>
-          </nav>
-        </aside>
+        <DashboardSidebarAside aria-label="Supplier navigation">
+          <SupplierWorkspaceSidebar active="billing" />
+        </DashboardSidebarAside>
 
-        <Button variant="outline" size="icon" className="md:hidden fixed bottom-4 right-4 z-40 rounded-full shadow-lg" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
+        <Button
+          variant="outline"
+          size="icon"
+          className="md:hidden fixed bottom-4 right-4 z-40 rounded-full shadow-lg"
+          onClick={() => setSidebarOpen(true)}
+          aria-label="Open menu"
+        >
           <Menu className="h-5 w-5" />
         </Button>
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-          <SheetContent side="left" className="w-72 p-0">
-            <nav className="flex flex-col h-full py-4">
-              <div className="px-4 pb-2"><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Menu</p></div>
-              <div className="flex-1 overflow-y-auto space-y-1 px-2">
-                {navItems.map(({ label, icon: Icon }) => (
-                  <Link key={label} href="/supplier" onClick={() => setSidebarOpen(false)} className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"><Icon className="h-5 w-5 shrink-0" /> {label}</Link>
-                ))}
-                <span className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium bg-primary/12 text-primary")}><CreditCard className="h-5 w-5 shrink-0" /> Billing</span>
-              </div>
-            </nav>
+          <SheetContent
+            side="left"
+            className="w-[min(100vw-2rem,288px)] p-0 overflow-hidden flex flex-col bg-sidebar border-r border-sidebar-border"
+          >
+            <div className="flex flex-col h-full min-h-0">
+              <SupplierWorkspaceSidebar
+                active="billing"
+                onNavigate={() => setSidebarOpen(false)}
+              />
+            </div>
           </SheetContent>
         </Sheet>
 
-      <main className="flex-1 min-w-0 overflow-auto">
+      <main className="flex-1 min-w-0 overflow-auto dashboard-main-area">
         <div className="w-full min-w-0 px-5 sm:px-8 lg:px-10 py-4 sm:py-8">
         <Link href="/supplier">
           <Button variant="ghost" className="mb-4 gap-2">

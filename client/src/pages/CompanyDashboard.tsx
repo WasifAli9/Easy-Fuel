@@ -29,6 +29,12 @@ import { apiRequest } from "@/lib/queryClient";
 import { formatCurrency } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import {
+  DashboardSidebarAside,
+  DashboardSidebarInner,
+  DashboardNavSection,
+  DashboardNavButton,
+} from "@/components/dashboard/DashboardSidebar";
+import {
   Users,
   UserCheck,
   UserX,
@@ -81,7 +87,9 @@ interface CompanyDriverRow {
 }
 
 export default function CompanyDashboard() {
-  const { profile } = useAuth();
+  const { profile, session, loading } = useAuth();
+  const companyQueryEnabled =
+    !loading && !!session?.access_token && profile?.role === "company";
   const { toast } = useToast();
   const qc = useQueryClient();
   const [tab, setTab] = useState<CompanyTab>("overview");
@@ -108,22 +116,22 @@ export default function CompanyDashboard() {
     revenueCents: number;
   }>({
     queryKey: ["/api/company/overview"],
-    enabled: profile?.role === "company",
+    enabled: companyQueryEnabled,
   });
 
   const { data: drivers = [], isLoading: driversLoading } = useQuery<CompanyDriverRow[]>({
     queryKey: ["/api/company/drivers"],
-    enabled: profile?.role === "company",
+    enabled: companyQueryEnabled,
   });
 
   const { data: daily = [], isLoading: dailyLoading } = useQuery<{ date: string; count: number }[]>({
     queryKey: ["/api/company/analytics/daily-deliveries"],
-    enabled: profile?.role === "company" && tab === "analytics",
+    enabled: companyQueryEnabled && tab === "analytics",
   });
 
   const { data: fleetVehicles = [], isLoading: vehiclesLoading } = useQuery<CompanyVehicleRow[]>({
     queryKey: ["/api/company/vehicles"],
-    enabled: profile?.role === "company",
+    enabled: companyQueryEnabled,
   });
 
   const createVehicleMutation = useMutation({
@@ -184,7 +192,7 @@ export default function CompanyDashboard() {
 
   const { data: driverOrders = [], isLoading: ordersLoading } = useQuery<any[]>({
     queryKey: ["/api/company/driver-orders", selectedDriverId],
-    enabled: !!selectedDriverId && profile?.role === "company",
+    enabled: companyQueryEnabled && !!selectedDriverId,
     queryFn: async () => {
       const res = await fetch(`/api/company/drivers/${selectedDriverId}/orders`, {
         credentials: "include",
@@ -225,43 +233,137 @@ export default function CompanyDashboard() {
     <div className="min-h-screen flex flex-col bg-background">
       <AppHeader showMenu onMenuClick={() => setSidebarOpen(true)} />
 
-      <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-        <SheetContent side="left" className="w-[280px]">
-          <nav className="flex flex-col gap-2 mt-8">
-            <Button variant={tab === "overview" ? "secondary" : "ghost"} className="justify-start" onClick={() => { setTab("overview"); setSidebarOpen(false); }}>
-              <LayoutDashboard className="h-4 w-4 mr-2" /> Overview
-            </Button>
-            <Button variant={tab === "drivers" ? "secondary" : "ghost"} className="justify-start" onClick={() => { setTab("drivers"); setSidebarOpen(false); }}>
-              <Users className="h-4 w-4 mr-2" /> Drivers
-            </Button>
-            <Button variant={tab === "vehicles" ? "secondary" : "ghost"} className="justify-start" onClick={() => { setTab("vehicles"); setSidebarOpen(false); }}>
-              <Truck className="h-4 w-4 mr-2" /> Vehicles
-            </Button>
-            <Button variant={tab === "analytics" ? "secondary" : "ghost"} className="justify-start" onClick={() => { setTab("analytics"); setSidebarOpen(false); }}>
-              <BarChart3 className="h-4 w-4 mr-2" /> Analytics
-            </Button>
-          </nav>
-        </SheetContent>
-      </Sheet>
+      <div className="flex flex-1 min-h-0">
+        <DashboardSidebarAside aria-label="Fleet company navigation">
+          <DashboardSidebarInner label="Fleet company" tagline="Operations">
+            <DashboardNavSection>
+              <DashboardNavButton
+                active={tab === "overview"}
+                icon={LayoutDashboard}
+                onClick={() => setTab("overview")}
+              >
+                Overview
+              </DashboardNavButton>
+              <DashboardNavButton active={tab === "drivers"} icon={Users} onClick={() => setTab("drivers")}>
+                Drivers
+              </DashboardNavButton>
+              <DashboardNavButton active={tab === "vehicles"} icon={Truck} onClick={() => setTab("vehicles")}>
+                Vehicles
+              </DashboardNavButton>
+              <DashboardNavButton
+                active={tab === "analytics"}
+                icon={BarChart3}
+                onClick={() => setTab("analytics")}
+              >
+                Analytics
+              </DashboardNavButton>
+            </DashboardNavSection>
+          </DashboardSidebarInner>
+        </DashboardSidebarAside>
 
-      <main className="flex-1 container max-w-6xl mx-auto px-4 py-8">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Fleet company</h1>
-            <p className="text-muted-foreground">Manage drivers linked to your company and view performance</p>
-          </div>
-          <Button variant="outline" size="icon" className="md:hidden" onClick={() => setSidebarOpen(true)}>
-            <Menu className="h-5 w-5" />
-          </Button>
-        </div>
+        <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+          <SheetContent
+            side="left"
+            className="w-[min(100vw-2rem,288px)] p-0 overflow-hidden flex flex-col bg-sidebar border-r border-sidebar-border"
+          >
+            <div className="flex flex-col h-full min-h-0">
+              <DashboardSidebarInner label="Fleet company">
+                <DashboardNavSection>
+                  <DashboardNavButton
+                    active={tab === "overview"}
+                    icon={LayoutDashboard}
+                    onClick={() => {
+                      setTab("overview");
+                      setSidebarOpen(false);
+                    }}
+                  >
+                    Overview
+                  </DashboardNavButton>
+                  <DashboardNavButton
+                    active={tab === "drivers"}
+                    icon={Users}
+                    onClick={() => {
+                      setTab("drivers");
+                      setSidebarOpen(false);
+                    }}
+                  >
+                    Drivers
+                  </DashboardNavButton>
+                  <DashboardNavButton
+                    active={tab === "vehicles"}
+                    icon={Truck}
+                    onClick={() => {
+                      setTab("vehicles");
+                      setSidebarOpen(false);
+                    }}
+                  >
+                    Vehicles
+                  </DashboardNavButton>
+                  <DashboardNavButton
+                    active={tab === "analytics"}
+                    icon={BarChart3}
+                    onClick={() => {
+                      setTab("analytics");
+                      setSidebarOpen(false);
+                    }}
+                  >
+                    Analytics
+                  </DashboardNavButton>
+                </DashboardNavSection>
+              </DashboardSidebarInner>
+            </div>
+          </SheetContent>
+        </Sheet>
 
-        <Tabs value={tab} onValueChange={(v) => setTab(v as CompanyTab)} className="space-y-6">
-          <TabsList className="hidden md:flex flex-wrap">
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="drivers">Drivers</TabsTrigger>
-            <TabsTrigger value="vehicles">Vehicles</TabsTrigger>
-            <TabsTrigger value="analytics">Analytics</TabsTrigger>
-          </TabsList>
+        <main className="flex-1 min-w-0 overflow-auto dashboard-main-area">
+          <div className="container max-w-6xl mx-auto px-4 py-8">
+            <div className="mb-8 rounded-2xl border border-border/60 bg-gradient-to-br from-card/95 via-card/80 to-primary/[0.05] p-6 sm:p-7 shadow-lg shadow-primary/[0.06] backdrop-blur-sm">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                <div className="space-y-1">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-primary/90">Fleet</p>
+                  <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Fleet company</h1>
+                  <p className="text-sm text-muted-foreground">
+                    Manage drivers linked to your company and view performance
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="md:hidden rounded-full shrink-0 shadow-sm"
+                  onClick={() => setSidebarOpen(true)}
+                >
+                  <Menu className="h-5 w-5" />
+                </Button>
+              </div>
+            </div>
+
+            <Tabs value={tab} onValueChange={(v) => setTab(v as CompanyTab)} className="space-y-6">
+              <TabsList className="flex md:hidden w-full flex-wrap h-auto gap-1 p-1.5 rounded-xl bg-muted/60 border border-border/50 shadow-inner">
+                <TabsTrigger
+                  value="overview"
+                  className="rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-sm flex-1 min-w-[5.5rem]"
+                >
+                  Overview
+                </TabsTrigger>
+                <TabsTrigger
+                  value="drivers"
+                  className="rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-sm flex-1 min-w-[5.5rem]"
+                >
+                  Drivers
+                </TabsTrigger>
+                <TabsTrigger
+                  value="vehicles"
+                  className="rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-sm flex-1 min-w-[5.5rem]"
+                >
+                  Vehicles
+                </TabsTrigger>
+                <TabsTrigger
+                  value="analytics"
+                  className="rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-sm flex-1 min-w-[5.5rem]"
+                >
+                  Analytics
+                </TabsTrigger>
+              </TabsList>
 
           <TabsContent value="overview" className="space-y-6">
             {overviewLoading ? (
@@ -282,15 +384,21 @@ export default function CompanyDashboard() {
                 />
               </div>
             )}
-            <Card>
+            <Card className="border-border/60 shadow-md">
               <CardHeader>
                 <CardTitle>Quick actions</CardTitle>
                 <CardDescription>Review driver roster and delivery trends</CardDescription>
               </CardHeader>
               <CardContent className="flex flex-wrap gap-2">
-                <Button variant="outline" onClick={() => setTab("drivers")}>Manage drivers</Button>
-                <Button variant="outline" onClick={() => setTab("vehicles")}>Manage vehicles</Button>
-                <Button variant="outline" onClick={() => setTab("analytics")}>View analytics</Button>
+                <Button variant="outline" className="rounded-full" onClick={() => setTab("drivers")}>
+                  Manage drivers
+                </Button>
+                <Button variant="outline" className="rounded-full" onClick={() => setTab("vehicles")}>
+                  Manage vehicles
+                </Button>
+                <Button variant="outline" className="rounded-full" onClick={() => setTab("analytics")}>
+                  View analytics
+                </Button>
               </CardContent>
             </Card>
           </TabsContent>
@@ -500,7 +608,9 @@ export default function CompanyDashboard() {
             </Card>
           </TabsContent>
         </Tabs>
-      </main>
+          </div>
+        </main>
+      </div>
 
       <Dialog open={addVehicleOpen} onOpenChange={setAddVehicleOpen}>
         <DialogContent>

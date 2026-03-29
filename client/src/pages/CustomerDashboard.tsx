@@ -25,12 +25,18 @@ import { useWebSocket } from "@/hooks/useWebSocket";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
+import {
+  DashboardSidebarAside,
+  DashboardSidebarInner,
+  DashboardNavSection,
+  DashboardNavButton,
+} from "@/components/dashboard/DashboardSidebar";
 import { cn } from "@/lib/utils";
 
 type CustomerTab = "all" | "active" | "completed";
 
 export default function CustomerDashboard() {
-  const { profile } = useAuth();
+  const { profile, session, loading } = useAuth();
   const [activeTab, setActiveTab] = useState<CustomerTab>("all");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
@@ -45,7 +51,7 @@ export default function CustomerDashboard() {
   // Fetch orders from API
   const { data: ordersData, isLoading } = useQuery<any[]>({
     queryKey: ["/api/orders"],
-    enabled: !!profile && profile.role === "customer", // Only fetch if customer is logged in
+    enabled: !loading && !!session?.access_token && !!profile && profile.role === "customer",
     refetchInterval: 30000, // Poll every 30 seconds (WebSocket handles real-time updates)
     staleTime: 15 * 1000, // Consider data fresh for 15 seconds
     retry: false, // Don't retry on errors
@@ -151,7 +157,7 @@ export default function CustomerDashboard() {
   // Fetch fuel types for filter
   const { data: fuelTypesData } = useQuery<any[]>({
     queryKey: ["/api/fuel-types"],
-    enabled: !!profile && profile.role === "customer", // Only fetch if customer is logged in
+    enabled: !loading && !!session?.access_token && !!profile && profile.role === "customer",
     retry: false, // Don't retry on errors
   });
 
@@ -250,62 +256,71 @@ export default function CustomerDashboard() {
       <AppHeader />
 
       <div className="flex flex-1 min-h-0">
-        <aside className="hidden md:flex flex-col w-52 min-w-[208px] shrink-0 border-r border-border bg-muted/30 min-h-0 z-10" aria-label="Orders navigation">
-          <nav className="sticky top-0 flex flex-col p-3 gap-0.5 overflow-y-auto">
-            <div className="px-3 py-2 mb-1">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Menu</p>
-            </div>
-            {navItems.map(({ value, label, icon: Icon }) => (
-              <button
-                key={value}
-                onClick={() => setActiveTab(value)}
-                className={cn(
-                  "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left",
-                  activeTab === value ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                )}
-                data-testid={value === "all" ? "tab-all" : value === "active" ? "tab-active" : "tab-completed"}
-              >
-                <Icon className="h-5 w-5 shrink-0" />
-                {label}
-              </button>
-            ))}
-          </nav>
-        </aside>
+        <DashboardSidebarAside aria-label="Orders navigation">
+          <DashboardSidebarInner label="Orders">
+            <DashboardNavSection>
+              {navItems.map(({ value, label, icon: Icon }) => (
+                <DashboardNavButton
+                  key={value}
+                  active={activeTab === value}
+                  icon={Icon}
+                  onClick={() => setActiveTab(value)}
+                  data-testid={value === "all" ? "tab-all" : value === "active" ? "tab-active" : "tab-completed"}
+                >
+                  {label}
+                </DashboardNavButton>
+              ))}
+            </DashboardNavSection>
+          </DashboardSidebarInner>
+        </DashboardSidebarAside>
 
         <Button variant="outline" size="icon" className="md:hidden fixed bottom-4 right-4 z-40 rounded-full shadow-lg" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
           <Menu className="h-5 w-5" />
         </Button>
 
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-          <SheetContent side="left" className="w-72 p-0">
-            <nav className="flex flex-col h-full py-4">
-              <div className="px-4 pb-2">
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Menu</p>
-              </div>
-              <div className="flex-1 overflow-y-auto space-y-1 px-2">
-                {navItems.map(({ value, label, icon: Icon }) => (
-                  <button key={value} onClick={() => { setActiveTab(value); setSidebarOpen(false); }} className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left", activeTab === value ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}>
-                    <Icon className="h-5 w-5 shrink-0" /> {label}
-                  </button>
-                ))}
-              </div>
-            </nav>
+          <SheetContent
+            side="left"
+            className="w-[min(100vw-2rem,288px)] p-0 overflow-hidden flex flex-col bg-sidebar border-r border-sidebar-border"
+          >
+            <div className="flex flex-col h-full min-h-0">
+              <DashboardSidebarInner label="Orders">
+                <DashboardNavSection>
+                  {navItems.map(({ value, label, icon: Icon }) => (
+                    <DashboardNavButton
+                      key={value}
+                      active={activeTab === value}
+                      icon={Icon}
+                      onClick={() => {
+                        setActiveTab(value);
+                        setSidebarOpen(false);
+                      }}
+                    >
+                      {label}
+                    </DashboardNavButton>
+                  ))}
+                </DashboardNavSection>
+              </DashboardSidebarInner>
+            </div>
           </SheetContent>
         </Sheet>
 
-        <main className="flex-1 min-w-0 overflow-auto">
+        <main className="flex-1 min-w-0 overflow-auto dashboard-main-area">
           <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-            <div className="flex items-center justify-between mb-8">
-              <div>
-                <h1 className="text-3xl font-bold">My Orders</h1>
-                <p className="text-muted-foreground">Track and manage your fuel deliveries</p>
+            <div className="mb-8 rounded-2xl border border-border/60 bg-gradient-to-br from-card/95 via-card/80 to-primary/[0.05] p-6 sm:p-7 shadow-lg shadow-primary/[0.06] backdrop-blur-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="space-y-1">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-primary/90">Customer</p>
+                  <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">My orders</h1>
+                  <p className="text-sm text-muted-foreground">Track and manage your fuel deliveries</p>
+                </div>
+                <CreateOrderDialog
+                  onOrderCreated={(orderId) => {
+                    setSelectedOrderId(orderId);
+                    setViewDialogOpen(true);
+                  }}
+                />
               </div>
-              <CreateOrderDialog
-                onOrderCreated={(orderId) => {
-                  setSelectedOrderId(orderId);
-                  setViewDialogOpen(true);
-                }}
-              />
             </div>
 
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">

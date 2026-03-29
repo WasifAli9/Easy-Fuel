@@ -113,14 +113,14 @@ interface Supplier {
 function DeliveryFeeSettings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { profile } = useAuth(); // Get profile from auth context
+  const { profile, session, loading } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
   const [pricePerKm, setPricePerKm] = useState<number>(0);
 
   // Fetch app settings
   const { data: settings, isLoading, error: settingsError } = useQuery<any>({
     queryKey: ["/api/admin/settings"],
-    enabled: !!profile && profile.role === "admin", // Only fetch if admin is logged in
+    enabled: !loading && !!session?.access_token && !!profile && profile.role === "admin",
     retry: false, // Don't retry on errors
   });
 
@@ -384,7 +384,7 @@ function DeliveryFeeSettings() {
 function DriverRadiusSettings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { profile, session, loading } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
   const [standardMiles, setStandardMiles] = useState<number>(200);
   const [extendedMiles, setExtendedMiles] = useState<number>(500);
@@ -392,7 +392,7 @@ function DriverRadiusSettings() {
 
   const { data: settings, isLoading, error: settingsError } = useQuery<any>({
     queryKey: ["/api/admin/settings"],
-    enabled: !!profile && profile.role === "admin",
+    enabled: !loading && !!session?.access_token && !!profile && profile.role === "admin",
     retry: false,
   });
 
@@ -533,7 +533,9 @@ function DriverRadiusSettings() {
 }
 
 export default function AdminDashboard() {
-  const { profile } = useAuth();
+  const { profile, session, loading } = useAuth();
+  const adminQueryEnabled =
+    !loading && !!session?.access_token && !!profile && profile.role === "admin";
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);

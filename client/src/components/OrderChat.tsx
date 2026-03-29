@@ -34,9 +34,11 @@ interface ChatThread {
 interface OrderChatProps {
   orderId: string;
   currentUserType: "customer" | "driver";
+  /** Parent already shows a section title (e.g. driver order card "Messages"). */
+  variant?: "default" | "embedded";
 }
 
-export function OrderChat({ orderId, currentUserType }: OrderChatProps) {
+export function OrderChat({ orderId, currentUserType, variant = "default" }: OrderChatProps) {
   const [messageText, setMessageText] = useState("");
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
@@ -145,11 +147,13 @@ export function OrderChat({ orderId, currentUserType }: OrderChatProps) {
   }
 
   return (
-    <div className="flex flex-col h-full min-h-[500px]">
-      <div className="flex items-center gap-2 mb-4 pb-3 border-b">
-        <MessageCircle className="h-5 w-5 text-primary" />
-        <h3 className="font-semibold text-base">Order Chat</h3>
-      </div>
+    <div className={`flex flex-col h-full ${variant === "embedded" ? "min-h-[420px]" : "min-h-[500px]"}`}>
+      {variant === "default" && (
+        <div className="flex items-center gap-2 mb-4 pb-3 border-b">
+          <MessageCircle className="h-5 w-5 text-primary" />
+          <h3 className="font-semibold text-base">Order Chat</h3>
+        </div>
+      )}
       <div className="flex-1 flex flex-col min-h-0">
         <ScrollArea ref={scrollAreaRef} className="flex-1 px-1 min-h-[350px]">
           {messagesLoading ? (

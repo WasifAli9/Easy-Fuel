@@ -1,6 +1,13 @@
 node_modules
 dist
+
+# Environment (secrets); keep example files committed
+.env
+.env.*
+!.env.example
 .DS_Store
 server/public
 vite.config.ts.*
 *.tar.gz
+.expo/
+mobile/.expo/

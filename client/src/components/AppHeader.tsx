@@ -39,7 +39,7 @@ interface AppHeaderProps {
 }
 
 export function AppHeader({ onMenuClick, notificationCount: propNotificationCount, showMenu = true, onAdminNotificationClick }: AppHeaderProps) {
-  const { profile, signOut } = useAuth();
+  const { profile, session, loading, signOut } = useAuth();
   const [, setLocation] = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -49,7 +49,7 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
   // Fetch notifications
   const { data: notifications = [], refetch: refetchNotifications, error: notificationsError } = useQuery<any[]>({
     queryKey: ["/api/notifications"],
-    enabled: !!profile, // Only fetch if user is logged in
+    enabled: !loading && !!profile && !!session?.access_token,
     refetchInterval: 30000, // Refetch every 30 seconds as fallback (WebSocket handles real-time)
     staleTime: 0, // Always consider data stale - refetch immediately when invalidated
     gcTime: 0, // Don't cache - always fetch fresh data
@@ -67,7 +67,7 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
   // Fetch unread count
   const { data: unreadData, refetch: refetchUnreadCount, error: unreadCountError } = useQuery<{ count: number }>({
     queryKey: ["/api/notifications/unread-count"],
-    enabled: !!profile,
+    enabled: !loading && !!profile && !!session?.access_token,
     refetchInterval: 30000, // Refetch every 30 seconds as fallback (WebSocket handles real-time)
     staleTime: 0, // Always consider data stale - refetch immediately when invalidated
     gcTime: 0, // Don't cache - always fetch fresh data
@@ -422,8 +422,8 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
   }
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <div className="flex h-16 items-center justify-between px-4">
+    <header className="sticky top-0 z-50 w-full border-b border-border/60 bg-background/85 backdrop-blur-md supports-[backdrop-filter]:bg-background/75 shadow-[0_1px_0_hsl(var(--border)/0.5)]">
+      <div className="flex h-16 items-center justify-between px-4 sm:px-5">
         <div className="flex items-center gap-4">
           {showMenu && (
             <Button 
@@ -446,21 +446,36 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
           
           {/* Customer Navigation */}
           {profile?.role === "customer" && (
-            <nav className="hidden md:flex items-center gap-2 ml-6">
+            <nav className="hidden md:flex items-center gap-1 ml-5 pl-5 border-l border-border/60">
               <Link href="/customer">
-                <Button variant="ghost" size="sm" data-testid="nav-orders">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-testid="nav-orders"
+                  className="rounded-full h-9 px-4 hover:bg-primary/10 hover:text-primary"
+                >
                   <Home className="h-4 w-4 mr-2" />
                   My Orders
                 </Button>
               </Link>
               <Link href="/customer/addresses">
-                <Button variant="ghost" size="sm" data-testid="nav-addresses">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-testid="nav-addresses"
+                  className="rounded-full h-9 px-4 hover:bg-primary/10 hover:text-primary"
+                >
                   <MapPin className="h-4 w-4 mr-2" />
                   Saved Addresses
                 </Button>
               </Link>
               <Link href="/customer/payment-methods">
-                <Button variant="ghost" size="sm" data-testid="nav-payment-methods">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-testid="nav-payment-methods"
+                  className="rounded-full h-9 px-4 hover:bg-primary/10 hover:text-primary"
+                >
                   <CreditCard className="h-4 w-4 mr-2" />
                   Payment Methods
                 </Button>
@@ -469,9 +484,9 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
           )}
 
           {profile?.role === "company" && (
-            <nav className="hidden md:flex items-center gap-2 ml-6">
+            <nav className="hidden md:flex items-center gap-1 ml-5 pl-5 border-l border-border/60">
               <Link href="/company">
-                <Button variant="ghost" size="sm">
+                <Button variant="ghost" size="sm" className="rounded-full h-9 px-4 hover:bg-primary/10 hover:text-primary">
                   <Home className="h-4 w-4 mr-2" />
                   Dashboard
                 </Button>

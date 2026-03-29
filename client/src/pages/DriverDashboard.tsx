@@ -8,7 +8,7 @@ import { DriverPreferencesManager } from "@/components/DriverPreferencesManager"
 import { DriverLocationTracker } from "@/components/DriverLocationTracker";
 import { OrderChat } from "@/components/OrderChat";
 import { DriverDepotsView } from "@/components/DriverDepotsView";
-import { Wallet, TrendingUp, CheckCircle, User, MapPin, Phone, DollarSign, Package, Truck, CheckCircle2, XCircle, AlertCircle, ArrowRight, CreditCard, Download, LayoutDashboard, Car, Settings, History, Warehouse, Store, Menu, Home } from "lucide-react";
+import { Wallet, TrendingUp, CheckCircle, User, MapPin, Phone, DollarSign, Package, Truck, CheckCircle2, XCircle, AlertCircle, ArrowRight, CreditCard, Download, LayoutDashboard, Car, Settings, History, Warehouse, Store, Menu, Home, ClipboardList, MessageCircle } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useCurrency } from "@/hooks/use-currency";
@@ -36,6 +36,14 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
+import {
+  DashboardSidebarAside,
+  DashboardSidebarInner,
+  DashboardNavSection,
+  DashboardNavButton,
+  DashboardNavLink,
+  DashboardSidebarDivider,
+} from "@/components/dashboard/DashboardSidebar";
 import { AlertTriangle, Calendar, Shield, FileCheck, CalendarClock } from "lucide-react";
 import {
   BarChart,
@@ -60,7 +68,7 @@ export default function DriverDashboard() {
   const [activeTab, setActiveTab] = useState<DriverTab>("overview");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { toast } = useToast();
-  const { profile } = useAuth();
+  const { profile, session, loading } = useAuth();
 
   // Request location permission when driver logs in
   useEffect(() => {
@@ -139,7 +147,7 @@ export default function DriverDashboard() {
   // Fetch driver profile to check availability status
   const { data: driverProfile, refetch: refetchProfile } = useQuery<any>({
     queryKey: ["/api/driver/profile"],
-    enabled: !!profile && profile.role === "driver", // Only fetch if driver is logged in
+    enabled: !loading && !!session?.access_token && !!profile && profile.role === "driver",
     refetchInterval: 30000, // Poll every 30 seconds (WebSocket handles real-time)
     staleTime: 15 * 1000, // Consider data fresh for 15 seconds
     retry: false, // Don't retry on errors
@@ -160,14 +168,14 @@ export default function DriverDashboard() {
   // Fetch pricing to check if any pricing is set
   const { data: pricingDataRaw } = useQuery<any[]>({
     queryKey: ["/api/driver/pricing"],
-    enabled: !!profile && profile.role === "driver", // Only fetch if driver is logged in
+    enabled: !loading && !!session?.access_token && !!profile && profile.role === "driver",
     retry: false, // Don't retry on errors
   });
 
   // Fetch vehicles to check if any vehicle is added
   const { data: vehiclesDataRaw } = useQuery<any[]>({
     queryKey: ["/api/driver/vehicles"],
-    enabled: !!profile && profile.role === "driver", // Only fetch if driver is logged in
+    enabled: !loading && !!session?.access_token && !!profile && profile.role === "driver",
     retry: false, // Don't retry on errors
   });
 
@@ -189,7 +197,7 @@ export default function DriverDashboard() {
     totalFuelCostCents?: number;
   }>({
     queryKey: ["/api/driver/stats"],
-    enabled: !!profile && profile.role === "driver",
+    enabled: !loading && !!session?.access_token && !!profile && profile.role === "driver",
     refetchInterval: 30000,
     staleTime: 15 * 1000,
     retry: false,
@@ -200,7 +208,7 @@ export default function DriverDashboard() {
     hasActiveSubscription: boolean;
   }>({
     queryKey: ["/api/driver/subscription"],
-    enabled: !!profile && profile.role === "driver",
+    enabled: !loading && !!session?.access_token && !!profile && profile.role === "driver",
   });
 
   const hasActiveSubscription = subscriptionData?.hasActiveSubscription ?? false;
@@ -210,14 +218,14 @@ export default function DriverDashboard() {
 
   const { data: statsAdvanced } = useQuery<typeof statsData>({
     queryKey: ["/api/driver/stats?detail=advanced"],
-    enabled: !!profile && profile.role === "driver" && !!canAdvancedStats,
+    enabled: !loading && !!session?.access_token && !!profile && profile.role === "driver" && !!canAdvancedStats,
     staleTime: 60 * 1000,
   });
 
   // Fetch assigned orders (accepted deliveries)
   const { data: assignedOrdersData, isLoading: loadingAssigned } = useQuery<any[]>({
     queryKey: ["/api/driver/assigned-orders"],
-    enabled: !!profile && profile.role === "driver", // Only fetch if driver is logged in
+    enabled: !loading && !!session?.access_token && !!profile && profile.role === "driver",
     refetchInterval: 30000, // Poll every 30 seconds (WebSocket handles real-time)
     staleTime: 15 * 1000, // Consider data fresh for 15 seconds
     retry: false, // Don't retry on errors
@@ -226,7 +234,7 @@ export default function DriverDashboard() {
   // Fetch completed orders (last week)
   const { data: completedOrdersData, isLoading: loadingCompleted } = useQuery<any[]>({
     queryKey: ["/api/driver/completed-orders"],
-    enabled: !!profile && profile.role === "driver", // Only fetch if driver is logged in
+    enabled: !loading && !!session?.access_token && !!profile && profile.role === "driver",
     refetchInterval: 30000, // Poll every 30 seconds (WebSocket handles real-time)
     staleTime: 15 * 1000, // Consider data fresh for 15 seconds
     retry: false, // Don't retry on errors
@@ -239,7 +247,7 @@ export default function DriverDashboard() {
   // Fetch driver documents for Critical Alerts / Action Required / Upcoming Due (advanced dashboard)
   const { data: documentsData } = useQuery<{ id: string; doc_type: string; title?: string; expiry_date: string | null; verification_status?: string }[]>({
     queryKey: ["/api/driver/documents"],
-    enabled: !!profile && profile.role === "driver",
+    enabled: !loading && !!session?.access_token && !!profile && profile.role === "driver",
     retry: false,
   });
   const documents = documentsData || [];
@@ -463,177 +471,142 @@ export default function DriverDashboard() {
       <AppHeader />
 
       <div className="flex flex-1 min-h-0">
-        {/* Side menu - always visible */}
-        <aside className="flex flex-col w-60 min-w-[240px] shrink-0 border-r border-border bg-muted/30 min-h-0 z-10" aria-label="Driver navigation">
-          <nav className="sticky top-0 flex flex-col p-3 gap-0.5 overflow-y-auto">
-            <div className="px-3 py-2 mb-1">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Menu</p>
-            </div>
-            <button
-              onClick={() => setActiveTab("overview")}
-              className={cn(
-                "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left",
-                activeTab === "overview"
-                  ? "bg-primary/12 text-primary"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
-              )}
-              data-testid="tab-overview"
-            >
-              <Home className="h-5 w-5 shrink-0" />
-              Dashboard
-            </button>
-            <button
-              onClick={() => setActiveTab("assigned")}
-              className={cn(
-                "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left",
-                activeTab === "assigned"
-                  ? "bg-primary/12 text-primary"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
-              )}
-              data-testid="tab-assigned"
-            >
-              <Package className="h-5 w-5 shrink-0" />
-              My Jobs
-            </button>
-            <button
-              onClick={() => setActiveTab("vehicles")}
-              className={cn(
-                "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left",
-                activeTab === "vehicles"
-                  ? "bg-primary/12 text-primary"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
-              )}
-              data-testid="tab-vehicles"
-            >
-              <Car className="h-5 w-5 shrink-0" />
-              Vehicles
-            </button>
-            <button
-              onClick={() => setActiveTab("pricing")}
-              className={cn(
-                "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left",
-                activeTab === "pricing"
-                  ? "bg-primary/12 text-primary"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
-              )}
-              data-testid="tab-pricing"
-            >
-              <DollarSign className="h-5 w-5 shrink-0" />
-              Pricing
-            </button>
-            <Link
-              href="/driver/subscription"
-              className={cn(
-                "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
-                "text-muted-foreground hover:bg-muted hover:text-foreground"
-              )}
-            >
-              <CreditCard className="h-5 w-5 shrink-0" />
-              Billing
-            </Link>
-            <button
-              onClick={() => setActiveTab("settings")}
-              className={cn(
-                "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left",
-                activeTab === "settings"
-                  ? "bg-primary/12 text-primary"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
-              )}
-              data-testid="tab-settings"
-            >
-              <Settings className="h-5 w-5 shrink-0" />
-              Settings
-            </button>
-            <button
-              onClick={() => setActiveTab("history")}
-              className={cn(
-                "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left",
-                activeTab === "history"
-                  ? "bg-primary/12 text-primary"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
-              )}
-              data-testid="tab-history"
-            >
-              <History className="h-5 w-5 shrink-0" />
-              History
-            </button>
-            <Separator className="my-2" />
-            <button
-              onClick={() => setActiveTab("depot-orders")}
-              className={cn(
-                "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left",
-                activeTab === "depot-orders"
-                  ? "bg-primary/12 text-primary"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
-              )}
-              data-testid="tab-depot-orders"
-            >
-              <Warehouse className="h-5 w-5 shrink-0" />
-              My Depot Orders
-            </button>
-            <button
-              onClick={() => setActiveTab("available-depots")}
-              className={cn(
-                "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left",
-                activeTab === "available-depots"
-                  ? "bg-primary/12 text-primary"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
-              )}
-              data-testid="tab-available-depots"
-            >
-              <Store className="h-5 w-5 shrink-0" />
-              Available Depots
-            </button>
-          </nav>
-        </aside>
+        <DashboardSidebarAside aria-label="Driver navigation">
+          <DashboardSidebarInner label="Driver workspace">
+            <DashboardNavSection>
+              <DashboardNavButton
+                active={activeTab === "overview"}
+                icon={Home}
+                onClick={() => setActiveTab("overview")}
+                data-testid="tab-overview"
+              >
+                Dashboard
+              </DashboardNavButton>
+              <DashboardNavButton
+                active={activeTab === "assigned"}
+                icon={Package}
+                onClick={() => setActiveTab("assigned")}
+                data-testid="tab-assigned"
+              >
+                My Jobs
+              </DashboardNavButton>
+              <DashboardNavButton
+                active={activeTab === "vehicles"}
+                icon={Car}
+                onClick={() => setActiveTab("vehicles")}
+                data-testid="tab-vehicles"
+              >
+                Vehicles
+              </DashboardNavButton>
+              <DashboardNavButton
+                active={activeTab === "pricing"}
+                icon={DollarSign}
+                onClick={() => setActiveTab("pricing")}
+                data-testid="tab-pricing"
+              >
+                Pricing
+              </DashboardNavButton>
+              <DashboardNavLink href="/driver/subscription" icon={CreditCard}>
+                Billing
+              </DashboardNavLink>
+              <DashboardNavButton
+                active={activeTab === "settings"}
+                icon={Settings}
+                onClick={() => setActiveTab("settings")}
+                data-testid="tab-settings"
+              >
+                Settings
+              </DashboardNavButton>
+              <DashboardNavButton
+                active={activeTab === "history"}
+                icon={History}
+                onClick={() => setActiveTab("history")}
+                data-testid="tab-history"
+              >
+                History
+              </DashboardNavButton>
+            </DashboardNavSection>
+            <DashboardSidebarDivider />
+            <DashboardNavSection title="Depot supply">
+              <DashboardNavButton
+                active={activeTab === "depot-orders"}
+                icon={Warehouse}
+                onClick={() => setActiveTab("depot-orders")}
+                data-testid="tab-depot-orders"
+              >
+                My depot orders
+              </DashboardNavButton>
+              <DashboardNavButton
+                active={activeTab === "available-depots"}
+                icon={Store}
+                onClick={() => setActiveTab("available-depots")}
+                data-testid="tab-available-depots"
+              >
+                Available depots
+              </DashboardNavButton>
+            </DashboardNavSection>
+          </DashboardSidebarInner>
+        </DashboardSidebarAside>
 
-        <main className="flex-1 min-w-0 overflow-auto">
+        <main className="flex-1 min-w-0 overflow-auto dashboard-main-area">
         <div className="w-full min-w-0 px-5 sm:px-8 lg:px-10 py-4 sm:py-8">
         {/* Separate Dashboard view (template-style): only alerts, KPIs, Action Required, etc. No My Jobs/Vehicles/Pricing here. */}
         {activeTab === "overview" && (
         <div className="space-y-6">
-        {/* Top bar: title, welcome, Export (Premium only), status */}
-        <div className="mb-4 sm:mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold mb-1">Driver Dashboard</h1>
-            <p className="text-sm text-muted-foreground">
-              {profile?.fullName ? `Welcome back, ${profile.fullName}` : "Manage your deliveries and earnings"}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {driverProfile && (
-              <Badge
-                variant={driverProfile.status === "active" && driverProfile.compliance_status === "approved" ? "default" : "secondary"}
-                className="text-sm px-3 py-1"
-              >
-                {driverProfile.status === "active" && driverProfile.compliance_status === "approved" ? "Active" : "Inactive"}
-              </Badge>
-            )}
-            {canExport && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={async () => {
-                  try {
-                    const { getAuthHeaders } = await import("@/lib/auth-headers");
-                    const headers = await getAuthHeaders();
-                    const res = await fetch("/api/driver/stats/export?format=csv", { credentials: "include", headers });
-                    if (!res.ok) throw new Error(await res.text());
-                    const blob = await res.blob();
-                    const a = document.createElement("a");
-                    a.href = URL.createObjectURL(blob);
-                    a.download = "earnings-export.csv";
-                    a.click();
-                    URL.revokeObjectURL(a.href);
-                  } catch (e: any) {
-                    toast({ title: "Export failed", description: e.message, variant: "destructive" });
+        {/* Hero header */}
+        <div className="mb-6 sm:mb-8 rounded-2xl border border-border/60 bg-gradient-to-br from-card/95 via-card/80 to-primary/[0.06] p-6 sm:p-8 shadow-lg shadow-primary/[0.07] backdrop-blur-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase tracking-widest text-primary/90">Overview</p>
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Driver dashboard</h1>
+              <p className="text-sm text-muted-foreground max-w-xl">
+                {profile?.fullName
+                  ? `Welcome back, ${profile.fullName}. Track jobs, vehicles, and earnings in one place.`
+                  : "Manage your deliveries, vehicles, and pricing from one place."}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
+              {driverProfile && (
+                <Badge
+                  variant={
+                    driverProfile.status === "active" && driverProfile.compliance_status === "approved"
+                      ? "default"
+                      : "secondary"
                   }
-                }}
-              >
-                <Download className="h-4 w-4 mr-2" />
-                Export (CSV)
-              </Button>
-            )}
+                  className="text-sm px-3 py-1 rounded-full shadow-sm"
+                >
+                  {driverProfile.status === "active" && driverProfile.compliance_status === "approved"
+                    ? "Active"
+                    : "Inactive"}
+                </Badge>
+              )}
+              {canExport && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-full border-primary/25 bg-background/80 shadow-sm"
+                  onClick={async () => {
+                    try {
+                      const { getAuthHeaders } = await import("@/lib/auth-headers");
+                      const headers = await getAuthHeaders();
+                      const res = await fetch("/api/driver/stats/export?format=csv", { credentials: "include", headers });
+                      if (!res.ok) throw new Error(await res.text());
+                      const blob = await res.blob();
+                      const a = document.createElement("a");
+                      a.href = URL.createObjectURL(blob);
+                      a.download = "earnings-export.csv";
+                      a.click();
+                      URL.revokeObjectURL(a.href);
+                    } catch (e: any) {
+                      toast({ title: "Export failed", description: e.message, variant: "destructive" });
+                    }
+                  }}
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Export (CSV)
+                </Button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -671,7 +644,7 @@ export default function DriverDashboard() {
         )}
 
         {/* KPI cards: 3 cards for all tiers */}
-        <div className={cn("grid gap-3 sm:gap-4 mb-6 sm:mb-8 [&>*]:rounded-xl [&>*]:shadow-md [&>*]:border-border/60", "grid-cols-1 sm:grid-cols-3")}>
+        <div className={cn("grid gap-4 sm:gap-5 mb-6 sm:mb-8", "grid-cols-1 sm:grid-cols-3")}>
           <StatsCard title="Earnings This Week" value={todayEarningsDisplay} icon={Wallet} />
           <StatsCard title="Active Jobs" value={activeJobsDisplay} description="In progress" icon={TrendingUp} />
           <StatsCard title="Completed" value={completedThisWeekDisplay} description="This week" icon={CheckCircle} />
@@ -758,8 +731,17 @@ export default function DriverDashboard() {
                         </div>
                       </CardHeader>
                       <CardContent className="p-0">
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-0 border-t">
-                          <div className="p-6 space-y-6 border-r border-border/50">
+                        <div className="flex flex-col border-t border-border/80 lg:flex-row">
+                          <div className="flex-1 min-w-0 space-y-6 bg-muted/25 p-6 dark:bg-muted/15">
+                            <div className="flex items-start gap-3 rounded-xl border border-border/60 bg-background/60 p-3 shadow-sm dark:bg-background/40">
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
+                                <ClipboardList className="h-5 w-5" />
+                              </div>
+                              <div className="min-w-0 pt-0.5">
+                                <p className="text-[11px] font-bold uppercase tracking-widest text-primary">Order details</p>
+                                <p className="text-xs text-muted-foreground">Actions, customer, and delivery information</p>
+                              </div>
+                            </div>
                             <div className="flex flex-wrap gap-2">
                               {order.state === "assigned" && (
                                 <Button onClick={() => handleStartDelivery(order.id)} disabled={isStarting} variant="default" className="flex items-center gap-2" size="sm">
@@ -811,8 +793,22 @@ export default function DriverDashboard() {
                               </div>
                             </div>
                           </div>
-                          <div className="p-6">
-                            <OrderChat orderId={order.id} currentUserType="driver" />
+                          <div
+                            className="relative flex min-h-0 flex-col border-t border-primary/25 bg-gradient-to-b from-primary/[0.08] via-muted/30 to-background p-6 dark:from-primary/[0.12] dark:via-muted/20 lg:w-[min(100%,420px)] lg:shrink-0 lg:border-l-2 lg:border-t-0 lg:border-primary/35 xl:w-[440px]"
+                            aria-label="Order chat"
+                          >
+                            <span
+                              className="pointer-events-none absolute left-0 top-4 bottom-4 hidden w-1 rounded-full bg-gradient-to-b from-primary from-40% via-primary/50 to-transparent lg:block"
+                              aria-hidden
+                            />
+                            <div className="mb-4 flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/10 px-3 py-2 dark:bg-primary/15">
+                              <MessageCircle className="h-5 w-5 shrink-0 text-primary" />
+                              <div>
+                                <p className="text-sm font-semibold leading-tight">Messages</p>
+                                <p className="text-xs text-muted-foreground">Chat with the customer about this order</p>
+                              </div>
+                            </div>
+                            <OrderChat orderId={order.id} currentUserType="driver" variant="embedded" />
                           </div>
                         </div>
                       </CardContent>
@@ -1181,24 +1177,82 @@ export default function DriverDashboard() {
           </Button>
 
           <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-            <SheetContent side="left" className="w-72 p-0">
-              <nav className="flex flex-col h-full py-4">
-                <div className="px-4 pb-2">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Menu</p>
-                </div>
-                <div className="flex-1 overflow-y-auto space-y-1 px-2">
-                  <button onClick={() => { setActiveTab("overview"); setSidebarOpen(false); }} className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left", activeTab === "overview" ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}> <Home className="h-5 w-5 shrink-0" /> Dashboard </button>
-                  <button onClick={() => { setActiveTab("assigned"); setSidebarOpen(false); }} className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left", activeTab === "assigned" ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}> <Package className="h-5 w-5 shrink-0" /> My Jobs </button>
-                  <button onClick={() => { setActiveTab("vehicles"); setSidebarOpen(false); }} className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left", activeTab === "vehicles" ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}> <Car className="h-5 w-5 shrink-0" /> Vehicles </button>
-                  <button onClick={() => { setActiveTab("pricing"); setSidebarOpen(false); }} className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left", activeTab === "pricing" ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}> <DollarSign className="h-5 w-5 shrink-0" /> Pricing </button>
-                  <Link href="/driver/subscription" onClick={() => setSidebarOpen(false)} className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"> <CreditCard className="h-5 w-5 shrink-0" /> Billing </Link>
-                  <button onClick={() => { setActiveTab("settings"); setSidebarOpen(false); }} className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left", activeTab === "settings" ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}> <Settings className="h-5 w-5 shrink-0" /> Settings </button>
-                  <button onClick={() => { setActiveTab("history"); setSidebarOpen(false); }} className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left", activeTab === "history" ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}> <History className="h-5 w-5 shrink-0" /> History </button>
-                  <Separator className="my-2" />
-                  <button onClick={() => { setActiveTab("depot-orders"); setSidebarOpen(false); }} className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left", activeTab === "depot-orders" ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}> <Warehouse className="h-5 w-5 shrink-0" /> My Depot Orders </button>
-                  <button onClick={() => { setActiveTab("available-depots"); setSidebarOpen(false); }} className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left", activeTab === "available-depots" ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")}> <Store className="h-5 w-5 shrink-0" /> Available Depots </button>
-                </div>
-              </nav>
+            <SheetContent
+              side="left"
+              className="w-[min(100vw-2rem,288px)] p-0 overflow-hidden flex flex-col bg-sidebar border-r border-sidebar-border"
+            >
+              <div className="flex flex-col h-full min-h-0">
+                <DashboardSidebarInner label="Menu">
+                  <DashboardNavSection>
+                    <DashboardNavButton
+                      active={activeTab === "overview"}
+                      icon={Home}
+                      onClick={() => { setActiveTab("overview"); setSidebarOpen(false); }}
+                    >
+                      Dashboard
+                    </DashboardNavButton>
+                    <DashboardNavButton
+                      active={activeTab === "assigned"}
+                      icon={Package}
+                      onClick={() => { setActiveTab("assigned"); setSidebarOpen(false); }}
+                    >
+                      My Jobs
+                    </DashboardNavButton>
+                    <DashboardNavButton
+                      active={activeTab === "vehicles"}
+                      icon={Car}
+                      onClick={() => { setActiveTab("vehicles"); setSidebarOpen(false); }}
+                    >
+                      Vehicles
+                    </DashboardNavButton>
+                    <DashboardNavButton
+                      active={activeTab === "pricing"}
+                      icon={DollarSign}
+                      onClick={() => { setActiveTab("pricing"); setSidebarOpen(false); }}
+                    >
+                      Pricing
+                    </DashboardNavButton>
+                    <DashboardNavLink
+                      href="/driver/subscription"
+                      icon={CreditCard}
+                      onNavigate={() => setSidebarOpen(false)}
+                    >
+                      Billing
+                    </DashboardNavLink>
+                    <DashboardNavButton
+                      active={activeTab === "settings"}
+                      icon={Settings}
+                      onClick={() => { setActiveTab("settings"); setSidebarOpen(false); }}
+                    >
+                      Settings
+                    </DashboardNavButton>
+                    <DashboardNavButton
+                      active={activeTab === "history"}
+                      icon={History}
+                      onClick={() => { setActiveTab("history"); setSidebarOpen(false); }}
+                    >
+                      History
+                    </DashboardNavButton>
+                  </DashboardNavSection>
+                  <DashboardSidebarDivider />
+                  <DashboardNavSection title="Depot supply">
+                    <DashboardNavButton
+                      active={activeTab === "depot-orders"}
+                      icon={Warehouse}
+                      onClick={() => { setActiveTab("depot-orders"); setSidebarOpen(false); }}
+                    >
+                      My depot orders
+                    </DashboardNavButton>
+                    <DashboardNavButton
+                      active={activeTab === "available-depots"}
+                      icon={Store}
+                      onClick={() => { setActiveTab("available-depots"); setSidebarOpen(false); }}
+                    >
+                      Available depots
+                    </DashboardNavButton>
+                  </DashboardNavSection>
+                </DashboardSidebarInner>
+              </div>
             </SheetContent>
           </Sheet>
 
@@ -1351,10 +1405,17 @@ export default function DriverDashboard() {
                         </div>
                       </CardHeader>
                       <CardContent className="p-0">
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-0 border-t">
-                          {/* Left Column - Order Details */}
-                          <div className="p-6 space-y-6 border-r border-border/50">
-                            {/* Action Buttons */}
+                        <div className="flex flex-col border-t border-border/80 lg:flex-row">
+                          <div className="flex-1 min-w-0 space-y-6 bg-muted/25 p-6 dark:bg-muted/15">
+                            <div className="flex items-start gap-3 rounded-xl border border-border/60 bg-background/60 p-3 shadow-sm dark:bg-background/40">
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
+                                <ClipboardList className="h-5 w-5" />
+                              </div>
+                              <div className="min-w-0 pt-0.5">
+                                <p className="text-[11px] font-bold uppercase tracking-widest text-primary">Order details</p>
+                                <p className="text-xs text-muted-foreground">Actions, customer, and delivery information</p>
+                              </div>
+                            </div>
                             <div className="flex flex-wrap gap-2">
                               {order.state === "assigned" && (
                                 <Button
@@ -1392,8 +1453,6 @@ export default function DriverDashboard() {
                                 </Button>
                               )}
                             </div>
-
-                            {/* Order Details */}
                             <div className="space-y-4">
                               <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
                                 <div className="p-1.5 rounded-md bg-background">
@@ -1453,12 +1512,22 @@ export default function DriverDashboard() {
                             </div>
                           </div>
 
-                          {/* Right Column - Chat */}
-                          <div className="p-6">
-                            <OrderChat
-                              orderId={order.id}
-                              currentUserType="driver"
+                          <div
+                            className="relative flex min-h-0 flex-col border-t border-primary/25 bg-gradient-to-b from-primary/[0.08] via-muted/30 to-background p-6 dark:from-primary/[0.12] dark:via-muted/20 lg:w-[min(100%,420px)] lg:shrink-0 lg:border-l-2 lg:border-t-0 lg:border-primary/35 xl:w-[440px]"
+                            aria-label="Order chat"
+                          >
+                            <span
+                              className="pointer-events-none absolute left-0 top-4 bottom-4 hidden w-1 rounded-full bg-gradient-to-b from-primary from-40% via-primary/50 to-transparent lg:block"
+                              aria-hidden
                             />
+                            <div className="mb-4 flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/10 px-3 py-2 dark:bg-primary/15">
+                              <MessageCircle className="h-5 w-5 shrink-0 text-primary" />
+                              <div>
+                                <p className="text-sm font-semibold leading-tight">Messages</p>
+                                <p className="text-xs text-muted-foreground">Chat with the customer about this order</p>
+                              </div>
+                            </div>
+                            <OrderChat orderId={order.id} currentUserType="driver" variant="embedded" />
                           </div>
                         </div>
                       </CardContent>

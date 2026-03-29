@@ -242,6 +242,19 @@
   }
 }
 
+/* Soft ambient background for dashboard main columns (teal theme) */
+.dashboard-main-area {
+  background-image:
+    radial-gradient(ellipse 120% 70% at 50% -15%, hsl(var(--primary) / 0.09), transparent 52%),
+    radial-gradient(ellipse 60% 40% at 100% 0%, hsl(var(--primary) / 0.05), transparent 50%);
+}
+
+.dark .dashboard-main-area {
+  background-image:
+    radial-gradient(ellipse 120% 70% at 50% -15%, hsl(var(--primary) / 0.14), transparent 55%),
+    radial-gradient(ellipse 50% 35% at 95% 5%, hsl(var(--primary) / 0.08), transparent 48%);
+}
+
 /**
  * Using the elevate system.
  * Automatic contrast adjustment.

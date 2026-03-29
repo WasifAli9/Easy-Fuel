@@ -18,12 +18,14 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/contexts/AuthContext";
-import { User, Lock, Upload, FileText, AlertTriangle, CheckCircle2, XCircle, Shield, Building, MapPin, Loader2, LayoutDashboard, Package, Car, DollarSign, Settings, History, Warehouse, Store, Menu, CreditCard } from "lucide-react";
+import { User, Lock, Upload, FileText, AlertTriangle, CheckCircle2, XCircle, Shield, Building, MapPin, Loader2, Menu } from "lucide-react";
 import { normalizeFilePath, normalizeProfilePhotoUrl, cn } from "@/lib/utils";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { DashboardSidebarAside } from "@/components/dashboard/DashboardSidebar";
+import { DriverWorkspaceSidebar } from "@/components/dashboard/DriverWorkspaceSidebar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -679,68 +681,9 @@ export default function DriverProfile() {
       <AppHeader />
       
       <div className="flex flex-1 min-h-0">
-        <aside className="hidden md:flex flex-col w-60 min-w-[240px] shrink-0 border-r border-border bg-muted/30 min-h-0 z-10" aria-label="Driver navigation">
-          <nav className="sticky top-0 flex flex-col p-3 gap-0.5 overflow-y-auto">
-            <div className="px-3 py-2 mb-1">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Menu</p>
-            </div>
-
-            <Link
-              href="/driver"
-              className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              <LayoutDashboard className="h-5 w-5 shrink-0" /> Dashboard
-            </Link>
-            <Link
-              href="/driver"
-              className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              <Package className="h-5 w-5 shrink-0" /> My Jobs
-            </Link>
-            <Link
-              href="/driver"
-              className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              <Car className="h-5 w-5 shrink-0" /> Vehicles
-            </Link>
-            <Link
-              href="/driver"
-              className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              <DollarSign className="h-5 w-5 shrink-0" /> Pricing
-            </Link>
-            <Link
-              href="/driver/subscription"
-              className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              <CreditCard className="h-5 w-5 shrink-0" /> Billing
-            </Link>
-            <span className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium bg-primary/12 text-primary")}>
-              <Settings className="h-5 w-5 shrink-0" /> Settings
-            </span>
-            <Link
-              href="/driver"
-              className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              <History className="h-5 w-5 shrink-0" /> History
-            </Link>
-
-            <Separator className="my-2" />
-
-            <Link
-              href="/driver"
-              className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              <Warehouse className="h-5 w-5 shrink-0" /> My Depot Orders
-            </Link>
-            <Link
-              href="/driver"
-              className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              <Store className="h-5 w-5 shrink-0" /> Available Depots
-            </Link>
-          </nav>
-        </aside>
+        <DashboardSidebarAside aria-label="Driver navigation">
+          <DriverWorkspaceSidebar active="profile" />
+        </DashboardSidebarAside>
 
         <Button
           variant="outline"
@@ -753,80 +696,20 @@ export default function DriverProfile() {
         </Button>
 
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-          <SheetContent side="left" className="w-72 p-0">
-            <nav className="flex flex-col h-full py-4">
-              <div className="px-4 pb-2">
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Menu</p>
-              </div>
-              <div className="flex-1 overflow-y-auto space-y-1 px-2">
-                <Link
-                  href="/driver"
-                  onClick={() => setSidebarOpen(false)}
-                  className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  <LayoutDashboard className="h-5 w-5 shrink-0" /> Dashboard
-                </Link>
-                <Link
-                  href="/driver"
-                  onClick={() => setSidebarOpen(false)}
-                  className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  <Package className="h-5 w-5 shrink-0" /> My Jobs
-                </Link>
-                <Link
-                  href="/driver"
-                  onClick={() => setSidebarOpen(false)}
-                  className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  <Car className="h-5 w-5 shrink-0" /> Vehicles
-                </Link>
-                <Link
-                  href="/driver"
-                  onClick={() => setSidebarOpen(false)}
-                  className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  <DollarSign className="h-5 w-5 shrink-0" /> Pricing
-                </Link>
-                <Link
-                  href="/driver/subscription"
-                  onClick={() => setSidebarOpen(false)}
-                  className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  <CreditCard className="h-5 w-5 shrink-0" /> Billing
-                </Link>
-                <span className={cn("w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium bg-primary/12 text-primary")}>
-                  <Settings className="h-5 w-5 shrink-0" /> Settings
-                </span>
-                <Link
-                  href="/driver"
-                  onClick={() => setSidebarOpen(false)}
-                  className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  <History className="h-5 w-5 shrink-0" /> History
-                </Link>
-
-                <Separator className="my-2" />
-
-                <Link
-                  href="/driver"
-                  onClick={() => setSidebarOpen(false)}
-                  className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  <Warehouse className="h-5 w-5 shrink-0" /> My Depot Orders
-                </Link>
-                <Link
-                  href="/driver"
-                  onClick={() => setSidebarOpen(false)}
-                  className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  <Store className="h-5 w-5 shrink-0" /> Available Depots
-                </Link>
-              </div>
-            </nav>
+          <SheetContent
+            side="left"
+            className="w-[min(100vw-2rem,288px)] p-0 overflow-hidden flex flex-col bg-sidebar border-r border-sidebar-border"
+          >
+            <div className="flex flex-col h-full min-h-0">
+              <DriverWorkspaceSidebar
+                active="profile"
+                onNavigate={() => setSidebarOpen(false)}
+              />
+            </div>
           </SheetContent>
         </Sheet>
 
-        <main className="flex-1 min-w-0 overflow-auto">
+        <main className="flex-1 min-w-0 overflow-auto dashboard-main-area">
           <div className="w-full min-w-0 px-5 sm:px-8 lg:px-10 py-4 sm:py-8">
         <div className="mb-8">
           <Link href="/driver">
