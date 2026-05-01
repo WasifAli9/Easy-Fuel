@@ -192,8 +192,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/auth/me", requireAuth, async (req, res) => {
     const user = (req as any).user;
-    const profile = await db.select().from(profiles).where(eq(profiles.id, user.id)).limit(1);
-    return res.json({ user: { id: user.id, email: user.email }, profile: profile[0] ?? null });
+    const rows = await db.select().from(profiles).where(eq(profiles.id, user.id)).limit(1);
+    const row = rows[0];
+    // JSON must use snake_case keys — the SPA expects full_name / profile_photo_url (Drizzle uses camelCase in memory).
+    const profileJson = row
+      ? {
+          id: row.id,
+          role: row.role,
+          full_name: row.fullName,
+          phone: row.phone,
+          phone_country_code: row.phoneCountryCode,
+          profile_photo_url: row.profilePhotoUrl,
+          is_active: row.isActive,
+        }
+      : null;
+    return res.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        full_name: profileJson?.full_name ?? null,
+      },
+      profile: profileJson,
+    });
   });
 
   app.post("/api/auth/change-password", requireAuth, async (_req, res) => res.json({ ok: true }));

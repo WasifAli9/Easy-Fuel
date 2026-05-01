@@ -9,6 +9,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useToast } from "@/hooks/use-toast";
 import { Mail, KeyRound, User as UserIcon, Eye, EyeOff, Fuel, Shield, MapPin, CheckCircle2, Clock, Truck, Loader2 } from "lucide-react";
 
+const AUTH_PROVIDER = (import.meta.env.VITE_AUTH_PROVIDER || "local").toLowerCase();
+
 export default function Signup() {
 	const [fullName, setFullName] = useState("");
 	const [email, setEmail] = useState("");
@@ -43,8 +45,10 @@ export default function Signup() {
 		}
 	}, [user, profile, authLoading, setLocation]);
 
-	// If user just signed up on this page, automatically create the profile once a session exists.
+	// Supabase: auth user exists before profiles row — create profile once session exists.
+	// Local auth: register already creates profile + role; skip this path.
 	useEffect(() => {
+		if (AUTH_PROVIDER === "local") return;
 		if (authLoading) return;
 		if (!user || profile) return;
 		if (!signupSubmitted) return;
@@ -179,6 +183,22 @@ export default function Signup() {
 									</SelectContent>
 								</Select>
 							</div>
+
+							{(!fullNameFromUser || !String(fullNameFromUser).trim()) && (
+								<div className="space-y-2">
+									<label htmlFor="setupFullName" className="text-sm font-medium">
+										Full name
+									</label>
+									<Input
+										id="setupFullName"
+										placeholder="Your full name"
+										value={fullName}
+										onChange={(e) => setFullName(e.target.value)}
+										required
+										data-testid="input-setup-fullname"
+									/>
+								</div>
+							)}
 
 							<Button type="submit" className="w-full" disabled={profileLoading} data-testid="button-create-profile">
 								{profileLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}

@@ -49,16 +49,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return res.json();
         })
         .then((payload) => {
-          setUser(payload.user ?? null);
-          setSession(payload.user ? { access_token: "cookie-session", user: payload.user } : null);
-          setProfile(
-            payload.profile
+          const p = payload.profile;
+          const fullNameRaw = p?.full_name ?? (p as any)?.fullName;
+          const u = payload.user;
+          setUser(
+            u
               ? {
-                  id: payload.profile.id,
-                  role: payload.profile.role,
-                  fullName: payload.profile.full_name,
-                  phone: payload.profile.phone,
-                  profilePhotoUrl: payload.profile.profile_photo_url || undefined,
+                  ...u,
+                  user_metadata: {
+                    full_name: (u as any).full_name ?? fullNameRaw,
+                  },
+                }
+              : null,
+          );
+          setSession(u ? { access_token: "cookie-session", user: u } : null);
+          setProfile(
+            p
+              ? {
+                  id: p.id,
+                  role: p.role,
+                  fullName: fullNameRaw,
+                  phone: p.phone ?? (p as any).phone,
+                  profilePhotoUrl: (p.profile_photo_url ?? (p as any).profilePhotoUrl) || undefined,
                 }
               : null,
           );
@@ -112,16 +124,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
         const payload = await response.json();
         const data = payload.profile;
+        const fullNameRaw = data?.full_name ?? (data as any)?.fullName;
         const profileData = data
           ? {
               id: data.id,
               role: data.role,
-              fullName: data.full_name,
-              phone: data.phone,
-              profilePhotoUrl: data.profile_photo_url || undefined,
+              fullName: fullNameRaw,
+              phone: data.phone ?? (data as any).phone,
+              profilePhotoUrl: (data.profile_photo_url ?? (data as any).profilePhotoUrl) || undefined,
             }
           : null;
-        setUser(payload.user ?? null);
+        const u = payload.user;
+        setUser(
+          u
+            ? {
+                ...u,
+                user_metadata: {
+                  full_name: (u as any).full_name ?? fullNameRaw,
+                },
+              }
+            : null,
+        );
         setProfile(profileData);
         setLoading(false);
         return;
@@ -222,9 +245,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw new Error(data.error || "Sign up failed");
       }
       const data = await res.json();
+      const p = data.profile as { id: string; role: Profile["role"]; full_name?: string } | undefined;
+      // Server already creates profile + role on register; hydrate immediately so we skip the extra "Complete setup" step.
+      if (p?.id && p?.role) {
+        setProfile({
+          id: p.id,
+          role: p.role,
+          fullName: p.full_name ?? fullName ?? String(email).split("@")[0],
+        });
+      }
       const localSession = { access_token: "cookie-session", user: data.user };
       setSession(localSession as AuthContextType["session"]);
-      setUser({ id: data.user.id, email, user_metadata: { full_name: fullName } });
+      setUser({
+        id: data.user.id,
+        email: data.user.email ?? email,
+        user_metadata: { full_name: p?.full_name ?? fullName },
+      });
       await fetchProfile(data.user.id);
       return data;
     }
