@@ -77,14 +77,20 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return next();
   }
   const user = await getRequestSessionUser(req);
-  if (!user) {
+    if (!user) {
     // Log why authentication failed for debugging
     const hasAuthHeader = !!req.headers.authorization;
-    const hasCookie = !!req.headers.cookie;
+    const raw = req.headers.cookie;
+    const cookieNames = raw
+      ? raw.split(";").map((c) => c.trim().split("=")[0]).filter(Boolean)
+      : [];
+    const hasEasyfuelSid = cookieNames.includes("easyfuel.sid");
     console.error(`❌ Auth failed for ${req.method} ${req.path}:`, {
       hasAuthHeader,
-      hasCookie: hasCookie ? 'yes (checking for token...)' : 'no',
-      userAgent: req.headers['user-agent']?.substring(0, 50)
+      hasCookie: !!raw,
+      cookieNames,
+      hasEasyfuelSid,
+      userAgent: req.headers["user-agent"]?.substring(0, 50),
     });
     return res.status(401).json({ error: "Unauthorized" });
   }
@@ -129,15 +135,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (error) {
           return res.status(500).json({ error: "Session login failed." });
         }
-        // connect-pg-simple persists asynchronously; ensure session is stored before the client
-        // immediately calls /api/auth/me or /api/auth/set-role (avoids flaky 401 right after signup).
-        req.session.save((saveErr) => {
-          if (saveErr) {
-            console.error("[auth/register] session save failed:", saveErr);
-            return res.status(500).json({ error: "Session login failed." });
-          }
-          return res.status(201).json({ user, profile: { id: user.id, role: user.role, full_name: fullName } });
-        });
+        // Passport 0.7+ regenerates the session and calls session.save before this callback runs.
+        res.clearCookie("inspect360.sid", { path: "/" });
+        return res.status(201).json({ user, profile: { id: user.id, role: user.role, full_name: fullName } });
       });
     } catch (error: any) {
       const normalizedMessage =
@@ -168,13 +168,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!user) return res.status(401).json({ error: info?.message || "Invalid credentials." });
       req.login(user, (loginError) => {
         if (loginError) return res.status(500).json({ error: "Session login failed." });
-        req.session.save((saveErr) => {
-          if (saveErr) {
-            console.error("[auth/login] session save failed:", saveErr);
-            return res.status(500).json({ error: "Session login failed." });
-          }
-          return res.json({ user });
-        });
+        res.clearCookie("inspect360.sid", { path: "/" });
+        return res.json({ user });
       });
     })(req, res);
   });
@@ -183,7 +178,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       req.logout?.(() => undefined);
       req.session?.destroy?.(() => undefined);
-      res.clearCookie("easyfuel.sid");
+      res.clearCookie("easyfuel.sid", { path: "/" });
+      res.clearCookie("inspect360.sid", { path: "/" });
       return res.json({ ok: true });
     } catch {
       return res.json({ ok: true });

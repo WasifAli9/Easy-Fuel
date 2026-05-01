@@ -91,6 +91,7 @@ export function setupAuth(app: Express) {
     process.env.SESSION_COOKIE_SECURE === "0" || process.env.SESSION_COOKIE_SECURE === "false"
       ? false
       : isProd;
+  const cookieDomain = process.env.SESSION_COOKIE_DOMAIN?.trim() || undefined;
 
   app.use(
     session({
@@ -106,9 +107,11 @@ export function setupAuth(app: Express) {
       proxy: true,
       cookie: {
         httpOnly: true,
+        path: "/",
         sameSite,
         secure: cookieSecure,
         maxAge: 1000 * 60 * 60 * 24 * 30,
+        ...(cookieDomain ? { domain: cookieDomain } : {}),
       },
     }),
   );

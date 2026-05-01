@@ -99,7 +99,18 @@ self.addEventListener("fetch", (event) => {
   // NEVER cache API requests - always fetch from network
   // This ensures state updates work correctly
   if (url.pathname.startsWith("/api/")) {
-    event.respondWith(fetch(request));
+    // Same-origin session cookies must be sent; some environments omit credentials on cloned Request.
+    event.respondWith(
+      fetch(request.url, {
+        method: request.method,
+        headers: request.headers,
+        credentials: "same-origin",
+        cache: "no-store",
+        redirect: request.redirect,
+        referrer: request.referrer,
+        referrerPolicy: request.referrerPolicy,
+      })
+    );
     return;
   }
 
