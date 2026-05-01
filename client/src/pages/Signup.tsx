@@ -22,25 +22,27 @@ export default function Signup() {
 	const { toast } = useToast();
 	const [, setLocation] = useLocation();
 
-	// If already authenticated and profile exists, route to dashboard.
+	// Signed-in users should never use /signup (no second "complete setup" step).
 	useEffect(() => {
-		if (!authLoading && user) {
-			if (profile) {
-				const dashboardPath =
-					profile.role === "customer"
-						? "/customer"
-						: profile.role === "driver"
-							? "/driver"
-							: profile.role === "supplier"
-								? "/supplier"
-								: profile.role === "admin"
-									? "/admin"
-									: profile.role === "company"
-										? "/company"
-										: "/";
-				setLocation(dashboardPath);
-			}
+		if (authLoading || !user) return;
+		if (profile) {
+			const dashboardPath =
+				profile.role === "customer"
+					? "/customer"
+					: profile.role === "driver"
+						? "/driver"
+						: profile.role === "supplier"
+							? "/supplier"
+							: profile.role === "admin"
+								? "/admin"
+								: profile.role === "company"
+									? "/company"
+									: "/";
+			setLocation(dashboardPath);
+			return;
 		}
+		// Session without profile is invalid for local auth; Auth page clears it.
+		setLocation("/auth");
 	}, [user, profile, authLoading, setLocation]);
 
 	async function handleSignup(e: React.FormEvent) {
