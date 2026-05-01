@@ -1,4 +1,4 @@
-const CACHE_NAME = "easy-fuel-v4";
+const CACHE_NAME = "easy-fuel-v5";
 const OFFLINE_FALLBACK_PAGE = "/";
 const STATIC_ASSETS = [
   "/manifest.webmanifest",
@@ -99,18 +99,9 @@ self.addEventListener("fetch", (event) => {
   // NEVER cache API requests - always fetch from network
   // This ensures state updates work correctly
   if (url.pathname.startsWith("/api/")) {
-    // Same-origin session cookies must be sent; some environments omit credentials on cloned Request.
-    event.respondWith(
-      fetch(request.url, {
-        method: request.method,
-        headers: request.headers,
-        credentials: "same-origin",
-        cache: "no-store",
-        redirect: request.redirect,
-        referrer: request.referrer,
-        referrerPolicy: request.referrerPolicy,
-      })
-    );
+    // Must forward the real Request (or equivalent credentials). Rebuilding fetch(url, { headers })
+    // from the SW often drops session cookies → /api/auth/me 401 even after login 200.
+    event.respondWith(fetch(request, { cache: "no-store" }));
     return;
   }
 
