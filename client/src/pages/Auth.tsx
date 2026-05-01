@@ -15,31 +15,31 @@ export default function Auth() {
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [resetEmailSent, setResetEmailSent] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const { user, profile, loading: authLoading, signInWithPassword, resetPassword } = useAuth();
+  const { user, profile, loading: authLoading, signInWithPassword, resetPassword, signOut } = useAuth();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
 
   useEffect(() => {
-    if (!authLoading && user) {
-      if (profile) {
-        const dashboardPath =
-          profile.role === "customer"
-            ? "/customer"
-            : profile.role === "driver"
-              ? "/driver"
-              : profile.role === "supplier"
-                ? "/supplier"
-                : profile.role === "admin"
-                  ? "/admin"
-                  : profile.role === "company"
-                    ? "/company"
-                    : "/";
-        setLocation(dashboardPath);
-      } else {
-        setLocation("/signup");
-      }
+    if (authLoading || !user) return;
+    if (profile) {
+      const dashboardPath =
+        profile.role === "customer"
+          ? "/customer"
+          : profile.role === "driver"
+            ? "/driver"
+            : profile.role === "supplier"
+              ? "/supplier"
+              : profile.role === "admin"
+                ? "/admin"
+                : profile.role === "company"
+                  ? "/company"
+                  : "/";
+      setLocation(dashboardPath);
+      return;
     }
-  }, [user, profile, authLoading, setLocation]);
+    // Session without profile (bad data): clear server session. Do not run during sign-in race — AuthContext hydrates user+profile together after login/register.
+    void signOut();
+  }, [user, profile, authLoading, setLocation, signOut]);
 
   async function handlePasswordSignIn(e: React.FormEvent) {
     e.preventDefault();

@@ -56,7 +56,7 @@ function ProtectedRoute({
 
   // Allow access without profile for role setup
   if (!profile && !allowWithoutProfile) {
-    return <Redirect to="/signup" />;
+    return <Redirect to="/auth" />;
   }
 
   // Redirect to role-specific dashboard if profile exists and accessing setup
@@ -84,7 +84,7 @@ function Router() {
       <Switch>
       <Route path="/">
         {user ? (
-          profile ? <Redirect to={`/${profile.role}`} /> : <Redirect to="/signup" />
+          profile ? <Redirect to={`/${profile.role}`} /> : <Redirect to="/auth" />
         ) : (
           <Landing />
         )}

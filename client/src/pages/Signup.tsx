@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, KeyRound, User as UserIcon, Eye, EyeOff, Fuel, Shield, Clock, Truck, Loader2 } from "lucide-react";
+import { Mail, KeyRound, User as UserIcon, Eye, EyeOff, Fuel, Shield, Clock, Truck } from "lucide-react";
 
 export default function Signup() {
 	const [fullName, setFullName] = useState("");
@@ -18,7 +18,7 @@ export default function Signup() {
 	const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 	const [loading, setLoading] = useState(false);
 	const [role, setRole] = useState<"customer" | "driver" | "supplier" | "admin" | "company">("driver");
-	const { user, profile, loading: authLoading, signUpWithPassword, refetchProfile } = useAuth();
+	const { user, profile, loading: authLoading, signUpWithPassword } = useAuth();
 	const { toast } = useToast();
 	const [, setLocation] = useLocation();
 
@@ -42,12 +42,6 @@ export default function Signup() {
 			}
 		}
 	}, [user, profile, authLoading, setLocation]);
-
-	// Register creates profile server-side; refetch if the SPA missed it (e.g. cookie timing).
-	useEffect(() => {
-		if (authLoading || !user || profile) return;
-		void refetchProfile();
-	}, [authLoading, user, profile, refetchProfile]);
 
 	async function handleSignup(e: React.FormEvent) {
 		e.preventDefault();
@@ -109,22 +103,6 @@ export default function Signup() {
 						</div>
 					</CardHeader>
 					<CardContent>
-						{user && !profile ? (
-							<div className="text-center space-y-4 py-8" data-testid="local-signup-finishing">
-								<Loader2 className="h-8 w-8 animate-spin mx-auto text-primary" />
-								<p className="text-sm text-muted-foreground">Finishing sign-up…</p>
-								<p className="text-sm text-muted-foreground">
-									<button
-										type="button"
-										className="underline"
-										onClick={() => setLocation("/auth")}
-										data-testid="link-to-signin-local-pending"
-									>
-										Sign in
-									</button>
-								</p>
-							</div>
-						) : (
 							<form className="space-y-4" onSubmit={handleSignup}>
 								<div className="space-y-2">
 									<label htmlFor="fullName" className="text-sm font-medium">
@@ -239,7 +217,6 @@ export default function Signup() {
 									</button>
 								</div>
 							</form>
-						)}
 					</CardContent>
 				</Card>
 			</div>

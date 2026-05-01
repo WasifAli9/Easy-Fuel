@@ -135,9 +135,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (error) {
           return res.status(500).json({ error: "Session login failed." });
         }
-        // Passport 0.7+ regenerates the session and calls session.save before this callback runs.
         res.clearCookie("inspect360.sid", { path: "/" });
-        return res.status(201).json({ user, profile: { id: user.id, role: user.role, full_name: fullName } });
+        req.session.save((saveErr) => {
+          if (saveErr) {
+            console.error("[auth/register] session.save failed:", saveErr);
+            return res.status(500).json({ error: "Session persist failed." });
+          }
+          return res.status(201).json({ user, profile: { id: user.id, role: user.role, full_name: fullName } });
+        });
       });
     } catch (error: any) {
       const normalizedMessage =
@@ -169,20 +174,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
       req.login(user, (loginError) => {
         if (loginError) return res.status(500).json({ error: "Session login failed." });
         res.clearCookie("inspect360.sid", { path: "/" });
-        return res.json({ user });
+        req.session.save((saveErr) => {
+          if (saveErr) {
+            console.error("[auth/login] session.save failed:", saveErr);
+            return res.status(500).json({ error: "Session persist failed." });
+          }
+          return res.json({ user });
+        });
       });
     })(req, res);
   });
 
-  app.post("/api/auth/logout", async (req, res) => {
-    try {
-      req.logout?.(() => undefined);
-      req.session?.destroy?.(() => undefined);
+  app.post("/api/auth/logout", (req, res) => {
+    const finish = () => {
       res.clearCookie("easyfuel.sid", { path: "/" });
       res.clearCookie("inspect360.sid", { path: "/" });
       return res.json({ ok: true });
-    } catch {
-      return res.json({ ok: true });
+    };
+
+    try {
+      // Passport 0.7 logout is async (save → regenerate). Calling req.session.destroy() immediately
+      // races that and can leave req.session undefined → "Cannot read properties of undefined (reading 'regenerate')".
+      if (typeof req.logout === "function") {
+        req.logout((logoutErr: unknown) => {
+          if (logoutErr) console.error("[auth/logout] passport:", logoutErr);
+          if (req.session) {
+            return req.session.destroy((destroyErr: unknown) => {
+              if (destroyErr) console.error("[auth/logout] destroy:", destroyErr);
+              finish();
+            });
+          }
+          finish();
+        });
+        return;
+      }
+      if (req.session) {
+        req.session.destroy(() => finish());
+        return;
+      }
+      finish();
+    } catch (e) {
+      console.error("[auth/logout]", e);
+      finish();
     }
   });
 

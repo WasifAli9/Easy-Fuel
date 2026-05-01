@@ -49,6 +49,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const p = payload.profile;
         const fullNameRaw = p?.full_name ?? (p as any)?.fullName;
         const u = payload.user;
+        if (u && !p) {
+          void fetch("/api/auth/logout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+          }).catch(() => undefined);
+          setSession(null);
+          setUser(null);
+          setProfile(null);
+          return;
+        }
         setUser(
           u
             ? {
@@ -86,6 +97,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         credentials: "include",
       });
       if (!response.ok) {
+        setSession(null);
+        setUser(null);
         setProfile(null);
         return;
       }
@@ -102,6 +115,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
         : null;
       const u = payload.user;
+      if (u && !data) {
+        await fetch("/api/auth/logout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+        }).catch(() => undefined);
+        setSession(null);
+        setUser(null);
+        setProfile(null);
+        return;
+      }
       setUser(
         u
           ? {
@@ -122,6 +146,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (error) {
       console.error("Error fetching profile:", error);
+      setSession(null);
+      setUser(null);
       setProfile(null);
     } finally {
       setLoading(false);
@@ -146,7 +172,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const data = await res.json();
     const localSession = { access_token: "cookie-session", user: data.user };
     setSession(localSession as AuthContextType["session"]);
-    setUser(data.user);
+    // Do not setUser before fetchProfile: React may commit user+!profile and Auth page calls signOut().
+    setLoading(true);
     await fetchProfile(data.user.id);
   }
 
@@ -167,21 +194,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error(data.error || "Sign up failed");
     }
     const data = await res.json();
-    const p = data.profile as { id: string; role: Profile["role"]; full_name?: string } | undefined;
-    if (p?.id && p?.role) {
-      setProfile({
-        id: p.id,
-        role: p.role,
-        fullName: p.full_name ?? fullName ?? String(email).split("@")[0],
-      });
-    }
     const localSession = { access_token: "cookie-session", user: data.user };
     setSession(localSession as AuthContextType["session"]);
-    setUser({
-      id: data.user.id,
-      email: data.user.email ?? email,
-      user_metadata: { full_name: p?.full_name ?? fullName },
-    });
+    setLoading(true);
     await fetchProfile(data.user.id);
   }
 

@@ -15,6 +15,31 @@ const useTrustProxy =
 if (useTrustProxy) {
   app.set("trust proxy", 1);
 }
+
+// express-session (proxy: true) treats the request as HTTPS only if X-Forwarded-Proto is set.
+// If nginx omits it, Secure cookies are never sent (login 200 but no easyfuel.sid → /api/auth/me 401).
+// Default in production behind trust proxy: infer https. Opt out with STRICT_X_FORWARDED_PROTO=1
+// after fixing nginx: proxy_set_header X-Forwarded-Proto $scheme;
+const strictForwardedProto =
+  process.env.STRICT_X_FORWARDED_PROTO === "1" ||
+  process.env.STRICT_X_FORWARDED_PROTO === "true";
+if (useTrustProxy && process.env.NODE_ENV === "production" && !strictForwardedProto) {
+  let warnedMissingForwardedProto = false;
+  app.use((req, _res, next) => {
+    const raw = req.headers["x-forwarded-proto"];
+    if (raw == null || String(raw).trim() === "") {
+      if (!warnedMissingForwardedProto) {
+        warnedMissingForwardedProto = true;
+        console.warn(
+          "[easyfuel] X-Forwarded-Proto missing from proxy; assuming https for session cookies. Fix nginx: proxy_set_header X-Forwarded-Proto $scheme; (then set STRICT_X_FORWARDED_PROTO=1).",
+        );
+      }
+      req.headers["x-forwarded-proto"] = "https";
+    }
+    next();
+  });
+}
+
 // Depot-order signatures may be stored as base64 data URLs (digital signatures).
 app.use(express.json({ limit: "15mb" }));
 app.use(express.urlencoded({ extended: false }));
