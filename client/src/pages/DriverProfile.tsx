@@ -20,6 +20,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { User, Lock, Upload, FileText, AlertTriangle, CheckCircle2, XCircle, Shield, Building, MapPin, Loader2, Menu } from "lucide-react";
 import { normalizeFilePath, normalizeProfilePhotoUrl, cn } from "@/lib/utils";
+import { normalizeDocuments } from "@/lib/document-normalize";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
 import { Badge } from "@/components/ui/badge";
@@ -76,15 +77,25 @@ export default function DriverProfile() {
     queryKey: ["/api/driver/profile"],
     refetchInterval: 5000, // Refetch every 5 seconds to get updated status
   });
+
+  const normalizedProfile = profile
+    ? {
+        ...profile,
+        full_name: profile.full_name ?? profile.fullName ?? "",
+        profile_photo_url: profile.profile_photo_url ?? profile.profilePhotoUrl ?? null,
+      }
+    : null;
   
   // Debug: Log profile data to see what we're getting
-  console.log("Driver Profile Data:", profile);
-  console.log("Profile Photo URL:", profile?.profile_photo_url);
+  console.log("Driver Profile Data:", normalizedProfile);
+  console.log("Profile Photo URL:", normalizedProfile?.profile_photo_url);
 
   const { data: documents = [] } = useQuery<DriverDocument[]>({
     queryKey: ["/api/driver/documents"],
     refetchInterval: 5000, // Refetch every 5 seconds to get updated status
   });
+
+  const normalizedDocuments = normalizeDocuments(documents as any[]) as DriverDocument[];
 
   // Listen for document status updates and KYC approval via WebSocket
   useWebSocket((message) => {
@@ -159,7 +170,7 @@ export default function DriverProfile() {
 
   // Helper function to find document by type
   const findDocument = (docType: string, title?: string) => {
-    return documents.find((d) => {
+    return normalizedDocuments.find((d) => {
       if (d.doc_type !== docType) return false;
       if (title && d.title !== title) return false;
       return true;
@@ -300,8 +311,8 @@ export default function DriverProfile() {
     defaultValues: {
       fullName: "",
     },
-    values: profile ? {
-      fullName: profile.full_name || "",
+    values: normalizedProfile ? {
+      fullName: normalizedProfile.full_name || "",
     } : {
       fullName: "",
     },
@@ -468,6 +479,13 @@ export default function DriverProfile() {
               console.log("Extracted path from uploadURL (using default bucket):", objectPath);
             }
           }
+        }
+
+        // Local object upload endpoint format:
+        // /api/object-storage/upload/private/<id>
+        if (!objectPath && pathOnly.startsWith("/api/object-storage/upload/")) {
+          objectPath = pathOnly;
+          console.log("Using object-storage upload URL as objectPath:", objectPath);
         }
       }
     }
@@ -682,7 +700,7 @@ export default function DriverProfile() {
       
       <div className="flex flex-1 min-h-0">
         <DashboardSidebarAside aria-label="Driver navigation">
-          <DriverWorkspaceSidebar active="profile" />
+          <DriverWorkspaceSidebar active={null} />
         </DashboardSidebarAside>
 
         <Button
@@ -702,7 +720,7 @@ export default function DriverProfile() {
           >
             <div className="flex flex-col h-full min-h-0">
               <DriverWorkspaceSidebar
-                active="profile"
+                active={null}
                 onNavigate={() => setSidebarOpen(false)}
               />
             </div>
@@ -911,9 +929,9 @@ export default function DriverProfile() {
                   {/* Profile Picture */}
                   <div className="flex items-center gap-6">
                     <div className="relative">
-                      {profile?.profile_photo_url ? (
+                      {normalizedProfile?.profile_photo_url ? (
                         (() => {
-                          const imageSrc = normalizeProfilePhotoUrl(profile.profile_photo_url);
+                          const imageSrc = normalizeProfilePhotoUrl(normalizedProfile.profile_photo_url);
                           
                           if (!imageSrc) {
                             return null;

@@ -1,10 +1,13 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { setupAuth } from "./auth";
 
 const app = express();
-app.use(express.json());
+// Depot-order signatures may be stored as base64 data URLs (digital signatures).
+app.use(express.json({ limit: "15mb" }));
 app.use(express.urlencoded({ extended: false }));
+setupAuth(app);
 
 app.use((req, res, next) => {
   const start = Date.now();

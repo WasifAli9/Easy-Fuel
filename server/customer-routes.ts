@@ -1,5 +1,20 @@
 import { Router } from "express";
-import { supabaseAdmin } from "./supabase";
+import { and, asc, desc, eq, gte, inArray, isNotNull, ne } from "drizzle-orm";
+import { db } from "./db";
+import {
+  customers,
+  deliveryAddresses,
+  depots,
+  dispatchOffers,
+  driverLocations,
+  driverPricing,
+  drivers,
+  fuelTypes,
+  localAuthUsers,
+  orders,
+  paymentMethods,
+  profiles,
+} from "@shared/schema";
 import { createDispatchOffers } from "./dispatch-service";
 import { sendDriverAcceptanceEmail } from "./email-service";
 import { websocketService } from "./websocket";
@@ -9,52 +24,68 @@ import { orderNotifications, offerNotifications } from "./notification-helpers";
 
 const router = Router();
 
+async function getCustomerByUserId(userId: string) {
+  const customerRows = await db
+    .select({ id: customers.id })
+    .from(customers)
+    .where(eq(customers.userId, userId))
+    .limit(1);
+  return customerRows[0] ?? null;
+}
+
 // Helper function to fetch full order data for WebSocket broadcast
 async function fetchFullOrderData(orderId: string) {
-  const { data: order, error } = await supabaseAdmin
-    .from("orders")
-    .select(`
-      *,
-      fuel_types (
-        id,
-        code,
-        label
-      ),
-      delivery_addresses (
-        id,
-        label,
-        address_street,
-        address_city,
-        address_province,
-        address_postal_code
-      ),
-      customers (
-        id,
-        company_name,
-        user_id
-      )
-    `)
-    .eq("id", orderId)
-    .single();
+  const orderRows = await db
+    .select({
+      order: orders,
+      fuelType: {
+        id: fuelTypes.id,
+        code: fuelTypes.code,
+        label: fuelTypes.label,
+      },
+      deliveryAddress: {
+        id: deliveryAddresses.id,
+        label: deliveryAddresses.label,
+        address_street: deliveryAddresses.addressStreet,
+        address_city: deliveryAddresses.addressCity,
+        address_province: deliveryAddresses.addressProvince,
+        address_postal_code: deliveryAddresses.addressPostalCode,
+      },
+      customer: {
+        id: customers.id,
+        company_name: customers.companyName,
+        user_id: customers.userId,
+      },
+    })
+    .from(orders)
+    .leftJoin(fuelTypes, eq(fuelTypes.id, orders.fuelTypeId))
+    .leftJoin(deliveryAddresses, eq(deliveryAddresses.id, orders.deliveryAddressId))
+    .leftJoin(customers, eq(customers.id, orders.customerId))
+    .where(eq(orders.id, orderId))
+    .limit(1);
 
-  if (error || !order) {
+  const row = orderRows[0];
+  if (!row) {
     return null;
   }
 
-  return order;
+  return {
+    ...row.order,
+    fuel_types: row.fuelType,
+    delivery_addresses: row.deliveryAddress,
+    customers: row.customer,
+  };
 }
 
 // Get all fuel types (for order creation)
 router.get("/fuel-types", async (req, res) => {
   try {
-    const { data: fuelTypes, error } = await supabaseAdmin
-      .from("fuel_types")
-      .select("*")
-      .eq("active", true)
-      .order("label", { ascending: true });
-
-    if (error) throw error;
-    res.json(fuelTypes || []);
+    const fuelTypeRows = await db
+      .select()
+      .from(fuelTypes)
+      .where(eq(fuelTypes.active, true))
+      .orderBy(fuelTypes.label);
+    res.json(fuelTypeRows || []);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -65,43 +96,46 @@ router.get("/orders", async (req, res) => {
   const user = (req as any).user;
   
   try {
-    // Get customer ID from user ID
-    const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (customerError) throw customerError;
+    const customerRows = await db
+      .select({ id: customers.id })
+      .from(customers)
+      .where(eq(customers.userId, user.id))
+      .limit(1);
+    const customer = customerRows[0];
     if (!customer) {
       return res.status(404).json({ error: "Customer profile not found" });
     }
 
-    // Fetch orders with fuel type and delivery address details
-    const { data: orders, error: ordersError } = await supabaseAdmin
-      .from("orders")
-      .select(`
-        *,
-        fuel_types (
-          id,
-          code,
-          label
-        ),
-        delivery_addresses (
-          id,
-          label,
-          address_street,
-          address_city,
-          address_province,
-          address_postal_code
-        )
-      `)
-      .eq("customer_id", customer.id)
-      .order("created_at", { ascending: false });
+    const orderRows = await db
+      .select({
+        order: orders,
+        fuelType: {
+          id: fuelTypes.id,
+          code: fuelTypes.code,
+          label: fuelTypes.label,
+        },
+        deliveryAddress: {
+          id: deliveryAddresses.id,
+          label: deliveryAddresses.label,
+          address_street: deliveryAddresses.addressStreet,
+          address_city: deliveryAddresses.addressCity,
+          address_province: deliveryAddresses.addressProvince,
+          address_postal_code: deliveryAddresses.addressPostalCode,
+        },
+      })
+      .from(orders)
+      .leftJoin(fuelTypes, eq(fuelTypes.id, orders.fuelTypeId))
+      .leftJoin(deliveryAddresses, eq(deliveryAddresses.id, orders.deliveryAddressId))
+      .where(eq(orders.customerId, customer.id))
+      .orderBy(desc(orders.createdAt));
 
-    if (ordersError) throw ordersError;
-
-    res.json(orders || []);
+    res.json(
+      orderRows.map((row) => ({
+        ...row.order,
+        fuel_types: row.fuelType,
+        delivery_addresses: row.deliveryAddress,
+      })),
+    );
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -113,68 +147,80 @@ router.get("/orders/:id", async (req, res) => {
   const orderId = req.params.id;
 
   try {
-    // Get customer ID from user ID
-    const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (customerError) throw customerError;
+    const customerRows = await db
+      .select({ id: customers.id })
+      .from(customers)
+      .where(eq(customers.userId, user.id))
+      .limit(1);
+    const customer = customerRows[0];
     if (!customer) {
       return res.status(404).json({ error: "Customer profile not found" });
     }
 
-    // Fetch order with full details
-    const { data: order, error: orderError } = await supabaseAdmin
-      .from("orders")
-      .select(`
-        *,
-        fuel_types (
-          id,
-          code,
-          label
-        ),
-        depots (
-          id,
-          name
-        ),
-        delivery_addresses (
-          id,
-          label,
-          address_street,
-          address_city,
-          address_province,
-          address_postal_code
-        )
-      `)
-      .eq("id", orderId)
-      .eq("customer_id", customer.id)
-      .single();
+    const orderRows = await db
+      .select({
+        order: orders,
+        fuelType: {
+          id: fuelTypes.id,
+          code: fuelTypes.code,
+          label: fuelTypes.label,
+        },
+        depot: {
+          id: depots.id,
+          name: depots.name,
+        },
+        deliveryAddress: {
+          id: deliveryAddresses.id,
+          label: deliveryAddresses.label,
+          address_street: deliveryAddresses.addressStreet,
+          address_city: deliveryAddresses.addressCity,
+          address_province: deliveryAddresses.addressProvince,
+          address_postal_code: deliveryAddresses.addressPostalCode,
+        },
+      })
+      .from(orders)
+      .leftJoin(fuelTypes, eq(fuelTypes.id, orders.fuelTypeId))
+      .leftJoin(depots, eq(depots.id, orders.selectedDepotId))
+      .leftJoin(deliveryAddresses, eq(deliveryAddresses.id, orders.deliveryAddressId))
+      .where(and(eq(orders.id, orderId), eq(orders.customerId, customer.id)))
+      .limit(1);
 
-    if (orderError) throw orderError;
+    const row = orderRows[0];
+    const order = row
+      ? {
+          ...row.order,
+          fuel_types: row.fuelType,
+          depots: row.depot,
+          delivery_addresses: row.deliveryAddress,
+        }
+      : null;
     if (!order) {
       return res.status(404).json({ error: "Order not found" });
     }
 
     // If driver is assigned, fetch driver details
     if (order.assigned_driver_id) {
-      const { data: driver, error: driverError } = await supabaseAdmin
-        .from("drivers")
-        .select("user_id")
-        .eq("id", order.assigned_driver_id)
-        .single();
+      const driverRows = await db
+        .select({ userId: drivers.userId })
+        .from(drivers)
+        .where(eq(drivers.id, order.assigned_driver_id))
+        .limit(1);
 
-      if (!driverError && driver) {
-        // Get driver profile for name, phone, and profile photo
-        const { data: driverProfile } = await supabaseAdmin
-          .from("profiles")
-          .select("full_name, phone, profile_photo_url")
-          .eq("id", driver.user_id)
-          .single();
+      const driver = driverRows[0];
+      if (driver) {
+        const profileRows = await db
+          .select({
+            full_name: profiles.fullName,
+            phone: profiles.phone,
+            profile_photo_url: profiles.profilePhotoUrl,
+          })
+          .from(profiles)
+          .where(eq(profiles.id, driver.userId))
+          .limit(1);
 
+        const driverProfile = profileRows[0];
         if (driverProfile) {
-          order.driver_details = driverProfile;
+          (order as any).driver_details = driverProfile;
         }
       }
     }
@@ -191,97 +237,138 @@ router.get("/orders/:id/offers", async (req, res) => {
   const orderId = req.params.id;
 
   try {
-    const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (customerError) throw customerError;
+    const customer = await getCustomerByUserId(user.id);
     if (!customer) {
       return res.status(404).json({ error: "Customer profile not found" });
     }
 
     // Ensure order belongs to customer
-    const { data: orderCheck, error: orderCheckError } = await supabaseAdmin
-      .from("orders")
-      .select("id")
-      .eq("id", orderId)
-      .eq("customer_id", customer.id)
-      .maybeSingle();
-
-    if (orderCheckError) throw orderCheckError;
+    const orderCheckRows = await db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(and(eq(orders.id, orderId), eq(orders.customerId, customer.id)))
+      .limit(1);
+    const orderCheck = orderCheckRows[0];
     if (!orderCheck) {
       return res.status(404).json({ error: "Order not found" });
     }
 
     // Get all offers for this order - including pending_customer (auto-calculated offers)
-    const { data: offers, error: offersError } = await supabaseAdmin
-      .from("dispatch_offers")
-      .select("id, driver_id, state, proposed_delivery_time, proposed_price_per_km_cents, proposed_notes, created_at, updated_at, customer_response_at")
-      .eq("order_id", orderId)
-      .in("state", ["pending_customer", "customer_accepted", "customer_declined", "offered"])
-      .not("proposed_price_per_km_cents", "is", null)
-      .order("created_at", { ascending: false });
-
-    if (offersError) throw offersError;
+    const offers = await db
+      .select({
+        id: dispatchOffers.id,
+        driver_id: dispatchOffers.driverId,
+        state: dispatchOffers.state,
+        proposed_delivery_time: dispatchOffers.proposedDeliveryTime,
+        proposed_price_per_km_cents: dispatchOffers.proposedPricePerKmCents,
+        proposed_notes: dispatchOffers.proposedNotes,
+        created_at: dispatchOffers.createdAt,
+        updated_at: dispatchOffers.updatedAt,
+        customer_response_at: dispatchOffers.customerResponseAt,
+      })
+      .from(dispatchOffers)
+      .where(
+        and(
+          eq(dispatchOffers.orderId, orderId),
+          inArray(dispatchOffers.state, [
+            "pending_customer",
+            "customer_accepted",
+            "customer_declined",
+            "offered",
+          ]),
+          isNotNull(dispatchOffers.proposedPricePerKmCents),
+        ),
+      )
+      .orderBy(desc(dispatchOffers.createdAt));
 
     if (!offers || offers.length === 0) {
       return res.json([]);
     }
 
     const driverIds = Array.from(new Set(offers.map((offer: any) => offer.driver_id)));
-    const { data: drivers, error: driversError } = await supabaseAdmin
-      .from("drivers")
-      .select("id, user_id, vehicle_capacity_litres, premium_status")
-      .in("id", driverIds);
+    const driverRows =
+      driverIds.length > 0
+        ? await db
+            .select({
+              id: drivers.id,
+              user_id: drivers.userId,
+              vehicle_capacity_litres: drivers.vehicleCapacityLitres,
+              premium_status: drivers.premiumStatus,
+            })
+            .from(drivers)
+            .where(inArray(drivers.id, driverIds))
+        : [];
 
-    if (driversError) throw driversError;
-
-    const driverUserIds = Array.from(new Set(drivers?.map((driver: any) => driver.user_id) || []));
-    const { data: profiles, error: profilesError } = await supabaseAdmin
-      .from("profiles")
-      .select("id, full_name, phone, profile_photo_url")
-      .in("id", driverUserIds.length > 0 ? driverUserIds : ["00000000-0000-0000-0000-000000000000"]);
-
-    if (profilesError) throw profilesError;
+    const driverUserIds = Array.from(new Set(driverRows.map((driver: any) => driver.user_id)));
+    const profileRows =
+      driverUserIds.length > 0
+        ? await db
+            .select({
+              id: profiles.id,
+              full_name: profiles.fullName,
+              phone: profiles.phone,
+              profile_photo_url: profiles.profilePhotoUrl,
+            })
+            .from(profiles)
+            .where(inArray(profiles.id, driverUserIds))
+        : [];
 
     // Get order to fetch fuel_type_id for driver pricing lookup
-    const { data: orderForPricing } = await supabaseAdmin
-      .from("orders")
-      .select("fuel_type_id, drop_lat, drop_lng, litres")
-      .eq("id", orderId)
-      .single();
+    const orderForPricingRows = await db
+      .select({
+        fuel_type_id: orders.fuelTypeId,
+        drop_lat: orders.dropLat,
+        drop_lng: orders.dropLng,
+        litres: orders.litres,
+      })
+      .from(orders)
+      .where(eq(orders.id, orderId))
+      .limit(1);
+    const orderForPricing = orderForPricingRows[0];
 
     // Fetch driver pricing for all drivers and the order's fuel type
     let driverPricingMap = new Map();
     if (orderForPricing?.fuel_type_id && driverIds.length > 0) {
-      const { data: driverPricing } = await supabaseAdmin
-        .from("driver_pricing")
-        .select("driver_id, fuel_price_per_liter_cents")
-        .eq("fuel_type_id", orderForPricing.fuel_type_id)
-        .in("driver_id", driverIds)
-        .eq("active", true);
+      const driverPricingRows = await db
+        .select({
+          driver_id: driverPricing.driverId,
+          fuel_price_per_liter_cents: driverPricing.fuelPricePerLiterCents,
+        })
+        .from(driverPricing)
+        .where(
+          and(
+            eq(driverPricing.fuelTypeId, orderForPricing.fuel_type_id),
+            inArray(driverPricing.driverId, driverIds),
+            eq(driverPricing.active, true),
+          ),
+        );
 
-      if (driverPricing) {
+      if (driverPricingRows) {
         driverPricingMap = new Map(
-          driverPricing.map((p: any) => [p.driver_id, p.fuel_price_per_liter_cents])
+          driverPricingRows.map((p: any) => [p.driver_id, p.fuel_price_per_liter_cents]),
         );
       }
     }
 
     // Get driver locations for distance calculation
-    const { data: driversWithLocation } = await supabaseAdmin
-      .from("drivers")
-      .select("id, current_lat, current_lng")
-      .in("id", driverIds);
+    const driversWithLocation =
+      driverIds.length > 0
+        ? await db
+            .select({
+              id: drivers.id,
+              current_lat: drivers.currentLat,
+              current_lng: drivers.currentLng,
+            })
+            .from(drivers)
+            .where(inArray(drivers.id, driverIds))
+        : [];
 
     const driverLocationMap = new Map(
-      (driversWithLocation || []).map((d: any) => [d.id, { lat: d.current_lat, lng: d.current_lng }])
+      (driversWithLocation || []).map((d: any) => [d.id, { lat: d.current_lat, lng: d.current_lng }]),
     );
 
-    const driverMap = new Map((drivers || []).map((driver: any) => [driver.id, driver]));
-    const profileMap = new Map((profiles || []).map((profile: any) => [profile.id, profile]));
+    const driverMap = new Map((driverRows || []).map((driver: any) => [driver.id, driver]));
+    const profileMap = new Map((profileRows || []).map((profile: any) => [profile.id, profile]));
 
     const { calculateDistance, milesToKm } = await import("./utils/distance");
 
@@ -351,25 +438,17 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
   const offerId = req.params.offerId;
 
   try {
-    const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (customerError) throw customerError;
+    const customer = await getCustomerByUserId(user.id);
     if (!customer) {
       return res.status(404).json({ error: "Customer profile not found" });
     }
 
-    const { data: order, error: orderError } = await supabaseAdmin
-      .from("orders")
-      .select("*")
-      .eq("id", orderId)
-      .eq("customer_id", customer.id)
-      .single();
-
-    if (orderError) throw orderError;
+    const orderRows = await db
+      .select()
+      .from(orders)
+      .where(and(eq(orders.id, orderId), eq(orders.customerId, customer.id)))
+      .limit(1);
+    const order = orderRows[0];
     if (!order) {
       return res.status(404).json({ error: "Order not found" });
     }
@@ -378,14 +457,12 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
       return res.status(409).json({ error: "Order can no longer accept driver quotes" });
     }
 
-    const { data: offer, error: offerError } = await supabaseAdmin
-      .from("dispatch_offers")
-      .select("*")
-      .eq("id", offerId)
-      .eq("order_id", orderId)
-      .single();
-
-    if (offerError) throw offerError;
+    const offerRows = await db
+      .select()
+      .from(dispatchOffers)
+      .where(and(eq(dispatchOffers.id, offerId), eq(dispatchOffers.orderId, orderId)))
+      .limit(1);
+    const offer = offerRows[0];
     if (!offer) {
       return res.status(404).json({ error: "Offer not found" });
     }
@@ -397,35 +474,39 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
     const nowIso = new Date().toISOString();
     
     // Get driver's fuel price per liter for this fuel type
-    const { data: driverPricing, error: pricingError } = await supabaseAdmin
-      .from("driver_pricing")
-      .select("fuel_price_per_liter_cents")
-      .eq("driver_id", offer.driver_id)
-      .eq("fuel_type_id", order.fuel_type_id)
-      .eq("active", true)
-      .maybeSingle();
-
-    if (pricingError) throw pricingError;
+    const driverPricingRows = await db
+      .select({ fuel_price_per_liter_cents: driverPricing.fuelPricePerLiterCents })
+      .from(driverPricing)
+      .where(
+        and(
+          eq(driverPricing.driverId, offer.driverId),
+          eq(driverPricing.fuelTypeId, order.fuelTypeId),
+          eq(driverPricing.active, true),
+        ),
+      )
+      .limit(1);
+    const pricing = driverPricingRows[0];
     
-    const fuelPricePerLiterCents = driverPricing?.fuel_price_per_liter_cents || 0;
-    const pricePerKmCents = Number(offer.proposed_price_per_km_cents) || 0;
+    const fuelPricePerLiterCents = pricing?.fuel_price_per_liter_cents || 0;
+    const pricePerKmCents = Number(offer.proposedPricePerKmCents) || 0;
     const litres = Number(order.litres) || 0;
     
     // Calculate distance from driver's current location to customer drop location
     let distanceKm = 0;
-    const { data: driver, error: driverError } = await supabaseAdmin
-      .from("drivers")
-      .select("current_lat, current_lng")
-      .eq("id", offer.driver_id)
-      .single();
+    const driverRows = await db
+      .select({ current_lat: drivers.currentLat, current_lng: drivers.currentLng })
+      .from(drivers)
+      .where(eq(drivers.id, offer.driverId))
+      .limit(1);
+    const driver = driverRows[0];
     
-    if (!driverError && driver?.current_lat && driver?.current_lng && order.drop_lat && order.drop_lng) {
+    if (driver?.current_lat && driver?.current_lng && order.dropLat && order.dropLng) {
       const { calculateDistance, milesToKm } = await import("./utils/distance");
       const distanceMiles = calculateDistance(
         driver.current_lat,
         driver.current_lng,
-        order.drop_lat,
-        order.drop_lng
+        order.dropLat,
+        order.dropLng,
       );
       distanceKm = milesToKm(distanceMiles);
     }
@@ -433,46 +514,75 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
     // Calculate total: (fuel_price_per_liter * litres) + (price_per_km * distance_km)
     const fuelCostCents = Math.round(fuelPricePerLiterCents * litres);
     const deliveryFeeCents = Math.round(pricePerKmCents * distanceKm);
-    const serviceFee = Number(order.service_fee_cents) || 0;
+    const serviceFee = Number(order.serviceFeeCents) || 0;
     const totalCents = fuelCostCents + deliveryFeeCents + serviceFee;
 
-    const { data: updatedOrder, error: updateOrderError } = await supabaseAdmin
-      .from("orders")
-      .update({
+    const updatedOrderRows = await db
+      .update(orders)
+      .set({
         state: "assigned",
-        assigned_driver_id: offer.driver_id,
-        confirmed_delivery_time: offer.proposed_delivery_time,
-        fuel_price_cents: fuelPricePerLiterCents,
-        delivery_fee_cents: deliveryFeeCents,
-        total_cents: totalCents,
-        updated_at: nowIso,
+        assignedDriverId: offer.driverId,
+        confirmedDeliveryTime: offer.proposedDeliveryTime,
+        fuelPriceCents: fuelPricePerLiterCents,
+        deliveryFeeCents: deliveryFeeCents,
+        totalCents: totalCents,
+        updatedAt: new Date(nowIso),
       })
-      .eq("id", orderId)
-      .eq("customer_id", customer.id)
-      .in("state", ["created", "awaiting_payment"])
-      .select(`
-        *,
-        customers (
-          user_id,
-          company_name
+      .where(
+        and(
+          eq(orders.id, orderId),
+          eq(orders.customerId, customer.id),
+          inArray(orders.state, ["created", "awaiting_payment"]),
         ),
-        fuel_types (
-          label
-        ),
-        delivery_addresses (
-          address_street,
-          address_city,
-          address_province
-        )
-      `)
-      .single();
-
-    if (updateOrderError || !updatedOrder) {
+      )
+      .returning();
+    const updatedOrder = updatedOrderRows[0];
+    if (!updatedOrder) {
       return res.status(409).json({ error: "Failed to assign driver. Please refresh and try again." });
     }
 
+    const customerRow = (
+      await db
+        .select({ user_id: customers.userId, company_name: customers.companyName })
+        .from(customers)
+        .where(eq(customers.id, updatedOrder.customerId))
+        .limit(1)
+    )[0];
+    const fuelTypeRow = (
+      await db
+        .select({ label: fuelTypes.label })
+        .from(fuelTypes)
+        .where(eq(fuelTypes.id, updatedOrder.fuelTypeId))
+        .limit(1)
+    )[0];
+    const deliveryAddressRow = updatedOrder.deliveryAddressId
+      ? (
+          await db
+            .select({
+              address_street: deliveryAddresses.addressStreet,
+              address_city: deliveryAddresses.addressCity,
+              address_province: deliveryAddresses.addressProvince,
+            })
+            .from(deliveryAddresses)
+            .where(eq(deliveryAddresses.id, updatedOrder.deliveryAddressId))
+            .limit(1)
+        )[0]
+      : null;
+    const updatedOrderPayload: any = {
+      ...updatedOrder,
+      id: updatedOrder.id,
+      customer_id: updatedOrder.customerId,
+      litres: updatedOrder.litres,
+      drop_lat: updatedOrder.dropLat,
+      drop_lng: updatedOrder.dropLng,
+      state: updatedOrder.state,
+      customers: customerRow || null,
+      fuel_types: fuelTypeRow || null,
+      delivery_addresses: deliveryAddressRow || null,
+    };
+
     // Fetch full updated order data for WebSocket broadcast
-    const fullOrderData = await fetchFullOrderData(updatedOrder.id);
+    const fullOrderData = await fetchFullOrderData(updatedOrderPayload.id);
     
     // Broadcast order update via WebSocket with full order data
     const { websocketService } = await import("./websocket");
@@ -481,22 +591,24 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
       // Notify customer
       websocketService.sendOrderUpdate(user.id, {
         type: "order_updated",
-        orderId: updatedOrder.id,
+        orderId: updatedOrderPayload.id,
         order: fullOrderData,
       });
 
       // Notify driver
-      if (offer.driver_id) {
-        const { data: driver } = await supabaseAdmin
-          .from("drivers")
-          .select("user_id")
-          .eq("id", offer.driver_id)
-          .single();
+      if (offer.driverId) {
+        const driverUserRow = (
+          await db
+            .select({ user_id: drivers.userId })
+            .from(drivers)
+            .where(eq(drivers.id, offer.driverId))
+            .limit(1)
+        )[0];
         
-        if (driver?.user_id) {
-          websocketService.sendOrderUpdate(driver.user_id, {
+        if (driverUserRow?.user_id) {
+          websocketService.sendOrderUpdate(driverUserRow.user_id, {
             type: "order_updated",
-            orderId: updatedOrder.id,
+            orderId: updatedOrderPayload.id,
             order: fullOrderData,
           });
         }
@@ -508,54 +620,57 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
       type: "order_assigned",
       payload: {
         orderId: updatedOrder.id,
-        state: updatedOrder.state,
-        assignedDriverId: updatedOrder.assigned_driver_id,
+        state: updatedOrderPayload.state,
+        assignedDriverId: updatedOrderPayload.assignedDriverId,
       },
     });
 
-    const { error: selectedOfferError } = await supabaseAdmin
-      .from("dispatch_offers")
-      .update({
+    await db
+      .update(dispatchOffers)
+      .set({
         state: "customer_accepted",
-        customer_response_at: nowIso,
-        updated_at: nowIso,
+        customerResponseAt: new Date(nowIso),
+        updatedAt: new Date(nowIso),
       })
-      .eq("id", offerId);
-
-    if (selectedOfferError) {
-      // Error updating selected offer
-    }
+      .where(eq(dispatchOffers.id, offerId));
 
     // Get all other offers that will be declined
-    const { data: otherOffers } = await supabaseAdmin
-      .from("dispatch_offers")
-      .select("driver_id")
-      .eq("order_id", orderId)
-      .neq("id", offerId)
-      .in("state", ["pending_customer", "offered"]);
+    const otherOffers = await db
+      .select({ driver_id: dispatchOffers.driverId })
+      .from(dispatchOffers)
+      .where(
+        and(
+          eq(dispatchOffers.orderId, orderId),
+          ne(dispatchOffers.id, offerId),
+          inArray(dispatchOffers.state, ["pending_customer", "offered"]),
+        ),
+      );
 
-    const { error: otherOffersError } = await supabaseAdmin
-      .from("dispatch_offers")
-      .update({
+    await db
+      .update(dispatchOffers)
+      .set({
         state: "customer_declined",
-        customer_response_at: nowIso,
-        updated_at: nowIso,
+        customerResponseAt: new Date(nowIso),
+        updatedAt: new Date(nowIso),
       })
-      .eq("order_id", orderId)
-      .neq("id", offerId)
-      .in("state", ["pending_customer", "offered"]);
-
-    if (otherOffersError) {
-      // Error updating other offers
-    }
+      .where(
+        and(
+          eq(dispatchOffers.orderId, orderId),
+          ne(dispatchOffers.id, offerId),
+          inArray(dispatchOffers.state, ["pending_customer", "offered"]),
+        ),
+      );
 
     // Notify drivers whose quotes were declined
     if (otherOffers && otherOffers.length > 0) {
       const declinedDriverIds = otherOffers.map((o: any) => o.driver_id);
-      const { data: declinedDrivers } = await supabaseAdmin
-        .from("drivers")
-        .select("id, user_id")
-        .in("id", declinedDriverIds);
+      const declinedDrivers =
+        declinedDriverIds.length > 0
+          ? await db
+              .select({ id: drivers.id, user_id: drivers.userId })
+              .from(drivers)
+              .where(inArray(drivers.id, declinedDriverIds))
+          : [];
 
       for (const driver of declinedDrivers || []) {
         if (driver.user_id) {
@@ -565,24 +680,25 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
     }
 
     // Fetch driver profile for notifications
-    const { data: driverRecord, error: driverLookupError } = await supabaseAdmin
-      .from("drivers")
-      .select("id, user_id")
-      .eq("id", offer.driver_id)
-      .single();
-
-    if (driverLookupError) throw driverLookupError;
+    const driverRecordRows = await db
+      .select({ id: drivers.id, user_id: drivers.userId })
+      .from(drivers)
+      .where(eq(drivers.id, offer.driverId))
+      .limit(1);
+    const driverRecord = driverRecordRows[0];
 
     const driverUserId = driverRecord?.user_id;
     let driverProfileName = "Driver";
 
     let driverProfilePhone: string | null = null;
     if (driverUserId) {
-      const { data: driverProfile } = await supabaseAdmin
-        .from("profiles")
-        .select("full_name, phone")
-        .eq("id", driverUserId)
-        .maybeSingle();
+      const driverProfile = (
+        await db
+          .select({ full_name: profiles.fullName, phone: profiles.phone })
+          .from(profiles)
+          .where(eq(profiles.id, driverUserId))
+          .limit(1)
+      )[0];
       if (driverProfile?.full_name) {
         driverProfileName = driverProfile.full_name;
       }
@@ -591,21 +707,29 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
       }
     }
 
-    const customerUserId = updatedOrder.customers?.user_id || user.id;
+    const customerUserId = updatedOrderPayload.customers?.user_id || user.id;
     let customerEmail: string | null = null;
     let customerName =
-      updatedOrder.customers?.company_name ||
-      updatedOrder.customers?.full_name ||
+      updatedOrderPayload.customers?.company_name ||
       "Customer";
 
     if (customerUserId) {
-      const { data: customerProfile } = await supabaseAdmin
-        .from("profiles")
-        .select("email, full_name")
-        .eq("id", customerUserId)
-        .maybeSingle();
-      if (customerProfile?.email) {
-        customerEmail = customerProfile.email;
+      const customerProfile = (
+        await db
+          .select({ full_name: profiles.fullName })
+          .from(profiles)
+          .where(eq(profiles.id, customerUserId))
+          .limit(1)
+      )[0];
+      const customerAuth = (
+        await db
+          .select({ email: localAuthUsers.email })
+          .from(localAuthUsers)
+          .where(eq(localAuthUsers.id, customerUserId))
+          .limit(1)
+      )[0];
+      if (customerAuth?.email) {
+        customerEmail = customerAuth.email;
       }
       if (customerProfile?.full_name) {
         customerName = customerProfile.full_name;
@@ -614,8 +738,8 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
 
     const chatThread = await ensureChatThreadForAssignment({
       orderId,
-      customerId: updatedOrder.customer_id,
-      driverId: offer.driver_id,
+      customerId: updatedOrder.customerId,
+      driverId: offer.driverId,
       customerUserId,
       driverUserId,
     });
@@ -634,11 +758,11 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
     // Send confirmation email to customer
     if (customerEmail) {
       const deliveryAddress = updatedOrder.delivery_addresses
-        ? `${updatedOrder.delivery_addresses.address_street}, ${updatedOrder.delivery_addresses.address_city}, ${updatedOrder.delivery_addresses.address_province}`
-        : `${updatedOrder.drop_lat}, ${updatedOrder.drop_lng}`;
+        ? `${updatedOrderPayload.delivery_addresses.address_street}, ${updatedOrderPayload.delivery_addresses.address_city}, ${updatedOrderPayload.delivery_addresses.address_province}`
+        : `${updatedOrderPayload.drop_lat}, ${updatedOrderPayload.drop_lng}`;
 
-      const confirmedTime = offer.proposed_delivery_time
-        ? new Date(offer.proposed_delivery_time).toLocaleString("en-ZA", {
+      const confirmedTime = offer.proposedDeliveryTime
+        ? new Date(offer.proposedDeliveryTime).toLocaleString("en-ZA", {
             dateStyle: "medium",
             timeStyle: "short",
             timeZone: "Africa/Johannesburg",
@@ -648,12 +772,12 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
       sendDriverAcceptanceEmail({
         customerEmail,
         customerName,
-        orderNumber: updatedOrder.id.substring(0, 8).toUpperCase(),
+        orderNumber: updatedOrderPayload.id.substring(0, 8).toUpperCase(),
         driverName: driverProfileName,
         driverPhone: driverProfilePhone || "Not available",
         confirmedDeliveryTime: confirmedTime,
-        fuelType: updatedOrder.fuel_types?.label || "Fuel",
-        litres: String(updatedOrder.litres),
+        fuelType: updatedOrderPayload.fuel_types?.label || "Fuel",
+        litres: String(updatedOrderPayload.litres),
         deliveryAddress,
       }).catch(() => {
         // Email send failed
@@ -716,13 +840,7 @@ router.post("/orders", async (req, res) => {
     }
 
     // Get customer ID from user ID
-    const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (customerError) throw customerError;
+    const customer = await getCustomerByUserId(user.id);
     if (!customer) {
       return res.status(404).json({ error: "Customer profile not found" });
     }
@@ -730,14 +848,15 @@ router.post("/orders", async (req, res) => {
     // Get delivery address details if provided
     let lat, lng;
     if (deliveryAddressId) {
-      const { data: address, error: addressError } = await supabaseAdmin
-        .from("delivery_addresses")
-        .select("lat, lng")
-        .eq("id", deliveryAddressId)
-        .eq("customer_id", customer.id)
-        .single();
+      const address = (
+        await db
+          .select({ lat: deliveryAddresses.lat, lng: deliveryAddresses.lng })
+          .from(deliveryAddresses)
+          .where(and(eq(deliveryAddresses.id, deliveryAddressId), eq(deliveryAddresses.customerId, customer.id)))
+          .limit(1)
+      )[0];
 
-      if (addressError || !address) {
+      if (!address) {
         return res.status(400).json({ error: "Invalid delivery address" });
       }
 
@@ -784,49 +903,36 @@ router.post("/orders", async (req, res) => {
     }
 
     // Create order with all new fields
-    const { data: newOrder, error: orderError } = await supabaseAdmin
-      .from("orders")
-      .insert({
-        customer_id: customer.id,
-        fuel_type_id: fuelTypeId,
+    const newOrderRows = await db
+      .insert(orders)
+      .values({
+        customerId: customer.id,
+        fuelTypeId,
         litres: litresNum.toString(),
-        
-        // Delivery details
-        delivery_address_id: deliveryAddressId,
-        drop_lat: lat,
-        drop_lng: lng,
-        access_instructions: accessNotes || null,
-        delivery_date: deliveryDate || null,
-        from_time: fromTimeTimestamp,
-        to_time: toTimeTimestamp,
-        priority_level: priorityLevel || "medium",
-        
-        // Vehicle/Equipment
-        vehicle_registration: vehicleRegistration || null,
-        equipment_type: equipmentType || null,
-        tank_capacity: tankCapacity ? parseFloat(tankCapacity) : null,
-        
-        // Payment and Legal
-        payment_method_id: paymentMethodId || null,
-        terms_accepted: termsAccepted,
-        terms_accepted_at: termsAccepted ? new Date().toISOString() : null,
-        signature_data: signatureData || null,
-        
-        // Pricing
-        fuel_price_cents: fuelPriceCents,
-        delivery_fee_cents: deliveryFeeCents,
-        service_fee_cents: serviceFeeCents,
-        total_cents: totalCents,
-        // Note: max_budget_cents column doesn't exist in database, removed from insert
-        
-        // Order management
-        selected_depot_id: depotId,
+        deliveryAddressId,
+        dropLat: lat,
+        dropLng: lng,
+        accessInstructions: accessNotes || null,
+        deliveryDate: deliveryDate ? new Date(deliveryDate) : null,
+        fromTime: fromTimeTimestamp ? new Date(fromTimeTimestamp) : null,
+        toTime: toTimeTimestamp ? new Date(toTimeTimestamp) : null,
+        priorityLevel: priorityLevel || "medium",
+        vehicleRegistration: vehicleRegistration || null,
+        equipmentType: equipmentType || null,
+        tankCapacity: tankCapacity ? String(parseFloat(tankCapacity)) : null,
+        paymentMethodId: paymentMethodId || null,
+        termsAccepted,
+        termsAcceptedAt: termsAccepted ? new Date() : null,
+        signatureData: signatureData || null,
+        fuelPriceCents,
+        deliveryFeeCents,
+        serviceFeeCents,
+        totalCents,
+        selectedDepotId: depotId,
         state: "created",
       })
-      .select()
-      .single();
-
-    if (orderError) throw orderError;
+      .returning();
+    const newOrder = newOrderRows[0];
 
     // Broadcast new order to all drivers via WebSocket
     // Use setImmediate to ensure database transaction is committed first
@@ -836,12 +942,12 @@ router.post("/orders", async (req, res) => {
         type: "new_order",
         payload: {
           orderId: newOrder.id,
-          fuelTypeId: newOrder.fuel_type_id,
+          fuelTypeId: newOrder.fuelTypeId,
           litres: litresNum,
           dropLat: lat,
           dropLng: lng,
           state: newOrder.state,
-          createdAt: newOrder.created_at,
+          createdAt: newOrder.createdAt,
         },
       });
     });
@@ -859,9 +965,13 @@ router.post("/orders", async (req, res) => {
     // Create dispatch offers for drivers IMMEDIATELY (wait for completion)
     // This ensures drivers are available when customer views the order
     try {
+      const orderFuelTypeId = (newOrder as any).fuelTypeId ?? (newOrder as any).fuel_type_id;
+      if (!orderFuelTypeId) {
+        console.warn(`[createDispatchOffers] Order ${newOrder.id}: missing fuel type id on created order payload`);
+      }
       await createDispatchOffers({
         orderId: newOrder.id,
-        fuelTypeId: newOrder.fuel_type_id,
+        fuelTypeId: orderFuelTypeId,
         dropLat: lat,
         dropLng: lng,
         litres: litresNum,
@@ -892,26 +1002,19 @@ router.patch("/orders/:id", async (req, res) => {
 
   try {
     // Get customer ID from user ID
-    const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (customerError) throw customerError;
+    const customer = await getCustomerByUserId(user.id);
     if (!customer) {
       return res.status(404).json({ error: "Customer profile not found" });
     }
 
     // Check if order exists and belongs to customer
-    const { data: existingOrder, error: orderCheckError } = await supabaseAdmin
-      .from("orders")
-      .select("*")
-      .eq("id", orderId)
-      .eq("customer_id", customer.id)
-      .single();
-
-    if (orderCheckError) throw orderCheckError;
+    const existingOrder = (
+      await db
+        .select()
+        .from(orders)
+        .where(and(eq(orders.id, orderId), eq(orders.customerId, customer.id)))
+        .limit(1)
+    )[0];
     if (!existingOrder) {
       return res.status(404).json({ error: "Order not found" });
     }
@@ -924,13 +1027,13 @@ router.patch("/orders/:id", async (req, res) => {
     }
 
     let updateData: any = {
-      updated_at: new Date().toISOString(),
+      updated_at: new Date(),
     };
 
     // If fuel type or litres changed, update them but DON'T recalculate pricing
     // Pricing is calculated only when customer accepts a driver's offer (marketplace model)
     if (fuelTypeId || litres) {
-      const newFuelTypeId = fuelTypeId || existingOrder.fuel_type_id;
+      const newFuelTypeId = fuelTypeId || existingOrder.fuelTypeId;
       const newLitres = parseFloat(litres || existingOrder.litres);
 
       if (isNaN(newLitres) || newLitres <= 0) {
@@ -939,13 +1042,13 @@ router.patch("/orders/:id", async (req, res) => {
 
       updateData = {
         ...updateData,
-        fuel_type_id: newFuelTypeId,
+        fuelTypeId: newFuelTypeId,
         litres: newLitres.toString(),
         // Keep pricing at 0 until driver offer is accepted
-        fuel_price_cents: 0,
-        delivery_fee_cents: 0,
-        service_fee_cents: 0,
-        total_cents: 0,
+        fuelPriceCents: 0,
+        deliveryFeeCents: 0,
+        serviceFeeCents: 0,
+        totalCents: 0,
       };
     }
 
@@ -954,7 +1057,7 @@ router.patch("/orders/:id", async (req, res) => {
       if (isNaN(lat)) {
         return res.status(400).json({ error: "Invalid latitude value" });
       }
-      updateData.drop_lat = lat;
+      updateData.dropLat = lat;
     }
     
     if (dropLng !== undefined) {
@@ -962,26 +1065,25 @@ router.patch("/orders/:id", async (req, res) => {
       if (isNaN(lng)) {
         return res.status(400).json({ error: "Invalid longitude value" });
       }
-      updateData.drop_lng = lng;
+      updateData.dropLng = lng;
     }
     
-    if (timeWindow !== undefined) updateData.time_window = timeWindow;
+    if (timeWindow !== undefined) updateData.timeWindow = timeWindow;
 
     // Update order
-    const { data: updatedOrder, error: updateError } = await supabaseAdmin
-      .from("orders")
-      .update(updateData)
-      .eq("id", orderId)
-      .select()
-      .single();
-
-    if (updateError) throw updateError;
+    const updatedOrder = (
+      await db
+        .update(orders)
+        .set(updateData)
+        .where(eq(orders.id, orderId))
+        .returning()
+    )[0];
 
     // Broadcast order update
     websocketService.sendOrderUpdate(user.id, {
       type: "order_updated",
       orderId: orderId,
-      state: updatedOrder.state,
+      state: updatedOrder?.state,
     });
 
     res.json(updatedOrder);
@@ -997,26 +1099,19 @@ router.delete("/orders/:id", async (req, res) => {
 
   try {
     // Get customer ID from user ID
-    const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (customerError) throw customerError;
+    const customer = await getCustomerByUserId(user.id);
     if (!customer) {
       return res.status(404).json({ error: "Customer profile not found" });
     }
 
     // Check if order exists and belongs to customer
-    const { data: existingOrder, error: orderCheckError } = await supabaseAdmin
-      .from("orders")
-      .select("*")
-      .eq("id", orderId)
-      .eq("customer_id", customer.id)
-      .single();
-
-    if (orderCheckError) throw orderCheckError;
+    const existingOrder = (
+      await db
+        .select()
+        .from(orders)
+        .where(and(eq(orders.id, orderId), eq(orders.customerId, customer.id)))
+        .limit(1)
+    )[0];
     if (!existingOrder) {
       return res.status(404).json({ error: "Order not found" });
     }
@@ -1030,17 +1125,16 @@ router.delete("/orders/:id", async (req, res) => {
     }
 
     // Update order state to cancelled
-    const { data: cancelledOrder, error: cancelError } = await supabaseAdmin
-      .from("orders")
-      .update({ 
-        state: "cancelled",
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", orderId)
-      .select()
-      .single();
-
-    if (cancelError) throw cancelError;
+    const cancelledOrder = (
+      await db
+        .update(orders)
+        .set({
+          state: "cancelled",
+          updatedAt: new Date(),
+        })
+        .where(eq(orders.id, orderId))
+        .returning()
+    )[0];
 
     // Broadcast order cancellation
     websocketService.sendOrderUpdate(user.id, {
@@ -1062,25 +1156,16 @@ router.get("/delivery-addresses", async (req, res) => {
   const user = (req as any).user;
   
   try {
-    const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (customerError) throw customerError;
+    const customer = await getCustomerByUserId(user.id);
     if (!customer) {
       return res.status(404).json({ error: "Customer profile not found" });
     }
 
-    const { data: addresses, error } = await supabaseAdmin
-      .from("delivery_addresses")
-      .select("*")
-      .eq("customer_id", customer.id)
-      .order("is_default", { ascending: false })
-      .order("created_at", { ascending: false });
-
-    if (error) throw error;
+    const addresses = await db
+      .select()
+      .from(deliveryAddresses)
+      .where(eq(deliveryAddresses.customerId, customer.id))
+      .orderBy(desc(deliveryAddresses.isDefault), desc(deliveryAddresses.createdAt));
     res.json(addresses || []);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1092,13 +1177,7 @@ router.post("/delivery-addresses", async (req, res) => {
   const user = (req as any).user;
   
   try {
-    const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (customerError) throw customerError;
+    const customer = await getCustomerByUserId(user.id);
     if (!customer) {
       return res.status(404).json({ error: "Customer profile not found" });
     }
@@ -1118,31 +1197,30 @@ router.post("/delivery-addresses", async (req, res) => {
 
     // If this is being set as default, unset other defaults
     if (isDefault) {
-      await supabaseAdmin
-        .from("delivery_addresses")
-        .update({ is_default: false })
-        .eq("customer_id", customer.id);
+      await db
+        .update(deliveryAddresses)
+        .set({ isDefault: false })
+        .where(eq(deliveryAddresses.customerId, customer.id));
     }
 
-    const { data: newAddress, error } = await supabaseAdmin
-      .from("delivery_addresses")
-      .insert({
-        customer_id: customer.id,
-        label,
-        address_street: addressStreet,
-        address_city: addressCity,
-        address_province: addressProvince,
-        address_postal_code: addressPostalCode,
-        address_country: addressCountry || "South Africa",
-        lat,
-        lng,
-        access_instructions: accessInstructions,
-        is_default: isDefault || false
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
+    const newAddress = (
+      await db
+        .insert(deliveryAddresses)
+        .values({
+          customerId: customer.id,
+          label,
+          addressStreet,
+          addressCity,
+          addressProvince,
+          addressPostalCode,
+          addressCountry: addressCountry || "South Africa",
+          lat,
+          lng,
+          accessInstructions,
+          isDefault: isDefault || false,
+        })
+        .returning()
+    )[0];
     
     // Broadcast delivery address creation
     websocketService.sendToUser(user.id, {
@@ -1162,13 +1240,7 @@ router.patch("/delivery-addresses/:id", async (req, res) => {
   const addressId = req.params.id;
   
   try {
-    const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (customerError) throw customerError;
+    const customer = await getCustomerByUserId(user.id);
     if (!customer) {
       return res.status(404).json({ error: "Customer profile not found" });
     }
@@ -1188,34 +1260,31 @@ router.patch("/delivery-addresses/:id", async (req, res) => {
 
     // If setting as default, unset other defaults
     if (isDefault) {
-      await supabaseAdmin
-        .from("delivery_addresses")
-        .update({ is_default: false })
-        .eq("customer_id", customer.id)
-        .neq("id", addressId);
+      await db
+        .update(deliveryAddresses)
+        .set({ isDefault: false })
+        .where(and(eq(deliveryAddresses.customerId, customer.id), ne(deliveryAddresses.id, addressId)));
     }
 
-    const updateData: any = { updated_at: new Date().toISOString() };
+    const updateData: any = { updatedAt: new Date() };
     if (label !== undefined) updateData.label = label;
-    if (addressStreet !== undefined) updateData.address_street = addressStreet;
-    if (addressCity !== undefined) updateData.address_city = addressCity;
-    if (addressProvince !== undefined) updateData.address_province = addressProvince;
-    if (addressPostalCode !== undefined) updateData.address_postal_code = addressPostalCode;
-    if (addressCountry !== undefined) updateData.address_country = addressCountry;
+    if (addressStreet !== undefined) updateData.addressStreet = addressStreet;
+    if (addressCity !== undefined) updateData.addressCity = addressCity;
+    if (addressProvince !== undefined) updateData.addressProvince = addressProvince;
+    if (addressPostalCode !== undefined) updateData.addressPostalCode = addressPostalCode;
+    if (addressCountry !== undefined) updateData.addressCountry = addressCountry;
     if (lat !== undefined) updateData.lat = lat;
     if (lng !== undefined) updateData.lng = lng;
-    if (accessInstructions !== undefined) updateData.access_instructions = accessInstructions;
-    if (isDefault !== undefined) updateData.is_default = isDefault;
+    if (accessInstructions !== undefined) updateData.accessInstructions = accessInstructions;
+    if (isDefault !== undefined) updateData.isDefault = isDefault;
 
-    const { data: updatedAddress, error } = await supabaseAdmin
-      .from("delivery_addresses")
-      .update(updateData)
-      .eq("id", addressId)
-      .eq("customer_id", customer.id)
-      .select()
-      .single();
-
-    if (error) throw error;
+    const updatedAddress = (
+      await db
+        .update(deliveryAddresses)
+        .set(updateData)
+        .where(and(eq(deliveryAddresses.id, addressId), eq(deliveryAddresses.customerId, customer.id)))
+        .returning()
+    )[0];
     if (!updatedAddress) {
       return res.status(404).json({ error: "Address not found" });
     }
@@ -1238,24 +1307,14 @@ router.delete("/delivery-addresses/:id", async (req, res) => {
   const addressId = req.params.id;
   
   try {
-    const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (customerError) throw customerError;
+    const customer = await getCustomerByUserId(user.id);
     if (!customer) {
       return res.status(404).json({ error: "Customer profile not found" });
     }
 
-    const { error } = await supabaseAdmin
-      .from("delivery_addresses")
-      .delete()
-      .eq("id", addressId)
-      .eq("customer_id", customer.id);
-
-    if (error) throw error;
+    await db
+      .delete(deliveryAddresses)
+      .where(and(eq(deliveryAddresses.id, addressId), eq(deliveryAddresses.customerId, customer.id)));
     
     // Broadcast delivery address deletion
     websocketService.sendToUser(user.id, {
@@ -1276,33 +1335,17 @@ router.get("/payment-methods", async (req, res) => {
   const user = (req as any).user;
   
   try {
-    const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (customerError) throw customerError;
+    const customer = await getCustomerByUserId(user.id);
     if (!customer) {
       return res.status(404).json({ error: "Customer profile not found" });
     }
 
-    const { data: paymentMethods, error } = await supabaseAdmin
-      .from("payment_methods")
-      .select("*")
-      .eq("customer_id", customer.id)
-      .eq("is_active", true)
-      .order("is_default", { ascending: false })
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      // Handle schema cache issues - return empty array
-      if (error.code === 'PGRST205' || error.code === 'PGRST204') {
-        return res.json([]);
-      }
-      throw error;
-    }
-    res.json(paymentMethods || []);
+    const paymentMethodRows = await db
+      .select()
+      .from(paymentMethods)
+      .where(and(eq(paymentMethods.customerId, customer.id), eq(paymentMethods.isActive, true)))
+      .orderBy(desc(paymentMethods.isDefault), desc(paymentMethods.createdAt));
+    res.json(paymentMethodRows || []);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -1313,13 +1356,7 @@ router.post("/payment-methods", async (req, res) => {
   const user = (req as any).user;
   
   try {
-    const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (customerError) throw customerError;
+    const customer = await getCustomerByUserId(user.id);
     if (!customer) {
       return res.status(404).json({ error: "Customer profile not found" });
     }
@@ -1342,35 +1379,34 @@ router.post("/payment-methods", async (req, res) => {
 
     // If setting as default, unset other defaults
     if (isDefault) {
-      await supabaseAdmin
-        .from("payment_methods")
-        .update({ is_default: false })
-        .eq("customer_id", customer.id);
+      await db
+        .update(paymentMethods)
+        .set({ isDefault: false })
+        .where(eq(paymentMethods.customerId, customer.id));
     }
 
-    const { data: newPaymentMethod, error } = await supabaseAdmin
-      .from("payment_methods")
-      .insert({
-        customer_id: customer.id,
-        method_type: methodType,
-        label,
-        bank_name: bankName,
-        account_holder_name: accountHolderName,
-        account_number: accountNumber,
-        branch_code: branchCode,
-        account_type: accountType,
-        card_last_four: cardLastFour,
-        card_brand: cardBrand,
-        card_expiry_month: cardExpiryMonth,
-        card_expiry_year: cardExpiryYear,
-        payment_gateway_token: paymentGatewayToken,
-        is_default: isDefault || false,
-        is_active: true
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
+    const newPaymentMethod = (
+      await db
+        .insert(paymentMethods)
+        .values({
+          customerId: customer.id,
+          methodType,
+          label,
+          bankName,
+          accountHolderName,
+          accountNumber,
+          branchCode,
+          accountType,
+          cardLastFour,
+          cardBrand,
+          cardExpiryMonth,
+          cardExpiryYear,
+          paymentGatewayToken,
+          isDefault: isDefault || false,
+          isActive: true,
+        })
+        .returning()
+    )[0];
     
     // Broadcast payment method creation
     websocketService.sendToUser(user.id, {
@@ -1390,25 +1426,16 @@ router.delete("/payment-methods/:id", async (req, res) => {
   const paymentMethodId = req.params.id;
   
   try {
-    const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (customerError) throw customerError;
+    const customer = await getCustomerByUserId(user.id);
     if (!customer) {
       return res.status(404).json({ error: "Customer profile not found" });
     }
 
     // Soft delete by marking as inactive
-    const { error } = await supabaseAdmin
-      .from("payment_methods")
-      .update({ is_active: false, updated_at: new Date().toISOString() })
-      .eq("id", paymentMethodId)
-      .eq("customer_id", customer.id);
-
-    if (error) throw error;
+    await db
+      .update(paymentMethods)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(and(eq(paymentMethods.id, paymentMethodId), eq(paymentMethods.customerId, customer.id)));
     
     // Broadcast payment method deletion
     websocketService.sendToUser(user.id, {
@@ -1429,25 +1456,16 @@ router.get("/addresses", async (req, res) => {
   const user = (req as any).user;
   
   try {
-    const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (customerError) throw customerError;
+    const customer = await getCustomerByUserId(user.id);
     if (!customer) {
       return res.status(404).json({ error: "Customer profile not found" });
     }
 
-    const { data: addresses, error } = await supabaseAdmin
-      .from("delivery_addresses")
-      .select("*")
-      .eq("customer_id", customer.id)
-      .order("is_default", { ascending: false })
-      .order("created_at", { ascending: false });
-
-    if (error) throw error;
+    const addresses = await db
+      .select()
+      .from(deliveryAddresses)
+      .where(eq(deliveryAddresses.customerId, customer.id))
+      .orderBy(desc(deliveryAddresses.isDefault), desc(deliveryAddresses.createdAt));
     res.json(addresses || []);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1460,31 +1478,18 @@ router.get("/addresses/:id", async (req, res) => {
   const addressId = req.params.id;
   
   try {
-    const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (customerError) throw customerError;
+    const customer = await getCustomerByUserId(user.id);
     if (!customer) {
       return res.status(404).json({ error: "Customer profile not found" });
     }
 
-    const { data: address, error } = await supabaseAdmin
-      .from("delivery_addresses")
-      .select("*")
-      .eq("id", addressId)
-      .eq("customer_id", customer.id)
-      .single();
-
-    if (error) {
-      // PGRST116 = "not found" error from Supabase/PostgREST
-      if (error.code === 'PGRST116') {
-        return res.status(404).json({ error: "Address not found" });
-      }
-      throw error;
-    }
+    const address = (
+      await db
+        .select()
+        .from(deliveryAddresses)
+        .where(and(eq(deliveryAddresses.id, addressId), eq(deliveryAddresses.customerId, customer.id)))
+        .limit(1)
+    )[0];
     if (!address) {
       return res.status(404).json({ error: "Address not found" });
     }
@@ -1498,58 +1503,50 @@ router.get("/addresses/:id", async (req, res) => {
 // Create new delivery address
 router.post("/addresses", async (req, res) => {
   const user = (req as any).user;
-  const {
-    label,
-    addressStreet,
-    addressCity,
-    addressProvince,
-    addressPostalCode,
-    addressCountry,
-    lat,
-    lng,
-    accessInstructions,
-    isDefault
-  } = req.body;
+  const body = req.body ?? {};
+  const label = body.label ?? null;
+  const addressStreet = body.addressStreet ?? body.address_street ?? null;
+  const addressCity = body.addressCity ?? body.address_city ?? null;
+  const addressProvince = body.addressProvince ?? body.address_province ?? "Gauteng";
+  const addressPostalCode = body.addressPostalCode ?? body.address_postal_code ?? null;
+  const addressCountry = body.addressCountry ?? body.address_country ?? "South Africa";
+  const lat = body.lat ?? null;
+  const lng = body.lng ?? null;
+  const accessInstructions = body.accessInstructions ?? body.access_instructions ?? null;
+  const isDefault = body.isDefault ?? body.is_default ?? false;
   
   try {
-    const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (customerError) throw customerError;
+    const customer = await getCustomerByUserId(user.id);
     if (!customer) {
       return res.status(404).json({ error: "Customer profile not found" });
     }
 
     // If setting as default, unset other defaults
     if (isDefault) {
-      await supabaseAdmin
-        .from("delivery_addresses")
-        .update({ is_default: false })
-        .eq("customer_id", customer.id);
+      await db
+        .update(deliveryAddresses)
+        .set({ isDefault: false })
+        .where(eq(deliveryAddresses.customerId, customer.id));
     }
 
-    const { data: newAddress, error } = await supabaseAdmin
-      .from("delivery_addresses")
-      .insert({
-        customer_id: customer.id,
-        label,
-        address_street: addressStreet,
-        address_city: addressCity,
-        address_province: addressProvince,
-        address_postal_code: addressPostalCode,
-        address_country: addressCountry || "South Africa",
-        lat,
-        lng,
-        access_instructions: accessInstructions,
-        is_default: isDefault || false
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
+    const newAddress = (
+      await db
+        .insert(deliveryAddresses)
+        .values({
+          customerId: customer.id,
+          label,
+          addressStreet,
+          addressCity,
+          addressProvince,
+          addressPostalCode,
+          addressCountry: addressCountry || "South Africa",
+          lat,
+          lng,
+          accessInstructions,
+          isDefault: isDefault || false,
+        })
+        .returning()
+    )[0];
     
     // Broadcast address creation
     websocketService.sendToUser(user.id, {
@@ -1567,66 +1564,51 @@ router.post("/addresses", async (req, res) => {
 router.put("/addresses/:id", async (req, res) => {
   const user = (req as any).user;
   const addressId = req.params.id;
-  const {
-    label,
-    addressStreet,
-    addressCity,
-    addressProvince,
-    addressPostalCode,
-    addressCountry,
-    lat,
-    lng,
-    accessInstructions,
-    isDefault
-  } = req.body;
+  const body = req.body ?? {};
+  const label = body.label ?? null;
+  const addressStreet = body.addressStreet ?? body.address_street ?? null;
+  const addressCity = body.addressCity ?? body.address_city ?? null;
+  const addressProvince = body.addressProvince ?? body.address_province ?? "Gauteng";
+  const addressPostalCode = body.addressPostalCode ?? body.address_postal_code ?? null;
+  const addressCountry = body.addressCountry ?? body.address_country ?? "South Africa";
+  const lat = body.lat ?? null;
+  const lng = body.lng ?? null;
+  const accessInstructions = body.accessInstructions ?? body.access_instructions ?? null;
+  const isDefault = body.isDefault ?? body.is_default ?? false;
   
   try {
-    const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (customerError) throw customerError;
+    const customer = await getCustomerByUserId(user.id);
     if (!customer) {
       return res.status(404).json({ error: "Customer profile not found" });
     }
 
     // If setting as default, unset other defaults
     if (isDefault) {
-      await supabaseAdmin
-        .from("delivery_addresses")
-        .update({ is_default: false })
-        .eq("customer_id", customer.id);
+      await db
+        .update(deliveryAddresses)
+        .set({ isDefault: false })
+        .where(eq(deliveryAddresses.customerId, customer.id));
     }
 
-    const { data: updatedAddress, error } = await supabaseAdmin
-      .from("delivery_addresses")
-      .update({
-        label,
-        address_street: addressStreet,
-        address_city: addressCity,
-        address_province: addressProvince,
-        address_postal_code: addressPostalCode,
-        address_country: addressCountry,
-        lat,
-        lng,
-        access_instructions: accessInstructions,
-        is_default: isDefault,
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", addressId)
-      .eq("customer_id", customer.id)
-      .select()
-      .single();
-
-    if (error) {
-      // PGRST116 = "not found" error from Supabase/PostgREST
-      if (error.code === 'PGRST116') {
-        return res.status(404).json({ error: "Address not found" });
-      }
-      throw error;
-    }
+    const updatedAddress = (
+      await db
+        .update(deliveryAddresses)
+        .set({
+          label,
+          addressStreet,
+          addressCity,
+          addressProvince,
+          addressPostalCode,
+          addressCountry,
+          lat,
+          lng,
+          accessInstructions,
+          isDefault,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(deliveryAddresses.id, addressId), eq(deliveryAddresses.customerId, customer.id)))
+        .returning()
+    )[0];
     if (!updatedAddress) {
       return res.status(404).json({ error: "Address not found" });
     }
@@ -1649,40 +1631,26 @@ router.delete("/addresses/:id", async (req, res) => {
   const addressId = req.params.id;
   
   try {
-    const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (customerError) throw customerError;
+    const customer = await getCustomerByUserId(user.id);
     if (!customer) {
       return res.status(404).json({ error: "Customer profile not found" });
     }
 
     // First check if address exists
-    const { data: existingAddress, error: checkError } = await supabaseAdmin
-      .from("delivery_addresses")
-      .select("id")
-      .eq("id", addressId)
-      .eq("customer_id", customer.id)
-      .single();
-
-    if (checkError) {
-      // PGRST116 = "not found" error from Supabase/PostgREST
-      if (checkError.code === 'PGRST116') {
-        return res.status(404).json({ error: "Address not found" });
-      }
-      throw checkError;
+    const existingAddress = (
+      await db
+        .select({ id: deliveryAddresses.id })
+        .from(deliveryAddresses)
+        .where(and(eq(deliveryAddresses.id, addressId), eq(deliveryAddresses.customerId, customer.id)))
+        .limit(1)
+    )[0];
+    if (!existingAddress) {
+      return res.status(404).json({ error: "Address not found" });
     }
 
-    const { error } = await supabaseAdmin
-      .from("delivery_addresses")
-      .delete()
-      .eq("id", addressId)
-      .eq("customer_id", customer.id);
-
-    if (error) throw error;
+    await db
+      .delete(deliveryAddresses)
+      .where(and(eq(deliveryAddresses.id, addressId), eq(deliveryAddresses.customerId, customer.id)));
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -1696,19 +1664,9 @@ router.get("/profile", async (req, res) => {
   const user = (req as any).user;
   
   try {
-    const { data: profile, error: profileError } = await supabaseAdmin
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (profileError) {
-      // If it's an API key error, it means the key is invalid
-      if (profileError.message?.includes("Invalid API key")) {
-        throw profileError;
-      }
-      throw profileError;
-    }
+    const profile = (
+      await db.select().from(profiles).where(eq(profiles.id, user.id)).limit(1)
+    )[0];
     
     // If no profile, user needs to complete setup
     if (!profile) {
@@ -1719,62 +1677,29 @@ router.get("/profile", async (req, res) => {
       });
     }
 
-    const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("*")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (customerError) throw customerError;
+    let customer = (
+      await db.select().from(customers).where(eq(customers.userId, user.id)).limit(1)
+    )[0];
     
     // If no customer record but profile exists, create it
     if (!customer) {
-      const { data: newCustomer, error: createError } = await supabaseAdmin
-        .from("customers")
-        .insert({ user_id: user.id })
-        .select()
-        .single();
-      
-      if (createError) {
-        // If RLS error, check if customer was created by another process
-        if (createError.message?.includes("row-level security")) {
-          const { data: existingCustomer } = await supabaseAdmin
-            .from("customers")
-            .select("*")
-            .eq("user_id", user.id)
-            .maybeSingle();
-          
-          if (existingCustomer) {
-            return res.json({
-              ...profile,
-              ...existingCustomer,
-              email: user.email || null
-            });
-          }
-        }
-        throw createError;
-      }
+      const newCustomer = (
+        await db.insert(customers).values({ userId: user.id }).returning()
+      )[0];
 
       return res.json({
         ...profile,
         ...newCustomer,
-        email: user.email || null
+        email: user.email || null,
       });
     }
 
     res.json({
       ...profile,
       ...customer,
-      email: user.email || null
+      email: user.email || null,
     });
   } catch (error: any) {
-    // Handle PGRST116 error (no rows found) gracefully
-    if (error?.code === 'PGRST116') {
-      return res.status(404).json({ 
-        error: "Profile not found",
-        code: "PROFILE_SETUP_REQUIRED"
-      });
-    }
     res.status(500).json({ error: error.message });
   }
 });
@@ -1797,36 +1722,33 @@ router.put("/profile", async (req, res) => {
   
   try {
     // Update profile table
-    const { error: profileError } = await supabaseAdmin
-      .from("profiles")
-      .update({
-        full_name: fullName,
+    await db
+      .update(profiles)
+      .set({
+        fullName: fullName,
         phone,
-        updated_at: new Date().toISOString()
+        updatedAt: new Date(),
       })
-      .eq("id", user.id);
-
-    if (profileError) throw profileError;
+      .where(eq(profiles.id, user.id));
 
     // Update customer table
-    const { data: updatedCustomer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .update({
-        company_name: companyName,
-        trading_as: tradingAs,
-        vat_number: vatNumber,
-        billing_address_street: billingAddressStreet,
-        billing_address_city: billingAddressCity,
-        billing_address_province: billingAddressProvince,
-        billing_address_postal_code: billingAddressPostalCode,
-        billing_address_country: billingAddressCountry,
-        updated_at: new Date().toISOString()
-      })
-      .eq("user_id", user.id)
-      .select()
-      .single();
-
-    if (customerError) throw customerError;
+    const updatedCustomer = (
+      await db
+        .update(customers)
+        .set({
+          companyName: companyName,
+          tradingAs: tradingAs,
+          vatNumber: vatNumber,
+          billingAddressStreet: billingAddressStreet,
+          billingAddressCity: billingAddressCity,
+          billingAddressProvince: billingAddressProvince,
+          billingAddressPostalCode: billingAddressPostalCode,
+          billingAddressCountry: billingAddressCountry,
+          updatedAt: new Date(),
+        })
+        .where(eq(customers.userId, user.id))
+        .returning()
+    )[0];
 
     // Broadcast customer profile update
     websocketService.sendToUser(user.id, {
@@ -1847,26 +1769,23 @@ router.get("/orders/:orderId/driver-location", async (req, res) => {
 
   try {
     // Get customer ID
-    const { data: customer, error: customerError } = await supabaseAdmin
-      .from("customers")
-      .select("id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (customerError) throw customerError;
+    const customer = await getCustomerByUserId(user.id);
     if (!customer) {
       return res.status(404).json({ error: "Customer profile not found" });
     }
 
     // Get order and verify it belongs to customer
-    const { data: order, error: orderError } = await supabaseAdmin
-      .from("orders")
-      .select("id, assigned_driver_id, state")
-      .eq("id", orderId)
-      .eq("customer_id", customer.id)
-      .single();
-
-    if (orderError) throw orderError;
+    const order = (
+      await db
+        .select({
+          id: orders.id,
+          assigned_driver_id: orders.assignedDriverId,
+          state: orders.state,
+        })
+        .from(orders)
+        .where(and(eq(orders.id, orderId), eq(orders.customerId, customer.id)))
+        .limit(1)
+    )[0];
     if (!order) {
       return res.status(404).json({ error: "Order not found" });
     }
@@ -1877,15 +1796,18 @@ router.get("/orders/:orderId/driver-location", async (req, res) => {
     }
 
     // Get driver info
-    const { data: driver, error: driverError } = await supabaseAdmin
-      .from("drivers")
-      .select("id, user_id, current_lat, current_lng")
-      .eq("id", order.assigned_driver_id)
-      .maybeSingle();
-
-    if (driverError) {
-      return res.status(500).json({ error: "Failed to fetch driver information" });
-    }
+    const driver = (
+      await db
+        .select({
+          id: drivers.id,
+          user_id: drivers.userId,
+          current_lat: drivers.currentLat,
+          current_lng: drivers.currentLng,
+        })
+        .from(drivers)
+        .where(eq(drivers.id, order.assigned_driver_id))
+        .limit(1)
+    )[0];
     
     if (!driver) {
       return res.status(404).json({ error: "Driver not found" });
@@ -1905,26 +1827,44 @@ router.get("/orders/:orderId/driver-location", async (req, res) => {
       // Prioritize locations from the last 5 minutes to ensure we get fresh GPS data
       const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
       
-      const { data: recentLocation, error: locationError } = await supabaseAdmin
-        .from("driver_locations")
-        .select("lat, lng, created_at")
-        .eq("driver_id", driver.id)
-        .eq("order_id", orderId)
-        .gte("created_at", fiveMinutesAgo) // Only get locations from last 5 minutes
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      const recentLocation = (
+        await db
+          .select({
+            lat: driverLocations.lat,
+            lng: driverLocations.lng,
+            created_at: driverLocations.createdAt,
+          })
+          .from(driverLocations)
+          .where(
+            and(
+              eq(driverLocations.driverId, driver.id),
+              eq(driverLocations.orderId, orderId),
+              gte(driverLocations.createdAt, new Date(fiveMinutesAgo)),
+            ),
+          )
+          .orderBy(desc(driverLocations.createdAt))
+          .limit(1)
+      )[0];
 
       // Priority 2: If no recent location for this order, try any recent location from this driver
-      if (locationError || !recentLocation || !recentLocation.lat || !recentLocation.lng) {
-        const { data: fallbackLocation } = await supabaseAdmin
-          .from("driver_locations")
-          .select("lat, lng, created_at")
-          .eq("driver_id", driver.id)
-          .gte("created_at", fiveMinutesAgo) // Only get locations from last 5 minutes
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
+      if (!recentLocation || !recentLocation.lat || !recentLocation.lng) {
+        const fallbackLocation = (
+          await db
+            .select({
+              lat: driverLocations.lat,
+              lng: driverLocations.lng,
+              created_at: driverLocations.createdAt,
+            })
+            .from(driverLocations)
+            .where(
+              and(
+                eq(driverLocations.driverId, driver.id),
+                gte(driverLocations.createdAt, new Date(fiveMinutesAgo)),
+              ),
+            )
+            .orderBy(desc(driverLocations.createdAt))
+            .limit(1)
+        )[0];
         
         if (fallbackLocation && fallbackLocation.lat && fallbackLocation.lng) {
           latitude = fallbackLocation.lat;
@@ -1941,15 +1881,18 @@ router.get("/orders/:orderId/driver-location", async (req, res) => {
 
       // Priority 3: If no recent location, get last known location (any time)
       if (!latitude || !longitude) {
-        const { data: lastKnownLocation } = await supabaseAdmin
-          .from("driver_locations")
-          .select("lat, lng, created_at")
-          .eq("driver_id", driver.id)
-          .not("lat", "is", null)
-          .not("lng", "is", null)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
+        const lastKnownLocation = (
+          await db
+            .select({
+              lat: driverLocations.lat,
+              lng: driverLocations.lng,
+              created_at: driverLocations.createdAt,
+            })
+            .from(driverLocations)
+            .where(and(eq(driverLocations.driverId, driver.id), isNotNull(driverLocations.lat), isNotNull(driverLocations.lng)))
+            .orderBy(desc(driverLocations.createdAt))
+            .limit(1)
+        )[0];
         
         if (lastKnownLocation && lastKnownLocation.lat && lastKnownLocation.lng) {
           latitude = lastKnownLocation.lat;
@@ -1972,11 +1915,13 @@ router.get("/orders/:orderId/driver-location", async (req, res) => {
     }
 
     // Get driver profile for additional details
-    const { data: driverProfile } = await supabaseAdmin
-      .from("profiles")
-      .select("full_name")
-      .eq("id", driver.user_id)
-      .maybeSingle();
+    const driverProfile = (
+      await db
+        .select({ full_name: profiles.fullName })
+        .from(profiles)
+        .where(eq(profiles.id, driver.user_id))
+        .limit(1)
+    )[0];
 
     res.json({
       latitude,

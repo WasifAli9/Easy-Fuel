@@ -1,4 +1,6 @@
-import { supabaseAdmin } from "./supabase";
+import { db } from "./db";
+import { documents, drivers, suppliers, vehicles } from "@shared/schema";
+import { and, eq, gt, inArray, isNotNull, lte } from "drizzle-orm";
 
 export interface ComplianceChecklist {
   required: string[];
@@ -67,54 +69,72 @@ const SUPPLIER_REQUIRED_DOCUMENTS = [
 export async function getDriverComplianceStatus(driverId: string): Promise<ComplianceStatus> {
   try {
     // Get driver record
-    const { data: driver, error: driverError } = await supabaseAdmin
-      .from("drivers")
-      .select("*")
-      .eq("id", driverId)
-      .single();
-
-    if (driverError || !driver) {
+    const driverRows = await db
+      .select({
+        id: drivers.id,
+        user_id: drivers.userId,
+        prdp_required: drivers.prdpRequired,
+        dg_training_required: drivers.dgTrainingRequired,
+        compliance_status: drivers.complianceStatus,
+        status: drivers.status,
+        compliance_rejection_reason: drivers.complianceRejectionReason,
+        compliance_reviewer_id: drivers.complianceReviewerId,
+        compliance_review_date: drivers.complianceReviewDate,
+      })
+      .from(drivers)
+      .where(eq(drivers.id, driverId))
+      .limit(1);
+    const driver = driverRows[0];
+    if (!driver) {
       throw new Error("Driver not found");
     }
 
     // Get all documents for driver
     // NOTE: Documents are stored with owner_id = driver.id (not driver.user_id)
-    const { data: documents, error: docsError } = await supabaseAdmin
-      .from("documents")
-      .select("*")
-      .eq("owner_type", "driver")
-      .eq("owner_id", driver.id);
-
-    if (docsError) {
-      console.error("Error fetching driver documents:", docsError);
-    }
+    const driverDocuments = await db
+      .select({
+        id: documents.id,
+        doc_type: documents.docType,
+        verification_status: documents.verificationStatus,
+        document_status: documents.verificationStatus,
+        owner_type: documents.ownerType,
+        owner_id: documents.ownerId,
+        title: documents.title,
+      })
+      .from(documents)
+      .where(and(eq(documents.ownerType, "driver"), eq(documents.ownerId, driver.id)));
 
     // Get vehicle documents
-    const { data: vehicles } = await supabaseAdmin
-      .from("vehicles")
-      .select("id")
-      .eq("driver_id", driverId);
-
-    const vehicleIds = vehicles?.map(v => v.id) || [];
+    const vehicleRows = await db
+      .select({ id: vehicles.id })
+      .from(vehicles)
+      .where(eq(vehicles.driverId, driverId));
+    const vehicleIds = vehicleRows.map((v) => v.id);
     let vehicleDocuments: any[] = [];
 
     if (vehicleIds.length > 0) {
-      const { data: vDocs } = await supabaseAdmin
-        .from("documents")
-        .select("*")
-        .eq("owner_type", "vehicle")
-        .in("owner_id", vehicleIds);
-
+      const vDocs = await db
+        .select({
+          id: documents.id,
+          doc_type: documents.docType,
+          verification_status: documents.verificationStatus,
+          document_status: documents.verificationStatus,
+          owner_type: documents.ownerType,
+          owner_id: documents.ownerId,
+          title: documents.title,
+        })
+        .from(documents)
+        .where(and(eq(documents.ownerType, "vehicle"), inArray(documents.ownerId, vehicleIds)));
       vehicleDocuments = vDocs || [];
     }
 
-    const allDocuments = [...(documents || []), ...vehicleDocuments];
+    const allDocuments = [...(driverDocuments || []), ...vehicleDocuments];
 
     // Debug: Log all documents found
     console.log("[Compliance Service] Driver documents found:", {
       driverId: driverId,
       driverUserId: driver.user_id,
-      documentsCount: documents?.length || 0,
+      documentsCount: driverDocuments?.length || 0,
       vehicleDocumentsCount: vehicleDocuments.length,
       allDocumentsCount: allDocuments.length,
       documentDetails: allDocuments.map(d => ({
@@ -222,25 +242,29 @@ export async function getDriverComplianceStatus(driverId: string): Promise<Compl
  */
 export async function getVehicleComplianceStatus(vehicleId: string): Promise<ComplianceStatus> {
   try {
-    const { data: vehicle, error: vehicleError } = await supabaseAdmin
-      .from("vehicles")
-      .select("*")
-      .eq("id", vehicleId)
-      .single();
-
-    if (vehicleError || !vehicle) {
+    const vehicleRows = await db
+      .select({
+        id: vehicles.id,
+        vehicle_status: vehicles.vehicleStatus,
+        dg_vehicle_permit_required: vehicles.dgVehiclePermitRequired,
+        loa_required: vehicles.loaRequired,
+      })
+      .from(vehicles)
+      .where(eq(vehicles.id, vehicleId))
+      .limit(1);
+    const vehicle = vehicleRows[0];
+    if (!vehicle) {
       throw new Error("Vehicle not found");
     }
 
-    const { data: documents, error: docsError } = await supabaseAdmin
-      .from("documents")
-      .select("*")
-      .eq("owner_type", "vehicle")
-      .eq("owner_id", vehicleId);
-
-    if (docsError) {
-      console.error("Error fetching vehicle documents:", docsError);
-    }
+    const vehicleDocuments = await db
+      .select({
+        doc_type: documents.docType,
+        verification_status: documents.verificationStatus,
+        document_status: documents.verificationStatus,
+      })
+      .from(documents)
+      .where(and(eq(documents.ownerType, "vehicle"), eq(documents.ownerId, vehicleId)));
 
     const requiredDocs = [...VEHICLE_REQUIRED_DOCUMENTS];
     if (vehicle.dg_vehicle_permit_required) {
@@ -250,10 +274,10 @@ export async function getVehicleComplianceStatus(vehicleId: string): Promise<Com
       // Already included
     }
 
-    const uploaded = (documents || []).map(d => d.doc_type);
-    const approved = (documents || []).filter(d => d.verification_status === "verified" || d.verification_status === "approved" || d.document_status === "approved").map(d => d.doc_type);
-    const rejected = (documents || []).filter(d => d.verification_status === "rejected" || d.document_status === "rejected").map(d => d.doc_type);
-    const pending = (documents || []).filter(d => (d.verification_status === "pending" || d.verification_status === "pending_review" || d.document_status === "pending" || d.document_status === "pending_review") && !approved.includes(d.doc_type)).map(d => d.doc_type);
+    const uploaded = (vehicleDocuments || []).map(d => d.doc_type);
+    const approved = (vehicleDocuments || []).filter(d => d.verification_status === "verified" || d.verification_status === "approved" || d.document_status === "approved").map(d => d.doc_type);
+    const rejected = (vehicleDocuments || []).filter(d => d.verification_status === "rejected" || d.document_status === "rejected").map(d => d.doc_type);
+    const pending = (vehicleDocuments || []).filter(d => (d.verification_status === "pending" || d.verification_status === "pending_review" || d.document_status === "pending" || d.document_status === "pending_review") && !approved.includes(d.doc_type)).map(d => d.doc_type);
     const missing = requiredDocs.filter(doc => !uploaded.includes(doc));
 
     const checklist: ComplianceChecklist = {
@@ -296,32 +320,39 @@ export async function getVehicleComplianceStatus(vehicleId: string): Promise<Com
  */
 export async function getSupplierComplianceStatus(supplierId: string): Promise<ComplianceStatus> {
   try {
-    const { data: supplier, error: supplierError } = await supabaseAdmin
-      .from("suppliers")
-      .select("*")
-      .eq("id", supplierId)
-      .single();
-
-    if (supplierError || !supplier) {
+    const supplierRows = await db
+      .select({
+        id: suppliers.id,
+        owner_id: suppliers.ownerId,
+        compliance_status: suppliers.complianceStatus,
+        status: suppliers.status,
+        compliance_rejection_reason: suppliers.complianceRejectionReason,
+        compliance_reviewer_id: suppliers.complianceReviewerId,
+        compliance_review_date: suppliers.complianceReviewDate,
+      })
+      .from(suppliers)
+      .where(eq(suppliers.id, supplierId))
+      .limit(1);
+    const supplier = supplierRows[0];
+    if (!supplier) {
       throw new Error("Supplier not found");
     }
 
-    const { data: documents, error: docsError } = await supabaseAdmin
-      .from("documents")
-      .select("*")
-      .eq("owner_type", "supplier")
-      .eq("owner_id", supplier.owner_id);
-
-    if (docsError) {
-      console.error("Error fetching supplier documents:", docsError);
-    }
+    const supplierDocuments = await db
+      .select({
+        doc_type: documents.docType,
+        verification_status: documents.verificationStatus,
+        document_status: documents.verificationStatus,
+      })
+      .from(documents)
+      .where(and(eq(documents.ownerType, "supplier"), eq(documents.ownerId, supplier.owner_id)));
 
     const requiredDocs = [...SUPPLIER_REQUIRED_DOCUMENTS];
 
-    const uploaded = (documents || []).map(d => d.doc_type);
-    const approved = (documents || []).filter(d => d.verification_status === "verified" || d.verification_status === "approved" || d.document_status === "approved").map(d => d.doc_type);
-    const rejected = (documents || []).filter(d => d.verification_status === "rejected" || d.document_status === "rejected").map(d => d.doc_type);
-    const pending = (documents || []).filter(d => (d.verification_status === "pending" || d.verification_status === "pending_review" || d.document_status === "pending" || d.document_status === "pending_review") && !approved.includes(d.doc_type)).map(d => d.doc_type);
+    const uploaded = (supplierDocuments || []).map(d => d.doc_type);
+    const approved = (supplierDocuments || []).filter(d => d.verification_status === "verified" || d.verification_status === "approved" || d.document_status === "approved").map(d => d.doc_type);
+    const rejected = (supplierDocuments || []).filter(d => d.verification_status === "rejected" || d.document_status === "rejected").map(d => d.doc_type);
+    const pending = (supplierDocuments || []).filter(d => (d.verification_status === "pending" || d.verification_status === "pending_review" || d.document_status === "pending" || d.document_status === "pending_review") && !approved.includes(d.doc_type)).map(d => d.doc_type);
     const missing = requiredDocs.filter(doc => !uploaded.includes(doc));
 
     const checklist: ComplianceChecklist = {
@@ -370,11 +401,12 @@ export async function getSupplierComplianceStatus(supplierId: string): Promise<C
  */
 export async function canDriverAccessPlatform(driverId: string): Promise<boolean> {
   try {
-    const { data: driver } = await supabaseAdmin
-      .from("drivers")
-      .select("status, compliance_status")
-      .eq("id", driverId)
-      .single();
+    const rows = await db
+      .select({ status: drivers.status, compliance_status: drivers.complianceStatus })
+      .from(drivers)
+      .where(eq(drivers.id, driverId))
+      .limit(1);
+    const driver = rows[0];
 
     if (!driver) return false;
 
@@ -390,11 +422,12 @@ export async function canDriverAccessPlatform(driverId: string): Promise<boolean
  */
 export async function canSupplierAccessPlatform(supplierId: string): Promise<boolean> {
   try {
-    const { data: supplier } = await supabaseAdmin
-      .from("suppliers")
-      .select("status, compliance_status")
-      .eq("id", supplierId)
-      .single();
+    const rows = await db
+      .select({ status: suppliers.status, compliance_status: suppliers.complianceStatus })
+      .from(suppliers)
+      .where(eq(suppliers.id, supplierId))
+      .limit(1);
+    const supplier = rows[0];
 
     if (!supplier) return false;
 
@@ -413,18 +446,17 @@ export async function checkExpiringDocuments(): Promise<void> {
     const thirtyDaysFromNow = new Date();
     thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
 
-    const { data: expiringDocs, error } = await supabaseAdmin
-      .from("documents")
-      .select("*, owner_type, owner_id")
-      .not("expiry_date", "is", null)
-      .lte("expiry_date", thirtyDaysFromNow.toISOString())
-      .gt("expiry_date", new Date().toISOString())
-      .eq("verification_status", "verified");
-
-    if (error) {
-      console.error("Error checking expiring documents:", error);
-      return;
-    }
+    const expiringDocs = await db
+      .select({ id: documents.id, owner_type: documents.ownerType, owner_id: documents.ownerId })
+      .from(documents)
+      .where(
+        and(
+          isNotNull(documents.expiryDate),
+          lte(documents.expiryDate, thirtyDaysFromNow),
+          gt(documents.expiryDate, new Date()),
+          eq(documents.verificationStatus, "verified"),
+        ),
+      );
 
     // TODO: Send notifications for expiring documents
     // This would integrate with the notification service

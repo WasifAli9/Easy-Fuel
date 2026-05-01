@@ -100,7 +100,7 @@ export default function Signup() {
 		setLoading(true);
 		setSignupSubmitted(false);
 		try {
-			await signUpWithPassword(email, password, fullName);
+			await signUpWithPassword(email, password, fullName, role);
 			setSignupSubmitted(true);
 			// Depending on Supabase settings, the user may need to confirm email before session exists.
 			toast({

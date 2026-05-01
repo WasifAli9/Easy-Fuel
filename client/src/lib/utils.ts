@@ -74,9 +74,11 @@ export function normalizeFilePath(filePath: string | null | undefined): string |
       // Extract path after domain
       let path = url.pathname;
       
-      // Remove /api/storage/upload/ prefix if present
+      // Remove upload endpoint prefixes if present
       if (path.startsWith('/api/storage/upload/')) {
         path = path.replace('/api/storage/upload/', '');
+      } else if (path.startsWith('/api/object-storage/upload/')) {
+        path = path.replace('/api/object-storage/upload/', '');
       }
       
       // If path doesn't start with /objects/, prepend it
@@ -96,6 +98,12 @@ export function normalizeFilePath(filePath: string | null | undefined): string |
   // If it starts with /api/storage/upload/, remove that prefix
   if (filePath.startsWith('/api/storage/upload/')) {
     const path = filePath.replace('/api/storage/upload/', '');
+    return `/objects/${path}`;
+  }
+
+  // Local filesystem upload endpoint format
+  if (filePath.startsWith('/api/object-storage/upload/')) {
+    const path = filePath.replace('/api/object-storage/upload/', '');
     return `/objects/${path}`;
   }
 

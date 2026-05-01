@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { AppHeader } from "@/components/AppHeader";
@@ -7,7 +7,7 @@ import { StatsCard } from "@/components/StatsCard";
 import { SupplierPricingManager } from "@/components/SupplierPricingManagerTiered";
 import { DepotManagementDialog } from "@/components/DepotManagementDialog";
 import { Button } from "@/components/ui/button";
-import { Plus, MapPin, TrendingUp, Loader2, ShoppingCart, BarChart3, Wallet, FileText, User, ExternalLink, DollarSign, CreditCard, Menu } from "lucide-react";
+import { Plus, MapPin, TrendingUp, Loader2, ShoppingCart, BarChart3, Wallet, FileText, User, ExternalLink, DollarSign, Menu } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/utils";
 import { useWebSocket } from "@/hooks/useWebSocket";
@@ -27,28 +27,52 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useLocation, Link } from "wouter";
+import { useLocation, useSearch, Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { DashboardSidebarAside } from "@/components/dashboard/DashboardSidebar";
 import {
-  DashboardSidebarAside,
-  DashboardSidebarInner,
-  DashboardNavSection,
-  DashboardNavButton,
-  DashboardNavLink,
-} from "@/components/dashboard/DashboardSidebar";
-import { cn } from "@/lib/utils";
+  SupplierWorkspaceSidebar,
+  type SupplierDashboardTab,
+} from "@/components/dashboard/SupplierWorkspaceSidebar";
 
-type SupplierTab = "driver-orders" | "depots" | "pricing" | "analytics" | "settlements" | "invoices";
+const VALID_SUPPLIER_TABS: SupplierDashboardTab[] = [
+  "driver-orders",
+  "depots",
+  "pricing",
+  "analytics",
+  "settlements",
+  "invoices",
+];
 
 export default function SupplierDashboard() {
   const { profile, session, loading } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [location, setLocation] = useLocation();
+  const [, setLocation] = useLocation();
+  const searchString = useSearch();
   const [depotDialogOpen, setDepotDialogOpen] = useState(false);
   const [selectedDepot, setSelectedDepot] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<SupplierTab>("driver-orders");
+  const tabFromUrl = useMemo(() => {
+    const p = new URLSearchParams(searchString).get("tab");
+    return p && VALID_SUPPLIER_TABS.includes(p as SupplierDashboardTab)
+      ? (p as SupplierDashboardTab)
+      : null;
+  }, [searchString]);
+
+  const [activeTab, setActiveTabState] = useState<SupplierDashboardTab>("driver-orders");
+
+  useEffect(() => {
+    if (tabFromUrl) setActiveTabState(tabFromUrl);
+  }, [tabFromUrl]);
+
+  const setActiveTab = useCallback(
+    (tab: SupplierDashboardTab) => {
+      setActiveTabState(tab);
+      setLocation(`/supplier?tab=${tab}`);
+    },
+    [setLocation]
+  );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [orderStatusFilter, setOrderStatusFilter] = useState<string[] | null>(null);
   const [depotStatusFilter, setDepotStatusFilter] = useState<"all" | "active" | null>(null);
@@ -192,48 +216,18 @@ export default function SupplierDashboard() {
     (order: any) => order.status === "pending" || order.status === "confirmed"
   ).length;
 
-  const navItems: { value: SupplierTab; label: string; icon: typeof MapPin }[] = [
-    { value: "driver-orders", label: "Driver Orders", icon: ShoppingCart },
-    { value: "depots", label: "Depots", icon: MapPin },
-    { value: "pricing", label: "Pricing", icon: DollarSign },
-    { value: "analytics", label: "Analytics", icon: BarChart3 },
-    { value: "settlements", label: "Settlements", icon: Wallet },
-    { value: "invoices", label: "Invoices", icon: FileText },
-  ];
-
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <AppHeader />
 
       <div className="flex flex-1 min-h-0">
-        <aside className="hidden md:flex flex-col w-52 min-w-[208px] shrink-0 border-r border-border bg-muted/30 min-h-0 z-10" aria-label="Supplier navigation">
-          <nav className="sticky top-0 flex flex-col p-3 gap-0.5 overflow-y-auto">
-            <div className="px-3 py-2 mb-1">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Menu</p>
-            </div>
-            {navItems.map(({ value, label, icon: Icon }) => (
-              <button
-                key={value}
-                onClick={() => setActiveTab(value)}
-                className={cn(
-                  "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-left",
-                  activeTab === value ? "bg-primary/12 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                )}
-                data-testid={`tab-${value}`}
-              >
-                <Icon className="h-5 w-5 shrink-0" />
-                {label}
-              </button>
-            ))}
-            <Link
-              href="/supplier/subscription"
-              className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              <CreditCard className="h-5 w-5 shrink-0" />
-              Billing
-            </Link>
-          </nav>
-        </aside>
+        <DashboardSidebarAside aria-label="Supplier navigation">
+          <SupplierWorkspaceSidebar
+            active={null}
+            dashboardActiveTab={activeTab}
+            onDashboardTabChange={setActiveTab}
+          />
+        </DashboardSidebarAside>
 
         <Button variant="outline" size="icon" className="md:hidden fixed bottom-4 right-4 z-40 rounded-full shadow-lg" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
           <Menu className="h-5 w-5" />
@@ -245,30 +239,12 @@ export default function SupplierDashboard() {
             className="w-[min(100vw-2rem,288px)] p-0 overflow-hidden flex flex-col bg-sidebar border-r border-sidebar-border"
           >
             <div className="flex flex-col h-full min-h-0">
-              <DashboardSidebarInner label="Menu">
-                <DashboardNavSection>
-                  {navItems.map(({ value, label, icon: Icon }) => (
-                    <DashboardNavButton
-                      key={value}
-                      active={activeTab === value}
-                      icon={Icon}
-                      onClick={() => {
-                        setActiveTab(value);
-                        setSidebarOpen(false);
-                      }}
-                    >
-                      {label}
-                    </DashboardNavButton>
-                  ))}
-                  <DashboardNavLink
-                    href="/supplier/subscription"
-                    icon={CreditCard}
-                    onNavigate={() => setSidebarOpen(false)}
-                  >
-                    Billing
-                  </DashboardNavLink>
-                </DashboardNavSection>
-              </DashboardSidebarInner>
+              <SupplierWorkspaceSidebar
+                active={null}
+                dashboardActiveTab={activeTab}
+                onDashboardTabChange={setActiveTab}
+                onNavigate={() => setSidebarOpen(false)}
+              />
             </div>
           </SheetContent>
         </Sheet>

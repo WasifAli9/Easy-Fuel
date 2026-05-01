@@ -1,18 +1,260 @@
 import { Router } from "express";
-import { supabaseAdmin } from "./supabase";
+import { and, asc, desc, eq, gt, gte, inArray, lt, lte, ne } from "drizzle-orm";
+import { db, pool } from "./db";
+import * as sharedSchema from "../shared/schema";
 import { insertDepotSchema } from "../shared/schema";
 import { getSupplierComplianceStatus, canSupplierAccessPlatform } from "./compliance-service";
 import { buildPaymentRedirectUrl, isOzowConfigured } from "./ozow-service";
 import { getSupplierPlan, SUPPLIER_PLAN_CODES, SUPPLIER_SUBSCRIPTION_PLANS } from "../shared/supplier-subscription-plans";
 import { z } from "zod";
+import { normalizeSignatureForStorage } from "./local-object-storage";
+import PDFDocument from "pdfkit";
+
+type FilterOp = "eq" | "neq" | "in" | "gte" | "lte" | "gt" | "lt";
+type FilterClause = { op: FilterOp; column: string; value: any };
+type OrderClause = { column: string; ascending: boolean };
+
+const tableMap: Record<string, any> = {
+  suppliers: sharedSchema.suppliers,
+  supplier_subscriptions: sharedSchema.supplierSubscriptions,
+  depots: sharedSchema.depots,
+  depot_prices: sharedSchema.depotPrices,
+  documents: sharedSchema.documents,
+  fuel_types: sharedSchema.fuelTypes,
+  pricing_history: sharedSchema.pricingHistory,
+  profiles: sharedSchema.profiles,
+  admins: sharedSchema.admins,
+  supplier_subscription_payments: sharedSchema.supplierSubscriptionPayments,
+  driver_depot_orders: sharedSchema.driverDepotOrders,
+  supplier_invoice_templates: sharedSchema.supplierInvoiceTemplates,
+  supplier_settlements: sharedSchema.supplierSettlements,
+};
+
+function getTable(tableName: string) {
+  const table = tableMap[tableName];
+  if (!table) throw new Error(`Unsupported table for drizzleClient adapter: ${tableName}`);
+  return table;
+}
+
+function getColumn(table: any, column: string) {
+  if (table[column]) return table[column];
+  const entries = Object.entries(table) as Array<[string, any]>;
+  const byDbName = entries.find(([, col]) => col?.name === column);
+  return byDbName?.[1] ?? null;
+}
+
+function getColumnEntry(table: any, column: string) {
+  const entries = Object.entries(table) as Array<[string, any]>;
+  const direct = entries.find(([key]) => key === column);
+  if (direct) return direct;
+  return entries.find(([, col]) => col?.name === column) ?? null;
+}
+
+function snakeCaseRow(table: any, row: Record<string, any>) {
+  const out: Record<string, any> = {};
+  for (const [key, value] of Object.entries(row)) {
+    const column = table[key];
+    if (column?.name) out[column.name] = value;
+    else out[key] = value;
+  }
+  return out;
+}
+
+function toTableData(table: any, data: Record<string, any>) {
+  const out: Record<string, any> = {};
+  for (const [key, value] of Object.entries(data)) {
+    const columnEntry = getColumnEntry(table, key);
+    if (!columnEntry) continue;
+    out[columnEntry[0]] = value;
+  }
+  return out;
+}
+
+class DrizzleCompatQuery {
+  private filters: FilterClause[] = [];
+  private orders: OrderClause[] = [];
+  private limitValue: number | undefined;
+  private selectClause = "*";
+  private selectRequested = false;
+  private expectSingle = false;
+  private expectMaybeSingle = false;
+  private mode: "select" | "insert" | "update" | "delete" = "select";
+  private insertPayload: any = null;
+  private updatePayload: any = null;
+  constructor(private readonly tableName: string) {}
+
+  select(columns = "*") { this.selectClause = columns; this.selectRequested = true; return this; }
+  eq(column: string, value: any) { this.filters.push({ op: "eq", column, value }); return this; }
+  neq(column: string, value: any) { this.filters.push({ op: "neq", column, value }); return this; }
+  in(column: string, value: any[]) { this.filters.push({ op: "in", column, value }); return this; }
+  gte(column: string, value: any) { this.filters.push({ op: "gte", column, value }); return this; }
+  lte(column: string, value: any) { this.filters.push({ op: "lte", column, value }); return this; }
+  gt(column: string, value: any) { this.filters.push({ op: "gt", column, value }); return this; }
+  lt(column: string, value: any) { this.filters.push({ op: "lt", column, value }); return this; }
+  order(column: string, options?: { ascending?: boolean }) { this.orders.push({ column, ascending: options?.ascending !== false }); return this; }
+  limit(value: number) { this.limitValue = value; return this; }
+  single() { this.expectSingle = true; return this; }
+  maybeSingle() { this.expectMaybeSingle = true; return this; }
+  insert(values: any) { this.mode = "insert"; this.insertPayload = values; return this; }
+  update(values: any) { this.mode = "update"; this.updatePayload = values; return this; }
+  delete() { this.mode = "delete"; return this; }
+  then(resolve: any, reject: any) { return this.execute().then(resolve, reject); }
+
+  private buildConditions(table: any) {
+    const conditions = this.filters.map((f) => {
+      const col = getColumn(table, f.column);
+      if (!col) throw new Error(`Unknown column ${f.column} on table ${this.tableName}`);
+      if (f.op === "eq") return eq(col, f.value);
+      if (f.op === "neq") return ne(col, f.value);
+      if (f.op === "in") return inArray(col, f.value);
+      if (f.op === "gte") return gte(col, f.value);
+      if (f.op === "lte") return lte(col, f.value);
+      if (f.op === "gt") return gt(col, f.value);
+      return lt(col, f.value);
+    });
+    return conditions.length ? and(...conditions) : undefined;
+  }
+
+  private buildSelection(table: any): Record<string, any> | undefined {
+    if (!this.selectClause || this.selectClause.trim() === "*") return undefined;
+    const selection: Record<string, any> = {};
+    const fields = this.selectClause.split(",").map((s) => s.trim()).filter(Boolean);
+    for (const field of fields) {
+      if (field.includes("(") || field.includes(")")) continue;
+      const col = getColumn(table, field);
+      if (col) selection[field] = col;
+    }
+    return Object.keys(selection).length ? selection : undefined;
+  }
+
+  private async attachFuelTypes(rows: any[]) {
+    if (!rows.length) return rows;
+    if (!(this.selectClause.includes("fuel_types") && (this.tableName === "depot_prices" || this.tableName === "pricing_history"))) {
+      return rows;
+    }
+    const ids = Array.from(new Set(rows.map((r) => r.fuel_type_id).filter(Boolean)));
+    if (!ids.length) return rows.map((r) => ({ ...r, fuel_types: null }));
+    const fuelRows = await db
+      .select({ id: sharedSchema.fuelTypes.id, label: sharedSchema.fuelTypes.label, code: sharedSchema.fuelTypes.code })
+      .from(sharedSchema.fuelTypes)
+      .where(inArray(sharedSchema.fuelTypes.id, ids));
+    const fuelMap = new Map(fuelRows.map((f) => [f.id, f]));
+    return rows.map((row) => ({ ...row, fuel_types: fuelMap.get(row.fuel_type_id) ?? null }));
+  }
+
+  async execute() {
+    try {
+      const table = getTable(this.tableName);
+      const whereCondition = this.buildConditions(table);
+      if (this.mode === "insert") {
+        const values = Array.isArray(this.insertPayload) ? this.insertPayload.map((v) => toTableData(table, v)) : toTableData(table, this.insertPayload ?? {});
+        const result = this.selectRequested ? await db.insert(table).values(values as any).returning() : await db.insert(table).values(values as any);
+        const rows = Array.isArray(result) ? result.map((r) => snakeCaseRow(table, r as any)) : [];
+        return this.finalize(rows);
+      }
+      if (this.mode === "update") {
+        const values = toTableData(table, this.updatePayload ?? {});
+        const query = db.update(table).set(values as any);
+        const withWhere = whereCondition ? query.where(whereCondition) : query;
+        const result = this.selectRequested ? await withWhere.returning() : await withWhere;
+        const rows = Array.isArray(result) ? result.map((r) => snakeCaseRow(table, r as any)) : [];
+        return this.finalize(rows);
+      }
+      if (this.mode === "delete") {
+        const query = db.delete(table);
+        const withWhere = whereCondition ? query.where(whereCondition) : query;
+        await withWhere;
+        return { data: null, error: null };
+      }
+
+      const selection = this.buildSelection(table);
+      let query: any = selection ? db.select(selection).from(table) : db.select().from(table);
+      if (whereCondition) query = query.where(whereCondition);
+      for (const orderEntry of this.orders) {
+        const col = getColumn(table, orderEntry.column);
+        if (col) query = query.orderBy(orderEntry.ascending ? asc(col) : desc(col));
+      }
+      if (typeof this.limitValue === "number") query = query.limit(this.limitValue);
+      const result = await query;
+      const rows = (result ?? []).map((r: any) => selection ? r : snakeCaseRow(table, r));
+      const rowsWithRelations = await this.attachFuelTypes(rows);
+      return this.finalize(rowsWithRelations);
+    } catch (error: any) {
+      return { data: null, error: { message: error?.message ?? "Query failed" } };
+    }
+  }
+
+  private finalize(rows: any[]) {
+    if (this.expectSingle) {
+      return { data: rows?.[0] ?? null, error: rows?.[0] ? null : { message: "No rows found" } };
+    }
+    if (this.expectMaybeSingle) return { data: rows?.[0] ?? null, error: null };
+    return { data: rows, error: null };
+  }
+}
+
+const drizzleClient = {
+  from(tableName: string) {
+    return new DrizzleCompatQuery(tableName);
+  },
+};
 
 const router = Router();
+let depotPricingTierColumnsReady = false;
+let depotPricingTierColumnsInFlight: Promise<void> | null = null;
+
+async function ensureDepotPricingTierColumns() {
+  if (depotPricingTierColumnsReady) return;
+  if (depotPricingTierColumnsInFlight) return depotPricingTierColumnsInFlight;
+  depotPricingTierColumnsInFlight = (async () => {
+    try {
+      await pool.query(
+        `ALTER TABLE depot_prices
+         ADD COLUMN IF NOT EXISTS min_litres integer DEFAULT 0`
+      );
+      await pool.query(
+        `ALTER TABLE depot_prices
+         ADD COLUMN IF NOT EXISTS available_litres double precision`
+      );
+      await pool.query(
+        `UPDATE depot_prices
+         SET min_litres = 0
+         WHERE min_litres IS NULL`
+      );
+    } catch (error: any) {
+      // In some environments the app DB user cannot ALTER table schema.
+      // Continue serving requests and rely on manual pgAdmin migration.
+      if (error?.code === "42501") {
+        console.warn(
+          "[supplier] Skipping depot_prices auto-migration due to insufficient privileges. " +
+          "Apply migration SQL manually in pgAdmin."
+        );
+      } else {
+        throw error;
+      }
+    }
+    depotPricingTierColumnsReady = true;
+  })().finally(() => {
+    depotPricingTierColumnsInFlight = null;
+  });
+  return depotPricingTierColumnsInFlight;
+}
+
+router.use(async (_req, _res, next) => {
+  try {
+    await ensureDepotPricingTierColumns();
+    next();
+  } catch (error) {
+    console.error("[supplier] Depot pricing schema check failed:", error);
+    next();
+  }
+});
 
 // Helper middleware to check supplier compliance
 async function checkSupplierCompliance(req: any, res: any, next: any) {
   try {
     const user = req.user;
-    const { data: supplier } = await supabaseAdmin
+    const { data: supplier } = await drizzleClient
       .from("suppliers")
       .select("id, status, compliance_status")
       .eq("owner_id", user.id)
@@ -45,25 +287,34 @@ async function requireSupplierSubscription(req: any, res: any, next: any) {
   try {
     const user = req.user;
     if (!user?.id) return res.status(401).json({ error: "User not authenticated" });
-    const { data: supplier, error: supplierError } = await supabaseAdmin
-      .from("suppliers")
-      .select("id")
-      .eq("owner_id", user.id)
-      .maybeSingle();
-    if (supplierError || !supplier) return res.status(404).json({ error: "Supplier not found" });
+    const supplierResult = await pool.query(
+      `SELECT id, subscription_tier
+       FROM suppliers
+       WHERE owner_id = $1
+       LIMIT 1`,
+      [user.id]
+    );
+    const supplier = supplierResult.rows[0] ?? null;
+    if (!supplier) return res.status(404).json({ error: "Supplier not found" });
 
-    const now = new Date().toISOString();
-    const { data: sub } = await supabaseAdmin
-      .from("supplier_subscriptions")
-      .select("id, status, current_period_end")
-      .eq("supplier_id", supplier.id)
-      .eq("status", "active")
-      .gte("current_period_end", now)
-      .order("current_period_end", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const subResult = await pool.query(
+      `SELECT id, status, current_period_end
+       FROM supplier_subscriptions
+       WHERE supplier_id = $1
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [supplier.id]
+    );
+    const sub = subResult.rows[0] ?? null;
+    const now = new Date();
+    const hasActiveSubscription = Boolean(
+      sub &&
+      sub.status === "active" &&
+      (!sub.current_period_end || new Date(sub.current_period_end) >= now)
+    );
+    const hasActiveTier = supplier.subscription_tier === "standard" || supplier.subscription_tier === "enterprise";
 
-    if (!sub) {
+    if (!hasActiveSubscription && !hasActiveTier) {
       return res.status(403).json({
         error: "Active subscription required",
         code: "SUBSCRIPTION_REQUIRED",
@@ -91,7 +342,7 @@ router.get("/depots", async (req, res) => {
 
     // Get supplier ID from user ID
     // Use limit(1) to handle duplicate records gracefully
-    const { data: suppliers, error: supplierError } = await supabaseAdmin
+    const { data: suppliers, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
@@ -114,7 +365,7 @@ router.get("/depots", async (req, res) => {
     }
 
     // Check compliance status - if not approved, return empty array (can view but no depots shown)
-    const { data: supplierStatus } = await supabaseAdmin
+    const { data: supplierStatus } = await drizzleClient
       .from("suppliers")
       .select("status, compliance_status")
       .eq("id", supplier.id)
@@ -126,7 +377,7 @@ router.get("/depots", async (req, res) => {
     }
 
     // Get all depots first
-    const { data: depots, error: depotsError } = await supabaseAdmin
+    const { data: depots, error: depotsError } = await drizzleClient
       .from("depots")
       .select(`
         id,
@@ -167,7 +418,7 @@ router.get("/depots", async (req, res) => {
     if (depotIds.length > 0) {
       try {
         // First try to get pricing with fuel_types relation
-        const { data: pricing, error: pricingError } = await supabaseAdmin
+        const { data: pricing, error: pricingError } = await drizzleClient
           .from("depot_prices")
           .select(`
             id,
@@ -189,7 +440,7 @@ router.get("/depots", async (req, res) => {
         if (pricingError) {
           console.error("Error fetching depot pricing with relations:", pricingError);
           // Fallback: try without nested relation
-          const { data: pricingWithoutRelation, error: fallbackError } = await supabaseAdmin
+          const { data: pricingWithoutRelation, error: fallbackError } = await drizzleClient
             .from("depot_prices")
             .select(`
               id,
@@ -211,7 +462,7 @@ router.get("/depots", async (req, res) => {
             // Fetch fuel types separately and merge
             const fuelTypeIds = Array.from(new Set((pricingWithoutRelation || []).map((p: any) => p.fuel_type_id).filter(Boolean)));
             if (fuelTypeIds.length > 0) {
-              const { data: fuelTypes } = await supabaseAdmin
+              const { data: fuelTypes } = await drizzleClient
                 .from("fuel_types")
                 .select("id, label, code")
                 .in("id", fuelTypeIds);
@@ -270,7 +521,7 @@ router.get("/depots/:depotId/pricing", requireSupplierSubscription, checkSupplie
   try {
     // Get supplier ID and verify depot belongs to this supplier
     // Use limit(1) to handle duplicate records gracefully
-    const { data: suppliers, error: supplierError } = await supabaseAdmin
+    const { data: suppliers, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
@@ -292,7 +543,7 @@ router.get("/depots/:depotId/pricing", requireSupplierSubscription, checkSupplie
     }
 
     // Verify depot belongs to supplier
-    const { data: depot, error: depotError } = await supabaseAdmin
+    const { data: depot, error: depotError } = await drizzleClient
       .from("depots")
       .select("id")
       .eq("id", depotId)
@@ -304,7 +555,7 @@ router.get("/depots/:depotId/pricing", requireSupplierSubscription, checkSupplie
     }
 
     // Get all fuel types
-    const { data: fuelTypes, error: fuelTypesError } = await supabaseAdmin
+    const { data: fuelTypes, error: fuelTypesError } = await drizzleClient
       .from("fuel_types")
       .select("*")
       .eq("active", true)
@@ -313,7 +564,7 @@ router.get("/depots/:depotId/pricing", requireSupplierSubscription, checkSupplie
     if (fuelTypesError) throw fuelTypesError;
 
     // Get depot pricing (all tiers for each fuel type)
-    const { data: pricing, error: pricingError } = await supabaseAdmin
+    const { data: pricing, error: pricingError } = await drizzleClient
       .from("depot_prices")
       .select("*")
       .eq("depot_id", depotId)
@@ -360,7 +611,7 @@ router.post("/depots/:depotId/pricing/:fuelTypeId/tiers", requireSupplierSubscri
     }
 
     // Get supplier ID and verify depot belongs to this supplier
-    const { data: suppliers, error: supplierError } = await supabaseAdmin
+    const { data: suppliers, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
@@ -372,7 +623,7 @@ router.post("/depots/:depotId/pricing/:fuelTypeId/tiers", requireSupplierSubscri
     }
 
     // Verify depot belongs to supplier
-    const { data: depot, error: depotError } = await supabaseAdmin
+    const { data: depot, error: depotError } = await drizzleClient
       .from("depots")
       .select("id")
       .eq("id", depotId)
@@ -384,7 +635,7 @@ router.post("/depots/:depotId/pricing/:fuelTypeId/tiers", requireSupplierSubscri
     }
 
     // Check if tier with same min_litres already exists
-    const { data: existingTier, error: checkError } = await supabaseAdmin
+    const { data: existingTier, error: checkError } = await drizzleClient
       .from("depot_prices")
       .select("*")
       .eq("depot_id", depotId)
@@ -400,7 +651,7 @@ router.post("/depots/:depotId/pricing/:fuelTypeId/tiers", requireSupplierSubscri
     }
 
     // Get existing tiers to get stock value (stock is shared across all tiers)
-    const { data: existingTiers } = await supabaseAdmin
+    const { data: existingTiers } = await drizzleClient
       .from("depot_prices")
       .select("available_litres")
       .eq("depot_id", depotId)
@@ -410,17 +661,17 @@ router.post("/depots/:depotId/pricing/:fuelTypeId/tiers", requireSupplierSubscri
     // Stock is managed separately, so use existing stock if available, otherwise null
     const stockValue = existingTiers && existingTiers.length > 0
       ? existingTiers[0].available_litres
-      : null;
+      : (availableLitres ?? null);
 
-    // Create tier (stock will be set separately)
-    const { data: newTier, error: insertError } = await supabaseAdmin
+    // Create tier (stock will be set separately/shared)
+    const { data: newTier, error: insertError } = await drizzleClient
       .from("depot_prices")
       .insert({
         depot_id: depotId,
         fuel_type_id: fuelTypeId,
         price_cents: priceCents,
         min_litres: minLitres,
-        available_litres: stockValue, // Use existing stock or null
+        available_litres: stockValue,
       })
       .select()
       .single();
@@ -451,7 +702,7 @@ router.put("/depots/:depotId/pricing/:fuelTypeId/stock", requireSupplierSubscrip
     }
 
     // Get supplier ID and verify depot belongs to this supplier
-    const { data: suppliers, error: supplierError } = await supabaseAdmin
+    const { data: suppliers, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
@@ -463,7 +714,7 @@ router.put("/depots/:depotId/pricing/:fuelTypeId/stock", requireSupplierSubscrip
     }
 
     // Verify depot belongs to supplier
-    const { data: depot, error: depotError } = await supabaseAdmin
+    const { data: depot, error: depotError } = await drizzleClient
       .from("depots")
       .select("id")
       .eq("id", depotId)
@@ -475,7 +726,7 @@ router.put("/depots/:depotId/pricing/:fuelTypeId/stock", requireSupplierSubscrip
     }
 
     // Check if any tiers exist for this fuel type
-    const { data: existingTiers, error: tiersError } = await supabaseAdmin
+    const { data: existingTiers, error: tiersError } = await drizzleClient
       .from("depot_prices")
       .select("id")
       .eq("depot_id", depotId)
@@ -486,7 +737,7 @@ router.put("/depots/:depotId/pricing/:fuelTypeId/stock", requireSupplierSubscrip
 
     if (existingTiers && existingTiers.length > 0) {
       // Update stock for all existing tiers
-      const { error: updateError } = await supabaseAdmin
+      const { error: updateError } = await drizzleClient
         .from("depot_prices")
         .update({ available_litres: availableLitresNum })
         .eq("depot_id", depotId)
@@ -495,7 +746,7 @@ router.put("/depots/:depotId/pricing/:fuelTypeId/stock", requireSupplierSubscrip
       if (updateError) throw updateError;
 
       // Return one of the updated tiers
-      const { data: updatedTier } = await supabaseAdmin
+      const { data: updatedTier } = await drizzleClient
         .from("depot_prices")
         .select("*")
         .eq("depot_id", depotId)
@@ -507,7 +758,7 @@ router.put("/depots/:depotId/pricing/:fuelTypeId/stock", requireSupplierSubscrip
     } else {
       // No tiers exist, create a default tier with stock
       // Use min_litres = 0 and price_cents = 10000 (R 100.00 default price)
-      const { data: newTier, error: insertError } = await supabaseAdmin
+      const { data: newTier, error: insertError } = await drizzleClient
         .from("depot_prices")
         .insert({
           depot_id: depotId,
@@ -537,7 +788,7 @@ router.put("/depots/:depotId/pricing/tiers/:tierId", requireSupplierSubscription
 
   try {
     // Get supplier ID and verify depot belongs to this supplier
-    const { data: suppliers, error: supplierError } = await supabaseAdmin
+    const { data: suppliers, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
@@ -549,7 +800,7 @@ router.put("/depots/:depotId/pricing/tiers/:tierId", requireSupplierSubscription
     }
 
     // Verify depot belongs to supplier
-    const { data: depot, error: depotError } = await supabaseAdmin
+    const { data: depot, error: depotError } = await drizzleClient
       .from("depots")
       .select("id")
       .eq("id", depotId)
@@ -561,7 +812,7 @@ router.put("/depots/:depotId/pricing/tiers/:tierId", requireSupplierSubscription
     }
 
     // Get existing tier
-    const { data: existingTier, error: tierError } = await supabaseAdmin
+    const { data: existingTier, error: tierError } = await drizzleClient
       .from("depot_prices")
       .select("*")
       .eq("id", tierId)
@@ -573,7 +824,7 @@ router.put("/depots/:depotId/pricing/tiers/:tierId", requireSupplierSubscription
     }
 
     const updateData: any = {
-      updated_at: new Date().toISOString(),
+      updated_at: new Date(),
     };
 
     if (priceCents !== undefined) {
@@ -588,7 +839,7 @@ router.put("/depots/:depotId/pricing/tiers/:tierId", requireSupplierSubscription
         return res.status(400).json({ error: "Minimum litres must be non-negative" });
       }
       // Check if another tier with this min_litres exists
-      const { data: conflictingTier } = await supabaseAdmin
+      const { data: conflictingTier } = await drizzleClient
         .from("depot_prices")
         .select("id")
         .eq("depot_id", depotId)
@@ -615,7 +866,7 @@ router.put("/depots/:depotId/pricing/tiers/:tierId", requireSupplierSubscription
         });
       }
       // Update stock for all tiers of this fuel type
-      const { data: updatedStockTiers, error: stockUpdateError } = await supabaseAdmin
+      const { data: updatedStockTiers, error: stockUpdateError } = await drizzleClient
         .from("depot_prices")
         .update({ available_litres: availableLitresNum })
         .eq("depot_id", depotId)
@@ -640,7 +891,7 @@ router.put("/depots/:depotId/pricing/tiers/:tierId", requireSupplierSubscription
     }
 
     // Update the tier
-    const { data: updatedTier, error: updateError } = await supabaseAdmin
+    const { data: updatedTier, error: updateError } = await drizzleClient
       .from("depot_prices")
       .update(updateData)
       .eq("id", tierId)
@@ -664,7 +915,7 @@ router.delete("/depots/:depotId/pricing/tiers/:tierId", requireSupplierSubscript
 
   try {
     // Get supplier ID and verify depot belongs to this supplier
-    const { data: suppliers, error: supplierError } = await supabaseAdmin
+    const { data: suppliers, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
@@ -676,7 +927,7 @@ router.delete("/depots/:depotId/pricing/tiers/:tierId", requireSupplierSubscript
     }
 
     // Verify depot belongs to supplier
-    const { data: depot, error: depotError } = await supabaseAdmin
+    const { data: depot, error: depotError } = await drizzleClient
       .from("depots")
       .select("id")
       .eq("id", depotId)
@@ -688,7 +939,7 @@ router.delete("/depots/:depotId/pricing/tiers/:tierId", requireSupplierSubscript
     }
 
     // Get existing tier
-    const { data: existingTier, error: tierError } = await supabaseAdmin
+    const { data: existingTier, error: tierError } = await drizzleClient
       .from("depot_prices")
       .select("*")
       .eq("id", tierId)
@@ -700,7 +951,7 @@ router.delete("/depots/:depotId/pricing/tiers/:tierId", requireSupplierSubscript
     }
 
     // Delete the tier (no restriction - allow deletion of any tier, even if it's the only one)
-    const { error: deleteError } = await supabaseAdmin
+    const { error: deleteError } = await drizzleClient
       .from("depot_prices")
       .delete()
       .eq("id", tierId);
@@ -722,7 +973,7 @@ router.get("/depots/:depotId/pricing/history", requireSupplierSubscription, asyn
   try {
     // Get supplier ID and verify depot belongs to this supplier
     // Use limit(1) to handle duplicate records gracefully
-    const { data: suppliers, error: supplierError } = await supabaseAdmin
+    const { data: suppliers, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
@@ -744,7 +995,7 @@ router.get("/depots/:depotId/pricing/history", requireSupplierSubscription, asyn
     }
 
     // Verify depot belongs to supplier
-    const { data: depot, error: depotError } = await supabaseAdmin
+    const { data: depot, error: depotError } = await drizzleClient
       .from("depots")
       .select("id, name")
       .eq("id", depotId)
@@ -756,7 +1007,7 @@ router.get("/depots/:depotId/pricing/history", requireSupplierSubscription, asyn
     }
 
     // Get pricing history with fuel type details (per-depot with explicit type filter)
-    const { data: history, error: historyError } = await supabaseAdmin
+    const { data: history, error: historyError } = await drizzleClient
       .from("pricing_history")
       .select(`
         *,
@@ -786,7 +1037,7 @@ router.post("/depots", requireSupplierSubscription, checkSupplierCompliance, asy
   try {
     // Get supplier ID from user ID
     // Use limit(1) to handle duplicate records gracefully
-    const { data: suppliers, error: supplierError } = await supabaseAdmin
+    const { data: suppliers, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id, status, compliance_status")
       .eq("owner_id", user.id)
@@ -885,7 +1136,7 @@ router.post("/depots", requireSupplierSubscription, checkSupplierCompliance, asy
     }
 
     // Create depot with all fields
-    const { data: depot, error: depotError } = await supabaseAdmin
+    const { data: depot, error: depotError } = await drizzleClient
       .from("depots")
       .insert(depotData)
       .select(`
@@ -946,7 +1197,7 @@ router.patch("/depots/:depotId", requireSupplierSubscription, async (req, res) =
   try {
     // Get supplier ID and verify depot belongs to this supplier
     // Use limit(1) to handle duplicate records gracefully
-    const { data: suppliers, error: supplierError } = await supabaseAdmin
+    const { data: suppliers, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
@@ -968,7 +1219,7 @@ router.patch("/depots/:depotId", requireSupplierSubscription, async (req, res) =
     }
 
     // Verify depot belongs to supplier
-    const { data: depot, error: depotError } = await supabaseAdmin
+    const { data: depot, error: depotError } = await drizzleClient
       .from("depots")
       .select("id")
       .eq("id", depotId)
@@ -981,7 +1232,7 @@ router.patch("/depots/:depotId", requireSupplierSubscription, async (req, res) =
 
     // Update depot
     const updateData: any = {
-      updated_at: new Date().toISOString(),
+      updated_at: new Date(),
     };
 
     // Update fields if provided
@@ -1012,7 +1263,7 @@ router.patch("/depots/:depotId", requireSupplierSubscription, async (req, res) =
       updateData.open_hours = openHours;
     }
 
-    const { data: updated, error: updateError } = await supabaseAdmin
+    const { data: updated, error: updateError } = await drizzleClient
       .from("depots")
       .update(updateData)
       .eq("id", depotId)
@@ -1059,7 +1310,7 @@ router.delete("/depots/:depotId", requireSupplierSubscription, async (req, res) 
   try {
     // Get supplier ID and verify depot belongs to this supplier
     // Use limit(1) to handle duplicate records gracefully
-    const { data: suppliers, error: supplierError } = await supabaseAdmin
+    const { data: suppliers, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
@@ -1081,7 +1332,7 @@ router.delete("/depots/:depotId", requireSupplierSubscription, async (req, res) 
     }
 
     // Verify depot belongs to supplier
-    const { data: depot, error: depotError } = await supabaseAdmin
+    const { data: depot, error: depotError } = await drizzleClient
       .from("depots")
       .select("id")
       .eq("id", depotId)
@@ -1093,7 +1344,7 @@ router.delete("/depots/:depotId", requireSupplierSubscription, async (req, res) 
     }
 
     // Check if depot has any active pricing
-    const { data: pricing, error: pricingError } = await supabaseAdmin
+    const { data: pricing, error: pricingError } = await drizzleClient
       .from("depot_prices")
       .select("id")
       .eq("depot_id", depotId)
@@ -1108,7 +1359,7 @@ router.delete("/depots/:depotId", requireSupplierSubscription, async (req, res) 
     }
 
     // Delete depot
-    const { error: deleteError } = await supabaseAdmin
+    const { error: deleteError } = await drizzleClient
       .from("depots")
       .delete()
       .eq("id", depotId);
@@ -1144,7 +1395,7 @@ router.get("/orders", async (req, res) => {
 
     // Get supplier ID from user ID
     // Use limit(1) to handle duplicate records gracefully
-    const { data: suppliers, error: supplierError } = await supabaseAdmin
+    const { data: suppliers, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
@@ -1182,7 +1433,7 @@ router.get("/profile", async (req, res) => {
 
   try {
     // Get profile data
-    const { data: profile, error: profileError } = await supabaseAdmin
+    const { data: profile, error: profileError } = await drizzleClient
       .from("profiles")
       .select("*")
       .eq("id", user.id)
@@ -1206,7 +1457,7 @@ router.get("/profile", async (req, res) => {
 
     // Get supplier-specific data
     // Use limit(1) to handle duplicate records gracefully
-    const { data: suppliers, error: supplierError } = await supabaseAdmin
+    const { data: suppliers, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("*")
       .eq("owner_id", user.id)
@@ -1223,7 +1474,7 @@ router.get("/profile", async (req, res) => {
 
     // If no supplier record but profile exists, create it
     if (!supplier) {
-      const { data: newSupplier, error: createError } = await supabaseAdmin
+      const { data: newSupplier, error: createError } = await drizzleClient
         .from("suppliers")
         .insert({
           owner_id: user.id,
@@ -1237,7 +1488,7 @@ router.get("/profile", async (req, res) => {
       if (createError) {
         // If RLS error, try to get the supplier record that might have been created
         if (createError.message?.includes("row-level security")) {
-          const { data: existingSuppliers } = await supabaseAdmin
+          const { data: existingSuppliers } = await drizzleClient
             .from("suppliers")
             .select("*")
             .eq("owner_id", user.id)
@@ -1266,13 +1517,13 @@ router.get("/profile", async (req, res) => {
     // Account manager (Enterprise only): include when subscription_tier is enterprise and assigned
     let accountManager: { name: string; email: string } | null = null;
     if ((supplier as any).subscription_tier === "enterprise" && (supplier as any).account_manager_id) {
-      const { data: admin } = await supabaseAdmin
+      const { data: admin } = await drizzleClient
         .from("admins")
         .select("user_id")
         .eq("id", (supplier as any).account_manager_id)
         .maybeSingle();
       if (admin?.user_id) {
-        const { data: amProfile } = await supabaseAdmin
+        const { data: amProfile } = await drizzleClient
           .from("profiles")
           .select("full_name")
           .eq("id", admin.user_id)
@@ -1321,7 +1572,7 @@ router.put("/profile", async (req, res) => {
     }
 
     // Check if supplier was rejected - if so, reset to pending for resubmission
-    const { data: supplier } = await supabaseAdmin
+    const { data: supplier } = await drizzleClient
       .from("suppliers")
       .select("id, kyb_status, status, compliance_status")
       .eq("owner_id", user.id)
@@ -1332,14 +1583,14 @@ router.put("/profile", async (req, res) => {
         console.log(`[KYB Resubmission] Supplier ${supplier.id} was rejected, resetting to pending status for resubmission`);
         
         // Update supplier status
-        const { error: supplierUpdateError } = await supabaseAdmin
+        const { error: supplierUpdateError } = await drizzleClient
           .from("suppliers")
           .update({
             kyb_status: "pending",
             status: "pending_compliance",
             compliance_status: "pending",
             compliance_rejection_reason: null,
-            updated_at: new Date().toISOString()
+            updated_at: new Date()
           })
           .eq("id", supplier.id);
         
@@ -1349,11 +1600,11 @@ router.put("/profile", async (req, res) => {
         }
         
         // Also update profile approval status
-        const { error: profileUpdateError } = await supabaseAdmin
+        const { error: profileUpdateError } = await drizzleClient
           .from("profiles")
           .update({ 
             approval_status: "pending",
-            updated_at: new Date().toISOString()
+            updated_at: new Date()
           })
           .eq("id", user.id);
         
@@ -1368,7 +1619,7 @@ router.put("/profile", async (req, res) => {
           const { websocketService } = await import("./websocket");
           
           // Get admin user IDs
-          const { data: adminProfiles, error: adminProfilesError } = await supabaseAdmin
+          const { data: adminProfiles, error: adminProfilesError } = await drizzleClient
             .from("profiles")
             .select("id")
             .eq("role", "admin");
@@ -1379,7 +1630,7 @@ router.put("/profile", async (req, res) => {
             const adminUserIds = adminProfiles.map(p => p.id);
             
             // Get supplier name
-            const { data: supplierProfile, error: profileError } = await supabaseAdmin
+            const { data: supplierProfile, error: profileError } = await drizzleClient
               .from("profiles")
               .select("full_name")
               .eq("id", user.id)
@@ -1443,7 +1694,7 @@ router.put("/profile", async (req, res) => {
 
     // Update profile table - only update fields that are provided
     const updateData: any = {
-      updated_at: new Date().toISOString()
+      updated_at: new Date()
     };
 
     // Only include fields that are explicitly provided (allowing empty strings to clear fields)
@@ -1475,7 +1726,7 @@ router.put("/profile", async (req, res) => {
       updateData.address_country = addressCountry || null;
     }
 
-    const { error: profileError } = await supabaseAdmin
+    const { error: profileError } = await drizzleClient
       .from("profiles")
       .update(updateData)
       .eq("id", user.id);
@@ -1502,14 +1753,14 @@ router.get("/subscription", async (req, res) => {
   const user = (req as any).user;
   try {
     if (!user?.id) return res.status(401).json({ error: "User not authenticated" });
-    const { data: supplier, error: supplierError } = await supabaseAdmin
+    const { data: supplier, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id, subscription_tier")
       .eq("owner_id", user.id)
       .maybeSingle();
     if (supplierError || !supplier) return res.status(404).json({ error: "Supplier not found" });
 
-    const { data: sub, error: subError } = await supabaseAdmin
+    const { data: sub, error: subError } = await drizzleClient
       .from("supplier_subscriptions")
       .select("id, plan_code, status, amount_cents, currency, current_period_start, current_period_end, next_billing_at")
       .eq("supplier_id", supplier.id)
@@ -1534,7 +1785,8 @@ router.get("/subscription", async (req, res) => {
 router.get("/subscription/plans", async (_req, res) => {
   try {
     const plans = SUPPLIER_PLAN_CODES.map((code) => SUPPLIER_SUBSCRIPTION_PLANS[code]);
-    return res.json({ plans, ozowConfigured: isOzowConfigured() });
+    const testMode = process.env.SUBSCRIPTION_TEST_MODE === "true";
+    return res.json({ plans, ozowConfigured: isOzowConfigured(), testMode });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -1551,21 +1803,91 @@ router.post("/subscription/create-payment", async (req, res) => {
     const { planCode } = parsed.data as { planCode: "standard" };
     const plan = getSupplierPlan(planCode);
     if (!plan || plan.isCustomPricing) return res.status(400).json({ error: "Only Standard plan can be paid via OZOW" });
-    if (!isOzowConfigured()) return res.status(503).json({ error: "Payment gateway not configured", code: "OZOW_NOT_CONFIGURED" });
 
-    const { data: supplier, error: supplierErr } = await supabaseAdmin
+    const { data: supplier, error: supplierErr } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
       .maybeSingle();
     if (supplierErr || !supplier) return res.status(404).json({ error: "Supplier not found" });
 
+    // Test mode: activate subscription immediately without checkout redirect
+    if (process.env.SUBSCRIPTION_TEST_MODE === "true") {
+      const now = new Date();
+      const periodStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const periodEnd = new Date(periodStart);
+      periodEnd.setMonth(periodEnd.getMonth() + 1);
+      const nextBilling = new Date(periodEnd);
+
+      const { data: existingSub } = await drizzleClient
+        .from("supplier_subscriptions")
+        .select("id")
+        .eq("supplier_id", supplier.id)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      let subscriptionId: string;
+      if (existingSub) {
+        await drizzleClient
+          .from("supplier_subscriptions")
+          .update({
+            plan_code: planCode,
+            status: "active",
+            amount_cents: plan.priceCents!,
+            currency: "ZAR",
+            current_period_start: periodStart,
+            current_period_end: periodEnd,
+            next_billing_at: nextBilling,
+            updated_at: now,
+          })
+          .eq("id", existingSub.id);
+        subscriptionId = existingSub.id;
+      } else {
+        const { data: newSub, error: insertErr } = await drizzleClient
+          .from("supplier_subscriptions")
+          .insert({
+            supplier_id: supplier.id,
+            plan_code: planCode,
+            status: "active",
+            amount_cents: plan.priceCents!,
+            currency: "ZAR",
+            current_period_start: periodStart,
+            current_period_end: periodEnd,
+            next_billing_at: nextBilling,
+          })
+          .select("id")
+          .single();
+        if (insertErr || !newSub) return res.status(500).json({ error: "Failed to create subscription", details: insertErr?.message });
+        subscriptionId = newSub.id;
+      }
+
+      await drizzleClient
+        .from("supplier_subscription_payments")
+        .insert({
+          supplier_subscription_id: subscriptionId,
+          amount_cents: plan.priceCents!,
+          currency: "ZAR",
+          status: "completed",
+          paid_at: now,
+        });
+
+      await drizzleClient
+        .from("suppliers")
+        .update({ subscription_tier: planCode, updated_at: now })
+        .eq("id", supplier.id);
+
+      return res.json({ success: true });
+    }
+
+    if (!isOzowConfigured()) return res.status(503).json({ error: "Payment gateway not configured", code: "OZOW_NOT_CONFIGURED" });
+
     const baseUrl = process.env.PUBLIC_APP_URL || (req.protocol + "://" + req.get("host") || "http://localhost:5000");
     const successUrl = `${baseUrl}/supplier/subscription?success=true`;
     const cancelUrl = `${baseUrl}/supplier/subscription?cancelled=true`;
     const notificationUrl = `${baseUrl}/api/webhooks/ozow-supplier-subscription`;
 
-    const { data: existingSub } = await supabaseAdmin
+    const { data: existingSub } = await drizzleClient
       .from("supplier_subscriptions")
       .select("id")
       .eq("supplier_id", supplier.id)
@@ -1575,19 +1897,19 @@ router.post("/subscription/create-payment", async (req, res) => {
 
     let subscriptionId: string;
     if (existingSub) {
-      await supabaseAdmin
+      await drizzleClient
         .from("supplier_subscriptions")
         .update({
           plan_code: planCode,
           status: "pending",
           amount_cents: plan.priceCents!,
           currency: "ZAR",
-          updated_at: new Date().toISOString(),
+          updated_at: new Date(),
         })
         .eq("id", existingSub.id);
       subscriptionId = existingSub.id;
     } else {
-      const { data: newSub, error: insertErr } = await supabaseAdmin
+      const { data: newSub, error: insertErr } = await drizzleClient
         .from("supplier_subscriptions")
         .insert({
           supplier_id: supplier.id,
@@ -1602,7 +1924,7 @@ router.post("/subscription/create-payment", async (req, res) => {
       subscriptionId = newSub.id;
     }
 
-    const { data: paymentRow, error: payErr } = await supabaseAdmin
+    const { data: paymentRow, error: payErr } = await drizzleClient
       .from("supplier_subscription_payments")
       .insert({
         supplier_subscription_id: subscriptionId,
@@ -1637,22 +1959,22 @@ router.post("/subscription/cancel", async (req, res) => {
   const user = (req as any).user;
   try {
     if (!user?.id) return res.status(401).json({ error: "User not authenticated" });
-    const { data: supplier, error: supplierErr } = await supabaseAdmin
+    const { data: supplier, error: supplierErr } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
       .maybeSingle();
     if (supplierErr || !supplier) return res.status(404).json({ error: "Supplier not found" });
 
-    const { error } = await supabaseAdmin
+    const { error } = await drizzleClient
       .from("supplier_subscriptions")
-      .update({ status: "cancelled", updated_at: new Date().toISOString() })
+      .update({ status: "cancelled", updated_at: new Date() })
       .eq("supplier_id", supplier.id)
       .eq("status", "active");
     if (error) return res.status(500).json({ error: error.message });
-    await supabaseAdmin
+    await drizzleClient
       .from("suppliers")
-      .update({ subscription_tier: null, updated_at: new Date().toISOString() })
+      .update({ subscription_tier: null, updated_at: new Date() })
       .eq("id", supplier.id);
     return res.json({ ok: true, message: "Subscription cancelled at period end." });
   } catch (e: any) {
@@ -1670,7 +1992,7 @@ router.get("/analytics", requireSupplierSubscription, async (req, res) => {
   const isAdvanced = detail === "advanced";
 
   try {
-    const { data: supplier, error: supplierErr } = await supabaseAdmin
+    const { data: supplier, error: supplierErr } = await drizzleClient
       .from("suppliers")
       .select("id, subscription_tier")
       .eq("owner_id", user.id)
@@ -1682,7 +2004,7 @@ router.get("/analytics", requireSupplierSubscription, async (req, res) => {
       return res.status(403).json({ error: "Advanced analytics and API access are available on Enterprise plan.", code: "SUBSCRIPTION_TIER_REQUIRED" });
     }
 
-    const { data: depots } = await supabaseAdmin
+    const { data: depots } = await drizzleClient
       .from("depots")
       .select("id, name")
       .eq("supplier_id", supplier.id);
@@ -1692,7 +2014,7 @@ router.get("/analytics", requireSupplierSubscription, async (req, res) => {
       return res.json(isAdvanced ? { ...base, byDepot: [], byFuelType: [], byPeriod: [] } : base);
     }
 
-    const { data: orders, error: ordersErr } = await supabaseAdmin
+    const { data: orders, error: ordersErr } = await drizzleClient
       .from("driver_depot_orders")
       .select("id, status, depot_id, fuel_type_id, litres, actual_litres_delivered, total_price_cents, created_at")
       .in("depot_id", depotIds);
@@ -1743,7 +2065,7 @@ router.get("/analytics", requireSupplierSubscription, async (req, res) => {
 
     const fuelTypeIds = [...new Set(orderList.map((o: any) => o.fuel_type_id).filter(Boolean))];
     const { data: fuelTypes } = fuelTypeIds.length
-      ? await supabaseAdmin.from("fuel_types").select("id, label, code").in("id", fuelTypeIds)
+      ? await drizzleClient.from("fuel_types").select("id, label, code").in("id", fuelTypeIds)
       : { data: [] };
     const fuelMap = new Map((fuelTypes || []).map((f: any) => [f.id, f]));
     const byFuelType = fuelTypeIds.map((ftId: string) => {
@@ -1778,7 +2100,7 @@ router.get("/analytics/export", requireSupplierSubscription, async (req, res) =>
   const format = (req.query.format as string) || "json";
 
   try {
-    const { data: supplier, error: supplierErr } = await supabaseAdmin
+    const { data: supplier, error: supplierErr } = await drizzleClient
       .from("suppliers")
       .select("id, subscription_tier")
       .eq("owner_id", user.id)
@@ -1788,7 +2110,7 @@ router.get("/analytics/export", requireSupplierSubscription, async (req, res) =>
       return res.status(403).json({ error: "Export and API access are available on Enterprise plan.", code: "SUBSCRIPTION_TIER_REQUIRED" });
     }
 
-    const { data: depots } = await supabaseAdmin.from("depots").select("id, name").eq("supplier_id", supplier.id);
+    const { data: depots } = await drizzleClient.from("depots").select("id, name").eq("supplier_id", supplier.id);
     const depotIds = (depots || []).map((d: any) => d.id);
     if (depotIds.length === 0) {
       if (format === "csv") {
@@ -1798,7 +2120,7 @@ router.get("/analytics/export", requireSupplierSubscription, async (req, res) =>
       return res.json({ byDepot: [], byFuelType: [], byPeriod: [] });
     }
 
-    const { data: orders } = await supabaseAdmin
+    const { data: orders } = await drizzleClient
       .from("driver_depot_orders")
       .select("id, status, depot_id, fuel_type_id, litres, actual_litres_delivered, total_price_cents, created_at")
       .in("depot_id", depotIds);
@@ -1813,7 +2135,7 @@ router.get("/analytics/export", requireSupplierSubscription, async (req, res) =>
     });
 
     const fuelTypeIds = [...new Set(orderList.map((o: any) => o.fuel_type_id).filter(Boolean))];
-    const { data: fuelTypes } = fuelTypeIds.length ? await supabaseAdmin.from("fuel_types").select("id, label").in("id", fuelTypeIds) : { data: [] };
+    const { data: fuelTypes } = fuelTypeIds.length ? await drizzleClient.from("fuel_types").select("id, label").in("id", fuelTypeIds) : { data: [] };
     const fuelMap = new Map((fuelTypes || []).map((f: any) => [f.id, f]));
     const byFuelType = fuelTypeIds.map((ftId: string) => {
       const ftOrders = orderList.filter((o: any) => o.fuel_type_id === ftId);
@@ -1842,43 +2164,46 @@ router.get("/analytics/export", requireSupplierSubscription, async (req, res) =>
 router.get("/invoices", requireSupplierSubscription, async (req, res) => {
   const user = (req as any).user;
   try {
-    const { data: supplier, error: supplierErr } = await supabaseAdmin
+    const { data: supplier, error: supplierErr } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
       .maybeSingle();
     if (supplierErr || !supplier) return res.status(404).json({ error: "Supplier not found" });
 
-    const { data: depots } = await supabaseAdmin.from("depots").select("id, name").eq("supplier_id", supplier.id);
+    const { data: depots } = await drizzleClient.from("depots").select("id, name").eq("supplier_id", supplier.id);
     const depotIds = (depots || []).map((d: any) => d.id);
     if (depotIds.length === 0) return res.json({ invoices: [] });
 
-    const { data: orders, error } = await supabaseAdmin
-      .from("driver_depot_orders")
-      .select(`
-        id,
-        status,
-        depot_id,
-        fuel_type_id,
-        litres,
-        actual_litres_delivered,
-        total_price_cents,
-        created_at,
-        completed_at,
-        depots ( id, name ),
-        fuel_types ( id, label, code )
-      `)
-      .in("depot_id", depotIds)
-      .eq("status", "completed")
-      .order("completed_at", { ascending: false })
-      .limit(200);
+    const ordersResult = await pool.query(
+      `SELECT o.id,
+              o.status,
+              o.depot_id,
+              o.fuel_type_id,
+              o.litres,
+              o.actual_litres_delivered,
+              o.price_per_litre_cents,
+              o.total_price_cents,
+              o.created_at,
+              o.completed_at,
+              d.name AS depot_name,
+              COALESCE(ft.label, ft.code, 'Unknown') AS fuel_label
+       FROM driver_depot_orders o
+       INNER JOIN depots d ON d.id = o.depot_id
+       LEFT JOIN fuel_types ft ON ft.id = o.fuel_type_id
+       WHERE o.depot_id = ANY($1::uuid[])
+         AND o.status = 'completed'
+       ORDER BY o.completed_at DESC
+       LIMIT 200`,
+      [depotIds]
+    );
 
-    if (error) return res.status(500).json({ error: error.message });
-    const list = (orders || []).map((o: any) => ({
+    const list = (ordersResult.rows || []).map((o: any) => ({
       id: o.id,
-      depotName: o.depots?.name,
-      fuelType: o.fuel_types?.label,
+      depotName: o.depot_name || "Unknown depot",
+      fuelType: o.fuel_label || "Unknown fuel",
       litres: Number(o.actual_litres_delivered ?? o.litres ?? 0),
+      pricePerLitreCents: Number(o.price_per_litre_cents ?? 0),
       totalCents: o.total_price_cents,
       completedAt: o.completed_at,
       createdAt: o.created_at,
@@ -1895,39 +2220,64 @@ router.get("/invoices/:id", requireSupplierSubscription, async (req, res) => {
   const user = (req as any).user;
   const { id } = req.params;
   try {
-    const { data: supplier } = await supabaseAdmin.from("suppliers").select("id").eq("owner_id", user.id).maybeSingle();
+    const { data: supplier } = await drizzleClient.from("suppliers").select("id").eq("owner_id", user.id).maybeSingle();
     if (!supplier) return res.status(404).json({ error: "Supplier not found" });
 
-    const { data: order, error } = await supabaseAdmin
-      .from("driver_depot_orders")
-      .select(`
-        id, status, depot_id, fuel_type_id, litres, actual_litres_delivered, total_price_cents, created_at, completed_at,
-        depots ( id, name, supplier_id, address_street, address_city, address_province, address_postal_code ),
-        fuel_types ( id, label, code ),
-        drivers ( id, user_id )
-      `)
-      .eq("id", id)
-      .single();
+    const { data: depots } = await drizzleClient.from("depots").select("id").eq("supplier_id", supplier.id);
+    const depotIds = (depots || []).map((d: any) => d.id);
+    if (depotIds.length === 0) return res.status(404).json({ error: "Invoice not found" });
 
-    if (error || !order) return res.status(404).json({ error: "Invoice not found" });
-    const depotSupplierId = (order as any).depots?.supplier_id;
-    if (!depotSupplierId || depotSupplierId !== supplier.id) return res.status(404).json({ error: "Invoice not found" });
+    const orderResult = await pool.query(
+      `SELECT o.*,
+              json_build_object(
+                'id', d.id,
+                'name', d.name,
+                'supplier_id', d.supplier_id,
+                'address_street', d.address_street,
+                'address_city', d.address_city,
+                'address_province', d.address_province,
+                'address_postal_code', d.address_postal_code
+              ) AS depots,
+              json_build_object(
+                'id', ft.id,
+                'label', COALESCE(ft.label, ft.code, 'Unknown'),
+                'code', ft.code
+              ) AS fuel_types,
+              json_build_object(
+                'id', dr.id,
+                'user_id', dr.user_id,
+                'profile', json_build_object(
+                  'id', p.id,
+                  'full_name', COALESCE(NULLIF(p.full_name, ''), split_part(lau.email, '@', 1), 'Driver'),
+                  'phone', p.phone
+                )
+              ) AS drivers
+       FROM driver_depot_orders o
+       INNER JOIN depots d ON d.id = o.depot_id
+       LEFT JOIN fuel_types ft ON ft.id = o.fuel_type_id
+       LEFT JOIN drivers dr ON dr.id = o.driver_id
+       LEFT JOIN profiles p ON p.id = dr.user_id
+       LEFT JOIN local_auth_users lau ON lau.id = dr.user_id
+       WHERE o.id = $1
+         AND o.depot_id = ANY($2::uuid[])
+       LIMIT 1`,
+      [id, depotIds]
+    );
 
-    const driverUserIds = [(order as any).drivers?.user_id].filter(Boolean);
-    const { data: profiles } = driverUserIds.length
-      ? await supabaseAdmin.from("profiles").select("id, full_name, phone").in("id", driverUserIds)
-      : { data: [] };
-    const driverName = profiles?.[0]?.full_name || "Driver";
+    const order = orderResult.rows?.[0];
+    if (!order) return res.status(404).json({ error: "Invoice not found" });
+    if ((order as any).status !== "completed") return res.status(400).json({ error: "Order not completed" });
 
     const invoice = {
       id: order.id,
       depot: (order as any).depots,
       fuelType: (order as any).fuel_types,
+      driver: (order as any).drivers,
       litres: Number((order as any).actual_litres_delivered ?? (order as any).litres ?? 0),
+      pricePerLitreCents: Number((order as any).price_per_litre_cents ?? 0),
       totalCents: (order as any).total_price_cents,
       completedAt: (order as any).completed_at,
       createdAt: (order as any).created_at,
-      driverName,
     };
     return res.json(invoice);
   } catch (e: any) {
@@ -1940,51 +2290,157 @@ router.get("/invoices/:id", requireSupplierSubscription, async (req, res) => {
 router.get("/invoices/:id/pdf", requireSupplierSubscription, async (req, res) => {
   const user = (req as any).user;
   const { id } = req.params;
+  const shouldDownload = String(req.query.download || "").toLowerCase() === "1" || String(req.query.download || "").toLowerCase() === "true";
   try {
-    const { data: supplier } = await supabaseAdmin.from("suppliers").select("id, name").eq("owner_id", user.id).maybeSingle();
+    const { data: supplier } = await drizzleClient.from("suppliers").select("id, name").eq("owner_id", user.id).maybeSingle();
     if (!supplier) return res.status(404).json({ error: "Supplier not found" });
 
-    const { data: order } = await supabaseAdmin
-      .from("driver_depot_orders")
-      .select(`
-        id, depot_id, litres, actual_litres_delivered, total_price_cents, completed_at,
-        depots ( id, name, supplier_id ),
-        fuel_types ( id, label ),
-        drivers ( id, user_id )
-      `)
-      .eq("id", id)
-      .single();
+    const { data: depots } = await drizzleClient.from("depots").select("id").eq("supplier_id", supplier.id);
+    const depotIds = (depots || []).map((d: any) => d.id);
+    if (depotIds.length === 0) return res.status(404).json({ error: "Invoice not found" });
 
-    if (!order || (order as any).depots?.supplier_id !== supplier.id) return res.status(404).send("Invoice not found");
-    if ((order as any).status !== "completed") return res.status(400).send("Order not completed");
+    const orderResult = await pool.query(
+      `SELECT o.*,
+              json_build_object(
+                'id', d.id,
+                'name', d.name,
+                'supplier_id', d.supplier_id,
+                'address_street', d.address_street,
+                'address_city', d.address_city,
+                'address_province', d.address_province,
+                'address_postal_code', d.address_postal_code
+              ) AS depots,
+              json_build_object(
+                'id', ft.id,
+                'label', COALESCE(ft.label, ft.code, 'Unknown'),
+                'code', ft.code
+              ) AS fuel_types,
+              json_build_object(
+                'id', dr.id,
+                'user_id', dr.user_id,
+                'profile', json_build_object(
+                  'id', p.id,
+                  'full_name', COALESCE(NULLIF(p.full_name, ''), split_part(lau.email, '@', 1), 'Driver'),
+                  'phone', p.phone
+                )
+              ) AS drivers
+       FROM driver_depot_orders o
+       INNER JOIN depots d ON d.id = o.depot_id
+       LEFT JOIN fuel_types ft ON ft.id = o.fuel_type_id
+       LEFT JOIN drivers dr ON dr.id = o.driver_id
+       LEFT JOIN profiles p ON p.id = dr.user_id
+       LEFT JOIN local_auth_users lau ON lau.id = dr.user_id
+       WHERE o.id = $1
+         AND o.depot_id = ANY($2::uuid[])
+       LIMIT 1`,
+      [id, depotIds]
+    );
 
+    const order = orderResult.rows?.[0];
+    if (!order) return res.status(404).json({ error: "Invoice not found" });
+    if ((order as any).status !== "completed") return res.status(400).json({ error: "Order not completed" });
+
+    const driverName = (order as any).drivers?.profile?.full_name || "Driver";
     const depotName = (order as any).depots?.name || "Depot";
     const fuelLabel = (order as any).fuel_types?.label || "";
     const litres = Number((order as any).actual_litres_delivered ?? (order as any).litres ?? 0);
+    const pricePerLitre = Number((order as any).price_per_litre_cents ?? 0) / 100;
     const totalCents = (order as any).total_price_cents || 0;
     const totalZAR = (totalCents / 100).toFixed(2);
-    const completedAt = (order as any).completed_at ? new Date((order as any).completed_at).toLocaleDateString() : "";
+    const completedAt = (order as any).completed_at
+      ? new Date((order as any).completed_at).toLocaleString("en-ZA", { dateStyle: "medium", timeStyle: "short" })
+      : "";
+    const createdAt = (order as any).created_at
+      ? new Date((order as any).created_at).toLocaleString("en-ZA", { dateStyle: "medium", timeStyle: "short" })
+      : "";
+    const depotAddress = [
+      (order as any).depots?.address_street,
+      (order as any).depots?.address_city,
+      (order as any).depots?.address_province,
+      (order as any).depots?.address_postal_code,
+    ]
+      .filter(Boolean)
+      .join(", ");
 
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Invoice ${order.id}</title><style>
-      body{font-family:system-ui,sans-serif;max-width:600px;margin:2rem auto;padding:1rem;}
-      h1{font-size:1.25rem;} table{width:100%;border-collapse:collapse;} th,td{text-align:left;padding:0.5rem;border-bottom:1px solid #eee;}
-    </style></head><body>
-      <h1>Invoice</h1>
-      <p><strong>Supplier:</strong> ${(supplier as any).name || "Supplier"}</p>
-      <p><strong>Depot:</strong> ${depotName}</p>
-      <p><strong>Invoice #:</strong> ${order.id}</p>
-      <p><strong>Date:</strong> ${completedAt}</p>
-      <table>
-        <tr><th>Description</th><th>Quantity</th><th>Amount (ZAR)</th></tr>
-        <tr><td>Fuel - ${fuelLabel}</td><td>${litres} L</td><td>${totalZAR}</td></tr>
-      </table>
-      <p><strong>Total:</strong> R ${totalZAR}</p>
-    </body></html>`;
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.send(html);
+    const orderShortId = String(order.id).slice(0, 8).toUpperCase();
+    const filename = `EasyFuel-Receipt-${orderShortId}.pdf`;
+    const formatZar = (value: number) =>
+      `R ${new Intl.NumberFormat("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}`;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `${shouldDownload ? "attachment" : "inline"}; filename="${filename}"`);
+
+    const doc = new PDFDocument({ size: "A4", margin: 40 });
+    doc.pipe(res);
+
+    const pageWidth = doc.page.width;
+    const contentWidth = pageWidth - 80;
+    const cardX = 40;
+    let y = 40;
+
+    doc.lineWidth(1.5).strokeColor("#d1d5db").roundedRect(cardX, y, contentWidth, 730, 10).stroke();
+    y += 18;
+
+    doc.font("Helvetica-Bold").fontSize(24).fillColor("#0f172a").text("Easy Fuel", cardX + 14, y);
+    doc.font("Helvetica").fontSize(10).fillColor("#475569").text("Fuel Delivery Receipt", cardX + 14, y + 30);
+    doc.font("Helvetica").fontSize(9).fillColor("#475569").text("Order ID", cardX + contentWidth - 130, y + 5, { width: 110, align: "right" });
+    doc.font("Helvetica-Bold").fontSize(18).fillColor("#0f172a").text(`#${orderShortId}`, cardX + contentWidth - 130, y + 20, { width: 110, align: "right" });
+    y += 60;
+
+    doc.moveTo(cardX + 12, y).lineTo(cardX + contentWidth - 12, y).strokeColor("#d1d5db").stroke();
+    y += 16;
+
+    const leftX = cardX + 14;
+    const rightX = cardX + contentWidth / 2 + 5;
+    const colWidth = contentWidth / 2 - 20;
+
+    doc.font("Helvetica-Bold").fontSize(9).fillColor("#475569").text("DRIVER INFORMATION", leftX, y);
+    doc.font("Helvetica-Bold").fontSize(9).fillColor("#475569").text("DEPOT INFORMATION", rightX, y);
+    y += 14;
+
+    doc.roundedRect(leftX, y, colWidth, 34, 6).fillAndStroke("#f1f5f9", "#e2e8f0");
+    doc.roundedRect(rightX, y, colWidth, 34, 6).fillAndStroke("#f1f5f9", "#e2e8f0");
+    doc.font("Helvetica-Bold").fontSize(11).fillColor("#0f172a").text(driverName, leftX + 8, y + 11, { width: colWidth - 16 });
+    doc.font("Helvetica-Bold").fontSize(11).fillColor("#0f172a").text(depotName, rightX + 8, y + 8, { width: colWidth - 16 });
+    doc.font("Helvetica").fontSize(8).fillColor("#475569").text(`Supplier: ${(supplier as any).name || "Supplier"}`, rightX + 8, y + 21, { width: colWidth - 16 });
+    y += 52;
+
+    doc.font("Helvetica-Bold").fontSize(9).fillColor("#475569").text("DEPOT ADDRESS", leftX, y);
+    y += 12;
+    doc.roundedRect(leftX, y, contentWidth - 28, 24, 6).fillAndStroke("#f1f5f9", "#e2e8f0");
+    doc.font("Helvetica").fontSize(9).fillColor("#0f172a").text(depotAddress || "Address not available", leftX + 8, y + 8, { width: contentWidth - 44 });
+    y += 38;
+
+    doc.font("Helvetica-Bold").fontSize(9).fillColor("#475569").text("FUEL COLLECTION DETAILS", leftX, y);
+    y += 12;
+    doc.roundedRect(leftX, y, contentWidth - 28, 48, 6).fillAndStroke("#f8fafc", "#d1d5db");
+    const sectionW = (contentWidth - 52) / 3;
+    doc.font("Helvetica").fontSize(8).fillColor("#475569").text("Fuel Type", leftX + 8, y + 8).text("Quantity", leftX + 8 + sectionW, y + 8).text("Price per Litre", leftX + 8 + sectionW * 2, y + 8);
+    doc.font("Helvetica-Bold").fontSize(14).fillColor("#0f172a").text(fuelLabel, leftX + 8, y + 22).text(`${litres}L`, leftX + 8 + sectionW, y + 22).text(formatZar(pricePerLitre), leftX + 8 + sectionW * 2, y + 22);
+    y += 62;
+
+    doc.font("Helvetica-Bold").fontSize(9).fillColor("#475569").text("PRICING BREAKDOWN", leftX, y);
+    y += 12;
+    doc.roundedRect(leftX, y, contentWidth - 28, 24, 6).fillAndStroke("#f1f5f9", "#e2e8f0");
+    doc.font("Helvetica").fontSize(10).fillColor("#0f172a").text(`Subtotal (${litres}L x ${formatZar(pricePerLitre)})`, leftX + 8, y + 8);
+    doc.font("Helvetica-Bold").fontSize(10).fillColor("#0f172a").text(formatZar(Number(totalZAR)), leftX, y + 8, { width: contentWidth - 44, align: "right" });
+    y += 32;
+
+    doc.roundedRect(leftX, y, contentWidth - 28, 32, 6).fillAndStroke("#f3f4f6", "#d1d5db");
+    doc.font("Helvetica-Bold").fontSize(14).fillColor("#0f172a").text("Total Amount", leftX + 8, y + 9);
+    doc.font("Helvetica-Bold").fontSize(24).fillColor("#0f172a").text(formatZar(Number(totalZAR)), leftX, y + 5, { width: contentWidth - 44, align: "right" });
+    y += 46;
+
+    doc.font("Helvetica-Bold").fontSize(9).fillColor("#475569").text("ORDER DATE", leftX, y);
+    doc.font("Helvetica-Bold").fontSize(9).fillColor("#475569").text("COMPLETED DATE", rightX, y);
+    y += 12;
+    doc.font("Helvetica").fontSize(10).fillColor("#0f172a").text(createdAt || "N/A", leftX, y);
+    doc.font("Helvetica").fontSize(10).fillColor("#0f172a").text(completedAt || "N/A", rightX, y);
+
+    doc.end();
   } catch (e: any) {
     console.error("GET /invoices/:id/pdf error:", e);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message || "Failed to generate invoice" });
   }
 });
 
@@ -1992,7 +2448,7 @@ router.get("/invoices/:id/pdf", requireSupplierSubscription, async (req, res) =>
 router.get("/invoice-templates", requireSupplierSubscription, async (req, res) => {
   const user = (req as any).user;
   try {
-    const { data: supplier, error: supplierErr } = await supabaseAdmin
+    const { data: supplier, error: supplierErr } = await drizzleClient
       .from("suppliers")
       .select("id, subscription_tier")
       .eq("owner_id", user.id)
@@ -2001,7 +2457,7 @@ router.get("/invoice-templates", requireSupplierSubscription, async (req, res) =
     if ((supplier as any).subscription_tier !== "enterprise") {
       return res.status(403).json({ error: "Custom invoice templates are available on Enterprise plan.", code: "SUBSCRIPTION_TIER_REQUIRED" });
     }
-    const { data: list, error } = await supabaseAdmin
+    const { data: list, error } = await drizzleClient
       .from("supplier_invoice_templates")
       .select("id, name, template_type, content, updated_at")
       .eq("supplier_id", supplier.id)
@@ -2019,7 +2475,7 @@ router.put("/invoice-templates", requireSupplierSubscription, async (req, res) =
   const user = (req as any).user;
   const { id, name, templateType, content } = req.body || {};
   try {
-    const { data: supplier, error: supplierErr } = await supabaseAdmin
+    const { data: supplier, error: supplierErr } = await drizzleClient
       .from("suppliers")
       .select("id, subscription_tier")
       .eq("owner_id", user.id)
@@ -2032,9 +2488,9 @@ router.put("/invoice-templates", requireSupplierSubscription, async (req, res) =
       return res.status(400).json({ error: "name, templateType, and content are required" });
     }
     if (id) {
-      const { data: updated, error } = await supabaseAdmin
+      const { data: updated, error } = await drizzleClient
         .from("supplier_invoice_templates")
-        .update({ name, template_type: templateType, content, updated_at: new Date().toISOString() })
+        .update({ name, template_type: templateType, content, updated_at: new Date() })
         .eq("id", id)
         .eq("supplier_id", supplier.id)
         .select("id")
@@ -2042,7 +2498,7 @@ router.put("/invoice-templates", requireSupplierSubscription, async (req, res) =
       if (error) return res.status(500).json({ error: error.message });
       return res.json(updated);
     }
-    const { data: created, error } = await supabaseAdmin
+    const { data: created, error } = await drizzleClient
       .from("supplier_invoice_templates")
       .insert({ supplier_id: supplier.id, name, template_type: templateType, content })
       .select("id")
@@ -2061,14 +2517,14 @@ router.put("/invoice-templates", requireSupplierSubscription, async (req, res) =
 router.get("/settlements", requireSupplierSubscription, async (req, res) => {
   const user = (req as any).user;
   try {
-    const { data: supplier, error: supplierErr } = await supabaseAdmin
+    const { data: supplier, error: supplierErr } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
       .maybeSingle();
     if (supplierErr || !supplier) return res.status(404).json({ error: "Supplier not found" });
 
-    const { data: list, error } = await supabaseAdmin
+    const { data: list, error } = await drizzleClient
       .from("supplier_settlements")
       .select("id, period_start, period_end, total_cents, status, settlement_type, paid_at, reference, created_at")
       .eq("supplier_id", supplier.id)
@@ -2098,7 +2554,7 @@ router.get("/driver-depot-orders", requireSupplierSubscription, async (req, res)
 
     // Get supplier ID from user ID
     // Use limit(1) to handle duplicate records gracefully
-    const { data: suppliers, error: supplierError } = await supabaseAdmin
+    const { data: suppliers, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id, subscription_tier")
       .eq("owner_id", user.id)
@@ -2120,7 +2576,7 @@ router.get("/driver-depot-orders", requireSupplierSubscription, async (req, res)
     }
 
     // Get all depots for this supplier (id, name for branch selector and summary)
-    const { data: depots, error: depotsError } = await supabaseAdmin
+    const { data: depots, error: depotsError } = await drizzleClient
       .from("depots")
       .select("id, name")
       .eq("supplier_id", supplier.id)
@@ -2139,42 +2595,52 @@ router.get("/driver-depot-orders", requireSupplierSubscription, async (req, res)
     // Optional filter by branch (Enterprise multi-branch)
     const filterDepotIds = depotId ? [depotId] : depotIds;
 
-    // Get all driver depot orders for these depots (without nested suppliers to avoid relationship issues)
-    const { data: orders, error: ordersError } = await supabaseAdmin
-      .from("driver_depot_orders")
-      .select(`
-        *,
-        depots!inner (
-          id,
-          name,
-          supplier_id,
-          address_street,
-          address_city,
-          address_province,
-          address_postal_code
-        ),
-        drivers (
-          id,
-          user_id
-        ),
-        fuel_types (
-          id,
-          label,
-          code
-        )
-      `)
-      .in("depot_id", filterDepotIds)
-      .order("created_at", { ascending: false });
-
-    if (ordersError) {
-      console.error("Error fetching driver depot orders:", ordersError);
-      // If the table doesn't exist or has issues, return empty array
-      if (ordersError.message?.includes("relation") || ordersError.message?.includes("does not exist")) {
-        console.warn("driver_depot_orders table may not exist, returning empty array");
-        return res.json({ orders: [], depots: depots || [], summaryByDepot: [] });
-      }
-      throw ordersError;
-    }
+    // Get all driver depot orders for these depots.
+    // Use direct SQL joins to guarantee driver/depot/fuel hydration (avoids partial nested relation results).
+    const ordersResult = await pool.query(
+      `SELECT o.*,
+              json_build_object(
+                'id', d.id,
+                'name', d.name,
+                'supplier_id', d.supplier_id,
+                'address_street', d.address_street,
+                'address_city', d.address_city,
+                'address_province', d.address_province,
+                'address_postal_code', d.address_postal_code,
+                'suppliers', json_build_object(
+                  'id', s.id,
+                  'name', s.name,
+                  'registered_name', s.registered_name,
+                  'owner_id', s.owner_id
+                )
+              ) AS depots,
+              json_build_object(
+                'id', dr.id,
+                'user_id', dr.user_id,
+                'email', lau.email,
+                'profile', json_build_object(
+                  'id', p.id,
+                  'full_name', COALESCE(NULLIF(p.full_name, ''), split_part(lau.email, '@', 1), 'Unknown Driver'),
+                  'phone', p.phone
+                )
+              ) AS drivers,
+              json_build_object(
+                'id', ft.id,
+                'label', COALESCE(ft.label, ft.code, 'Unknown'),
+                'code', ft.code
+              ) AS fuel_types
+       FROM driver_depot_orders o
+       INNER JOIN depots d ON d.id = o.depot_id
+       INNER JOIN suppliers s ON s.id = d.supplier_id
+       LEFT JOIN drivers dr ON dr.id = o.driver_id
+       LEFT JOIN profiles p ON p.id = dr.user_id
+       LEFT JOIN local_auth_users lau ON lau.id = dr.user_id
+       LEFT JOIN fuel_types ft ON ft.id = o.fuel_type_id
+       WHERE o.depot_id = ANY($1::uuid[])
+       ORDER BY o.created_at DESC`,
+      [filterDepotIds]
+    );
+    const orders = ordersResult.rows || [];
 
     // Per-depot summary (order count, total litres) for multi-branch dashboard
     const summaryByDepot = (depots || []).map((d: { id: string; name: string }) => {
@@ -2186,51 +2652,7 @@ router.get("/driver-depot-orders", requireSupplierSubscription, async (req, res)
       return { depotId: d.id, depotName: d.name, orderCount: depotOrders.length, totalLitres };
     });
 
-    // Enrich with driver profile data and supplier information
-    if (orders && orders.length > 0) {
-      const driverUserIds = Array.from(
-        new Set(orders.map((o: any) => o.drivers?.user_id).filter(Boolean))
-      );
-
-      if (driverUserIds.length > 0) {
-        const { data: profiles } = await supabaseAdmin
-          .from("profiles")
-          .select("id, full_name, phone")
-          .in("id", driverUserIds);
-
-        const profileMap = new Map(profiles?.map(p => [p.id, p]) || []);
-
-        orders.forEach((order: any) => {
-          if (order.drivers?.user_id) {
-            order.drivers.profile = profileMap.get(order.drivers.user_id) || null;
-          }
-        });
-      }
-
-      // Enrich with supplier information separately
-      const supplierIds = [...new Set(
-        orders
-          .map((o: any) => o.depots?.supplier_id)
-          .filter(Boolean)
-      )];
-      
-      if (supplierIds.length > 0) {
-        const { data: suppliers } = await supabaseAdmin
-          .from("suppliers")
-          .select("id, name, registered_name")
-          .in("id", supplierIds);
-        
-        const supplierMap = new Map(
-          (suppliers || []).map((s: any) => [s.id, s])
-        );
-        
-        orders.forEach((order: any) => {
-          if (order.depots?.supplier_id) {
-            order.depots.suppliers = supplierMap.get(order.depots.supplier_id) || null;
-          }
-        });
-      }
-    }
+    // Orders are fully hydrated by SQL joins above.
 
     res.json({
       orders: orders || [],
@@ -2250,28 +2672,22 @@ router.get("/driver-depot-orders", requireSupplierSubscription, async (req, res)
 
 // Helper function to verify order ownership
 async function verifyOrderOwnership(orderId: string, supplierId: string) {
-  const { data: order, error } = await supabaseAdmin
-    .from("driver_depot_orders")
-    .select(`
-      *,
-      depots!inner (
-        id,
-        supplier_id
-      ),
-      drivers (
-        id,
-        user_id
-      ),
-      fuel_types (
-        id,
-        label,
-        code
-      )
-    `)
-    .eq("id", orderId)
-    .single();
+  const orderResult = await pool.query(
+    `SELECT o.*,
+            json_build_object('id', d.id, 'supplier_id', d.supplier_id, 'name', d.name) AS depots,
+            json_build_object('id', dr.id, 'user_id', dr.user_id) AS drivers,
+            json_build_object('id', ft.id, 'label', ft.label, 'code', ft.code) AS fuel_types
+     FROM driver_depot_orders o
+     JOIN depots d ON d.id = o.depot_id
+     LEFT JOIN drivers dr ON dr.id = o.driver_id
+     LEFT JOIN fuel_types ft ON ft.id = o.fuel_type_id
+     WHERE o.id = $1
+     LIMIT 1`,
+    [orderId]
+  );
+  const order = orderResult.rows[0] || null;
 
-  if (error || !order) {
+  if (!order) {
     return { error: "Order not found", order: null };
   }
 
@@ -2289,7 +2705,7 @@ router.post("/driver-depot-orders/:orderId/accept", requireSupplierSubscription,
 
   try {
     // Get supplier ID
-    const { data: suppliers, error: supplierError } = await supabaseAdmin
+    const { data: suppliers, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
@@ -2313,12 +2729,12 @@ router.post("/driver-depot-orders/:orderId/accept", requireSupplierSubscription,
     }
 
     // Update order to pending_payment
-    const { data: updatedOrder, error: updateError } = await supabaseAdmin
+    const { data: updatedOrder, error: updateError } = await drizzleClient
       .from("driver_depot_orders")
       .update({
         status: "pending_payment",
         payment_status: "pending_payment",
-        updated_at: new Date().toISOString(),
+        updated_at: new Date(),
       })
       .eq("id", orderId)
       .select(`
@@ -2372,7 +2788,7 @@ router.post("/driver-depot-orders/:orderId/reject", requireSupplierSubscription,
 
   try {
     // Get supplier ID
-    const { data: suppliers, error: supplierError } = await supabaseAdmin
+    const { data: suppliers, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
@@ -2396,11 +2812,11 @@ router.post("/driver-depot-orders/:orderId/reject", requireSupplierSubscription,
     }
 
     // Update order to rejected
-    const { data: updatedOrder, error: updateError } = await supabaseAdmin
+    const { data: updatedOrder, error: updateError } = await drizzleClient
       .from("driver_depot_orders")
       .update({
         status: "rejected",
-        updated_at: new Date().toISOString(),
+        updated_at: new Date(),
         notes: reason ? `${order.notes || ""}\n[Rejection reason: ${reason}]`.trim() : order.notes,
       })
       .eq("id", orderId)
@@ -2439,7 +2855,7 @@ router.post("/driver-depot-orders/:orderId/verify-payment", requireSupplierSubsc
 
   try {
     // Get supplier ID
-    const { data: suppliers, error: supplierError } = await supabaseAdmin
+    const { data: suppliers, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
@@ -2473,14 +2889,14 @@ router.post("/driver-depot-orders/:orderId/verify-payment", requireSupplierSubsc
     }
 
     // Update payment status and order status - go directly to ready_for_pickup
-    const { data: updatedOrder, error: updateError } = await supabaseAdmin
+    const { data: updatedOrder, error: updateError } = await drizzleClient
       .from("driver_depot_orders")
       .update({
         payment_status: "payment_verified",
         status: "ready_for_pickup", // Go directly to ready for pickup, skip signatures
-        payment_confirmed_at: new Date().toISOString(),
+        payment_confirmed_at: new Date(),
         payment_confirmed_by: user.id,
-        updated_at: new Date().toISOString(),
+        updated_at: new Date(),
       })
       .eq("id", orderId)
       .select(`
@@ -2533,7 +2949,7 @@ router.post("/driver-depot-orders/:orderId/reject-payment", requireSupplierSubsc
 
   try {
     // Get supplier ID
-    const { data: suppliers, error: supplierError } = await supabaseAdmin
+    const { data: suppliers, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
@@ -2562,12 +2978,12 @@ router.post("/driver-depot-orders/:orderId/reject-payment", requireSupplierSubsc
     }
 
     // Update payment status - reset to pending_payment so driver can pay again
-    const { data: updatedOrder, error: updateError } = await supabaseAdmin
+    const { data: updatedOrder, error: updateError } = await drizzleClient
       .from("driver_depot_orders")
       .update({
         payment_status: "payment_failed",
         status: "pending_payment",
-        updated_at: new Date().toISOString(),
+        updated_at: new Date(),
       })
       .eq("id", orderId)
       .select(`
@@ -2617,15 +3033,18 @@ router.post("/driver-depot-orders/:orderId/reject-payment", requireSupplierSubsc
 router.post("/driver-depot-orders/:orderId/supplier-signature", requireSupplierSubscription, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
-  const { signatureUrl } = req.body;
+  const signatureUrlRaw = (req.body as any)?.signatureUrl ?? (req.body as any)?.signature_url;
 
   try {
-    if (!signatureUrl) {
-      return res.status(400).json({ error: "signatureUrl is required" });
+    let toStore: string;
+    try {
+      toStore = normalizeSignatureForStorage(signatureUrlRaw);
+    } catch (e: any) {
+      return res.status(400).json({ error: e?.message || "Invalid signature" });
     }
 
     // Get supplier ID
-    const { data: suppliers, error: supplierError } = await supabaseAdmin
+    const { data: suppliers, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
@@ -2653,12 +3072,12 @@ router.post("/driver-depot-orders/:orderId/supplier-signature", requireSupplierS
     }
 
     // Update supplier signature
-    const { data: updatedOrder, error: updateError } = await supabaseAdmin
+    const { data: updatedOrder, error: updateError } = await drizzleClient
       .from("driver_depot_orders")
       .update({
-        supplier_signature_url: signatureUrl,
-        supplier_signed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        supplier_signature_url: toStore,
+        supplier_signed_at: new Date(),
+        updated_at: new Date(),
       })
       .eq("id", orderId)
       .select(`
@@ -2675,11 +3094,11 @@ router.post("/driver-depot-orders/:orderId/supplier-signature", requireSupplierS
     // BUT: Skip this for online_payment - those orders should already be at ready_for_pickup
     // and should not require signatures before release
     if (updatedOrder.driver_signature_url && updatedOrder.supplier_signature_url && updatedOrder.payment_method !== "online_payment") {
-      await supabaseAdmin
+      await drizzleClient
         .from("driver_depot_orders")
         .update({
           status: "ready_for_pickup",
-          updated_at: new Date().toISOString(),
+          updated_at: new Date(),
         })
         .eq("id", orderId);
       
@@ -2710,7 +3129,7 @@ router.post("/driver-depot-orders/:orderId/release", requireSupplierSubscription
 
   try {
     // Get supplier ID
-    const { data: suppliers, error: supplierError } = await supabaseAdmin
+    const { data: suppliers, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
@@ -2734,11 +3153,11 @@ router.post("/driver-depot-orders/:orderId/release", requireSupplierSubscription
 
     // Update order to awaiting_signature - driver needs to sign to complete
     // Using "awaiting_signature" (19 chars) instead of "awaiting_driver_signature" (25 chars) due to varchar(20) limit
-    const { data: updatedOrder, error: updateError } = await supabaseAdmin
+    const { data: updatedOrder, error: updateError } = await drizzleClient
       .from("driver_depot_orders")
       .update({
         status: "awaiting_signature",
-        updated_at: new Date().toISOString(),
+        updated_at: new Date(),
       })
       .eq("id", orderId)
       .select(`
@@ -2757,7 +3176,7 @@ router.post("/driver-depot-orders/:orderId/release", requireSupplierSubscription
     const depotId = order.depots?.id;
 
     if (depotId && fuelTypeId) {
-      const { data: depotPrice } = await supabaseAdmin
+      const { data: depotPrice } = await drizzleClient
         .from("depot_prices")
         .select("available_litres")
         .eq("depot_id", depotId)
@@ -2768,11 +3187,11 @@ router.post("/driver-depot-orders/:orderId/release", requireSupplierSubscription
         const currentStock = parseFloat(depotPrice.available_litres.toString());
         const newStock = Math.max(0, currentStock - orderLitres);
 
-        await supabaseAdmin
+        await drizzleClient
           .from("depot_prices")
           .update({
             available_litres: newStock.toString(),
-            updated_at: new Date().toISOString(),
+            updated_at: new Date(),
           })
           .eq("depot_id", depotId)
           .eq("fuel_type_id", fuelTypeId);
@@ -2818,7 +3237,7 @@ router.post("/driver-depot-orders/:orderId/confirm-delivery", requireSupplierSub
 
   try {
     // Get supplier ID
-    const { data: suppliers, error: supplierError } = await supabaseAdmin
+    const { data: suppliers, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
@@ -2848,11 +3267,11 @@ router.post("/driver-depot-orders/:orderId/confirm-delivery", requireSupplierSub
     }
 
     // Update order with actual litres (driver signature will be added separately)
-    const { data: updatedOrder, error: updateError } = await supabaseAdmin
+    const { data: updatedOrder, error: updateError } = await drizzleClient
       .from("driver_depot_orders")
       .update({
         actual_litres_delivered: actualLitresNum !== null ? actualLitresNum.toString() : null,
-        updated_at: new Date().toISOString(),
+        updated_at: new Date(),
       })
       .eq("id", orderId)
       .select(`
@@ -2892,7 +3311,7 @@ router.get("/documents", async (req, res) => {
   const user = (req as any).user;
   
   try {
-    const { data: documents, error } = await supabaseAdmin
+    const { data: documents, error } = await drizzleClient
       .from("documents")
       .select("*")
       .eq("owner_type", "supplier")
@@ -2924,7 +3343,7 @@ router.post("/documents", async (req, res) => {
   
   try {
     // Insert document first
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await drizzleClient
       .from("documents")
       .insert({
         owner_type: owner_type || "supplier",
@@ -2960,16 +3379,16 @@ router.post("/documents", async (req, res) => {
         
         // Fetch admin profiles and supplier data in parallel
         const [adminProfilesResult, supplierProfileResult, supplierResult] = await Promise.all([
-          supabaseAdmin
+          drizzleClient
             .from("profiles")
             .select("id")
             .eq("role", "admin"),
-          supabaseAdmin
+          drizzleClient
             .from("profiles")
             .select("full_name")
             .eq("id", user.id)
             .maybeSingle(),
-          supabaseAdmin
+          drizzleClient
             .from("suppliers")
             .select("id, kyb_status, status, compliance_status")
             .eq("owner_id", user.id)
@@ -3011,14 +3430,14 @@ router.post("/documents", async (req, res) => {
               console.log(`[KYB Resubmission] Supplier ${supplier.id} was rejected, resetting to pending status after document upload`);
               
               // Update supplier status
-              const { error: supplierUpdateError } = await supabaseAdmin
+              const { error: supplierUpdateError } = await drizzleClient
                 .from("suppliers")
                 .update({
                   kyb_status: "pending",
                   status: "pending_compliance",
                   compliance_status: "pending",
                   compliance_rejection_reason: null,
-                  updated_at: new Date().toISOString()
+                  updated_at: new Date()
                 })
                 .eq("id", supplier.id);
               
@@ -3028,11 +3447,11 @@ router.post("/documents", async (req, res) => {
               }
               
               // Also update profile approval status
-              const { error: profileUpdateError } = await supabaseAdmin
+              const { error: profileUpdateError } = await drizzleClient
                 .from("profiles")
                 .update({ 
                   approval_status: "pending",
-                  updated_at: new Date().toISOString()
+                  updated_at: new Date()
                 })
                 .eq("id", user.id);
               
@@ -3087,7 +3506,7 @@ router.post("/documents", async (req, res) => {
             }
           } else if (supplier && (supplier.kyb_status === "pending" || supplier.status === "pending_compliance")) {
             // Check if this is the first document (new KYC submission)
-            const { data: existingDocs } = await supabaseAdmin
+            const { data: existingDocs } = await drizzleClient
               .from("documents")
               .select("id")
               .eq("owner_type", "supplier")
@@ -3129,7 +3548,7 @@ router.get("/compliance/status", async (req, res) => {
   
   try {
     // Get supplier ID
-    const { data: supplier, error: supplierError } = await supabaseAdmin
+    const { data: supplier, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id")
       .eq("owner_id", user.id)
@@ -3155,7 +3574,7 @@ router.put("/compliance", async (req, res) => {
     console.log("PUT /compliance - Request body:", JSON.stringify(req.body, null, 2));
     
     // Get supplier ID and current status
-    const { data: supplier, error: supplierError } = await supabaseAdmin
+    const { data: supplier, error: supplierError } = await drizzleClient
       .from("suppliers")
       .select("id, kyb_status, status, compliance_status")
       .eq("owner_id", user.id)
@@ -3180,11 +3599,11 @@ router.put("/compliance", async (req, res) => {
         updateData.compliance_rejection_reason = null;
         
         // Also update profile approval status
-        const { error: profileUpdateError } = await supabaseAdmin
+        const { error: profileUpdateError } = await drizzleClient
           .from("profiles")
           .update({ 
             approval_status: "pending",
-            updated_at: new Date().toISOString()
+            updated_at: new Date()
           })
           .eq("id", user.id);
         
@@ -3342,11 +3761,11 @@ router.put("/compliance", async (req, res) => {
       return res.json({ message: "No fields to update", supplier });
     }
 
-    updateData.updated_at = new Date().toISOString();
+    updateData.updated_at = new Date();
 
     console.log("Update data:", JSON.stringify(updateData, null, 2));
 
-    const { data: updatedSupplier, error: updateError } = await supabaseAdmin
+    const { data: updatedSupplier, error: updateError } = await drizzleClient
       .from("suppliers")
       .update(updateData)
       .eq("id", supplier.id)
@@ -3360,7 +3779,7 @@ router.put("/compliance", async (req, res) => {
         const { websocketService } = await import("./websocket");
         
         // Get admin user IDs
-        const { data: adminProfiles, error: adminProfilesError } = await supabaseAdmin
+        const { data: adminProfiles, error: adminProfilesError } = await drizzleClient
           .from("profiles")
           .select("id")
           .eq("role", "admin");
@@ -3371,7 +3790,7 @@ router.put("/compliance", async (req, res) => {
           const adminUserIds = adminProfiles.map(p => p.id);
           
           // Get supplier name
-          const { data: supplierProfile, error: profileError } = await supabaseAdmin
+          const { data: supplierProfile, error: profileError } = await drizzleClient
             .from("profiles")
             .select("full_name")
             .eq("id", user.id)
@@ -3453,11 +3872,11 @@ router.put("/compliance", async (req, res) => {
         delete cleanedUpdateData.updated_at;
         
         if (Object.keys(cleanedUpdateData).length > 0) {
-          cleanedUpdateData.updated_at = new Date().toISOString();
+          cleanedUpdateData.updated_at = new Date();
           console.log(`Removed problematic column '${missingColumn}' and retrying with remaining fields...`);
           
           // Retry without the problematic column
-          const retryResult = await supabaseAdmin
+          const retryResult = await drizzleClient
             .from("suppliers")
             .update(cleanedUpdateData)
             .eq("id", supplier.id)
@@ -3468,7 +3887,7 @@ router.put("/compliance", async (req, res) => {
             return res.status(500).json({ 
               error: `Database column '${missingColumn}' not found in suppliers table.`,
               details: updateError.message,
-              hint: `Please add the '${missingColumn}' column to the suppliers table or refresh the schema cache by running: NOTIFY pgrst, 'reload schema'; in Supabase SQL Editor.`,
+              hint: `Please add the '${missingColumn}' column to the suppliers table or refresh schema metadata by running: NOTIFY pgrst, 'reload schema'; in your PostgreSQL SQL tool.`,
               attemptedFields: Object.keys(updateData),
               skippedField: missingColumn
             });
@@ -3512,3 +3931,4 @@ router.put("/compliance", async (req, res) => {
 });
 
 export default router;
+

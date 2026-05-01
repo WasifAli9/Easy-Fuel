@@ -35,6 +35,7 @@ import {
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import { normalizeDocuments } from "@/lib/document-normalize";
 import { Separator } from "@/components/ui/separator";
 import {
   DashboardSidebarAside,
@@ -250,7 +251,7 @@ export default function DriverDashboard() {
     enabled: !loading && !!session?.access_token && !!profile && profile.role === "driver",
     retry: false,
   });
-  const documents = documentsData || [];
+  const documents = normalizeDocuments(documentsData);
 
   const { currency } = useCurrency();
 
@@ -710,6 +711,7 @@ export default function DriverDashboard() {
                   const isStarting = startDeliveryMutation.isPending && startDeliveryMutation.variables === order.id;
                   const isPickingUp = pickupDeliveryMutation.isPending && pickupDeliveryMutation.variables === order.id;
                   const customerName = order.customers?.profiles?.full_name || order.customers?.company_name || "Customer";
+                  const fuelTypeLabel = order.fuel_types?.label || order.fuel_types?.code?.toUpperCase() || "N/A";
                   const deliveryAddress = order.delivery_addresses
                     ? [order.delivery_addresses.address_street, order.delivery_addresses.address_city, order.delivery_addresses.address_province].filter(Boolean).join(", ") || "Address not specified"
                     : order.drop_lat && order.drop_lng ? `${order.drop_lat}, ${order.drop_lng}` : "Address not specified";
@@ -768,6 +770,13 @@ export default function DriverDashboard() {
                                 <div className="flex-1 min-w-0">
                                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Customer</p>
                                   <p className="font-semibold text-sm truncate">{customerName}</p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
+                                <div className="p-1.5 rounded-md bg-background"><Package className="h-4 w-4 text-muted-foreground" /></div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Fuel Type</p>
+                                  <p className="font-medium text-sm">{fuelTypeLabel}</p>
                                 </div>
                               </div>
                               <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
@@ -1373,6 +1382,7 @@ export default function DriverDashboard() {
                   const customerName = order.customers?.profiles?.full_name ||
                     order.customers?.company_name ||
                     "Customer";
+                  const fuelTypeLabel = order.fuel_types?.label || order.fuel_types?.code?.toUpperCase() || "N/A";
                   const deliveryAddress = order.delivery_addresses
                     ? [
                         order.delivery_addresses.address_street,
@@ -1464,6 +1474,19 @@ export default function DriverDashboard() {
                                   </p>
                                   <p className="font-semibold text-sm truncate">
                                     {customerName}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
+                                <div className="p-1.5 rounded-md bg-background">
+                                  <Package className="h-4 w-4 text-muted-foreground" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
+                                    Fuel Type
+                                  </p>
+                                  <p className="font-medium text-sm">
+                                    {fuelTypeLabel}
                                   </p>
                                 </div>
                               </div>

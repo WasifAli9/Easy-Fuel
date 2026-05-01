@@ -4,7 +4,6 @@ import {
   Car,
   DollarSign,
   CreditCard,
-  UserCircle,
   Settings,
   History,
   Warehouse,
@@ -17,7 +16,7 @@ import {
   DashboardSidebarDivider,
 } from "./DashboardSidebar";
 
-export type DriverWorkspaceActive = "billing" | "profile";
+export type DriverWorkspaceActive = "billing";
 
 export function DriverWorkspaceSidebar({
   active,
@@ -48,14 +47,6 @@ export function DriverWorkspaceSidebar({
           onNavigate={onNavigate}
         >
           Billing
-        </DashboardNavRouteLink>
-        <DashboardNavRouteLink
-          href="/driver/profile"
-          active={active === "profile"}
-          icon={UserCircle}
-          onNavigate={onNavigate}
-        >
-          Profile
         </DashboardNavRouteLink>
         <DashboardNavRouteLink href="/driver" active={false} icon={Settings} onNavigate={onNavigate}>
           Settings

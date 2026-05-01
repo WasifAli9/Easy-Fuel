@@ -1,65 +1,91 @@
 import axios from "axios";
 import { appConfig } from "@/services/config";
-import { clearSecureSession, readSecureSession, saveSecureSession } from "@/services/storage";
+import { clearSecureSession } from "@/services/storage";
 import { useSessionStore } from "@/store/session-store";
-import { supabase } from "@/services/supabase";
 
 export const apiClient = axios.create({
   baseURL: appConfig.apiBaseUrl,
   timeout: 15_000,
+  withCredentials: true,
 });
 
-apiClient.interceptors.request.use(async (config) => {
-  const token = useSessionStore.getState().accessToken;
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+function toSnakeCase(key: string) {
+  return key.replace(/([A-Z])/g, "_$1").toLowerCase();
+}
+
+function toCamelCase(key: string) {
+  return key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+}
+
+function isPlainObject(value: unknown): value is Record<string, any> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function withCaseAliasesDeep<T>(input: T): T {
+  if (Array.isArray(input)) {
+    return input.map((item) => withCaseAliasesDeep(item)) as T;
   }
-  return config;
-});
+  if (!isPlainObject(input)) return input;
+
+  const out: Record<string, any> = {};
+  for (const [key, value] of Object.entries(input)) {
+    const normalizedValue = withCaseAliasesDeep(value);
+    out[key] = normalizedValue;
+
+    const snake = toSnakeCase(key);
+    const camel = toCamelCase(key);
+    if (out[snake] === undefined) out[snake] = normalizedValue;
+    if (out[camel] === undefined) out[camel] = normalizedValue;
+  }
+  return out as T;
+}
 
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    response.data = withCaseAliasesDeep(response.data);
+    return response;
+  },
   async (error) => {
-    const originalRequest = error.config;
-    if (error.response?.status !== 401 || originalRequest?._retry) {
+    if (error.response?.status !== 401) {
       return Promise.reject(error);
     }
-
-    originalRequest._retry = true;
-    const session = await readSecureSession();
-    if (!session.refreshToken) {
-      await clearSecureSession();
-      useSessionStore.getState().clearSession();
-      return Promise.reject(error);
-    }
-
-    try {
-      const { data, error } = await supabase.auth.refreshSession({
-        refresh_token: session.refreshToken,
-      });
-      if (error || !data.session) {
-        throw error ?? new Error("Session refresh failed.");
-      }
-
-      const role = useSessionStore.getState().role ?? session.role ?? "customer";
-      await saveSecureSession({
-        accessToken: data.session.access_token,
-        refreshToken: data.session.refresh_token,
-        role,
-      });
-
-      useSessionStore.getState().setSession({
-        accessToken: data.session.access_token,
-        refreshToken: data.session.refresh_token,
-        role: role as "customer" | "driver" | "supplier" | "company",
-      });
-
-      originalRequest.headers.Authorization = `Bearer ${data.session.access_token}`;
-      return apiClient(originalRequest);
-    } catch (refreshError) {
-      await clearSecureSession();
-      useSessionStore.getState().clearSession();
-      return Promise.reject(refreshError);
-    }
+    await clearSecureSession();
+    useSessionStore.getState().clearSession();
+    return Promise.reject(error);
   },
 );
+
+apiClient.interceptors.request.use((config) => {
+  const contentType =
+    (config.headers as any)?.["Content-Type"] ||
+    (config.headers as any)?.["content-type"] ||
+    "";
+
+  const isFormData =
+    typeof FormData !== "undefined" && config.data instanceof FormData;
+
+  if (!isFormData && Array.isArray(config.data)) {
+    config.data = withCaseAliasesDeep(config.data);
+    return config;
+  }
+
+  if (!isFormData && isPlainObject(config.data)) {
+    config.data = withCaseAliasesDeep(config.data);
+    return config;
+  }
+
+  if (
+    !isFormData &&
+    typeof config.data === "string" &&
+    String(contentType).includes("application/json")
+  ) {
+    try {
+      const parsed = JSON.parse(config.data);
+      config.data = JSON.stringify(withCaseAliasesDeep(parsed));
+    } catch {
+      // Ignore invalid JSON string body and send as-is.
+    }
+  }
+
+  return config;
+});

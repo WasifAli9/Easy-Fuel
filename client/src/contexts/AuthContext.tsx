@@ -1,7 +1,6 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
-import type { User, Session } from "@supabase/supabase-js";
 import { queryClient } from "@/lib/queryClient";
+import { supabase } from "@/lib/supabase";
 
 interface Profile {
   id: string;
@@ -12,11 +11,16 @@ interface Profile {
 }
 
 interface AuthContextType {
-  user: User | null;
+  user: { id: string; email?: string; user_metadata?: Record<string, unknown>; app_metadata?: Record<string, unknown> } | null;
   profile: Profile | null;
-  session: Session | null;
+  session: { access_token: string; refresh_token?: string; expires_at?: number; user?: any } | null;
   loading: boolean;
-  signUpWithPassword: (email: string, password: string, fullName?: string) => Promise<void>;
+  signUpWithPassword: (
+    email: string,
+    password: string,
+    fullName?: string,
+    role?: "customer" | "driver" | "supplier" | "admin" | "company",
+  ) => Promise<void>;
   signInWithOtp: (email: string) => Promise<void>;
   signInWithPassword: (email: string, password: string) => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
@@ -27,14 +31,47 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const AUTH_PROVIDER = (import.meta.env.VITE_AUTH_PROVIDER || "local").toLowerCase();
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AuthContextType["user"]>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSession] = useState<AuthContextType["session"]>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (AUTH_PROVIDER === "local") {
+      fetch("/api/auth/me", {
+        credentials: "include",
+      })
+        .then(async (res) => {
+          if (!res.ok) throw new Error("Session expired");
+          return res.json();
+        })
+        .then((payload) => {
+          setUser(payload.user ?? null);
+          setSession(payload.user ? { access_token: "cookie-session", user: payload.user } : null);
+          setProfile(
+            payload.profile
+              ? {
+                  id: payload.profile.id,
+                  role: payload.profile.role,
+                  fullName: payload.profile.full_name,
+                  phone: payload.profile.phone,
+                  profilePhotoUrl: payload.profile.profile_photo_url || undefined,
+                }
+              : null,
+          );
+        })
+        .catch(() => {
+          setSession(null);
+          setUser(null);
+          setProfile(null);
+        })
+        .finally(() => setLoading(false));
+      return;
+    }
+
     // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
@@ -65,6 +102,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   async function fetchProfile(userId: string) {
     try {
+      if (AUTH_PROVIDER === "local") {
+        const response = await fetch("/api/auth/me", {
+          credentials: "include",
+        });
+        if (!response.ok) {
+          setProfile(null);
+          return;
+        }
+        const payload = await response.json();
+        const data = payload.profile;
+        const profileData = data
+          ? {
+              id: data.id,
+              role: data.role,
+              fullName: data.full_name,
+              phone: data.phone,
+              profilePhotoUrl: data.profile_photo_url || undefined,
+            }
+          : null;
+        setUser(payload.user ?? null);
+        setProfile(profileData);
+        setLoading(false);
+        return;
+      }
       const { data, error } = await supabase
         .from("profiles")
         .select("*")
@@ -100,6 +161,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function signInWithOtp(email: string) {
+    if (AUTH_PROVIDER === "local") {
+      throw new Error("Magic link is disabled in local auth mode. Use password sign-in.");
+    }
     // Use the current window origin for redirect
     const redirectTo = window.location.origin;
     
@@ -114,6 +178,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function signInWithPassword(email: string, password: string) {
+    if (AUTH_PROVIDER === "local") {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Invalid email or password");
+      }
+      const data = await res.json();
+      const localSession = { access_token: "cookie-session", user: data.user };
+      setSession(localSession as AuthContextType["session"]);
+      setUser(data.user);
+      await fetchProfile(data.user.id);
+      return;
+    }
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -122,7 +204,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (error) throw error;
   }
 
-  async function signUpWithPassword(email: string, password: string, fullName?: string) {
+  async function signUpWithPassword(
+    email: string,
+    password: string,
+    fullName?: string,
+    role: "customer" | "driver" | "supplier" | "admin" | "company" = "customer",
+  ) {
+    if (AUTH_PROVIDER === "local") {
+      const res = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, fullName: fullName || email.split("@")[0], role }),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Sign up failed");
+      }
+      const data = await res.json();
+      const localSession = { access_token: "cookie-session", user: data.user };
+      setSession(localSession as AuthContextType["session"]);
+      setUser({ id: data.user.id, email, user_metadata: { full_name: fullName } });
+      await fetchProfile(data.user.id);
+      return data;
+    }
     // Use the current window origin for redirect, ensuring it includes the full path
     const redirectTo = `${window.location.origin}/auth`;
     
@@ -170,6 +275,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function resetPassword(email: string) {
+    if (AUTH_PROVIDER === "local") {
+      // Placeholder endpoint behavior while production email service is wired.
+      const res = await fetch("/api/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      if (!res.ok) {
+        throw new Error("Failed to send reset email");
+      }
+      return;
+    }
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: `${window.location.origin}/reset-password`,
     });
@@ -178,6 +295,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function updatePassword(newPassword: string) {
+    if (AUTH_PROVIDER === "local") {
+      const res = await fetch("/api/auth/change-password", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ currentPassword: "", newPassword }),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to update password");
+      }
+      return;
+    }
     const { error } = await supabase.auth.updateUser({
       password: newPassword,
     });
@@ -186,6 +318,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function signOut() {
+    if (AUTH_PROVIDER === "local") {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      }).catch(() => undefined);
+      setSession(null);
+      setUser(null);
+      setProfile(null);
+      return;
+    }
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
     setProfile(null);
@@ -197,6 +340,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     phone?: string
   ) {
     if (!user) throw new Error("No user logged in");
+    if (AUTH_PROVIDER === "local") {
+      const response = await fetch("/api/auth/set-role", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ role, fullName, phone }),
+        credentials: "include",
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to set role");
+      }
+      await fetchProfile(user.id);
+      return;
+    }
 
     const { error: profileError } = await supabase.from("profiles").insert({
       id: user.id,

@@ -38,6 +38,7 @@ import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { normalizeFilePath } from "@/lib/utils";
+import { normalizeDocuments } from "@/lib/document-normalize";
 import { ChevronRight } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { DashboardSidebarAside } from "@/components/dashboard/DashboardSidebar";
@@ -136,6 +137,7 @@ export default function SupplierProfile() {
     refetchInterval: 30000, // Refetch every 30 seconds (WebSocket handles real-time)
     staleTime: 15 * 1000, // Consider data fresh for 15 seconds
   });
+  const normalizedDocuments = normalizeDocuments(documents);
 
   // Listen for document status updates and KYC approval via WebSocket
   useWebSocket((message) => {
@@ -192,7 +194,7 @@ export default function SupplierProfile() {
 
   // Helper function to find document by type
   const findDocument = (docType: string, title?: string) => {
-    return documents.find((d) => {
+    return normalizedDocuments.find((d) => {
       if (d.doc_type !== docType) return false;
       if (title && d.title !== title) return false;
       return true;
@@ -534,7 +536,7 @@ export default function SupplierProfile() {
         <AppHeader />
         <div className="flex flex-1 min-h-0">
           <DashboardSidebarAside aria-label="Supplier navigation">
-            <SupplierWorkspaceSidebar active="profile" />
+            <SupplierWorkspaceSidebar active={null} />
           </DashboardSidebarAside>
           <main className="flex-1 flex items-center justify-center dashboard-main-area">
             <div className="text-muted-foreground">Loading profile...</div>
@@ -550,7 +552,7 @@ export default function SupplierProfile() {
 
       <div className="flex flex-1 min-h-0">
         <DashboardSidebarAside aria-label="Supplier navigation">
-          <SupplierWorkspaceSidebar active="profile" />
+          <SupplierWorkspaceSidebar active={null} />
         </DashboardSidebarAside>
 
         <Button
@@ -570,7 +572,7 @@ export default function SupplierProfile() {
           >
             <div className="flex flex-col h-full min-h-0">
               <SupplierWorkspaceSidebar
-                active="profile"
+                active={null}
                 onNavigate={() => setSidebarOpen(false)}
               />
             </div>

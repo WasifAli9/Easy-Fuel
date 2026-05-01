@@ -50,7 +50,7 @@ export default function SupplierSubscription() {
     queryKey: ["/api/supplier/subscription"],
   });
 
-  const { data: plansData } = useQuery<{ plans: SupplierPlan[]; ozowConfigured: boolean }>({
+  const { data: plansData } = useQuery<{ plans: SupplierPlan[]; ozowConfigured: boolean; testMode?: boolean }>({
     queryKey: ["/api/supplier/subscription/plans"],
   });
 
@@ -58,11 +58,15 @@ export default function SupplierSubscription() {
     mutationFn: async (planCode: string) => {
       const res = await apiRequest("POST", "/api/supplier/subscription/create-payment", { planCode });
       const json = await res.json();
+      if (json.success && !json.redirectUrl) return json;
       if (json.redirectUrl) window.location.href = json.redirectUrl;
       else throw new Error(json.error || "No redirect URL");
     },
-    onSuccess: () => {
+    onSuccess: (data: { success?: boolean; redirectUrl?: string }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/supplier/subscription"] });
+      if (data?.success && !data?.redirectUrl) {
+        toast({ title: "Subscribed", description: "Subscription activated (test mode)." });
+      }
     },
     onError: (e: Error) => {
       toast({ title: "Error", description: e.message, variant: "destructive" });
@@ -103,6 +107,7 @@ export default function SupplierSubscription() {
   const hasActive = subscription?.isActive ?? (!!subscriptionTier && subscription?.status === "active");
   const plans = plansData?.plans ?? [];
   const ozowConfigured = plansData?.ozowConfigured ?? false;
+  const testMode = plansData?.testMode ?? false;
   const nextBilling = subscription?.next_billing_at ? new Date(subscription.next_billing_at) : null;
 
   return (
@@ -213,7 +218,7 @@ export default function SupplierSubscription() {
                 {plan.code === "standard" ? (
                   <Button
                     className="w-full mt-4"
-                    disabled={!ozowConfigured || createPayment.isPending || (hasActive && subscriptionTier === "standard")}
+                    disabled={(!ozowConfigured && !testMode) || createPayment.isPending || (hasActive && subscriptionTier === "standard")}
                     onClick={() => createPayment.mutate("standard")}
                   >
                     {createPayment.isPending ? (
@@ -221,7 +226,7 @@ export default function SupplierSubscription() {
                     ) : (
                       <>
                         <CreditCard className="h-4 w-4 mr-2" />
-                        {hasActive && subscriptionTier === "standard" ? "Current plan" : "Subscribe with OZOW"}
+                        {hasActive && subscriptionTier === "standard" ? "Current plan" : testMode ? "Subscribe (test)" : "Subscribe with OZOW"}
                       </>
                     )}
                   </Button>
@@ -243,10 +248,16 @@ export default function SupplierSubscription() {
           ))}
         </div>
 
-        {!ozowConfigured && (
+        {!ozowConfigured && !testMode && (
           <Alert className="mt-6">
             <AlertTitle>Payment gateway not configured</AlertTitle>
             <AlertDescription>Standard plan subscribe button will be available once OZOW is configured.</AlertDescription>
+          </Alert>
+        )}
+        {testMode && (
+          <Alert className="mt-6 border-amber-500/50 bg-amber-500/10">
+            <AlertTitle>Test mode</AlertTitle>
+            <AlertDescription>Subscribing will activate the plan immediately without payment checkout.</AlertDescription>
           </Alert>
         )}
       </div>

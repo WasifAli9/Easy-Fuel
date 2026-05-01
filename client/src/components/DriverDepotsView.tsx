@@ -91,8 +91,9 @@ export function DriverDepotsView({ defaultTab = "orders" }: DriverDepotsViewProp
   oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
   
   const orders = (allOrders || []).filter((order: any) => {
+    const st = order.status ?? order.orderStatus ?? order.order_status;
     // Show all non-completed orders
-    if (order.status !== "completed") {
+    if (st !== "completed") {
       return true;
     }
     // For completed orders, only show those from the last week
@@ -204,85 +205,20 @@ export function DriverDepotsView({ defaultTab = "orders" }: DriverDepotsViewProp
       return;
     }
 
-    // Convert data URL to blob and upload
-    try {
-      const response = await fetch(signatureData);
-      const blob = await response.blob();
-      const file = new File([blob], "signature.png", { type: "image/png" });
-
-      const { getAuthHeaders } = await import("@/lib/auth-headers");
-      const headers = await getAuthHeaders();
-      
-      // Get upload URL using the correct endpoint
-      const uploadUrlResponse = await fetch("/api/objects/upload", {
-        method: "POST",
-        headers,
-      });
-
-      if (!uploadUrlResponse.ok) {
-        const errorText = await uploadUrlResponse.text();
-        console.error("Upload URL error:", errorText);
-        throw new Error("Failed to get upload URL");
-      }
-
-      const uploadUrlData = await uploadUrlResponse.json();
-      const uploadUrl = uploadUrlData.uploadURL || uploadUrlData.url;
-
-      if (!uploadUrl) {
-        throw new Error("No upload URL returned from server");
-      }
-
-      // Upload file
-      const uploadResponse = await fetch(uploadUrl, {
-        method: "PUT",
-        body: file,
-        headers: {
-          "Content-Type": "image/png",
-        },
-      });
-
-      if (!uploadResponse.ok) {
-        const errorText = await uploadResponse.text();
-        console.error("Upload error:", errorText);
-        throw new Error("Failed to upload signature");
-      }
-
-      // Extract object path from upload URL or use the objectPath from response
-      let signatureUrl: string;
-      if (uploadUrlData.objectPath) {
-        signatureUrl = uploadUrlData.objectPath;
-      } else if (uploadUrl.includes("/api/storage/upload/")) {
-        // Extract path from Supabase storage URL
-        const match = uploadUrl.match(/\/api\/storage\/upload\/([^/]+)\/(.+)/);
-        if (match) {
-          signatureUrl = `${match[1]}/${match[2]}`;
-        } else {
-          signatureUrl = uploadUrl.split("?")[0];
-        }
-      } else {
-        signatureUrl = uploadUrl.split("?")[0];
-      }
-
-      submitSignatureMutation.mutate({
-        orderId: selectedOrderForSignature.id,
-        signatureUrl,
-        type: signatureType,
-      });
-    } catch (error: any) {
-      toast({
-        title: "Upload Error",
-        description: error.message || "Failed to upload signature",
-        variant: "destructive",
-      });
-    }
+    // Digital signature: store canvas data URL (data:image/png;base64,...) in DB — no file upload.
+    submitSignatureMutation.mutate({
+      orderId: selectedOrderForSignature.id,
+      signatureUrl: signatureData,
+      type: signatureType,
+    });
   };
 
   const handleOrderClick = (depot: any) => {
     setSelectedDepot(depot);
     setOrderDialogOpen(true);
-    if (depot.depot_prices && depot.depot_prices.length > 0) {
-      setSelectedFuelType(depot.depot_prices[0].fuel_type_id);
-    }
+    // Require explicit fuel selection; do not auto-select first option.
+    setSelectedFuelType(null);
+    setLitres("");
   };
 
   const handlePlaceOrder = () => {
@@ -337,8 +273,8 @@ export function DriverDepotsView({ defaultTab = "orders" }: DriverDepotsViewProp
   };
 
   const getStatusBadge = (order: any) => {
-    const status = order.status;
-    const paymentStatus = order.payment_status;
+    const status = order.status ?? order.orderStatus ?? order.order_status;
+    const paymentStatus = order.payment_status ?? order.paymentStatus;
     
     const variants: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
       pending: "secondary",
@@ -462,7 +398,7 @@ export function DriverDepotsView({ defaultTab = "orders" }: DriverDepotsViewProp
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex gap-2 justify-end">
-                        {order.status === "pending" && (
+                        {(order.status ?? order.orderStatus ?? order.order_status) === "pending" && (
                           <Button
                             variant="ghost"
                             size="sm"
@@ -486,21 +422,34 @@ export function DriverDepotsView({ defaultTab = "orders" }: DriverDepotsViewProp
                             )}
                           </Button>
                         )}
-                        {(order.status === "pending_payment" || (order.status === "pending_payment" && order.payment_status === "payment_failed")) && (
+                        {(() => {
+                          const orderStatus = order.status ?? order.orderStatus ?? order.order_status;
+                          const paymentStatus = order.payment_status ?? order.paymentStatus;
+                          return orderStatus === "pending_payment" &&
+                            (paymentStatus === "pending_payment" || paymentStatus === "payment_failed" || !paymentStatus);
+                        })() && (
                           <Button
-                            variant={order.payment_status === "payment_failed" ? "destructive" : "default"}
+                            variant={(order.payment_status ?? order.paymentStatus) === "payment_failed" ? "destructive" : "default"}
                             size="sm"
                             onClick={() => {
                               setSelectedOrderForPayment(order);
                               setPaymentDialogOpen(true);
                             }}
-                            title={order.payment_status === "payment_failed" ? "Payment was rejected. Pay again" : "Pay for order"}
+                            title={(order.payment_status ?? order.paymentStatus) === "payment_failed" ? "Payment was rejected. Pay again" : "Pay for order"}
                           >
                             <CreditCard className="h-4 w-4 mr-1" />
-                            {order.payment_status === "payment_failed" ? "Pay Again" : "Pay Now"}
+                            {(order.payment_status ?? order.paymentStatus) === "payment_failed" ? "Pay Again" : "Pay Now"}
                           </Button>
                         )}
-                        {(order.status === "awaiting_signature" || order.status === "released") && !order.delivery_signature_url && (
+                        {(() => {
+                          const st = order.status ?? order.orderStatus ?? order.order_status;
+                          const deliverySig =
+                            order.delivery_signature_url ?? order.deliverySignatureUrl;
+                          return (
+                            (st === "awaiting_signature" || st === "released") &&
+                            !deliverySig
+                          );
+                        })() && (
                           <Button
                             variant="default"
                             size="sm"
@@ -515,7 +464,7 @@ export function DriverDepotsView({ defaultTab = "orders" }: DriverDepotsViewProp
                             Sign for Receipt
                           </Button>
                         )}
-                        {order.status === "completed" && (
+                        {(order.status ?? order.orderStatus ?? order.order_status) === "completed" && (
                           <Button
                             variant="outline"
                             size="sm"

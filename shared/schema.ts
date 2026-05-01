@@ -135,6 +135,31 @@ export const notificationTypeEnum = pgEnum("notification_type", [
   "order_fulfilled",
   "order_ready_for_pickup",
   "supplier_rating_received",
+  // Driver depot orders
+  "driver_depot_order_placed",
+  "driver_depot_order_confirmed",
+  "driver_depot_order_fulfilled",
+  "driver_depot_order_cancelled",
+  "driver_depot_order_accepted",
+  "driver_depot_order_rejected",
+  "driver_depot_payment_verified",
+  "driver_depot_payment_rejected",
+  "driver_depot_order_released",
+  "driver_depot_order_completed",
+  // Supplier depot order notifications
+  "supplier_depot_order_placed",
+  "supplier_payment_received",
+  "supplier_signature_required",
+  "supplier_order_completed",
+  // Admin notifications
+  "admin_document_uploaded",
+  "admin_kyc_submitted",
+  "admin_vehicle_approved",
+  "admin_vehicle_rejected",
+  "admin_document_approved",
+  "admin_document_rejected",
+  "admin_kyc_approved",
+  "admin_kyc_rejected",
   
   // Driver specific
   "driver_rating_received",
@@ -184,6 +209,25 @@ export const profiles = pgTable("profiles", {
   lastLoginAt: timestamp("last_login_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Local auth users table (for self-hosted auth mode)
+export const localAuthUsers = pgTable("local_auth_users", {
+  id: uuid("id").primaryKey().notNull(),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// Local auth refresh token table (legacy JWT flow support)
+export const localAuthRefreshTokens = pgTable("local_auth_refresh_tokens", {
+  id: uuid("id").primaryKey().notNull(),
+  userId: uuid("user_id").notNull().references(() => localAuthUsers.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 // App Settings table
@@ -310,6 +354,8 @@ export const depotPrices = pgTable("depot_prices", {
   depotId: uuid("depot_id").notNull().references(() => depots.id),
   fuelTypeId: uuid("fuel_type_id").notNull().references(() => fuelTypes.id),
   priceCents: integer("price_cents").notNull(),
+  minLitres: integer("min_litres").notNull().default(0),
+  availableLitres: doublePrecision("available_litres"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -359,7 +405,7 @@ export const drivers = pgTable("drivers", {
   criminalCheckReference: text("criminal_check_reference"),
   criminalCheckDate: timestamp("criminal_check_date"),
   isCompanyDriver: boolean("is_company_driver").default(false),
-  companyId: uuid("company_id").references(() => customers.id),
+  companyId: uuid("company_id").references(() => companies.id, { onDelete: "set null" }),
   roleInCompany: text("role_in_company"),
   sarsTaxNumber: text("sars_tax_number"),
   bankAccountName: text("bank_account_name"),
@@ -607,6 +653,42 @@ export const orders = pgTable("orders", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
+
+// Driver depot orders table (supplier pickup flow)
+export const driverDepotOrders = pgTable("driver_depot_orders", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  driverId: uuid("driver_id").notNull().references(() => drivers.id),
+  depotId: uuid("depot_id").notNull().references(() => depots.id),
+  fuelTypeId: uuid("fuel_type_id").notNull().references(() => fuelTypes.id),
+  litres: numeric("litres").notNull(),
+  actualLitresDelivered: numeric("actual_litres_delivered"),
+  pricePerLitreCents: integer("price_per_litre_cents").notNull(),
+  totalPriceCents: integer("total_price_cents").notNull(),
+  status: text("status").notNull().default("pending"),
+  paymentStatus: text("payment_status"),
+  paymentMethod: text("payment_method"),
+  paymentProofUrl: text("payment_proof_url"),
+  paymentConfirmedAt: timestamp("payment_confirmed_at"),
+  paymentConfirmedBy: uuid("payment_confirmed_by").references(() => profiles.id, { onDelete: "set null" }),
+  driverSignatureUrl: text("driver_signature_url"),
+  driverSignedAt: timestamp("driver_signed_at"),
+  supplierSignatureUrl: text("supplier_signature_url"),
+  supplierSignedAt: timestamp("supplier_signed_at"),
+  deliverySignatureUrl: text("delivery_signature_url"),
+  deliverySignedAt: timestamp("delivery_signed_at"),
+  pickupDate: timestamp("pickup_date"),
+  completedAt: timestamp("completed_at"),
+  settlementId: uuid("settlement_id"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => ({
+  driverIdIdx: index("driver_depot_orders_driver_id_idx").on(table.driverId),
+  depotIdIdx: index("driver_depot_orders_depot_id_idx").on(table.depotId),
+  statusIdx: index("driver_depot_orders_status_idx").on(table.status),
+  createdAtIdx: index("driver_depot_orders_created_at_idx").on(table.createdAt),
+  settlementIdIdx: index("driver_depot_orders_settlement_id_idx").on(table.settlementId),
+}));
 
 // Dispatch Offers table
 export const dispatchOffers = pgTable("dispatch_offers", {
@@ -922,6 +1004,12 @@ export const insertOrderSchema = createInsertSchema(orders).omit({
   updatedAt: true 
 });
 
+export const insertDriverDepotOrderSchema = createInsertSchema(driverDepotOrders).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true
+});
+
 export const insertDispatchOfferSchema = createInsertSchema(dispatchOffers).omit({ 
   id: true, 
   createdAt: true, 
@@ -1076,6 +1164,9 @@ export type Customer = typeof customers.$inferSelect;
 
 export type InsertOrder = z.infer<typeof insertOrderSchema>;
 export type Order = typeof orders.$inferSelect;
+
+export type InsertDriverDepotOrder = z.infer<typeof insertDriverDepotOrderSchema>;
+export type DriverDepotOrder = typeof driverDepotOrders.$inferSelect;
 
 export type InsertDispatchOffer = z.infer<typeof insertDispatchOfferSchema>;
 export type DispatchOffer = typeof dispatchOffers.$inferSelect;

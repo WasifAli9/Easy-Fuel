@@ -5,9 +5,11 @@ import { SignInScreen } from "@/features/auth/screens/SignInScreen";
 import { hydrateSessionFromStorage } from "@/services/api/auth";
 import { useSessionStore } from "@/store/session-store";
 import { RootStackParamList } from "@/navigation/types";
-import { RoleTabs } from "@/navigation/RoleTabs";
 import { initializeRoleCapabilities } from "@/services/mobile-capabilities";
 import { DriverNavigator } from "@/navigation/DriverNavigator";
+import { SupplierNavigator } from "@/navigation/SupplierNavigator";
+import { CustomerNavigator } from "@/navigation/CustomerNavigator";
+import { CompanyNavigator } from "@/navigation/CompanyNavigator";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -47,11 +49,11 @@ export function RootNavigator() {
       ) : role === "driver" ? (
         <Stack.Screen name="DriverHome" component={DriverNavigator} />
       ) : role === "supplier" ? (
-        <Stack.Screen name="SupplierHome" children={() => <RoleTabs role="supplier" />} />
+        <Stack.Screen name="SupplierHome" component={SupplierNavigator} />
       ) : role === "company" ? (
-        <Stack.Screen name="CompanyHome" children={() => <RoleTabs role="company" />} />
+        <Stack.Screen name="CompanyHome" component={CompanyNavigator} />
       ) : (
-        <Stack.Screen name="CustomerHome" children={() => <RoleTabs role="customer" />} />
+        <Stack.Screen name="CustomerHome" component={CustomerNavigator} />
       )}
     </Stack.Navigator>
   );

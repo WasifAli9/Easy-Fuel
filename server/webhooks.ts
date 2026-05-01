@@ -3,9 +3,18 @@
  */
 
 import type { Request, Response } from "express";
-import { supabaseAdmin } from "./supabase";
 import { verifyWebhookPayload } from "./ozow-service";
 import "@shared/subscription-plans";
+import { db } from "./db";
+import {
+  driverSubscriptions,
+  drivers,
+  subscriptionPayments,
+  supplierSubscriptionPayments,
+  supplierSubscriptions,
+  suppliers,
+} from "@shared/schema";
+import { eq } from "drizzle-orm";
 
 /**
  * OZOW subscription payment callback. OZOW may send GET (redirect) or POST with query/body.
@@ -38,13 +47,17 @@ export async function handleOzowSubscriptionWebhook(req: Request, res: Response)
       return;
     }
 
-    const { data: payment, error: payErr } = await supabaseAdmin
-      .from("subscription_payments")
-      .select("id, driver_subscription_id, status")
-      .eq("id", paymentId)
-      .single();
-
-    if (payErr || !payment) {
+    const paymentRows = await db
+      .select({
+        id: subscriptionPayments.id,
+        driver_subscription_id: subscriptionPayments.driverSubscriptionId,
+        status: subscriptionPayments.status,
+      })
+      .from(subscriptionPayments)
+      .where(eq(subscriptionPayments.id, paymentId))
+      .limit(1);
+    const payment = paymentRows[0];
+    if (!payment) {
       res.status(200).send("OK");
       return;
     }
@@ -60,50 +73,55 @@ export async function handleOzowSubscriptionWebhook(req: Request, res: Response)
       periodEnd.setMonth(periodEnd.getMonth() + 1);
       const nextBilling = new Date(periodEnd);
 
-      await supabaseAdmin
-        .from("subscription_payments")
-        .update({
+      await db
+        .update(subscriptionPayments)
+        .set({
           status: "completed",
-          paid_at: now.toISOString(),
-          ozow_transaction_id: payload.TransactionReference,
+          paidAt: now,
+          ozowTransactionId: payload.TransactionReference,
           raw: payload as unknown as Record<string, unknown>,
-          updated_at: now.toISOString(),
+          updatedAt: now,
         })
-        .eq("id", payment.id);
+        .where(eq(subscriptionPayments.id, payment.id));
 
-      const { data: sub } = await supabaseAdmin
-        .from("driver_subscriptions")
-        .select("id, driver_id, plan_code")
-        .eq("id", payment.driver_subscription_id)
-        .single();
+      const subRows = await db
+        .select({
+          id: driverSubscriptions.id,
+          driver_id: driverSubscriptions.driverId,
+          plan_code: driverSubscriptions.planCode,
+        })
+        .from(driverSubscriptions)
+        .where(eq(driverSubscriptions.id, payment.driver_subscription_id))
+        .limit(1);
+      const sub = subRows[0];
 
       if (sub) {
-        await supabaseAdmin
-          .from("driver_subscriptions")
-          .update({
+        await db
+          .update(driverSubscriptions)
+          .set({
             status: "active",
-            current_period_start: periodStart.toISOString(),
-            current_period_end: periodEnd.toISOString(),
-            next_billing_at: nextBilling.toISOString(),
-            ozow_transaction_id: payload.TransactionReference,
-            updated_at: now.toISOString(),
+            currentPeriodStart: periodStart,
+            currentPeriodEnd: periodEnd,
+            nextBillingAt: nextBilling,
+            ozowTransactionId: payload.TransactionReference,
+            updatedAt: now,
           })
-          .eq("id", sub.id);
+          .where(eq(driverSubscriptions.id, sub.id));
 
-        await supabaseAdmin
-          .from("drivers")
-          .update({
-            premium_status: "active",
-            subscription_tier: sub.plan_code,
-            updated_at: now.toISOString(),
+        await db
+          .update(drivers)
+          .set({
+            premiumStatus: "active",
+            subscriptionTier: sub.plan_code,
+            updatedAt: now,
           })
-          .eq("id", sub.driver_id);
+          .where(eq(drivers.id, sub.driver_id));
       }
     } else {
-      await supabaseAdmin
-        .from("subscription_payments")
-        .update({ status: "failed", updated_at: new Date().toISOString() })
-        .eq("id", payment.id);
+      await db
+        .update(subscriptionPayments)
+        .set({ status: "failed", updatedAt: new Date() })
+        .where(eq(subscriptionPayments.id, payment.id));
     }
 
     res.status(200).send("OK");
@@ -144,13 +162,17 @@ export async function handleOzowSupplierSubscriptionWebhook(req: Request, res: R
       return;
     }
 
-    const { data: payment, error: payErr } = await supabaseAdmin
-      .from("supplier_subscription_payments")
-      .select("id, supplier_subscription_id, status")
-      .eq("id", paymentId)
-      .single();
-
-    if (payErr || !payment) {
+    const paymentRows = await db
+      .select({
+        id: supplierSubscriptionPayments.id,
+        supplier_subscription_id: supplierSubscriptionPayments.supplierSubscriptionId,
+        status: supplierSubscriptionPayments.status,
+      })
+      .from(supplierSubscriptionPayments)
+      .where(eq(supplierSubscriptionPayments.id, paymentId))
+      .limit(1);
+    const payment = paymentRows[0];
+    if (!payment) {
       res.status(200).send("OK");
       return;
     }
@@ -166,49 +188,54 @@ export async function handleOzowSupplierSubscriptionWebhook(req: Request, res: R
       periodEnd.setMonth(periodEnd.getMonth() + 1);
       const nextBilling = new Date(periodEnd);
 
-      await supabaseAdmin
-        .from("supplier_subscription_payments")
-        .update({
+      await db
+        .update(supplierSubscriptionPayments)
+        .set({
           status: "completed",
-          paid_at: now.toISOString(),
-          ozow_transaction_id: payload.TransactionReference,
+          paidAt: now,
+          ozowTransactionId: payload.TransactionReference,
           raw: payload as unknown as Record<string, unknown>,
-          updated_at: now.toISOString(),
+          updatedAt: now,
         })
-        .eq("id", payment.id);
+        .where(eq(supplierSubscriptionPayments.id, payment.id));
 
-      const { data: sub } = await supabaseAdmin
-        .from("supplier_subscriptions")
-        .select("id, supplier_id, plan_code")
-        .eq("id", payment.supplier_subscription_id)
-        .single();
+      const subRows = await db
+        .select({
+          id: supplierSubscriptions.id,
+          supplier_id: supplierSubscriptions.supplierId,
+          plan_code: supplierSubscriptions.planCode,
+        })
+        .from(supplierSubscriptions)
+        .where(eq(supplierSubscriptions.id, payment.supplier_subscription_id))
+        .limit(1);
+      const sub = subRows[0];
 
       if (sub) {
-        await supabaseAdmin
-          .from("supplier_subscriptions")
-          .update({
+        await db
+          .update(supplierSubscriptions)
+          .set({
             status: "active",
-            current_period_start: periodStart.toISOString(),
-            current_period_end: periodEnd.toISOString(),
-            next_billing_at: nextBilling.toISOString(),
-            ozow_transaction_id: payload.TransactionReference,
-            updated_at: now.toISOString(),
+            currentPeriodStart: periodStart,
+            currentPeriodEnd: periodEnd,
+            nextBillingAt: nextBilling,
+            ozowTransactionId: payload.TransactionReference,
+            updatedAt: now,
           })
-          .eq("id", sub.id);
+          .where(eq(supplierSubscriptions.id, sub.id));
 
-        await supabaseAdmin
-          .from("suppliers")
-          .update({
-            subscription_tier: sub.plan_code,
-            updated_at: now.toISOString(),
+        await db
+          .update(suppliers)
+          .set({
+            subscriptionTier: sub.plan_code,
+            updatedAt: now,
           })
-          .eq("id", sub.supplier_id);
+          .where(eq(suppliers.id, sub.supplier_id));
       }
     } else {
-      await supabaseAdmin
-        .from("supplier_subscription_payments")
-        .update({ status: "failed", updated_at: new Date().toISOString() })
-        .eq("id", payment.id);
+      await db
+        .update(supplierSubscriptionPayments)
+        .set({ status: "failed", updatedAt: new Date() })
+        .where(eq(supplierSubscriptionPayments.id, payment.id));
     }
 
     res.status(200).send("OK");

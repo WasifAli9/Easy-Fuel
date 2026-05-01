@@ -4,8 +4,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PaperProvider } from "react-native-paper";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { darkTheme, lightTheme } from "@/design/theme";
+import { RealtimeSync } from "@/app/RealtimeSync";
 import { readThemeMode } from "@/services/storage";
 import { useUiThemeStore } from "@/store/ui-theme-store";
+import { navigationRef } from "@/navigation/navigationRef";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -55,7 +57,11 @@ export function AppProviders({ children }: PropsWithChildren) {
       <SafeAreaView style={{ flex: 1 }} edges={["top", "left", "right"]}>
         <PaperProvider theme={paperTheme}>
           <QueryClientProvider client={queryClient}>
-            <NavigationContainer theme={navTheme}>{children}</NavigationContainer>
+            <RealtimeSync>
+              <NavigationContainer ref={navigationRef} theme={navTheme}>
+                {children}
+              </NavigationContainer>
+            </RealtimeSync>
           </QueryClientProvider>
         </PaperProvider>
       </SafeAreaView>

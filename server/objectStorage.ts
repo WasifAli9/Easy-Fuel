@@ -9,10 +9,10 @@ import {
   getObjectAclPolicy,
   setObjectAclPolicy,
 } from "./objectAcl";
-import { supabaseAdmin } from "./supabase";
+import { buildS3ObjectPath, getDefaultBucket } from "./s3-storage";
 
 const REPLIT_SIDECAR_ENDPOINT = "http://127.0.0.1:1106";
-const USE_SUPABASE_STORAGE = process.env.USE_SUPABASE_STORAGE === "true" || !process.env.REPL_ID;
+const OBJECT_STORAGE_PROVIDER = (process.env.OBJECT_STORAGE_PROVIDER || "local").toLowerCase();
 
 export const objectStorageClient = new Storage({
   credentials: {
@@ -117,9 +117,12 @@ export class ObjectStorageService {
 
   async getObjectEntityUploadURL(): Promise<string> {
     try {
-      // Use Supabase Storage if not on Replit or if explicitly enabled
-      if (USE_SUPABASE_STORAGE) {
-        return await this.getSupabaseUploadURL();
+      if (OBJECT_STORAGE_PROVIDER === "s3" || OBJECT_STORAGE_PROVIDER === "minio") {
+        return `s3://${getDefaultBucket()}/${buildS3ObjectPath()}`;
+      }
+      if (OBJECT_STORAGE_PROVIDER === "local") {
+        const objectId = randomUUID();
+        return `local://uploads/${objectId}`;
       }
       
       const privateObjectDir = this.getPrivateObjectDir();
@@ -149,27 +152,7 @@ export class ObjectStorageService {
       });
     } catch (error: any) {
       console.error("Error in getObjectEntityUploadURL:", error);
-      // If Replit sidecar fails and we haven't tried Supabase, fallback to Supabase
-      if (!USE_SUPABASE_STORAGE && (error.message?.includes("Cannot connect to Replit") || error.message?.includes("ECONNREFUSED"))) {
-        console.log("Replit sidecar unavailable, falling back to Supabase Storage");
-        return await this.getSupabaseUploadURL();
-      }
       throw error;
-    }
-  }
-
-  private async getSupabaseUploadURL(): Promise<string> {
-    try {
-      const bucketName = process.env.SUPABASE_STORAGE_BUCKET || "private-objects";
-      const objectId = randomUUID();
-      const objectPath = `uploads/${objectId}`;
-      
-      // Return a special format that indicates Supabase Storage should be used
-      // The client will upload to our server endpoint which will handle Supabase Storage
-      return `supabase://${bucketName}/${objectPath}`;
-    } catch (error: any) {
-      console.error("Error in getSupabaseUploadURL:", error);
-      throw new Error(`Failed to generate Supabase upload URL: ${error.message || "Unknown error"}`);
     }
   }
 

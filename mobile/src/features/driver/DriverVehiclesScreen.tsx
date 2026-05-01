@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { FlatList, Linking, ScrollView, StyleSheet, View } from "react-native";
+import { Linking, ScrollView, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as DocumentPicker from "expo-document-picker";
 import {
@@ -394,115 +394,113 @@ export function DriverVehiclesScreen() {
 
   return (
     <View style={styles.container}>
-      <Card style={styles.headerCard}>
-        <Card.Content>
-          <Text variant="headlineSmall">Fleet company</Text>
-          <Text style={styles.subtitle}>
-            Work independently or link your account to one fleet company.
-          </Text>
+      <ScrollView contentContainerStyle={styles.pageContent}>
+        <Card style={styles.headerCard}>
+          <Card.Content>
+            <Text variant="headlineSmall">Fleet company</Text>
+            <Text style={styles.subtitle}>
+              Work independently or link your account to one fleet company.
+            </Text>
 
-          {membershipQuery.data?.isDisabledByCompany ? (
-            <Banner visible icon="alert-circle">
-              {membershipQuery.data.disabledReason ||
-                "You are disabled by your fleet company. Switch to independent to continue receiving jobs."}
-            </Banner>
-          ) : null}
+            {membershipQuery.data?.isDisabledByCompany ? (
+              <Banner visible icon="alert-circle">
+                {membershipQuery.data.disabledReason ||
+                  "You are disabled by your fleet company. Switch to independent to continue receiving jobs."}
+              </Banner>
+            ) : null}
 
-          <RadioButton.Group onValueChange={(v) => setWorkMode(v as "independent" | "company")} value={workMode}>
-            <View style={styles.modeCard}>
-              <View style={styles.modeRow}>
-                <RadioButton value="independent" />
-                <View style={{ flex: 1 }}>
-                  <Text variant="titleSmall">Work independently</Text>
-                  <Text style={styles.meta}>Take platform jobs without a fleet company link.</Text>
+            <RadioButton.Group onValueChange={(v) => setWorkMode(v as "independent" | "company")} value={workMode}>
+              <View style={styles.modeCard}>
+                <View style={styles.modeRow}>
+                  <RadioButton value="independent" />
+                  <View style={{ flex: 1 }}>
+                    <Text variant="titleSmall">Work independently</Text>
+                    <Text style={styles.meta}>Take platform jobs without a fleet company link.</Text>
+                  </View>
                 </View>
               </View>
-            </View>
 
-            <View style={styles.modeCard}>
-              <View style={styles.modeRow}>
-                <RadioButton value="company" />
-                <View style={{ flex: 1 }}>
-                  <Text variant="titleSmall">Work under a fleet company</Text>
-                  <Text style={styles.meta}>
-                    Link your account to one company. They can view your deliveries and control fleet access.
-                  </Text>
+              <View style={styles.modeCard}>
+                <View style={styles.modeRow}>
+                  <RadioButton value="company" />
+                  <View style={{ flex: 1 }}>
+                    <Text variant="titleSmall">Work under a fleet company</Text>
+                    <Text style={styles.meta}>
+                      Link your account to one company. They can view your deliveries and control fleet access.
+                    </Text>
+                  </View>
                 </View>
               </View>
-            </View>
-          </RadioButton.Group>
+            </RadioButton.Group>
 
-          {workMode === "company" ? (
-            <View style={styles.companyPickerWrap}>
-              <TextInput
-                mode="outlined"
-                label="Search companies"
-                value={companySearch}
-                onChangeText={setCompanySearch}
-                style={styles.input}
-              />
-              <View style={styles.companyList}>
-                {(companiesQuery.data ?? []).slice(0, 8).map((company) => {
-                  const selected = selectedCompanyId === company.id;
-                  return (
-                    <Button
-                      key={company.id}
-                      mode={selected ? "contained" : "outlined"}
-                      buttonColor={selected ? theme.colors.primary : undefined}
-                      textColor={selected ? theme.colors.onPrimary : theme.colors.primary}
-                      onPress={() => setSelectedCompanyId(company.id)}
-                      style={styles.companyBtn}
-                    >
-                      {company.name}
-                    </Button>
-                  );
-                })}
-                {!companiesQuery.isLoading && (companiesQuery.data ?? []).length === 0 ? (
-                  <Text style={styles.meta}>No companies found.</Text>
-                ) : null}
+            {workMode === "company" ? (
+              <View style={styles.companyPickerWrap}>
+                <TextInput
+                  mode="outlined"
+                  label="Search companies"
+                  value={companySearch}
+                  onChangeText={setCompanySearch}
+                  style={styles.input}
+                />
+                <View style={styles.companyList}>
+                  {(companiesQuery.data ?? []).slice(0, 8).map((company) => {
+                    const selected = selectedCompanyId === company.id;
+                    return (
+                      <Button
+                        key={company.id}
+                        mode={selected ? "contained" : "outlined"}
+                        buttonColor={selected ? theme.colors.primary : undefined}
+                        textColor={selected ? theme.colors.onPrimary : theme.colors.primary}
+                        onPress={() => setSelectedCompanyId(company.id)}
+                        style={styles.companyBtn}
+                      >
+                        {company.name}
+                      </Button>
+                    );
+                  })}
+                  {!companiesQuery.isLoading && (companiesQuery.data ?? []).length === 0 ? (
+                    <Text style={styles.meta}>No companies found.</Text>
+                  ) : null}
+                </View>
               </View>
-            </View>
-          ) : null}
+            ) : null}
 
-          <Button
-            mode="contained"
-            buttonColor={theme.colors.primary}
-            textColor={theme.colors.onPrimary}
-            style={styles.mt12}
-            onPress={() => saveMembershipMutation.mutate()}
-            loading={saveMembershipMutation.isPending}
-          >
-            Save fleet settings
-          </Button>
-        </Card.Content>
-      </Card>
+            <Button
+              mode="contained"
+              buttonColor={theme.colors.primary}
+              textColor={theme.colors.onPrimary}
+              style={styles.mt12}
+              onPress={() => saveMembershipMutation.mutate()}
+              loading={saveMembershipMutation.isPending}
+            >
+              Save fleet settings
+            </Button>
+          </Card.Content>
+        </Card>
 
-      <Card style={styles.headerCard}>
-        <Card.Content>
-          <Text variant="headlineSmall">My Vehicles</Text>
-          <Text style={styles.subtitle}>View and manage your delivery vehicles.</Text>
-          <Button mode="contained" style={styles.addBtn} onPress={() => setShowAdd(true)}>
-            Add Vehicle
-          </Button>
-        </Card.Content>
-      </Card>
+        <Card style={styles.headerCard}>
+          <Card.Content>
+            <Text variant="headlineSmall">My Vehicles</Text>
+            <Text style={styles.subtitle}>View and manage your delivery vehicles.</Text>
+            <Button mode="contained" style={styles.addBtn} onPress={() => setShowAdd(true)}>
+              Add Vehicle
+            </Button>
+          </Card.Content>
+        </Card>
 
-      {vehiclesQuery.isLoading ? (
-        <View style={styles.center}>
-          <ActivityIndicator />
-        </View>
-      ) : vehiclesQuery.isError ? (
-        <View style={styles.center}>
-          <Text>Could not load vehicles.</Text>
-        </View>
-      ) : (
-        <FlatList
-          data={vehicles}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.list}
-          ListEmptyComponent={<Text style={styles.empty}>No vehicles yet. Add your first vehicle.</Text>}
-          renderItem={({ item }) => (
-            <Card style={styles.vehicleCard}>
+        {vehiclesQuery.isLoading ? (
+          <View style={styles.center}>
+            <ActivityIndicator />
+          </View>
+        ) : vehiclesQuery.isError ? (
+          <View style={styles.center}>
+            <Text>Could not load vehicles.</Text>
+          </View>
+        ) : vehicles.length === 0 ? (
+          <Text style={styles.empty}>No vehicles yet. Add your first vehicle.</Text>
+        ) : (
+          vehicles.map((item) => (
+            <Card key={item.id} style={styles.vehicleCard}>
               <Card.Content>
                 <Text variant="titleMedium">{item.registrationNumber || "Unnamed vehicle"}</Text>
                 <Text style={styles.meta}>
@@ -530,9 +528,9 @@ export function DriverVehiclesScreen() {
                 </Button>
               </Card.Content>
             </Card>
-          )}
-        />
-      )}
+          ))
+        )}
+      </ScrollView>
 
       <Portal>
         <Dialog visible={showAdd} onDismiss={() => setShowAdd(false)} style={styles.dialog}>
@@ -631,6 +629,10 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
     gap: 10,
     paddingBottom: 20,
   },
+  pageContent: {
+    gap: 10,
+    paddingBottom: 20,
+  },
   empty: {
     textAlign: "center",
     color: theme.colors.onSurfaceVariant,
@@ -638,6 +640,7 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
   },
   vehicleCard: {
     backgroundColor: theme.colors.surface,
+    borderRadius: 0,
   },
   meta: {
     marginTop: 4,

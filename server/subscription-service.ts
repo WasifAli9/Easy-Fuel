@@ -3,7 +3,7 @@
  * Radius limits are read from app_settings (admin-editable) with code defaults as fallback.
  */
 
-import { supabaseAdmin } from "./supabase";
+import { db } from "./db";
 import {
   getPlan,
   RADIUS_MILES,
@@ -11,6 +11,8 @@ import {
   type SubscriptionPlan,
   type RadiusTier,
 } from "@shared/subscription-plans";
+import { appSettings, driverSubscriptions } from "@shared/schema";
+import { and, desc, eq, gte } from "drizzle-orm";
 
 export interface ActiveSubscriptionResult {
   subscriptionId: string;
@@ -29,30 +31,34 @@ export interface ActiveSubscriptionResult {
 export async function getDriverActiveSubscription(
   driverId: string
 ): Promise<ActiveSubscriptionResult | null> {
-  const today = new Date().toISOString().split("T")[0];
-  const { data: sub, error } = await supabaseAdmin
-    .from("driver_subscriptions")
-    .select("id, driver_id, plan_code, status, current_period_start, current_period_end, next_billing_at")
-    .eq("driver_id", driverId)
-    .eq("status", "active")
-    .gte("current_period_end", today)
-    .order("current_period_end", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error || !sub) return null;
-  const plan = getPlan(sub.plan_code);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const rows = await db
+    .select()
+    .from(driverSubscriptions)
+    .where(
+      and(
+        eq(driverSubscriptions.driverId, driverId),
+        eq(driverSubscriptions.status, "active"),
+        gte(driverSubscriptions.currentPeriodEnd, today),
+      ),
+    )
+    .orderBy(desc(driverSubscriptions.currentPeriodEnd))
+    .limit(1);
+  const sub = rows[0];
+  if (!sub) return null;
+  const plan = getPlan(sub.planCode);
   if (!plan) return null;
 
   return {
     subscriptionId: sub.id,
-    driverId: sub.driver_id,
-    planCode: sub.plan_code as PlanCode,
+    driverId: sub.driverId,
+    planCode: sub.planCode as PlanCode,
     plan,
     status: sub.status,
-    currentPeriodStart: sub.current_period_start,
-    currentPeriodEnd: sub.current_period_end,
-    nextBillingAt: sub.next_billing_at,
+    currentPeriodStart: sub.currentPeriodStart ? sub.currentPeriodStart.toISOString() : null,
+    currentPeriodEnd: sub.currentPeriodEnd ? sub.currentPeriodEnd.toISOString() : null,
+    nextBillingAt: sub.nextBillingAt ? sub.nextBillingAt.toISOString() : null,
   };
 }
 
@@ -67,13 +73,20 @@ export async function getDriverSubscription(driverId: string): Promise<{
   if (active)
     return { subscription: active, latestRow: { id: active.subscriptionId, plan_code: active.planCode, status: active.status, next_billing_at: active.nextBillingAt, current_period_start: active.currentPeriodStart, current_period_end: active.currentPeriodEnd } };
 
-  const { data: row } = await supabaseAdmin
-    .from("driver_subscriptions")
-    .select("id, plan_code, status, next_billing_at, current_period_start, current_period_end")
-    .eq("driver_id", driverId)
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const rows = await db
+    .select({
+      id: driverSubscriptions.id,
+      plan_code: driverSubscriptions.planCode,
+      status: driverSubscriptions.status,
+      next_billing_at: driverSubscriptions.nextBillingAt,
+      current_period_start: driverSubscriptions.currentPeriodStart,
+      current_period_end: driverSubscriptions.currentPeriodEnd,
+    })
+    .from(driverSubscriptions)
+    .where(eq(driverSubscriptions.driverId, driverId))
+    .orderBy(desc(driverSubscriptions.updatedAt))
+    .limit(1);
+  const row = rows[0];
 
   if (!row) return { subscription: null, latestRow: null };
   const plan = getPlan(row.plan_code);
@@ -83,25 +96,30 @@ export async function getDriverSubscription(driverId: string): Promise<{
       id: row.id,
       plan_code: row.plan_code,
       status: row.status,
-      next_billing_at: row.next_billing_at,
-      current_period_start: row.current_period_start,
-      current_period_end: row.current_period_end,
+      next_billing_at: row.next_billing_at ? row.next_billing_at.toISOString() : null,
+      current_period_start: row.current_period_start ? row.current_period_start.toISOString() : null,
+      current_period_end: row.current_period_end ? row.current_period_end.toISOString() : null,
     },
   };
 }
 
 /** Get radius limits from app_settings (admin-editable); fallback to RADIUS_MILES if columns missing. */
 export async function getSubscriptionRadiusMiles(): Promise<Record<RadiusTier, number>> {
-  const { data: row } = await supabaseAdmin
-    .from("app_settings")
-    .select("driver_radius_standard_miles, driver_radius_extended_miles, driver_radius_unlimited_miles")
-    .eq("id", 1)
-    .maybeSingle();
+  const rows = await db
+    .select({
+      driverRadiusStandardMiles: appSettings.driverRadiusStandardMiles,
+      driverRadiusExtendedMiles: appSettings.driverRadiusExtendedMiles,
+      driverRadiusUnlimitedMiles: appSettings.driverRadiusUnlimitedMiles,
+    })
+    .from(appSettings)
+    .where(eq(appSettings.id, 1))
+    .limit(1);
+  const row = rows[0];
 
   return {
-    standard: row?.driver_radius_standard_miles ?? RADIUS_MILES.standard,
-    extended: row?.driver_radius_extended_miles ?? RADIUS_MILES.extended,
-    unlimited: row?.driver_radius_unlimited_miles ?? RADIUS_MILES.unlimited,
+    standard: row?.driverRadiusStandardMiles ?? RADIUS_MILES.standard,
+    extended: row?.driverRadiusExtendedMiles ?? RADIUS_MILES.extended,
+    unlimited: row?.driverRadiusUnlimitedMiles ?? RADIUS_MILES.unlimited,
   };
 }
 

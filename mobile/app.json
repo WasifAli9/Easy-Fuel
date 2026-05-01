@@ -16,7 +16,11 @@
       "package": "com.easyfuel.mobile",
       "permissions": [
         "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION"
+        "ACCESS_COARSE_LOCATION",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
       ]
     },
     "plugins": [
@@ -28,7 +32,11 @@
       "expo-font"
     ],
     "extra": {
-      "apiBaseUrl": "http://localhost:5002"
-    }
+      "apiBaseUrl": "http://localhost:5002",
+      "eas": {
+        "projectId": "84b0d361-c107-4a26-8a03-5f01d4ae72f5"
+      }
+    },
+    "owner": "wasifali9"
   }
 }

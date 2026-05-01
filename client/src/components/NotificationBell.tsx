@@ -30,6 +30,7 @@ import { formatDistanceToNow } from "date-fns";
 import { useEffect, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import type { LucideIcon } from "lucide-react";
+import { useLocation } from "wouter";
 
 function getNotificationIcon(type: string): LucideIcon {
   const iconMap: Record<string, LucideIcon> = {
@@ -82,7 +83,7 @@ function NotificationItem({
   onRead,
 }: {
   notification: Notification;
-  onRead: (id: string) => void;
+  onRead: () => void;
 }) {
   const IconComponent = getNotificationIcon(notification.type);
   const priorityColor = getPriorityColor(notification.type);
@@ -95,7 +96,7 @@ function NotificationItem({
       className={`p-3 hover-elevate active-elevate-2 cursor-pointer transition-colors rounded-md ${
         !notification.read ? "bg-accent/20" : ""
       }`}
-      onClick={() => onRead(notification.id)}
+      onClick={onRead}
       data-testid={`notification-item-${notification.id}`}
     >
       <div className="flex items-start gap-3">
@@ -125,6 +126,7 @@ export function NotificationBell() {
   const { notifications, unreadCount, markAsRead, markAllAsRead, latestNotification } = useNotifications();
   const [isOpen, setIsOpen] = useState(false);
   const { toast } = useToast();
+  const [location, setLocation] = useLocation();
 
   // Show toast for new notifications when not viewing the popover
   useEffect(() => {
@@ -137,8 +139,29 @@ export function NotificationBell() {
     }
   }, [latestNotification, isOpen, toast]);
 
-  const handleNotificationClick = (id: string) => {
-    markAsRead(id);
+  const handleNotificationClick = (notification: Notification) => {
+    markAsRead(notification.id);
+    const data = notification.data ?? {};
+    const action = String(data.action ?? "");
+    const orderId = data.orderId ?? data.order_id ?? data.entityId;
+    const threadId = data.threadId ?? data.thread_id;
+    if (action === "open_chat" && orderId) {
+      setLocation(`/driver-dashboard?orderId=${encodeURIComponent(String(orderId))}${threadId ? `&threadId=${encodeURIComponent(String(threadId))}` : ""}`);
+      return;
+    }
+    if ((action === "open_order" || action === "open_depot_order") && orderId) {
+      setLocation(`/customer-dashboard?orderId=${encodeURIComponent(String(orderId))}`);
+      return;
+    }
+    if (location.includes("supplier")) {
+      setLocation("/supplier-dashboard");
+    } else if (location.includes("driver")) {
+      setLocation("/driver-dashboard");
+    } else if (location.includes("admin")) {
+      setLocation("/admin-dashboard");
+    } else {
+      setLocation("/customer-dashboard");
+    }
   };
 
   const handleMarkAllAsRead = () => {
@@ -195,7 +218,7 @@ export function NotificationBell() {
                 <div key={notification.id}>
                   <NotificationItem
                     notification={notification}
-                    onRead={handleNotificationClick}
+                    onRead={() => handleNotificationClick(notification)}
                   />
                   {index < notifications.length - 1 && <Separator />}
                 </div>

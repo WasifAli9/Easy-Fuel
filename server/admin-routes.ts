@@ -1,5 +1,17 @@
 import { Router } from "express";
-import { supabaseAdmin } from "./supabase";
+import { randomUUID } from "crypto";
+import bcrypt from "bcryptjs";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import {
+  appSettings,
+  customers,
+  documents,
+  drivers,
+  profiles,
+  suppliers,
+  vehicles,
+} from "@shared/schema";
+import { db, pool } from "./db";
 import { ObjectStorageService } from "./objectStorage";
 import { getDriverComplianceStatus, getSupplierComplianceStatus } from "./compliance-service";
 import { websocketService } from "./websocket";
@@ -7,40 +19,374 @@ import { websocketService } from "./websocket";
 const router = Router();
 const objectStorageService = new ObjectStorageService();
 
+async function getLocalAuthUserById(userId: string): Promise<{ id: string; email: string } | null> {
+  const result = await pool.query(`SELECT id::text, email FROM local_auth_users WHERE id = $1 LIMIT 1`, [
+    userId,
+  ]);
+  return result.rows[0] ?? null;
+}
+
+async function getLocalAuthEmailsByIds(userIds: string[]): Promise<Map<string, string>> {
+  const ids = Array.from(new Set((userIds || []).filter(Boolean)));
+  if (ids.length === 0) return new Map();
+  const result = await pool.query(
+    `SELECT id::text, email FROM local_auth_users WHERE id = ANY($1::uuid[])`,
+    [ids],
+  );
+  return new Map(result.rows.map((row: { id: string; email: string }) => [row.id, row.email]));
+}
+
+function getRowUserId(row: any): string | null {
+  return row?.user_id ?? row?.userId ?? row?.owner_id ?? row?.ownerId ?? null;
+}
+
+function getRowCreatedAt(row: any): string | null {
+  return row?.created_at ?? row?.createdAt ?? null;
+}
+
+const tableMap = {
+  app_settings: appSettings,
+  customers,
+  documents,
+  drivers,
+  profiles,
+  suppliers,
+  vehicles,
+} as const;
+
+type TableName = keyof typeof tableMap;
+type Predicate = ReturnType<typeof eq>;
+
+function getTable(tableName: string) {
+  const table = tableMap[tableName as TableName];
+  if (!table) {
+    throw new Error(`Unsupported table in admin adapter: ${tableName}`);
+  }
+  return table as any;
+}
+
+function getColumn(table: any, columnName: string) {
+  const found = Object.values(table).find(
+    (col: any) => col && typeof col === "object" && col.name === columnName,
+  );
+  if (!found) {
+    throw new Error(`Unknown column '${columnName}'`);
+  }
+  return found as any;
+}
+
+function getColumnEntry(table: any, columnName: string): [string, any] | null {
+  if (!table) return null;
+  const entries = Object.entries(table) as Array<[string, any]>;
+  const direct = entries.find(([key]) => key === columnName);
+  if (direct) return direct;
+  const camel = columnName.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+  const byCamel = entries.find(([key]) => key === camel);
+  if (byCamel) return byCamel;
+  const byDbName = entries.find(([, col]) => col?.name === columnName);
+  return byDbName ?? null;
+}
+
+function mapDataToTableShape(table: any, payload: Record<string, unknown>) {
+  const mapped: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(payload ?? {})) {
+    const entry = getColumnEntry(table, key);
+    if (!entry) continue;
+    mapped[entry[0]] = value;
+  }
+  return mapped;
+}
+
+function pickColumns(table: any, selectClause?: string) {
+  if (!selectClause || selectClause.trim() === "*") return undefined;
+  const cols = selectClause.split(",").map((c) => c.trim()).filter(Boolean);
+  const selected: Record<string, any> = {};
+  for (const colName of cols) {
+    selected[colName] = getColumn(table, colName);
+  }
+  return selected;
+}
+
+function notFoundError() {
+  return { code: "PGRST116", message: "No rows found" };
+}
+
+function wrapError(error: unknown) {
+  if (error && typeof error === "object" && "message" in error) {
+    return error;
+  }
+  return { message: "Unknown database error" };
+}
+
+function createFrom(tableName: string) {
+  const table = getTable(tableName);
+
+  const wherePredicates: Predicate[] = [];
+  let orderByClause: any | undefined;
+  let isSingle = false;
+  let isMaybeSingle = false;
+  let returnSelection: string | undefined;
+
+  const applyCommonQuery = <T>(query: T & { where: any; orderBy: any; limit: any }) => {
+    let q = query;
+    if (wherePredicates.length > 0) q = q.where(and(...wherePredicates));
+    if (orderByClause) q = q.orderBy(orderByClause);
+    if (isSingle || isMaybeSingle) q = q.limit(1);
+    return q;
+  };
+
+  const runSelect = async () => {
+    try {
+      const selected = pickColumns(table, returnSelection);
+      const baseQuery = selected ? db.select(selected).from(table) : db.select().from(table);
+      const rows = await applyCommonQuery(baseQuery);
+      if (isSingle) {
+        const row = rows[0];
+        if (!row) return { data: null, error: notFoundError() };
+        return { data: row, error: null };
+      }
+      if (isMaybeSingle) {
+        return { data: rows[0] || null, error: null };
+      }
+      return { data: rows, error: null };
+    } catch (error) {
+      return { data: null, error: wrapError(error) };
+    }
+  };
+
+  const runUpdate = (updateData: Record<string, unknown>) => {
+    const updateBuilder = {
+      eq(columnName: string, value: unknown) {
+        wherePredicates.push(eq(getColumn(table, columnName), value as any));
+        return updateBuilder;
+      },
+      select(selectClause?: string) {
+        returnSelection = selectClause;
+        return updateBuilder;
+      },
+      single() {
+        isSingle = true;
+        return runUpdateInternal();
+      },
+      maybeSingle() {
+        isMaybeSingle = true;
+        return runUpdateInternal();
+      },
+      then(resolve: any, reject: any) {
+        return runUpdateInternal().then(resolve, reject);
+      },
+    };
+
+    const runUpdateInternal = async () => {
+      try {
+        const selected = pickColumns(table, returnSelection) ?? undefined;
+        const mappedUpdateData = mapDataToTableShape(table, updateData);
+        if (Object.keys(mappedUpdateData).length === 0) {
+          return { data: null, error: wrapError(new Error("No valid columns provided for update")) };
+        }
+        let query = db.update(table).set(mappedUpdateData as any);
+        if (wherePredicates.length > 0) {
+          query = query.where(and(...wherePredicates)) as any;
+        }
+        const updatedRows = await (query as any).returning(selected);
+        if (isSingle) {
+          const row = updatedRows[0];
+          if (!row) return { data: null, error: notFoundError() };
+          return { data: row, error: null };
+        }
+        if (isMaybeSingle) {
+          return { data: updatedRows[0] || null, error: null };
+        }
+        return { data: updatedRows, error: null };
+      } catch (error) {
+        return { data: null, error: wrapError(error) };
+      }
+    };
+
+    return updateBuilder;
+  };
+
+  const runInsert = (values: Record<string, unknown> | Record<string, unknown>[]) => {
+    const insertBuilder = {
+      select(selectClause?: string) {
+        returnSelection = selectClause;
+        return insertBuilder;
+      },
+      single() {
+        isSingle = true;
+        return runInsertInternal();
+      },
+      then(resolve: any, reject: any) {
+        return runInsertInternal().then(resolve, reject);
+      },
+    };
+
+    const runInsertInternal = async () => {
+      try {
+        const selected = pickColumns(table, returnSelection) ?? undefined;
+        const inserted = await db
+          .insert(table)
+          .values(values as any)
+          .returning(selected);
+        if (isSingle) {
+          return { data: inserted[0] || null, error: inserted[0] ? null : notFoundError() };
+        }
+        return { data: inserted, error: null };
+      } catch (error) {
+        return { data: null, error: wrapError(error) };
+      }
+    };
+
+    return insertBuilder;
+  };
+
+  const runDelete = () => {
+    const deleteBuilder = {
+      eq(columnName: string, value: unknown) {
+        wherePredicates.push(eq(getColumn(table, columnName), value as any));
+        return deleteBuilder;
+      },
+      then(resolve: any, reject: any) {
+        return runDeleteInternal().then(resolve, reject);
+      },
+    };
+
+    const runDeleteInternal = async () => {
+      try {
+        await db
+          .delete(table)
+          .where(wherePredicates.length > 0 ? and(...wherePredicates) : undefined as any);
+        return { error: null };
+      } catch (error) {
+        return { error: wrapError(error) };
+      }
+    };
+
+    return deleteBuilder;
+  };
+
+  const runUpsert = (values: Record<string, unknown>, opts?: { onConflict?: string }) => {
+    const upsertBuilder = {
+      select(selectClause?: string) {
+        returnSelection = selectClause;
+        return upsertBuilder;
+      },
+      single() {
+        isSingle = true;
+        return runUpsertInternal();
+      },
+      then(resolve: any, reject: any) {
+        return runUpsertInternal().then(resolve, reject);
+      },
+    };
+
+    const runUpsertInternal = async () => {
+      try {
+        const conflictColumn = opts?.onConflict ? getColumn(table, opts.onConflict) : undefined;
+        const selected = pickColumns(table, returnSelection) ?? undefined;
+        const inserted = await db
+          .insert(table)
+          .values(values as any)
+          .onConflictDoUpdate({
+            target: conflictColumn,
+            set: values as any,
+          })
+          .returning(selected);
+        if (isSingle) {
+          return { data: inserted[0] || null, error: inserted[0] ? null : notFoundError() };
+        }
+        return { data: inserted, error: null };
+      } catch (error) {
+        return { data: null, error: wrapError(error) };
+      }
+    };
+
+    return upsertBuilder;
+  };
+
+  return {
+    select(selectClause?: string) {
+      returnSelection = selectClause;
+      return this;
+    },
+    eq(columnName: string, value: unknown) {
+      wherePredicates.push(eq(getColumn(table, columnName), value as any));
+      return this;
+    },
+    in(columnName: string, values: unknown[]) {
+      wherePredicates.push(inArray(getColumn(table, columnName), values as any[]));
+      return this;
+    },
+    order(columnName: string, opts?: { ascending?: boolean }) {
+      orderByClause = (opts?.ascending ?? true)
+        ? asc(getColumn(table, columnName))
+        : desc(getColumn(table, columnName));
+      return this;
+    },
+    single() {
+      isSingle = true;
+      return runSelect();
+    },
+    maybeSingle() {
+      isMaybeSingle = true;
+      return runSelect();
+    },
+    update(updateData: Record<string, unknown>) {
+      return runUpdate(updateData);
+    },
+    insert(values: Record<string, unknown> | Record<string, unknown>[]) {
+      return runInsert(values);
+    },
+    delete() {
+      return runDelete();
+    },
+    upsert(values: Record<string, unknown>, opts?: { onConflict?: string }) {
+      return runUpsert(values, opts);
+    },
+    then(resolve: any, reject: any) {
+      return runSelect().then(resolve, reject);
+    },
+  };
+}
+
+const adminDb = {
+  from(tableName: string) {
+    return createFrom(tableName);
+  },
+};
+
 // Get all users with their profiles and role-specific data
 router.get("/users", async (req, res) => {
   try {
     // Fetch all profiles with joined data
-    const { data: profilesData, error: profilesError } = await supabaseAdmin
+    const { data: profilesData, error: profilesError } = await adminDb
       .from("profiles")
       .select("*")
       .order("created_at", { ascending: false });
 
     if (profilesError) throw profilesError;
 
-    // Fetch auth users for email
-    const { data: { users }, error: authError } = await supabaseAdmin.auth.admin.listUsers();
-    if (authError) throw authError;
+    // Fetch local auth users for email
+    const authEmailById = await getLocalAuthEmailsByIds((profilesData || []).map((p: any) => p.id));
 
     // Fetch drivers
-    const { data: driversData } = await supabaseAdmin.from("drivers").select("*");
+    const { data: driversData } = await adminDb.from("drivers").select("*");
     
     // Fetch suppliers
-    const { data: suppliersData } = await supabaseAdmin.from("suppliers").select("*");
+    const { data: suppliersData } = await adminDb.from("suppliers").select("*");
     
     // Fetch customers
-    const { data: customersData } = await supabaseAdmin.from("customers").select("*");
+    const { data: customersData } = await adminDb.from("customers").select("*");
 
     // Combine data
     const usersWithDetails = profilesData?.map(profile => {
-      const authUser = users.find(u => u.id === profile.id);
       const driver = driversData?.find(d => d.user_id === profile.id);
       const supplier = suppliersData?.find(s => s.owner_id === profile.id);
       const customer = customersData?.find(c => c.user_id === profile.id);
 
       return {
         id: profile.id,
-        email: authUser?.email,
+        email: authEmailById.get(profile.id) || null,
         role: profile.role,
         full_name: profile.full_name,
         phone: profile.phone,
@@ -61,7 +407,7 @@ router.get("/users", async (req, res) => {
 // Get all customers
 router.get("/customers", async (req, res) => {
   try {
-    const { data: customers, error } = await supabaseAdmin
+    const { data: customers, error } = await adminDb
       .from("customers")
       .select("*")
       .order("created_at", { ascending: false });
@@ -71,41 +417,49 @@ router.get("/customers", async (req, res) => {
     // Fetch profiles and emails for customers
     const customersWithProfiles = await Promise.all(
       (customers || []).map(async (customer) => {
+        const customerUserId = getRowUserId(customer);
         // Try to fetch profile with profile_photo_url, fallback to without if column doesn't exist
         let profile = null;
-        const { data, error } = await supabaseAdmin
-          .from("profiles")
-          .select("id, full_name, phone, role, profile_photo_url")
-          .eq("id", customer.user_id)
-          .single();
+        const { data, error } = customerUserId
+          ? await adminDb
+              .from("profiles")
+              .select("id, full_name, phone, role, profile_photo_url")
+              .eq("id", customerUserId)
+              .maybeSingle()
+          : { data: null, error: null as any };
         
         if (error) {
           // If profile_photo_url column doesn't exist, fetch without it
           if (error.code === '42703') {
-            const { data: profileData } = await supabaseAdmin
+            const { data: profileData } = await adminDb
               .from("profiles")
               .select("id, full_name, phone, role")
-              .eq("id", customer.user_id)
-              .single();
+              .eq("id", customerUserId)
+              .maybeSingle();
             profile = profileData;
+          } else if (error.code === "PGRST116") {
+            // Missing profile row for this customer; keep response usable without noisy errors.
+            profile = null;
           } else {
-            console.error(`Failed to fetch profile for customer ${customer.user_id}:`, error);
+            console.error(`Failed to fetch profile for customer ${customerUserId}:`, error);
           }
         } else {
           profile = data;
         }
         
-        // Fetch email from Supabase Auth
+        // Fetch email from local auth table
         let email = null;
         try {
-          const { data: authData } = await supabaseAdmin.auth.admin.getUserById(customer.user_id);
-          email = authData?.user?.email || null;
+          const authUser = customerUserId ? await getLocalAuthUserById(customerUserId) : null;
+          email = authUser?.email || null;
         } catch (e) {
-          console.error(`Failed to fetch email for customer ${customer.user_id}:`, e);
+          console.error(`Failed to fetch email for customer ${customerUserId}:`, e);
         }
         
         return {
           ...customer,
+          user_id: customerUserId,
+          created_at: getRowCreatedAt(customer),
           profiles: profile ? { ...profile, email } : null,
         };
       })
@@ -121,7 +475,7 @@ router.get("/customers", async (req, res) => {
 // Get all suppliers
 router.get("/suppliers", async (req, res) => {
   try {
-    const { data: suppliers, error } = await supabaseAdmin
+    const { data: suppliers, error } = await adminDb
       .from("suppliers")
       .select("*");
 
@@ -130,41 +484,48 @@ router.get("/suppliers", async (req, res) => {
     // Fetch profiles and emails for suppliers
     const suppliersWithProfiles = await Promise.all(
       (suppliers || []).map(async (supplier) => {
+        const supplierUserId = getRowUserId(supplier);
         // Try to fetch profile with profile_photo_url, fallback to without if column doesn't exist
         let profile = null;
-        const { data, error } = await supabaseAdmin
-          .from("profiles")
-          .select("id, full_name, phone, role, profile_photo_url")
-          .eq("id", supplier.owner_id)
-          .single();
+        const { data, error } = supplierUserId
+          ? await adminDb
+              .from("profiles")
+              .select("id, full_name, phone, role, profile_photo_url")
+              .eq("id", supplierUserId)
+              .maybeSingle()
+          : { data: null, error: null as any };
         
         if (error) {
           // If profile_photo_url column doesn't exist, fetch without it
           if (error.code === '42703') {
-            const { data: profileData } = await supabaseAdmin
+            const { data: profileData } = await adminDb
               .from("profiles")
               .select("id, full_name, phone, role")
-              .eq("id", supplier.owner_id)
-              .single();
+              .eq("id", supplierUserId)
+              .maybeSingle();
             profile = profileData;
+          } else if (error.code === "PGRST116") {
+            profile = null;
           } else {
-            console.error(`Failed to fetch profile for supplier ${supplier.owner_id}:`, error);
+            console.error(`Failed to fetch profile for supplier ${supplierUserId}:`, error);
           }
         } else {
           profile = data;
         }
         
-        // Fetch email from Supabase Auth
+        // Fetch email from local auth table
         let email = null;
         try {
-          const { data: authData } = await supabaseAdmin.auth.admin.getUserById(supplier.owner_id);
-          email = authData?.user?.email || null;
+          const authUser = supplierUserId ? await getLocalAuthUserById(supplierUserId) : null;
+          email = authUser?.email || null;
         } catch (e) {
-          console.error(`Failed to fetch email for supplier ${supplier.owner_id}:`, e);
+          console.error(`Failed to fetch email for supplier ${supplierUserId}:`, e);
         }
         
         return {
           ...supplier,
+          owner_id: supplierUserId,
+          created_at: getRowCreatedAt(supplier),
           profiles: profile ? { ...profile, email } : null,
         };
       })
@@ -182,7 +543,7 @@ router.patch("/suppliers/:id", async (req, res) => {
   const { id } = req.params;
   const { account_manager_id, subscription_tier } = req.body || {};
   try {
-    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    const updates: Record<string, unknown> = { updated_at: new Date() };
     if (account_manager_id !== undefined) updates.account_manager_id = account_manager_id || null;
     if (subscription_tier !== undefined) updates.subscription_tier = subscription_tier || null;
 
@@ -190,7 +551,7 @@ router.patch("/suppliers/:id", async (req, res) => {
       return res.status(400).json({ error: "Provide at least one of account_manager_id, subscription_tier" });
     }
 
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await adminDb
       .from("suppliers")
       .update(updates)
       .eq("id", id)
@@ -209,7 +570,7 @@ router.patch("/suppliers/:id", async (req, res) => {
 // Get all drivers
 router.get("/drivers", async (req, res) => {
   try {
-    const { data: drivers, error } = await supabaseAdmin
+    const { data: drivers, error } = await adminDb
       .from("drivers")
       .select("*")
       .order("created_at", { ascending: false });
@@ -219,42 +580,47 @@ router.get("/drivers", async (req, res) => {
     // Fetch profiles, emails, and vehicles for drivers
     const driversWithProfiles = await Promise.all(
       (drivers || []).map(async (driver) => {
+        const driverUserId = getRowUserId(driver);
         // Try to fetch profile with profile_photo_url, fallback to without if column doesn't exist
         let profile = null;
-        const { data, error } = await supabaseAdmin
-          .from("profiles")
-          .select("id, full_name, phone, role, profile_photo_url")
-          .eq("id", driver.user_id)
-          .single();
+        const { data, error } = driverUserId
+          ? await adminDb
+              .from("profiles")
+              .select("id, full_name, phone, role, profile_photo_url")
+              .eq("id", driverUserId)
+              .maybeSingle()
+          : { data: null, error: null as any };
         
         if (error) {
           // If profile_photo_url column doesn't exist, fetch without it
           if (error.code === '42703') {
-            const { data: profileData } = await supabaseAdmin
+            const { data: profileData } = await adminDb
               .from("profiles")
               .select("id, full_name, phone, role")
-              .eq("id", driver.user_id)
-              .single();
+              .eq("id", driverUserId)
+              .maybeSingle();
             profile = profileData;
+          } else if (error.code === "PGRST116") {
+            profile = null;
           } else {
-            console.error(`Failed to fetch profile for driver ${driver.user_id}:`, error);
+            console.error(`Failed to fetch profile for driver ${driverUserId}:`, error);
           }
         } else {
           profile = data;
         }
         
-        // Fetch email from Supabase Auth
+        // Fetch email from local auth table
         let email = null;
         try {
-          const { data: authData } = await supabaseAdmin.auth.admin.getUserById(driver.user_id);
-          email = authData?.user?.email || null;
+          const authUser = driverUserId ? await getLocalAuthUserById(driverUserId) : null;
+          email = authUser?.email || null;
         } catch (e) {
-          console.error(`Failed to fetch email for driver ${driver.user_id}:`, e);
+          console.error(`Failed to fetch email for driver ${driverUserId}:`, e);
         }
         
         // Try to fetch vehicles (table may not exist yet)
         let vehicles: any[] = [];
-        const { data: vehiclesData, error: vehiclesError } = await supabaseAdmin
+        const { data: vehiclesData, error: vehiclesError } = await adminDb
           .from("vehicles")
           .select("id, registration_number, make, model, capacity_litres, fuel_types")
           .eq("driver_id", driver.id);
@@ -265,6 +631,8 @@ router.get("/drivers", async (req, res) => {
         
         return {
           ...driver,
+          user_id: driverUserId,
+          created_at: getRowCreatedAt(driver),
           profiles: profile ? { ...profile, email } : null,
           vehicles,
         };
@@ -282,7 +650,7 @@ router.get("/drivers", async (req, res) => {
 router.get("/kyc/pending", async (req, res) => {
   try {
     // Fetch pending drivers
-    const { data: pendingDrivers, error: driversError } = await supabaseAdmin
+    const { data: pendingDrivers, error: driversError } = await adminDb
       .from("drivers")
       .select("*")
       .eq("kyc_status", "pending");
@@ -290,7 +658,7 @@ router.get("/kyc/pending", async (req, res) => {
     if (driversError) throw driversError;
 
     // Fetch pending suppliers
-    const { data: pendingSuppliers, error: suppliersError } = await supabaseAdmin
+    const { data: pendingSuppliers, error: suppliersError } = await adminDb
       .from("suppliers")
       .select("*")
       .eq("kyb_status", "pending");
@@ -300,14 +668,19 @@ router.get("/kyc/pending", async (req, res) => {
     // Fetch profiles for drivers
     const driversWithProfiles = await Promise.all(
       (pendingDrivers || []).map(async (driver) => {
-        const { data: profile } = await supabaseAdmin
-          .from("profiles")
-          .select("id, full_name, phone")
-          .eq("id", driver.user_id)
-          .single();
+        const driverUserId = getRowUserId(driver);
+        const { data: profile } = driverUserId
+          ? await adminDb
+              .from("profiles")
+              .select("id, full_name, phone")
+              .eq("id", driverUserId)
+              .maybeSingle()
+          : { data: null as any };
         
         return {
           ...driver,
+          user_id: driverUserId,
+          created_at: getRowCreatedAt(driver),
           profiles: profile,
         };
       })
@@ -316,14 +689,19 @@ router.get("/kyc/pending", async (req, res) => {
     // Fetch profiles for suppliers
     const suppliersWithProfiles = await Promise.all(
       (pendingSuppliers || []).map(async (supplier) => {
-        const { data: profile } = await supabaseAdmin
-          .from("profiles")
-          .select("id, full_name, phone")
-          .eq("id", supplier.owner_id)
-          .single();
+        const supplierUserId = getRowUserId(supplier);
+        const { data: profile } = supplierUserId
+          ? await adminDb
+              .from("profiles")
+              .select("id, full_name, phone")
+              .eq("id", supplierUserId)
+              .maybeSingle()
+          : { data: null as any };
         
         return {
           ...supplier,
+          owner_id: supplierUserId,
+          created_at: getRowCreatedAt(supplier),
           profiles: profile,
         };
       })
@@ -346,7 +724,7 @@ router.post("/kyc/driver/:id/approve", async (req, res) => {
     const user = (req as any).user;
 
     // Get driver user_id before updating
-    const { data: driver } = await supabaseAdmin
+    const { data: driver } = await adminDb
       .from("drivers")
       .select("user_id")
       .eq("id", id)
@@ -354,16 +732,16 @@ router.post("/kyc/driver/:id/approve", async (req, res) => {
 
     console.log(`[KYC Approval] Updating driver ${id} with status: active, compliance_status: approved`);
     
-    const { data: updatedDriver, error } = await supabaseAdmin
+    const { data: updatedDriver, error } = await adminDb
       .from("drivers")
       .update({ 
         kyc_status: "approved",
         status: "active",
         compliance_status: "approved",
         compliance_reviewer_id: user.id,
-        compliance_review_date: new Date().toISOString(),
+        compliance_review_date: new Date(),
         compliance_rejection_reason: null,
-        updated_at: new Date().toISOString() 
+        updated_at: new Date() 
       })
       .eq("id", id)
       .select("id, user_id, status, compliance_status, kyc_status")
@@ -378,7 +756,7 @@ router.post("/kyc/driver/:id/approve", async (req, res) => {
     
     // Also update the profile's is_active field so admin portal shows correct status
     if (updatedDriver?.user_id) {
-      const { error: profileError } = await supabaseAdmin
+      const { error: profileError } = await adminDb
         .from("profiles")
         .update({ 
           is_active: true,
@@ -432,19 +810,19 @@ router.post("/kyc/driver/:id/reject", async (req, res) => {
     const { id } = req.params;
 
     // Get driver user_id before updating
-    const { data: driver } = await supabaseAdmin
+    const { data: driver } = await adminDb
       .from("drivers")
       .select("user_id")
       .eq("id", id)
       .single();
 
-    const { error } = await supabaseAdmin
+    const { error } = await adminDb
       .from("drivers")
       .update({ 
         kyc_status: "rejected",
         status: "rejected",
         compliance_status: "rejected",
-        updated_at: new Date().toISOString() 
+        updated_at: new Date() 
       })
       .eq("id", id);
 
@@ -452,7 +830,7 @@ router.post("/kyc/driver/:id/reject", async (req, res) => {
     
     // Also update the profile's is_active field
     if (driver?.user_id) {
-      await supabaseAdmin
+      await adminDb
         .from("profiles")
         .update({ 
           is_active: false,
@@ -501,7 +879,7 @@ router.post("/kyc/supplier/:id/approve", async (req, res) => {
     const user = (req as any).user;
 
     // Get supplier owner_id before updating
-    const { data: supplier } = await supabaseAdmin
+    const { data: supplier } = await adminDb
       .from("suppliers")
       .select("owner_id")
       .eq("id", id)
@@ -509,16 +887,16 @@ router.post("/kyc/supplier/:id/approve", async (req, res) => {
 
     console.log(`[KYC Approval] Updating supplier ${id} with status: active, compliance_status: approved`);
     
-    const { data: updatedSupplier, error } = await supabaseAdmin
+    const { data: updatedSupplier, error } = await adminDb
       .from("suppliers")
       .update({ 
         kyb_status: "approved",
         status: "active",
         compliance_status: "approved",
         compliance_reviewer_id: user.id,
-        compliance_review_date: new Date().toISOString(),
+        compliance_review_date: new Date(),
         compliance_rejection_reason: null,
-        updated_at: new Date().toISOString() 
+        updated_at: new Date() 
       })
       .eq("id", id)
       .select("id, owner_id, status, compliance_status, kyb_status")
@@ -534,7 +912,7 @@ router.post("/kyc/supplier/:id/approve", async (req, res) => {
     // Also update the profile's is_active field so admin portal shows correct status
     if (updatedSupplier?.owner_id) {
       console.log(`[KYC Approval] Updating profile ${updatedSupplier.owner_id} for supplier ${id}`);
-      const { data: updatedProfile, error: profileError } = await supabaseAdmin
+      const { data: updatedProfile, error: profileError } = await adminDb
         .from("profiles")
         .update({ 
           is_active: true,
@@ -595,19 +973,19 @@ router.post("/kyc/supplier/:id/reject", async (req, res) => {
     const { id } = req.params;
 
     // Get supplier owner_id before updating
-    const { data: supplier } = await supabaseAdmin
+    const { data: supplier } = await adminDb
       .from("suppliers")
       .select("owner_id")
       .eq("id", id)
       .single();
 
-    const { error } = await supabaseAdmin
+    const { error } = await adminDb
       .from("suppliers")
       .update({ 
         kyb_status: "rejected",
         status: "rejected",
         compliance_status: "rejected",
-        updated_at: new Date().toISOString() 
+        updated_at: new Date() 
       })
       .eq("id", id);
 
@@ -615,7 +993,7 @@ router.post("/kyc/supplier/:id/reject", async (req, res) => {
     
     // Also update the profile's is_active field
     if (supplier?.owner_id) {
-      await supabaseAdmin
+      await adminDb
         .from("profiles")
         .update({ 
           is_active: false,
@@ -667,11 +1045,14 @@ router.post("/users/:id/reset-password", async (req, res) => {
       return res.status(400).json({ error: "Password must be at least 6 characters" });
     }
 
-    const { error } = await supabaseAdmin.auth.admin.updateUserById(id, {
-      password: password,
-    });
-
-    if (error) throw error;
+    const passwordHash = await bcrypt.hash(password, 12);
+    const result = await pool.query(
+      `UPDATE local_auth_users SET password_hash = $2, updated_at = now() WHERE id = $1`,
+      [id, passwordHash],
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "User auth record not found" });
+    }
 
     res.json({ success: true, message: "Password reset successfully" });
   } catch (error: any) {
@@ -687,14 +1068,14 @@ router.patch("/users/:id/profile", async (req, res) => {
     const { full_name, phone, role } = req.body;
 
     const updateData: any = {
-      updated_at: new Date().toISOString(),
+      updated_at: new Date(),
     };
 
     if (full_name) updateData.full_name = full_name;
     if (phone) updateData.phone = phone;
     if (role) updateData.role = role;
 
-    const { error } = await supabaseAdmin
+    const { error } = await adminDb
       .from("profiles")
       .update(updateData)
       .eq("id", id);
@@ -733,23 +1114,17 @@ router.post("/users/create", async (req, res) => {
       return res.status(400).json({ error: "Company name is required for suppliers" });
     }
 
-    // 1. Create user in Supabase Auth
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: {
-        full_name,
-      },
-    });
-
-    if (authError) throw authError;
-    if (!authData.user) throw new Error("Failed to create user");
-
-    userId = authData.user.id;
+    // 1. Create user in local auth table
+    userId = randomUUID();
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const passwordHash = await bcrypt.hash(password, 12);
+    await pool.query(
+      `INSERT INTO local_auth_users (id, email, password_hash) VALUES ($1, $2, $3)`,
+      [userId, normalizedEmail, passwordHash],
+    );
 
     // 2. Create profile
-    const { error: profileError } = await supabaseAdmin.from("profiles").insert({
+    const { error: profileError } = await adminDb.from("profiles").insert({
       id: userId,
       role,
       full_name,
@@ -757,22 +1132,22 @@ router.post("/users/create", async (req, res) => {
     });
 
     if (profileError) {
-      // Rollback: delete auth user if profile creation fails
-      await supabaseAdmin.auth.admin.deleteUser(userId);
+      // Rollback: delete local auth user if profile creation fails
+      await pool.query(`DELETE FROM local_auth_users WHERE id = $1`, [userId]);
       throw profileError;
     }
 
     // 3. Create role-specific record
     try {
       if (role === "customer") {
-        const { error } = await supabaseAdmin.from("customers").insert({
+        const { error } = await adminDb.from("customers").insert({
           user_id: userId,
           company_name: additionalData?.companyName || null,
           vat_number: additionalData?.vatNumber || null,
         });
         if (error) throw error;
       } else if (role === "driver") {
-        const { error } = await supabaseAdmin.from("drivers").insert({
+        const { error } = await adminDb.from("drivers").insert({
           user_id: userId,
           kyc_status: "pending",
           vehicle_registration: additionalData?.vehicleRegistration || null,
@@ -781,7 +1156,7 @@ router.post("/users/create", async (req, res) => {
         });
         if (error) throw error;
       } else if (role === "supplier") {
-        const { error } = await supabaseAdmin.from("suppliers").insert({
+        const { error } = await adminDb.from("suppliers").insert({
           owner_id: userId,
           name: additionalData.companyName, // Required - already validated above
           kyb_status: "pending",
@@ -790,9 +1165,9 @@ router.post("/users/create", async (req, res) => {
         if (error) throw error;
       }
     } catch (roleError: any) {
-      // Rollback: delete profile and auth user if role-specific insert fails
-      await supabaseAdmin.from("profiles").delete().eq("id", userId);
-      await supabaseAdmin.auth.admin.deleteUser(userId);
+      // Rollback: delete profile and local auth user if role-specific insert fails
+      await adminDb.from("profiles").delete().eq("id", userId);
+      await pool.query(`DELETE FROM local_auth_users WHERE id = $1`, [userId]);
       throw new Error(`Failed to create ${role} record: ${roleError.message}`);
     }
 
@@ -803,7 +1178,7 @@ router.post("/users/create", async (req, res) => {
       payload: {
         userId,
         role,
-        fullName,
+        full_name,
         email,
       },
     });
@@ -836,37 +1211,46 @@ router.get("/users/:userId", async (req, res) => {
     const { userId } = req.params;
 
     // Fetch profile
-    const { data: profile, error: profileError } = await supabaseAdmin
+    const { data: profile, error: profileError } = await adminDb
       .from("profiles")
       .select("*")
       .eq("id", userId)
       .single();
 
     if (profileError) throw profileError;
+    const normalizedProfile: any = {
+      ...profile,
+      full_name: (profile as any)?.full_name ?? (profile as any)?.fullName ?? null,
+      role: (profile as any)?.role ?? null,
+      phone: (profile as any)?.phone ?? null,
+      profile_photo_url: (profile as any)?.profile_photo_url ?? (profile as any)?.profilePhotoUrl ?? null,
+      approval_status: (profile as any)?.approval_status ?? (profile as any)?.approvalStatus ?? "pending",
+      is_active: (profile as any)?.is_active ?? (profile as any)?.isActive ?? false,
+    };
 
-    // Fetch email from Supabase Auth
-    const { data: authData } = await supabaseAdmin.auth.admin.getUserById(userId);
-    const email = authData?.user?.email || null;
+    // Fetch email from local auth table
+    const authUser = await getLocalAuthUserById(userId);
+    const email = authUser?.email || null;
 
-    const result: any = { profile: { ...profile, email } };
+    const result: any = { profile: { ...normalizedProfile, email } };
 
     // Fetch role-specific data
-    if (profile.role === "customer") {
-      const { data: customer } = await supabaseAdmin
+    if (normalizedProfile.role === "customer") {
+      const { data: customer } = await adminDb
         .from("customers")
         .select("*")
         .eq("user_id", userId)
         .single();
       result.customer = customer;
-    } else if (profile.role === "driver") {
-      const { data: driver } = await supabaseAdmin
+    } else if (normalizedProfile.role === "driver") {
+      const { data: driver } = await adminDb
         .from("drivers")
         .select("*")
         .eq("user_id", userId)
         .single();
       
       // Fetch driver's vehicles
-      const { data: vehicles } = await supabaseAdmin
+      const { data: vehicles } = await adminDb
         .from("vehicles")
         .select("*")
         .eq("driver_id", driver?.id)
@@ -897,9 +1281,9 @@ router.get("/users/:userId", async (req, res) => {
           };
         }
       }
-    } else if (profile.role === "supplier") {
+    } else if (normalizedProfile.role === "supplier") {
       // Use maybeSingle to handle cases where supplier record doesn't exist yet
-      const { data: supplier, error: supplierError } = await supabaseAdmin
+      const { data: supplier, error: supplierError } = await adminDb
         .from("suppliers")
         .select("*")
         .eq("owner_id", userId)
@@ -942,7 +1326,11 @@ router.patch("/users/:userId", async (req, res) => {
 
     // Update email if provided
     if (email !== undefined) {
-      await supabaseAdmin.auth.admin.updateUserById(userId, { email });
+      const normalizedEmail = String(email).trim().toLowerCase();
+      await pool.query(
+        `UPDATE local_auth_users SET email = $2, updated_at = now() WHERE id = $1`,
+        [userId, normalizedEmail],
+      );
     }
 
     // Update profile with all new fields
@@ -960,7 +1348,7 @@ router.patch("/users/:userId", async (req, res) => {
     if (notes !== undefined) profileUpdate.notes = notes;
 
     if (Object.keys(profileUpdate).length > 0) {
-      const { error: profileError } = await supabaseAdmin
+      const { error: profileError } = await adminDb
         .from("profiles")
         .update(profileUpdate)
         .eq("id", userId);
@@ -983,7 +1371,7 @@ router.patch("/users/:userId", async (req, res) => {
       if (roleData.verification_level !== undefined) customerUpdate.verification_level = roleData.verification_level;
 
       if (Object.keys(customerUpdate).length > 0) {
-        const { error } = await supabaseAdmin
+        const { error } = await adminDb
           .from("customers")
           .update(customerUpdate)
           .eq("user_id", userId);
@@ -1008,7 +1396,7 @@ router.patch("/users/:userId", async (req, res) => {
       if (roleData.availability_status !== undefined) driverUpdate.availability_status = roleData.availability_status;
 
       if (Object.keys(driverUpdate).length > 0) {
-        const { error } = await supabaseAdmin
+        const { error } = await adminDb
           .from("drivers")
           .update(driverUpdate)
           .eq("user_id", userId);
@@ -1028,7 +1416,7 @@ router.patch("/users/:userId", async (req, res) => {
       if (roleData.primary_contact_phone !== undefined) supplierUpdate.primary_contact_phone = roleData.primary_contact_phone;
 
       if (Object.keys(supplierUpdate).length > 0) {
-        const { error } = await supabaseAdmin
+        const { error } = await adminDb
           .from("suppliers")
           .update(supplierUpdate)
           .eq("owner_id", userId);
@@ -1048,7 +1436,7 @@ router.get("/drivers/:driverId/vehicles", async (req, res) => {
   try {
     const { driverId } = req.params;
     
-    const { data: vehicles, error } = await supabaseAdmin
+    const { data: vehicles, error } = await adminDb
       .from("vehicles")
       .select("*")
       .eq("driver_id", driverId);
@@ -1067,7 +1455,7 @@ router.post("/drivers/:driverId/vehicles", async (req, res) => {
     const { driverId } = req.params;
     const vehicleData = req.body;
     
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await adminDb
       .from("vehicles")
       .insert({
         driver_id: driverId,
@@ -1090,7 +1478,7 @@ router.patch("/vehicles/:vehicleId", async (req, res) => {
     const { vehicleId } = req.params;
     const vehicleData = req.body;
     
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await adminDb
       .from("vehicles")
       .update(vehicleData)
       .eq("id", vehicleId)
@@ -1110,7 +1498,7 @@ router.delete("/vehicles/:vehicleId", async (req, res) => {
   try {
     const { vehicleId } = req.params;
     
-    const { error } = await supabaseAdmin
+    const { error } = await adminDb
       .from("vehicles")
       .delete()
       .eq("id", vehicleId);
@@ -1130,7 +1518,7 @@ router.post("/vehicles/:vehicleId/approve", async (req, res) => {
     const user = (req as any).user;
 
     // Get vehicle to verify it exists
-    const { data: vehicle, error: vehicleError } = await supabaseAdmin
+    const { data: vehicle, error: vehicleError } = await adminDb
       .from("vehicles")
       .select("id, driver_id")
       .eq("id", vehicleId)
@@ -1143,11 +1531,11 @@ router.post("/vehicles/:vehicleId/approve", async (req, res) => {
 
     console.log(`[Vehicle Approval] Updating vehicle ${vehicleId} with status: active`);
     
-    const { data: updatedVehicle, error } = await supabaseAdmin
+    const { data: updatedVehicle, error } = await adminDb
       .from("vehicles")
       .update({ 
         vehicle_status: "active",
-        updated_at: new Date().toISOString() 
+        updated_at: new Date()
       })
       .eq("id", vehicleId)
       .select("id, vehicle_status")
@@ -1171,7 +1559,7 @@ router.post("/vehicles/:vehicleId/approve", async (req, res) => {
     });
 
     // Get driver's user_id to send notification
-    const { data: driver } = await supabaseAdmin
+    const { data: driver } = await adminDb
       .from("drivers")
       .select("user_id")
       .eq("id", vehicle.driver_id)
@@ -1209,7 +1597,7 @@ router.post("/vehicles/:vehicleId/reject", async (req, res) => {
     const { rejectionReason } = req.body;
 
     // Get vehicle to verify it exists
-    const { data: vehicle, error: vehicleError } = await supabaseAdmin
+    const { data: vehicle, error: vehicleError } = await adminDb
       .from("vehicles")
       .select("id, driver_id")
       .eq("id", vehicleId)
@@ -1222,11 +1610,11 @@ router.post("/vehicles/:vehicleId/reject", async (req, res) => {
 
     console.log(`[Vehicle Rejection] Updating vehicle ${vehicleId} with status: rejected`);
     
-    const { data: updatedVehicle, error } = await supabaseAdmin
+    const { data: updatedVehicle, error } = await adminDb
       .from("vehicles")
       .update({ 
         vehicle_status: "rejected",
-        updated_at: new Date().toISOString() 
+        updated_at: new Date()
       })
       .eq("id", vehicleId)
       .select("id, vehicle_status")
@@ -1249,7 +1637,7 @@ router.post("/vehicles/:vehicleId/reject", async (req, res) => {
     });
 
     // Get driver's user_id to send notification
-    const { data: driver } = await supabaseAdmin
+    const { data: driver } = await adminDb
       .from("drivers")
       .select("user_id")
       .eq("id", vehicle.driver_id)
@@ -1266,7 +1654,7 @@ router.post("/vehicles/:vehicleId/reject", async (req, res) => {
 
       // Send notification to driver
       const { notificationService } = await import("./notification-service");
-      const { data: vehicleData } = await supabaseAdmin
+      const { data: vehicleData } = await adminDb
         .from("vehicles")
         .select("registration_number")
         .eq("id", vehicleId)
@@ -1295,7 +1683,7 @@ router.get("/users/:userId/documents", async (req, res) => {
     console.log(`[GET /api/admin/users/${userId}/documents] Fetching documents for user:`, userId);
     
     // First, get the profile to determine the role
-    const { data: profile, error: profileError } = await supabaseAdmin
+    const { data: profile, error: profileError } = await adminDb
       .from("profiles")
       .select("role")
       .eq("id", userId)
@@ -1318,7 +1706,7 @@ router.get("/users/:userId/documents", async (req, res) => {
     
     // For drivers, we need to get the driver record ID, not the user ID
     if (profile.role === "driver") {
-      const { data: driver, error: driverError } = await supabaseAdmin
+      const { data: driver, error: driverError } = await adminDb
         .from("drivers")
         .select("id, user_id")
         .eq("user_id", userId)
@@ -1340,7 +1728,7 @@ router.get("/users/:userId/documents", async (req, res) => {
         console.log("Using userId as ownerId fallback:", ownerId);
       }
     } else if (profile.role === "supplier") {
-      const { data: supplier, error: supplierError } = await supabaseAdmin
+      const { data: supplier, error: supplierError } = await adminDb
         .from("suppliers")
         .select("id")
         .eq("owner_id", userId)
@@ -1375,7 +1763,7 @@ router.get("/users/:userId/documents", async (req, res) => {
     // Also fetch vehicle documents if driver
     let vehicleDocuments: any[] = [];
     if (profile.role === "driver" && ownerType === "driver") {
-      const { data: vehicles } = await supabaseAdmin
+      const { data: vehicles } = await adminDb
         .from("vehicles")
         .select("id")
         .eq("driver_id", ownerId);
@@ -1383,7 +1771,7 @@ router.get("/users/:userId/documents", async (req, res) => {
       if (vehicles && vehicles.length > 0) {
         const vehicleIds = vehicles.map(v => v.id).filter(id => id && uuidRegex.test(id));
         if (vehicleIds.length > 0) {
-          const { data: vDocs } = await supabaseAdmin
+          const { data: vDocs } = await adminDb
             .from("documents")
             .select("*")
             .in("owner_id", vehicleIds)
@@ -1397,7 +1785,7 @@ router.get("/users/:userId/documents", async (req, res) => {
     }
     
     // First, let's check what documents actually exist in the database for debugging
-    const { data: allDriverDocs, error: debugError } = await supabaseAdmin
+    const { data: allDriverDocs, error: debugError } = await adminDb
       .from("documents")
       .select("*")
       .eq("owner_type", "driver")
@@ -1414,7 +1802,7 @@ router.get("/users/:userId/documents", async (req, res) => {
     }
     
     // Fetch documents for the owner
-    let { data, error } = await supabaseAdmin
+    let { data, error } = await adminDb
       .from("documents")
       .select("*")
       .eq("owner_id", ownerId)
@@ -1435,7 +1823,7 @@ router.get("/users/:userId/documents", async (req, res) => {
         
         // Try 1: Query by user_id (validate UUID first)
         if (userId && uuidRegex.test(userId)) {
-          const { data: fallbackData1, error: fallbackError1 } = await supabaseAdmin
+          const { data: fallbackData1, error: fallbackError1 } = await adminDb
             .from("documents")
             .select("*")
             .eq("owner_id", userId)
@@ -1448,7 +1836,7 @@ router.get("/users/:userId/documents", async (req, res) => {
           } else {
             // Try 2: Query all driver documents and filter by uploaded_by (validate UUID first)
             if (userId && uuidRegex.test(userId)) {
-              const { data: fallbackData2, error: fallbackError2 } = await supabaseAdmin
+              const { data: fallbackData2, error: fallbackError2 } = await adminDb
                 .from("documents")
                 .select("*")
                 .eq("owner_type", "driver")
@@ -1467,7 +1855,7 @@ router.get("/users/:userId/documents", async (req, res) => {
         
         // Try 1: Query by user_id (owner_id) - validate UUID first
         if (userId && uuidRegex.test(userId)) {
-          const { data: fallbackData1, error: fallbackError1 } = await supabaseAdmin
+          const { data: fallbackData1, error: fallbackError1 } = await adminDb
             .from("documents")
             .select("*")
             .eq("owner_id", userId)
@@ -1480,7 +1868,7 @@ router.get("/users/:userId/documents", async (req, res) => {
           } else {
             // Try 2: Query all supplier documents and filter by uploaded_by (validate UUID first)
             if (userId && uuidRegex.test(userId)) {
-              const { data: fallbackData2, error: fallbackError2 } = await supabaseAdmin
+              const { data: fallbackData2, error: fallbackError2 } = await adminDb
                 .from("documents")
                 .select("*")
                 .eq("owner_type", "supplier")
@@ -1499,10 +1887,27 @@ router.get("/users/:userId/documents", async (req, res) => {
     
     // Combine driver documents with vehicle documents
     const allDocuments = [...(data || []), ...vehicleDocuments];
+
+    // Normalize snake_case/camelCase document fields from mixed query adapters.
+    const normalizedDocuments = allDocuments.map((doc: any) => ({
+      ...doc,
+      id: doc.id,
+      title: doc.title ?? "",
+      owner_id: doc.owner_id ?? doc.ownerId ?? null,
+      owner_type: doc.owner_type ?? doc.ownerType ?? null,
+      doc_type: doc.doc_type ?? doc.docType ?? null,
+      file_path: doc.file_path ?? doc.filePath ?? null,
+      mime_type: doc.mime_type ?? doc.mimeType ?? null,
+      created_at: doc.created_at ?? doc.createdAt ?? null,
+      expiry_date: doc.expiry_date ?? doc.expiryDate ?? null,
+      document_status: doc.document_status ?? doc.documentStatus ?? null,
+      verification_status: doc.verification_status ?? doc.verificationStatus ?? null,
+      document_rejection_reason: doc.document_rejection_reason ?? doc.documentRejectionReason ?? null,
+    }));
     
     // Filter out documents with empty or invalid file_path
-    const validDocuments = allDocuments.filter((doc: any) => {
-      if (!doc.file_path || doc.file_path.trim() === '') {
+    const validDocuments = normalizedDocuments.filter((doc: any) => {
+      if (!doc.file_path || String(doc.file_path).trim() === '') {
         console.warn("Filtering out document with empty file_path:", doc.id, doc.title);
         return false;
       }
@@ -1524,7 +1929,7 @@ router.post("/users/:userId/documents", async (req, res) => {
     const { userId } = req.params;
     const { owner_type, doc_type, title, file_path, file_size, mime_type } = req.body;
     
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await adminDb
       .from("documents")
       .insert({
         owner_type,
@@ -1579,8 +1984,8 @@ router.patch("/documents/:documentId/status", async (req, res) => {
     const updateData: any = {
       verification_status: verificationStatus,
       verified_by: user.id,
-      verified_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      verified_at: new Date(),
+      updated_at: new Date(),
     };
 
     if (status === "rejected" && rejectionReason) {
@@ -1589,24 +1994,42 @@ router.patch("/documents/:documentId/status", async (req, res) => {
       updateData.document_rejection_reason = null;
     }
 
-    const { data: updatedDocument, error: updateError } = await supabaseAdmin
-      .from("documents")
-      .update(updateData)
-      .eq("id", documentId)
-      .select()
-      .single();
-
-    if (updateError) throw updateError;
+    // Use direct SQL for this critical path to avoid adapter edge-cases
+    // that can generate invalid UPDATE SQL when key casing varies.
+    const updateResult = await pool.query(
+      `UPDATE documents
+       SET verification_status = $1,
+           verified_by = $2,
+           verified_at = $3,
+           updated_at = $4,
+           document_rejection_reason = $5
+       WHERE id = $6
+       RETURNING *`,
+      [
+        updateData.verification_status ?? null,
+        updateData.verified_by ?? null,
+        updateData.verified_at ?? null,
+        updateData.updated_at ?? null,
+        updateData.document_rejection_reason ?? null,
+        documentId,
+      ],
+    );
+    const updatedDocument = updateResult.rows[0] ?? null;
+    if (!updatedDocument) {
+      return res.status(404).json({ error: "Document not found" });
+    }
 
     console.log("Document status updated:", { documentId, status: verificationStatus });
 
     // Send WebSocket notification to driver or supplier if document belongs to them
-    if (updatedDocument?.owner_type === "driver") {
+    const ownerType = updatedDocument?.owner_type ?? updatedDocument?.ownerType;
+    const ownerId = updatedDocument?.owner_id ?? updatedDocument?.ownerId;
+    if (ownerType === "driver") {
       // Get driver's user_id
-      const { data: driver } = await supabaseAdmin
+      const { data: driver } = await adminDb
         .from("drivers")
         .select("user_id")
-        .eq("id", updatedDocument.owner_id)
+        .eq("id", ownerId)
         .single();
 
       if (driver?.user_id) {
@@ -1618,12 +2041,12 @@ router.patch("/documents/:documentId/status", async (req, res) => {
           },
         });
       }
-    } else if (updatedDocument?.owner_type === "supplier") {
+    } else if (ownerType === "supplier") {
       // Get supplier's owner_id (which is the user_id)
-      const { data: supplier } = await supabaseAdmin
+      const { data: supplier } = await adminDb
         .from("suppliers")
         .select("owner_id")
-        .eq("id", updatedDocument.owner_id)
+        .eq("id", ownerId)
         .single();
 
       if (supplier?.owner_id) {
@@ -1649,7 +2072,7 @@ router.delete("/documents/:documentId", async (req, res) => {
   try {
     const { documentId } = req.params;
     
-    const { error } = await supabaseAdmin
+    const { error } = await adminDb
       .from("documents")
       .delete()
       .eq("id", documentId);
@@ -1683,7 +2106,7 @@ router.put("/users/:userId/profile-picture", async (req, res) => {
 
     // Update profile_photo_url in database (if column exists)
     try {
-      const { error: updateError } = await supabaseAdmin
+      const { error: updateError } = await adminDb
         .from("profiles")
         .update({ profile_photo_url: objectPath })
         .eq("id", userId);
@@ -1710,7 +2133,7 @@ router.put("/users/:userId/profile-picture", async (req, res) => {
 router.get("/compliance/pending", async (req, res) => {
   try {
     // Get drivers pending compliance
-    const { data: pendingDrivers, error: driversError } = await supabaseAdmin
+    const { data: pendingDrivers, error: driversError } = await adminDb
       .from("drivers")
       .select("id, user_id, status, compliance_status")
       .in("status", ["pending_compliance"])
@@ -1721,7 +2144,7 @@ router.get("/compliance/pending", async (req, res) => {
     }
 
     // Get suppliers pending compliance
-    const { data: pendingSuppliers, error: suppliersError } = await supabaseAdmin
+    const { data: pendingSuppliers, error: suppliersError } = await adminDb
       .from("suppliers")
       .select("id, owner_id, status, compliance_status, name, registered_name")
       .in("status", ["pending_compliance"])
@@ -1734,7 +2157,7 @@ router.get("/compliance/pending", async (req, res) => {
     // Fetch profiles for drivers separately
     const driversWithProfiles = await Promise.all(
       (pendingDrivers || []).map(async (driver) => {
-        const { data: profile } = await supabaseAdmin
+        const { data: profile } = await adminDb
           .from("profiles")
           .select("id, full_name, email, phone")
           .eq("id", driver.user_id)
@@ -1750,7 +2173,7 @@ router.get("/compliance/pending", async (req, res) => {
     // Fetch profiles for suppliers separately
     const suppliersWithProfiles = await Promise.all(
       (pendingSuppliers || []).map(async (supplier) => {
-        const { data: profile } = await supabaseAdmin
+        const { data: profile } = await adminDb
           .from("profiles")
           .select("id, full_name, email, phone")
           .eq("id", supplier.owner_id)
@@ -1803,22 +2226,22 @@ router.post("/compliance/driver/:id/approve", async (req, res) => {
     const { id } = req.params;
     const user = (req as any).user;
 
-    const { error: updateError } = await supabaseAdmin
+    const { error: updateError } = await adminDb
       .from("drivers")
       .update({
         compliance_status: "approved",
         status: "active",
         compliance_reviewer_id: user.id,
-        compliance_review_date: new Date().toISOString(),
+        compliance_review_date: new Date(),
         compliance_rejection_reason: null,
-        updated_at: new Date().toISOString(),
+        updated_at: new Date(),
       })
       .eq("id", id);
 
     if (updateError) throw updateError;
 
     // Get driver user_id for notification
-    const { data: driver } = await supabaseAdmin
+    const { data: driver } = await adminDb
       .from("drivers")
       .select("user_id")
       .eq("id", id)
@@ -1864,22 +2287,22 @@ router.post("/compliance/driver/:id/reject", async (req, res) => {
       return res.status(400).json({ error: "Rejection reason is required" });
     }
 
-    const { error: updateError } = await supabaseAdmin
+    const { error: updateError } = await adminDb
       .from("drivers")
       .update({
         compliance_status: "rejected",
         status: "rejected",
         compliance_reviewer_id: user.id,
-        compliance_review_date: new Date().toISOString(),
+        compliance_review_date: new Date(),
         compliance_rejection_reason: reason,
-        updated_at: new Date().toISOString(),
+        updated_at: new Date(),
       })
       .eq("id", id);
 
     if (updateError) throw updateError;
 
     // Get driver user_id for notification
-    const { data: driver } = await supabaseAdmin
+    const { data: driver } = await adminDb
       .from("drivers")
       .select("user_id")
       .eq("id", id)
@@ -1922,22 +2345,22 @@ router.post("/compliance/supplier/:id/approve", async (req, res) => {
     const { id } = req.params;
     const user = (req as any).user;
 
-    const { error: updateError } = await supabaseAdmin
+    const { error: updateError } = await adminDb
       .from("suppliers")
       .update({
         compliance_status: "approved",
         status: "active",
         compliance_reviewer_id: user.id,
-        compliance_review_date: new Date().toISOString(),
+        compliance_review_date: new Date(),
         compliance_rejection_reason: null,
-        updated_at: new Date().toISOString(),
+        updated_at: new Date(),
       })
       .eq("id", id);
 
     if (updateError) throw updateError;
 
     // Get supplier owner_id for notification
-    const { data: supplier } = await supabaseAdmin
+    const { data: supplier } = await adminDb
       .from("suppliers")
       .select("owner_id")
       .eq("id", id)
@@ -1983,22 +2406,22 @@ router.post("/compliance/supplier/:id/reject", async (req, res) => {
       return res.status(400).json({ error: "Rejection reason is required" });
     }
 
-    const { error: updateError } = await supabaseAdmin
+    const { error: updateError } = await adminDb
       .from("suppliers")
       .update({
         compliance_status: "rejected",
         status: "rejected",
         compliance_reviewer_id: user.id,
-        compliance_review_date: new Date().toISOString(),
+        compliance_review_date: new Date(),
         compliance_rejection_reason: reason,
-        updated_at: new Date().toISOString(),
+        updated_at: new Date(),
       })
       .eq("id", id);
 
     if (updateError) throw updateError;
 
     // Get supplier owner_id for notification
-    const { data: supplier } = await supabaseAdmin
+    const { data: supplier } = await adminDb
       .from("suppliers")
       .select("owner_id")
       .eq("id", id)
@@ -2042,7 +2465,7 @@ router.post("/compliance/documents/:id/approve", async (req, res) => {
     const user = (req as any).user;
 
     // Get document details before updating
-    const { data: document, error: docError } = await supabaseAdmin
+    const { data: document, error: docError } = await adminDb
       .from("documents")
       .select("owner_type, owner_id, doc_type, uploaded_by")
       .eq("id", id)
@@ -2050,14 +2473,14 @@ router.post("/compliance/documents/:id/approve", async (req, res) => {
 
     if (docError) throw docError;
 
-    const { error: updateError } = await supabaseAdmin
+    const { error: updateError } = await adminDb
       .from("documents")
       .update({
         verification_status: "approved",
         verified_by: user.id,
-        verified_at: new Date().toISOString(),
+        verified_at: new Date(),
         document_rejection_reason: null,
-        updated_at: new Date().toISOString(),
+        updated_at: new Date(),
       })
       .eq("id", id);
 
@@ -2069,21 +2492,21 @@ router.post("/compliance/documents/:id/approve", async (req, res) => {
       
       // Get user_id based on owner_type
       if (document.owner_type === "driver") {
-        const { data: driver } = await supabaseAdmin
+        const { data: driver } = await adminDb
           .from("drivers")
           .select("user_id")
           .eq("id", document.owner_id)
           .single();
         userId = driver?.user_id || null;
       } else if (document.owner_type === "supplier") {
-        const { data: supplier } = await supabaseAdmin
+        const { data: supplier } = await adminDb
           .from("suppliers")
           .select("owner_id")
           .eq("id", document.owner_id)
           .single();
         userId = supplier?.owner_id || null;
       } else if (document.owner_type === "customer") {
-        const { data: customer } = await supabaseAdmin
+        const { data: customer } = await adminDb
           .from("customers")
           .select("user_id")
           .eq("id", document.owner_id)
@@ -2091,7 +2514,7 @@ router.post("/compliance/documents/:id/approve", async (req, res) => {
         userId = customer?.user_id || null;
       } else if (document.owner_type === "vehicle") {
         // For vehicle documents, get the driver's user_id
-        const { data: vehicle } = await supabaseAdmin
+        const { data: vehicle } = await adminDb
           .from("vehicles")
           .select("driver_id, drivers!inner(user_id)")
           .eq("id", document.owner_id)
@@ -2127,14 +2550,14 @@ router.post("/compliance/documents/:id/reject", async (req, res) => {
       return res.status(400).json({ error: "Rejection reason is required" });
     }
 
-    const { error: updateError } = await supabaseAdmin
+    const { error: updateError } = await adminDb
       .from("documents")
       .update({
         verification_status: "rejected",
         verified_by: user.id,
-        verified_at: new Date().toISOString(),
+        verified_at: new Date(),
         document_rejection_reason: reason,
-        updated_at: new Date().toISOString(),
+        updated_at: new Date(),
       })
       .eq("id", id);
 
@@ -2152,7 +2575,7 @@ router.post("/compliance/documents/:id/reject", async (req, res) => {
 // Get app settings
 router.get("/settings", async (req, res) => {
   try {
-    const { data: settings, error } = await supabaseAdmin
+    const { data: settings, error } = await adminDb
       .from("app_settings")
       .select("*")
       .eq("id", 1)
@@ -2214,7 +2637,7 @@ router.put("/settings", async (req, res) => {
     const { price_per_km_cents, service_fee_percent, service_fee_min_cents, base_delivery_fee_cents, dispatch_radius_km, dispatch_sla_seconds, driver_radius_standard_miles, driver_radius_extended_miles, driver_radius_unlimited_miles } = req.body;
 
     const updateData: any = {
-      updated_at: new Date().toISOString(),
+      updated_at: new Date(),
     };
 
     if (price_per_km_cents !== undefined) {
@@ -2269,7 +2692,7 @@ router.put("/settings", async (req, res) => {
       updateData.driver_radius_unlimited_miles = v;
     }
 
-    const { data: updatedSettings, error } = await supabaseAdmin
+    const { data: updatedSettings, error } = await adminDb
       .from("app_settings")
       .upsert({
         id: 1,

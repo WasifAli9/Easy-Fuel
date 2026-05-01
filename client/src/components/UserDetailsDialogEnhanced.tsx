@@ -195,6 +195,19 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
 
   if (!userDetails) return null;
 
+  // Guard against partial payloads so opening "View KYC" never crashes the page.
+  const safeProfile = {
+    id: userId || "",
+    full_name: userDetails.profile?.fullName ?? "Unknown User",
+    email: "",
+    phone: "",
+    role: userDetails.profile?.userRole ?? "customer",
+    profile_photo_url: null,
+    approval_status: "pending",
+    is_active: false,
+    ...(userDetails.profile || {}),
+  } as any;
+
   const handleProfilePictureUpload = async (result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
     if (!result.successful || result.successful.length === 0) return;
     
@@ -252,13 +265,19 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
             <div className="relative">
               <Avatar className="h-16 w-16">
                 <AvatarImage 
-                  src={normalizeProfilePhotoUrl(userDetails.profile.profile_photo_url) || undefined}
+                  src={normalizeProfilePhotoUrl(safeProfile.profile_photo_url) || undefined}
                   onError={() => {
                     // Suppress image load errors
                   }} 
                 />
                 <AvatarFallback className="bg-primary text-primary-foreground text-lg">
-                  {userDetails.profile.full_name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)}
+                  {String(safeProfile.full_name || "U")
+                    .split(" ")
+                    .filter(Boolean)
+                    .map((n: string) => n[0])
+                    .join("")
+                    .toUpperCase()
+                    .slice(0, 2) || "U"}
                 </AvatarFallback>
               </Avatar>
               <div className="absolute -bottom-1 -right-1">
@@ -277,28 +296,28 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
               </div>
             </div>
             <div className="flex-1">
-              <DialogTitle className="text-xl">{userDetails.profile.full_name}</DialogTitle>
+              <DialogTitle className="text-xl">{safeProfile.full_name}</DialogTitle>
               <DialogDescription>
                 User details and management
               </DialogDescription>
               <div className="flex items-center gap-2 mt-2">
-                <Badge variant="outline" className="capitalize">{userDetails.profile.role}</Badge>
+                <Badge variant="outline" className="capitalize">{safeProfile.role}</Badge>
                 <Badge variant={
                   // For drivers, if approved, they should be active
-                  (userDetails.driver && userDetails.profile.approval_status === "approved") || userDetails.profile.is_active
+                  (userDetails.driver && safeProfile.approval_status === "approved") || safeProfile.is_active
                     ? "default" 
                     : "secondary"
                 }>
-                  {(userDetails.driver && userDetails.profile.approval_status === "approved") || userDetails.profile.is_active
+                  {(userDetails.driver && safeProfile.approval_status === "approved") || safeProfile.is_active
                     ? "Active" 
                     : "Inactive"}
                 </Badge>
                 <Badge variant={
-                  userDetails.profile.approval_status === "approved" ? "default" :
-                  userDetails.profile.approval_status === "pending" ? "secondary" :
+                  safeProfile.approval_status === "approved" ? "default" :
+                  safeProfile.approval_status === "pending" ? "secondary" :
                   "destructive"
                 } className="capitalize">
-                  {userDetails.profile.approval_status}
+                  {safeProfile.approval_status}
                 </Badge>
               </div>
             </div>
@@ -343,7 +362,7 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
                       onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
                     />
                   ) : (
-                    <p className="text-sm mt-1">{userDetails.profile.full_name}</p>
+                    <p className="text-sm mt-1">{safeProfile.full_name}</p>
                   )}
                 </div>
 

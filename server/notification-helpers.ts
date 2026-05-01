@@ -104,6 +104,16 @@ export const orderNotifications = {
   },
 
   /**
+   * Notify customer when fuel pickup is completed and delivery officially starts.
+   */
+  async onDeliveryStarted(customerId: string, orderId: string, driverName: string) {
+    await notifySafely(
+      () => notificationService.notifyDeliveryStarted(customerId, orderId, driverName),
+      { operation: "delivery_started", customerId, orderId },
+    );
+  },
+
+  /**
    * Notify customer when delivery is complete
    */
   async onDeliveryComplete(customerId: string, orderId: string, litres: number, fuelType: string) {

@@ -117,6 +117,39 @@ type DriverPreferences = {
   subscriptionPlanName?: string | null;
 };
 
+const driverPlanDetails: Record<
+  string,
+  {
+    bestFor: string;
+    features: string[];
+  }
+> = {
+  starter: {
+    bestFor: "Best for new drivers with lower monthly order volume.",
+    features: [
+      "Basic access to driver orders and delivery status updates.",
+      "Vehicle and compliance management tools.",
+      "Standard in-app support response time.",
+    ],
+  },
+  professional: {
+    bestFor: "Best for active drivers handling regular weekly deliveries.",
+    features: [
+      "Everything in Starter, with higher usage allowance.",
+      "Priority processing for subscription/account support.",
+      "Improved operational visibility for active delivery workflow.",
+    ],
+  },
+  premium: {
+    bestFor: "Best for high-volume professional drivers and fleet-heavy operations.",
+    features: [
+      "Everything in Professional, with highest usage allowance.",
+      "Priority support and faster issue escalation.",
+      "Built for intensive, full-time delivery operations.",
+    ],
+  },
+};
+
 function cardContainer(children: React.ReactNode, styles: ReturnType<typeof getStyles>) {
   return <Card style={styles.card}><Card.Content>{children}</Card.Content></Card>;
 }
@@ -593,6 +626,7 @@ export function DriverSubscriptionMenuScreen() {
   const theme = mode === "dark" ? darkTheme : lightTheme;
   const styles = getStyles(theme);
   const queryClient = useQueryClient();
+  const [expandedPlanCode, setExpandedPlanCode] = useState<string | null>(null);
   const subQuery = useQuery({
     queryKey: ["/api/driver/subscription"],
     queryFn: async () => (await apiClient.get<DriverSubscription>("/api/driver/subscription")).data,
@@ -627,8 +661,31 @@ export function DriverSubscriptionMenuScreen() {
       {(plansQuery.data?.plans || []).map((plan) => (
         <Card key={plan.code} style={styles.card}>
           <Card.Content>
-            <Text variant="titleMedium">{plan.name}</Text>
+            <View style={styles.rowBetween}>
+              <Text variant="titleMedium">{plan.name}</Text>
+              <Button
+                mode="text"
+                onPress={() => setExpandedPlanCode((prev) => (prev === plan.code ? null : plan.code))}
+              >
+                {expandedPlanCode === plan.code ? "Hide details" : "Show details"}
+              </Button>
+            </View>
             <Text style={styles.meta}>R {(plan.priceCents / 100).toFixed(2)} / month</Text>
+            {expandedPlanCode === plan.code ? (
+              <View style={styles.planDetailBox}>
+                <Text style={styles.metaStrong}>
+                  {driverPlanDetails[plan.code.toLowerCase()]?.bestFor || "Plan details for this subscription tier."}
+                </Text>
+                {(driverPlanDetails[plan.code.toLowerCase()]?.features || [
+                  "Access to driver portal workflows.",
+                  "Monthly billing with subscription management in-app.",
+                ]).map((feature) => (
+                  <Text key={`${plan.code}-${feature}`} style={styles.meta}>
+                    - {feature}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
             <Button mode="contained" buttonColor={theme.colors.primary} textColor={theme.colors.onPrimary} style={styles.mt8} onPress={() => createMutation.mutate(plan.code)} loading={createMutation.isPending}>
               Choose {plan.name}
             </Button>
@@ -733,11 +790,18 @@ export function DriverPricingMenuScreen() {
       {cardContainer(
         <>
           <View style={styles.rowBetween}>
-            <View>
+            <View style={styles.pricingHeaderTextWrap}>
               <Text variant="headlineSmall">Pricing</Text>
               <Text style={styles.subtitle}>Set your fuel prices per liter for each fuel type.</Text>
             </View>
-            <Button mode="contained" buttonColor={theme.colors.primary} textColor={theme.colors.onPrimary} onPress={() => setHistoryVisible(true)}>
+            <Button
+              mode="contained"
+              compact
+              buttonColor={theme.colors.primary}
+              textColor={theme.colors.onPrimary}
+              onPress={() => setHistoryVisible(true)}
+              style={styles.pricingHistoryButton}
+            >
               History
             </Button>
           </View>
@@ -948,7 +1012,6 @@ export function DriverSettingsMenuScreen() {
   const setThemeMode = useUiThemeStore((state) => state.setMode);
   const [lat, setLat] = useState("");
   const [lng, setLng] = useState("");
-  const [radius, setRadius] = useState("");
   const preferencesQuery = useQuery({
     queryKey: ["/api/driver/preferences"],
     queryFn: async () => (await apiClient.get<DriverPreferences>("/api/driver/preferences")).data,
@@ -957,7 +1020,6 @@ export function DriverSettingsMenuScreen() {
     if (preferencesQuery.data) {
       setLat(String(preferencesQuery.data.currentLat ?? ""));
       setLng(String(preferencesQuery.data.currentLng ?? ""));
-      setRadius(String(preferencesQuery.data.jobRadiusPreferenceMiles ?? ""));
     }
   }, [preferencesQuery.data]);
 
@@ -966,7 +1028,6 @@ export function DriverSettingsMenuScreen() {
       apiClient.patch("/api/driver/preferences", {
         currentLat: Number(lat),
         currentLng: Number(lng),
-        ...(radius ? { jobRadiusPreferenceMiles: Number(radius) } : {}),
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/driver/preferences"] }),
   });
@@ -1003,9 +1064,9 @@ export function DriverSettingsMenuScreen() {
           <Text style={styles.subtitle}>Job preferences and location.</Text>
           <Text style={styles.meta}>Plan: {preferencesQuery.data?.subscriptionPlanName || "No active plan"}</Text>
           <Text style={styles.meta}>Max radius: {preferencesQuery.data?.maxRadiusMiles ?? 0} miles</Text>
+          <Text style={styles.meta}>Pickup radius is managed automatically by your subscription tier.</Text>
           <TextInput mode="outlined" label="Latitude" value={lat} onChangeText={setLat} style={styles.input} />
           <TextInput mode="outlined" label="Longitude" value={lng} onChangeText={setLng} style={styles.input} />
-          <TextInput mode="outlined" label="Pickup Radius (miles)" value={radius} onChangeText={setRadius} style={styles.input} keyboardType="numeric" />
           <View style={styles.row}>
             <Button mode="contained" buttonColor={theme.colors.primary} textColor={theme.colors.onPrimary} onPress={useCurrentLocation}>Use Current Location</Button>
             <Button mode="contained" buttonColor={theme.colors.primary} textColor={theme.colors.onPrimary} onPress={() => saveMutation.mutate()} loading={saveMutation.isPending}>Save Preferences</Button>
@@ -1023,14 +1084,25 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   subtitle: { marginTop: 4, color: theme.colors.onSurfaceVariant },
   meta: { marginTop: 4, color: theme.colors.onSurfaceVariant },
+  metaStrong: { marginTop: 2, marginBottom: 2, color: theme.colors.onSurface, fontWeight: "600" },
   input: { marginTop: 8, backgroundColor: theme.colors.surface },
   row: { flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap" },
   rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
+  pricingHeaderTextWrap: { flex: 1, minWidth: 0, paddingRight: 4 },
+  pricingHistoryButton: { alignSelf: "flex-start" },
   twoCol: { marginTop: 8, gap: 8 },
   rightAligned: { alignItems: "flex-end" },
   priceValue: { fontWeight: "700" },
   empty: { textAlign: "center", marginTop: 24, color: theme.colors.onSurfaceVariant },
   mt8: { marginTop: 8 },
+  planDetailBox: {
+    marginTop: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.outline,
+    borderRadius: 10,
+    backgroundColor: theme.colors.background,
+  },
   errorText: { marginTop: 8, color: "#DC2626" },
   historyBackdrop: {
     flex: 1,

@@ -45,9 +45,22 @@ export function DriverPricingManager() {
   const [editingNotes, setEditingNotes] = useState<Record<string, string>>({});
 
   // Fetch pricing data
-  const { data: fuelTypes, isLoading } = useQuery<FuelTypeWithPricing[]>({
+  const { data: fuelTypesRaw, isLoading } = useQuery<FuelTypeWithPricing[]>({
     queryKey: ["/api/driver/pricing"],
   });
+  const fuelTypes = (fuelTypesRaw || []).map((fuelType) => ({
+    ...fuelType,
+    pricing: fuelType.pricing
+      ? {
+          ...fuelType.pricing,
+          fuel_price_per_liter_cents: Number(
+            (fuelType.pricing as any).fuel_price_per_liter_cents ??
+              (fuelType.pricing as any).fuelPricePerLiterCents ??
+              0
+          ),
+        }
+      : null,
+  }));
 
   // Fetch pricing history
   const { data: history } = useQuery<PricingHistoryItem[]>({
@@ -139,7 +152,8 @@ export function DriverPricingManager() {
       return editingPrices[fuelType.id];
     }
     if (fuelType.pricing) {
-      return (fuelType.pricing.fuel_price_per_liter_cents / 100).toFixed(2);
+      const cents = fuelType.pricing.fuel_price_per_liter_cents;
+      return (cents / 100).toFixed(2);
     }
     return "";
   };

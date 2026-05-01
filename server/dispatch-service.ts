@@ -1,9 +1,21 @@
-import { supabaseAdmin } from "./supabase";
+import { db } from "./db";
 import { calculateDistance, milesToKm } from "./utils/distance";
 import { websocketService } from "./websocket";
 import { pushNotificationService } from "./push-service";
 import { offerNotifications } from "./notification-helpers";
 import { getSubscriptionRadiusMiles } from "./subscription-service";
+import {
+  appSettings,
+  customers,
+  dispatchOffers,
+  driverCompanyMemberships,
+  driverPricing,
+  driverSubscriptions,
+  drivers,
+  fuelTypes,
+  orders,
+} from "@shared/schema";
+import { and, eq, gte, inArray, isNotNull, lt } from "drizzle-orm";
 
 interface CreateDispatchOffersParams {
   orderId: string;
@@ -49,62 +61,73 @@ export async function createDispatchOffers({
 }: CreateDispatchOffersParams): Promise<void> {
   try {
     // Get admin-set price per km from app_settings
-    const { data: appSettings, error: settingsError } = await supabaseAdmin
-      .from("app_settings")
-      .select("price_per_km_cents")
-      .eq("id", 1)
-      .single();
-
-    if (settingsError) {
-      console.error("Error fetching app settings:", settingsError);
-      return;
-    }
-
-    const pricePerKmCents = appSettings?.price_per_km_cents || 5000; // Default R50 per km
+    const appSettingsRows = await db
+      .select({ price_per_km_cents: appSettings.pricePerKmCents })
+      .from(appSettings)
+      .where(eq(appSettings.id, 1))
+      .limit(1);
+    const appSettingsRow = appSettingsRows[0];
+    const pricePerKmCents = appSettingsRow?.price_per_km_cents || 5000; // Default R50 per km
 
     // Find all available drivers with location, radius, and capacity
     // IMPORTANT: Only fetch drivers that are active and compliance approved
-    const { data: drivers, error: driversError } = await supabaseAdmin
-      .from("drivers")
-      .select("id, user_id, premium_status, current_lat, current_lng, job_radius_preference_miles, vehicle_capacity_litres, status, compliance_status")
-      .eq("status", "active")
-      .eq("compliance_status", "approved");
+    const driversRows = await db
+      .select({
+        id: drivers.id,
+        user_id: drivers.userId,
+        premium_status: drivers.premiumStatus,
+        availability_status: drivers.availabilityStatus,
+        current_lat: drivers.currentLat,
+        current_lng: drivers.currentLng,
+        job_radius_preference_miles: drivers.jobRadiusPreferenceMiles,
+        vehicle_capacity_litres: drivers.vehicleCapacityLitres,
+        status: drivers.status,
+        compliance_status: drivers.complianceStatus,
+      })
+      .from(drivers)
+      .where(and(eq(drivers.status, "active"), eq(drivers.complianceStatus, "approved")));
 
-    if (driversError) {
-      console.error("Error fetching drivers:", driversError);
-      return;
-    }
-
-    if (!drivers || drivers.length === 0) {
+    if (!driversRows || driversRows.length === 0) {
       return;
     }
 
     // Only drivers with active subscription can receive offers (§4.0)
     const today = new Date().toISOString().split("T")[0];
-    const { data: activeSubs } = await supabaseAdmin
-      .from("driver_subscriptions")
-      .select("driver_id, plan_code")
-      .eq("status", "active")
-      .gte("current_period_end", today)
-      .in("driver_id", drivers.map((d: any) => d.id));
+    const activeSubs = await db
+      .select({ driver_id: driverSubscriptions.driverId, plan_code: driverSubscriptions.planCode })
+      .from(driverSubscriptions)
+      .where(
+        and(
+          eq(driverSubscriptions.status, "active"),
+          gte(driverSubscriptions.currentPeriodEnd, new Date(`${today}T00:00:00.000Z`)),
+          inArray(
+            driverSubscriptions.driverId,
+            driversRows.map((d: any) => d.id),
+          ),
+        ),
+      );
     const subscribedDriverIds = new Set((activeSubs || []).map((s: any) => s.driver_id));
     const driverTierMap = new Map((activeSubs || []).map((s: any) => [s.driver_id, s.plan_code]));
-    let driversWithSub = (drivers as any[]).filter((d) => subscribedDriverIds.has(d.id));
+    let driversWithSub = (driversRows as any[]).filter((d) => subscribedDriverIds.has(d.id));
     if (driversWithSub.length === 0) {
       console.log(`[createDispatchOffers] Order ${orderId}: No drivers with active subscription`);
       return;
     }
 
     // Company-scoped disable: still linked to a company but disabled by that company → not eligible for platform dispatch
-    const { data: companyBlockedRows } = await supabaseAdmin
-      .from("driver_company_memberships")
-      .select("driver_id")
-      .in(
-        "driver_id",
-        driversWithSub.map((d: any) => d.id)
-      )
-      .eq("is_disabled_by_company", true)
-      .not("company_id", "is", null);
+    const companyBlockedRows = await db
+      .select({ driver_id: driverCompanyMemberships.driverId })
+      .from(driverCompanyMemberships)
+      .where(
+        and(
+          inArray(
+            driverCompanyMemberships.driverId,
+            driversWithSub.map((d: any) => d.id),
+          ),
+          eq(driverCompanyMemberships.isDisabledByCompany, true),
+          isNotNull(driverCompanyMemberships.companyId),
+        ),
+      );
     const companyDisabledIds = new Set((companyBlockedRows || []).map((m: any) => m.driver_id));
     const beforeCompany = driversWithSub.length;
     driversWithSub = driversWithSub.filter((d: any) => !companyDisabledIds.has(d.id));
@@ -119,23 +142,29 @@ export async function createDispatchOffers({
     }
 
     // Get driver pricing for this fuel type
-    const { data: driverPricing, error: pricingError } = await supabaseAdmin
-      .from("driver_pricing")
-      .select("driver_id, fuel_price_per_liter_cents")
-      .eq("fuel_type_id", fuelTypeId)
-      .eq("active", true)
-      .in("driver_id", driversWithSub.map((d: any) => d.id));
-
-    if (pricingError) {
-      console.error("Error fetching driver pricing:", pricingError);
-    }
+    const driverPricingRows = await db
+      .select({
+        driver_id: driverPricing.driverId,
+        fuel_price_per_liter_cents: driverPricing.fuelPricePerLiterCents,
+      })
+      .from(driverPricing)
+      .where(
+        and(
+          eq(driverPricing.fuelTypeId, fuelTypeId),
+          eq(driverPricing.active, true),
+          inArray(
+            driverPricing.driverId,
+            driversWithSub.map((d: any) => d.id),
+          ),
+        ),
+      );
 
     // Create a map of driver_id to fuel_price_per_liter_cents
     const pricingMap = new Map(
-      (driverPricing || []).map((p: any) => [p.driver_id, p.fuel_price_per_liter_cents])
+      (driverPricingRows || []).map((p: any) => [p.driver_id, p.fuel_price_per_liter_cents])
     );
 
-    console.log(`[createDispatchOffers] Order ${orderId}: Found ${driversWithSub.length} drivers with subscription, ${driverPricing?.length || 0} with pricing for fuel type ${fuelTypeId}`);
+    console.log(`[createDispatchOffers] Order ${orderId}: Found ${driversWithSub.length} drivers with subscription, ${driverPricingRows?.length || 0} with pricing for fuel type ${fuelTypeId}`);
 
     // Radius limits from app_settings (admin-editable)
     const radiusLimits = await getSubscriptionRadiusMiles();
@@ -275,11 +304,12 @@ async function createDriverOffersWithPricing(
   }
 
   // Check if order was already accepted
-  const { data: order } = await supabaseAdmin
-    .from("orders")
-    .select("state, assigned_driver_id")
-    .eq("id", orderId)
-    .single();
+  const orderRows = await db
+    .select({ state: orders.state, assigned_driver_id: orders.assignedDriverId })
+    .from(orders)
+    .where(eq(orders.id, orderId))
+    .limit(1);
+  const order = orderRows[0];
 
   if (order?.state === "assigned" || order?.assigned_driver_id) {
     return;
@@ -295,22 +325,26 @@ async function createDriverOffersWithPricing(
     expires_at: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(), // 12 hours
   }));
 
-  const { data: insertedOffers, error: offersError } = await supabaseAdmin
-    .from("dispatch_offers")
-    .insert(offers)
-    .select("id, driver_id");
-
-  if (offersError) {
-    console.error(`Error creating ${isPremium ? 'premium' : 'regular'} driver offers:`, offersError);
-    return;
-  }
+  const insertedOffers = await db
+    .insert(dispatchOffers)
+    .values(
+      offers.map((o) => ({
+        orderId: o.order_id,
+        driverId: o.driver_id,
+        state: o.state,
+        proposedPricePerKmCents: o.proposed_price_per_km_cents,
+        expiresAt: new Date(o.expires_at),
+      })),
+    )
+    .returning({ id: dispatchOffers.id, driver_id: dispatchOffers.driverId });
 
   // Fetch fuel type label
-  const { data: fuelType } = await supabaseAdmin
-    .from("fuel_types")
-    .select("label")
-    .eq("id", fuelTypeId)
-    .single();
+  const fuelTypeRows = await db
+    .select({ label: fuelTypes.label })
+    .from(fuelTypes)
+    .where(eq(fuelTypes.id, fuelTypeId))
+    .limit(1);
+  const fuelType = fuelTypeRows[0];
 
   const fuelLabel = fuelType?.label || "Fuel";
 
@@ -347,14 +381,16 @@ async function createDriverOffersWithPricing(
   }
 
   // Notify customer that offers are available
-  const { data: orderForCustomer } = await supabaseAdmin
-    .from("orders")
-    .select("customer_id, customers(user_id)")
-    .eq("id", orderId)
-    .single();
+  const orderForCustomerRows = await db
+    .select({ customer_user_id: customers.userId })
+    .from(orders)
+    .innerJoin(customers, eq(customers.id, orders.customerId))
+    .where(eq(orders.id, orderId))
+    .limit(1);
+  const orderForCustomer = orderForCustomerRows[0];
 
-  if (orderForCustomer?.customers?.user_id) {
-    websocketService.sendOrderUpdate((orderForCustomer.customers as any).user_id, {
+  if (orderForCustomer?.customer_user_id) {
+    websocketService.sendOrderUpdate(orderForCustomer.customer_user_id, {
       type: "driver_offers_available",
       orderId,
       offerCount: insertedOffers?.length || 0,
@@ -368,15 +404,10 @@ async function createDriverOffersWithPricing(
  */
 export async function expireOldOffers(): Promise<void> {
   try {
-    const { error } = await supabaseAdmin
-      .from("dispatch_offers")
-      .update({ state: "timeout" })
-      .eq("state", "offered")
-      .lt("expires_at", new Date().toISOString());
-
-    if (error) {
-      console.error("Error expiring old offers:", error);
-    }
+    await db
+      .update(dispatchOffers)
+      .set({ state: "timeout" })
+      .where(and(eq(dispatchOffers.state, "offered"), lt(dispatchOffers.expiresAt, new Date())));
   } catch (error) {
     console.error("Error in expireOldOffers:", error);
   }

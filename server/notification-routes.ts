@@ -1,25 +1,15 @@
 import { Router } from "express";
-import { supabaseAdmin } from "./supabase";
+import {
+  cleanupOldReadNotifications,
+  countUnreadNotifications,
+  findUserNotification,
+  listRecentReadNotifications,
+  listUnreadNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+} from "./data/notifications-repo";
 
 const router = Router();
-
-function isSchemaCacheError(error: any): boolean {
-  if (!error) return false;
-  return (
-    error?.code === "PGRST205" ||
-    error?.message?.includes("schema cache") ||
-    error?.message?.includes("Could not find the table 'public.notifications'")
-  );
-}
-
-function respondSchemaCacheIssue(res: any) {
-  return res.status(503).json({
-    error: "Supabase schema cache is out of date for the notifications table.",
-    resolution:
-      "In Supabase SQL editor run `NOTIFY pgrst, 'reload schema';` then wait ~10 seconds. If the table truly does not exist, run the migration that creates `public.notifications`.",
-    code: "SCHEMA_CACHE_NOTIFICATIONS",
-  });
-}
 
 // Get all notifications for the authenticated user
 // Returns: All unread notifications + Last 10 read notifications
@@ -29,52 +19,14 @@ router.get("/", async (req, res) => {
   
   try {
     // 1. Fetch ALL unread notifications (no limit)
-    const { data: unreadNotifications, error: unreadError } = await supabaseAdmin
-      .from("notifications")
-      .select("*")
-      .eq("user_id", user.id)
-      .eq("read", false)
-      .order("created_at", { ascending: false });
-
-    if (unreadError) {
-      console.error("[notification-routes] Error fetching unread notifications:", unreadError);
-      if (isSchemaCacheError(unreadError)) return respondSchemaCacheIssue(res);
-      throw unreadError;
-    }
+    const unreadNotifications = await listUnreadNotifications(user.id);
 
     // 2. Fetch LAST 10 read notifications
-    const { data: readNotifications, error: readError } = await supabaseAdmin
-      .from("notifications")
-      .select("*")
-      .eq("user_id", user.id)
-      .eq("read", true)
-      .order("created_at", { ascending: false })
-      .limit(10);
-
-    if (readError) {
-      console.error("[notification-routes] Error fetching read notifications:", readError);
-      if (isSchemaCacheError(readError)) return respondSchemaCacheIssue(res);
-      throw readError;
-    }
+    const readNotifications = await listRecentReadNotifications(user.id, 10);
 
     // 3. Clean up old read notifications (keep only last 10)
     // If we have 10 read notifications, delete all others older than the 10th
-    if (readNotifications && readNotifications.length >= 10) {
-      const oldestKeptNotification = readNotifications[readNotifications.length - 1];
-      const oldestKeptDate = oldestKeptNotification.created_at;
-
-      // Delete all read notifications older than the 10th one
-      const { error: deleteError } = await supabaseAdmin
-        .from("notifications")
-        .delete()
-        .eq("user_id", user.id)
-        .eq("read", true)
-        .lt("created_at", oldestKeptDate);
-
-      if (deleteError) {
-        // Don't fail the request if cleanup fails
-      }
-    }
+    await cleanupOldReadNotifications(user.id, 10);
 
     // 4. Combine unread and read notifications
     const allNotifications = [
@@ -82,7 +34,7 @@ router.get("/", async (req, res) => {
       ...(readNotifications || [])
     ].sort((a, b) => {
       // Sort by created_at descending (newest first)
-      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
 
     res.json(allNotifications);
@@ -94,7 +46,6 @@ router.get("/", async (req, res) => {
       stack: error?.stack,
       userId: user?.id,
     });
-    if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
     res.status(500).json({ error: error.message || "Internal server error" });
   }
 });
@@ -104,27 +55,8 @@ router.get("/unread-count", async (req, res) => {
   const user = (req as any).user;
   
   try {
-    const { count, error } = await supabaseAdmin
-      .from("notifications")
-      .select("*", { count: "exact", head: true })
-      .eq("user_id", user.id)
-      .eq("read", false);
-
-    if (error) {
-      console.error("[notification-routes] Error fetching unread count:", error);
-      console.error("[notification-routes] Error details:", {
-        error,
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        userId: user.id,
-      });
-      if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
-      throw error;
-    }
-
-    res.json({ count: count || 0 });
+    const unreadCount = await countUnreadNotifications(user.id);
+    res.json({ count: unreadCount });
   } catch (error: any) {
     console.error("[notification-routes] Exception fetching unread count:", error);
     console.error("[notification-routes] Exception details:", {
@@ -133,7 +65,6 @@ router.get("/unread-count", async (req, res) => {
       stack: error?.stack,
       userId: user?.id,
     });
-    if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
     res.status(500).json({ error: error.message || "Internal server error" });
   }
 });
@@ -145,27 +76,7 @@ router.patch("/:id/read", async (req, res) => {
   
   try {
     // Verify notification belongs to user
-    const { data: notification, error: checkError } = await supabaseAdmin
-      .from("notifications")
-      .select("id")
-      .eq("id", notificationId)
-      .eq("user_id", user.id)
-      .single();
-
-    if (checkError) {
-      console.error("[notification-routes] Error checking notification:", checkError);
-      console.error("[notification-routes] Error details:", {
-        error: checkError,
-        code: checkError.code,
-        message: checkError.message,
-        details: checkError.details,
-        hint: checkError.hint,
-        userId: user.id,
-        notificationId,
-      });
-      if (isSchemaCacheError(checkError)) return respondSchemaCacheIssue(res);
-      throw checkError;
-    }
+    const notification = await findUserNotification(notificationId, user.id);
 
     if (!notification) {
       console.warn("[notification-routes] Notification not found:", { userId: user.id, notificationId });
@@ -173,53 +84,12 @@ router.patch("/:id/read", async (req, res) => {
     }
 
     // Mark as read
-    const { error } = await supabaseAdmin
-      .from("notifications")
-      .update({ 
-        read: true,
-        read_at: new Date().toISOString()
-      })
-      .eq("id", notificationId)
-      .eq("user_id", user.id);
-
-    if (error) {
-      console.error("[notification-routes] Error marking notification as read:", error);
-      console.error("[notification-routes] Error details:", {
-        error,
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        userId: user.id,
-        notificationId,
-      });
-      if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
-      throw error;
-    }
+    await markNotificationRead(notificationId, user.id);
 
     // Clean up old read notifications after marking as read
     // Keep only the last 10 read notifications
     try {
-      const { data: readNotifications } = await supabaseAdmin
-        .from("notifications")
-        .select("id, created_at")
-        .eq("user_id", user.id)
-        .eq("read", true)
-        .order("created_at", { ascending: false })
-        .limit(11); // Get 11 to check if we need cleanup
-
-      if (readNotifications && readNotifications.length > 10) {
-        const oldestKeptNotification = readNotifications[9]; // 10th notification (0-indexed)
-        const oldestKeptDate = oldestKeptNotification.created_at;
-
-        // Delete all read notifications older than the 10th one
-        await supabaseAdmin
-          .from("notifications")
-          .delete()
-          .eq("user_id", user.id)
-          .eq("read", true)
-          .lt("created_at", oldestKeptDate);
-      }
+      await cleanupOldReadNotifications(user.id, 10);
     } catch (cleanupError) {
       console.error("[notification-routes] Error cleaning up old notifications:", cleanupError);
       // Don't fail the request if cleanup fails
@@ -235,7 +105,6 @@ router.patch("/:id/read", async (req, res) => {
       userId: user?.id,
       notificationId,
     });
-    if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
     res.status(500).json({ error: error.message || "Internal server error" });
   }
 });
@@ -246,60 +115,15 @@ router.patch("/read-all", async (req, res) => {
   
   try {
     // First, get the current unread notifications to determine what will be kept
-    const { data: unreadNotifications } = await supabaseAdmin
-      .from("notifications")
-      .select("id, created_at")
-      .eq("user_id", user.id)
-      .eq("read", false)
-      .order("created_at", { ascending: false });
+    await listUnreadNotifications(user.id);
 
     // Mark all as read
-    const { error } = await supabaseAdmin
-      .from("notifications")
-      .update({ 
-        read: true,
-        read_at: new Date().toISOString()
-      })
-      .eq("user_id", user.id)
-      .eq("read", false);
-
-    if (error) {
-      console.error("[notification-routes] Error marking all notifications as read:", error);
-      console.error("[notification-routes] Error details:", {
-        error,
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        userId: user.id,
-      });
-      if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
-      throw error;
-    }
+    await markAllNotificationsRead(user.id);
 
     // Clean up old read notifications after marking all as read
     // Keep only the last 10 read notifications
     try {
-      const { data: allReadNotifications } = await supabaseAdmin
-        .from("notifications")
-        .select("id, created_at")
-        .eq("user_id", user.id)
-        .eq("read", true)
-        .order("created_at", { ascending: false })
-        .limit(11); // Get 11 to check if we need cleanup
-
-      if (allReadNotifications && allReadNotifications.length > 10) {
-        const oldestKeptNotification = allReadNotifications[9]; // 10th notification (0-indexed)
-        const oldestKeptDate = oldestKeptNotification.created_at;
-
-        // Delete all read notifications older than the 10th one
-        await supabaseAdmin
-          .from("notifications")
-          .delete()
-          .eq("user_id", user.id)
-          .eq("read", true)
-          .lt("created_at", oldestKeptDate);
-      }
+      await cleanupOldReadNotifications(user.id, 10);
     } catch (cleanupError) {
       // Don't fail the request if cleanup fails
       // Don't fail the request if cleanup fails
@@ -314,7 +138,6 @@ router.patch("/read-all", async (req, res) => {
       stack: error?.stack,
       userId: user?.id,
     });
-    if (isSchemaCacheError(error)) return respondSchemaCacheIssue(res);
     res.status(500).json({ error: error.message || "Internal server error" });
   }
 });

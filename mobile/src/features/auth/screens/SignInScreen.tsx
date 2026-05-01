@@ -3,10 +3,14 @@ import { Alert, Image, KeyboardAvoidingView, Platform, StyleSheet, View } from "
 import { Button, Text, TextInput } from "react-native-paper";
 import { AxiosError } from "axios";
 import { signInWithPassword } from "@/services/api/auth";
-import { appTheme } from "@/design/theme";
+import { darkTheme, lightTheme } from "@/design/theme";
 import { appConfig } from "@/services/config";
+import { useUiThemeStore } from "@/store/ui-theme-store";
 
 export function SignInScreen() {
+  const mode = useUiThemeStore((state) => state.mode);
+  const theme = mode === "dark" ? darkTheme : lightTheme;
+  const styles = getStyles(theme);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -60,6 +64,10 @@ export function SignInScreen() {
           onChangeText={setEmail}
           style={styles.input}
           left={<TextInput.Icon icon="email-outline" />}
+          textColor={theme.colors.onSurface}
+          outlineColor={theme.colors.outline}
+          activeOutlineColor={theme.colors.primary}
+          theme={{ colors: { onSurfaceVariant: theme.colors.onSurfaceVariant } }}
         />
         <TextInput
           mode="outlined"
@@ -75,6 +83,10 @@ export function SignInScreen() {
               onPress={() => setShowPassword((prev) => !prev)}
             />
           }
+          textColor={theme.colors.onSurface}
+          outlineColor={theme.colors.outline}
+          activeOutlineColor={theme.colors.primary}
+          theme={{ colors: { onSurfaceVariant: theme.colors.onSurfaceVariant } }}
         />
         <Button
           mode="contained"
@@ -83,6 +95,8 @@ export function SignInScreen() {
           disabled={loading || !email.trim() || !password}
           style={styles.button}
           contentStyle={styles.buttonContent}
+          buttonColor={theme.colors.primary}
+          textColor={theme.colors.onPrimary}
         >
           Sign In
         </Button>
@@ -91,15 +105,15 @@ export function SignInScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
   container: {
     flex: 1,
     justifyContent: "center",
     padding: 20,
-    backgroundColor: appTheme.colors.background,
+    backgroundColor: theme.colors.background,
   },
   card: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: theme.colors.surface,
     borderRadius: 20,
     padding: 20,
     shadowColor: "#000000",
@@ -125,21 +139,23 @@ const styles = StyleSheet.create({
   },
   title: {
     textAlign: "center",
+    color: theme.colors.onSurface,
   },
   subtitle: {
     textAlign: "center",
     marginTop: 2,
     fontWeight: "600",
+    color: theme.colors.onSurface,
   },
   description: {
     textAlign: "center",
-    color: "#6B7280",
+    color: theme.colors.onSurfaceVariant,
     marginTop: 6,
     marginBottom: 16,
   },
   input: {
     marginBottom: 10,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: theme.colors.surface,
   },
   button: {
     marginTop: 6,

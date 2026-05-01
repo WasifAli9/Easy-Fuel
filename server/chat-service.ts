@@ -1,5 +1,7 @@
-import { supabaseAdmin } from "./supabase";
 import { websocketService } from "./websocket";
+import { db } from "./db";
+import { chatMessages, chatThreads, customers, drivers } from "@shared/schema";
+import { eq } from "drizzle-orm";
 
 interface EnsureChatThreadParams {
   orderId: string;
@@ -19,34 +21,30 @@ export async function ensureChatThreadForAssignment({
   driverUserId,
 }: EnsureChatThreadParams) {
   try {
-    const { data: existingThread, error: threadError } = await supabaseAdmin
-      .from("chat_threads")
-      .select("id")
-      .eq("order_id", orderId)
-      .maybeSingle();
-
-    if (threadError) {
-      console.error("Error checking existing chat thread:", threadError);
-      return null;
-    }
+    const existingThreadRows = await db
+      .select({ id: chatThreads.id })
+      .from(chatThreads)
+      .where(eq(chatThreads.orderId, orderId))
+      .limit(1);
+    const existingThread = existingThreadRows[0];
 
     if (existingThread) {
       notifyParticipantsChatReady(orderId, existingThread.id, customerUserId, driverUserId);
       return existingThread;
     }
 
-    const { data: newThread, error: insertError } = await supabaseAdmin
-      .from("chat_threads")
-      .insert({
-        order_id: orderId,
-        customer_id: customerId,
-        driver_id: driverId,
+    const inserted = await db
+      .insert(chatThreads)
+      .values({
+        orderId,
+        customerId,
+        driverId,
       })
-      .select()
-      .single();
+      .returning();
+    const newThread = inserted[0];
 
-    if (insertError || !newThread) {
-      console.error("Error creating chat thread:", insertError);
+    if (!newThread) {
+      console.error("Error creating chat thread");
       return null;
     }
 
@@ -88,48 +86,46 @@ function notifyParticipantsChatReady(
 
 export async function cleanupChatForOrder(orderId: string) {
   try {
-    const { data: thread, error: threadError } = await supabaseAdmin
-      .from("chat_threads")
-      .select("id, customer_id, driver_id")
-      .eq("order_id", orderId)
-      .maybeSingle();
-
-    if (threadError) {
-      console.error("Error fetching chat thread for cleanup:", threadError);
-      return;
-    }
+    const threadRows = await db
+      .select({ id: chatThreads.id, customerId: chatThreads.customerId, driverId: chatThreads.driverId })
+      .from(chatThreads)
+      .where(eq(chatThreads.orderId, orderId))
+      .limit(1);
+    const thread = threadRows[0];
 
     if (!thread) {
       return;
     }
 
-    const [{ data: customer }, { data: driver }] = await Promise.all([
-      supabaseAdmin
-        .from("customers")
-        .select("user_id")
-        .eq("id", thread.customer_id)
-        .maybeSingle(),
-      supabaseAdmin
-        .from("drivers")
-        .select("user_id")
-        .eq("id", thread.driver_id)
-        .maybeSingle(),
+    const [customerRows, driverRows] = await Promise.all([
+      db
+        .select({ userId: customers.userId })
+        .from(customers)
+        .where(eq(customers.id, thread.customerId))
+        .limit(1),
+      db
+        .select({ userId: drivers.userId })
+        .from(drivers)
+        .where(eq(drivers.id, thread.driverId))
+        .limit(1),
     ]);
+    const customer = customerRows[0];
+    const driver = driverRows[0];
 
-    await supabaseAdmin.from("chat_messages").delete().eq("thread_id", thread.id);
-    await supabaseAdmin.from("chat_threads").delete().eq("id", thread.id);
+    await db.delete(chatMessages).where(eq(chatMessages.threadId, thread.id));
+    await db.delete(chatThreads).where(eq(chatThreads.id, thread.id));
 
     const payload = { orderId, threadId: thread.id };
 
-    if (customer?.user_id) {
-      websocketService.sendToUser(customer.user_id, {
+    if (customer?.userId) {
+      websocketService.sendToUser(customer.userId, {
         type: "chat_thread_closed",
         payload,
       });
     }
 
-    if (driver?.user_id) {
-      websocketService.sendToUser(driver.user_id, {
+    if (driver?.userId) {
+      websocketService.sendToUser(driver.userId, {
         type: "chat_thread_closed",
         payload,
       });

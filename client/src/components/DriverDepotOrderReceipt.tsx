@@ -2,9 +2,8 @@ import { useRef, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Download, Loader2 } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, normalizeFilePath } from "@/lib/utils";
 import { useCurrency } from "@/hooks/use-currency";
-import { apiRequest } from "@/lib/queryClient";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 
@@ -14,12 +13,63 @@ interface DriverDepotOrderReceiptProps {
   onOpenChange: (open: boolean) => void;
 }
 
+/**
+ * Digital signatures: `data:image/...;base64,...` renders directly.
+ * Legacy uploads: authenticated image proxy (session cookie).
+ */
+function signatureDisplaySrc(
+  orderId: string | undefined,
+  kind: "delivery" | "driver" | "supplier",
+  raw: string | null | undefined
+): string | null {
+  if (!raw || !String(raw).trim()) return null;
+  const s = String(raw).trim();
+  if (s.startsWith("data:image/")) return s;
+  if (!orderId) return null;
+  return `/api/driver-depot-orders/${orderId}/signature-image?kind=${kind}`;
+}
+
+function getSignatureCandidates(
+  orderId: string | undefined,
+  kind: "delivery" | "driver" | "supplier",
+  raw: string | null | undefined
+): string[] {
+  if (!raw || !String(raw).trim()) return [];
+  const s = String(raw).trim();
+  if (s.startsWith("data:")) return [s];
+  if (s.startsWith("http://") || s.startsWith("https://")) return [s];
+
+  const candidates: string[] = [];
+  const proxy = signatureDisplaySrc(orderId, kind, s);
+  if (proxy) candidates.push(proxy);
+
+  const normalized = normalizeFilePath(s);
+  if (normalized && !candidates.includes(normalized)) {
+    candidates.push(normalized);
+  }
+  return candidates;
+}
+
 export function DriverDepotOrderReceipt({ order, open, onOpenChange }: DriverDepotOrderReceiptProps) {
   const { currency } = useCurrency();
   const receiptRef = useRef<HTMLDivElement>(null);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
   const [logoLoaded, setLogoLoaded] = useState(false);
-  const [deliverySignatureUrl, setDeliverySignatureUrl] = useState<string | null>(null);
+
+  const deliverySigRaw =
+    order?.delivery_signature_url ?? order?.deliverySignatureUrl ?? null;
+  const driverSigRaw =
+    order?.driver_signature_url ?? order?.driverSignatureUrl ?? null;
+  const supplierSigRaw =
+    order?.supplier_signature_url ?? order?.supplierSignatureUrl ?? null;
+
+  const deliverySigCandidates = getSignatureCandidates(order?.id, "delivery", deliverySigRaw);
+  const driverSigCandidates = getSignatureCandidates(order?.id, "driver", driverSigRaw);
+  const supplierSigCandidates = getSignatureCandidates(order?.id, "supplier", supplierSigRaw);
+
+  const [deliverySigIndex, setDeliverySigIndex] = useState(0);
+  const [driverSigIndex, setDriverSigIndex] = useState(0);
+  const [supplierSigIndex, setSupplierSigIndex] = useState(0);
 
   useEffect(() => {
     if (open) {
@@ -50,52 +100,16 @@ export function DriverDepotOrderReceipt({ order, open, onOpenChange }: DriverDep
           };
         };
       };
-      
-      // Fetch presigned URL for delivery signature if it exists
-      if (order?.delivery_signature_url) {
-        const fetchPresignedUrl = async () => {
-          try {
-            let objectPath = order.delivery_signature_url;
-            
-            // If already a full URL, use it directly
-            if (objectPath.startsWith('http://') || objectPath.startsWith('https://')) {
-              setDeliverySignatureUrl(objectPath);
-              return;
-            }
-            
-            // Clean up the path
-            objectPath = objectPath.replace(/^\/+/, '');
-            
-            // Ensure proper format
-            if (!objectPath.includes('/')) {
-              objectPath = `private-objects/uploads/${objectPath}`;
-            } else if (!objectPath.startsWith('private-objects/') && !objectPath.startsWith('public-objects/')) {
-              objectPath = `private-objects/${objectPath}`;
-            }
-            
-            const response = await apiRequest("POST", "/api/objects/presigned-url", { objectPath });
-            const responseData = await response.json();
-            if (responseData.signedUrl) {
-              setDeliverySignatureUrl(responseData.signedUrl);
-            } else {
-              // Fallback to direct endpoint
-              setDeliverySignatureUrl(`/api/objects/${objectPath}`);
-            }
-          } catch (error) {
-            console.error("Error fetching presigned URL for delivery signature:", error);
-            // Fallback to direct endpoint
-            setDeliverySignatureUrl(order.delivery_signature_url.startsWith('/') 
-              ? order.delivery_signature_url 
-              : `/api/objects/${order.delivery_signature_url}`);
-          }
-        };
-        
-        fetchPresignedUrl();
-      } else {
-        setDeliverySignatureUrl(null);
-      }
     }
-  }, [open, order?.delivery_signature_url]);
+  }, [open]);
+
+  useEffect(() => {
+    if (open) {
+      setDeliverySigIndex(0);
+      setDriverSigIndex(0);
+      setSupplierSigIndex(0);
+    }
+  }, [open, order?.id, deliverySigRaw, driverSigRaw, supplierSigRaw]);
 
   const formatDate = (dateString: string) => {
     if (!dateString) return "N/A";
@@ -146,11 +160,14 @@ export function DriverDepotOrderReceipt({ order, open, onOpenChange }: DriverDep
 
   if (!order) return null;
 
-  // Get driver name - check multiple possible paths
-  const driverName = order.drivers?.profile?.full_name 
-    || order.driver_profile?.full_name 
-    || order.drivers?.full_name
-    || "Unknown Driver";
+  // Get driver name - check multiple possible paths (snake/camel from API normalization)
+  const driverName =
+    order.drivers?.profile?.full_name ??
+    order.drivers?.profile?.fullName ??
+    order.driver_profile?.full_name ??
+    order.driverProfile?.fullName ??
+    order.drivers?.full_name ??
+    "Unknown Driver";
   
   // Get supplier name - check multiple possible paths
   const supplierName = order.depots?.suppliers?.name 
@@ -159,30 +176,37 @@ export function DriverDepotOrderReceipt({ order, open, onOpenChange }: DriverDep
     || order.supplier?.registered_name
     || "Unknown Supplier";
   const depotName = order.depots?.name || "Unknown Depot";
-  const fuelType = order.fuel_types?.label || "Unknown";
-  const litres = order.actual_litres || order.litres || 0;
-  const pricePerLitre = order.price_per_litre_cents / 100;
-  const totalPrice = order.total_price_cents / 100;
+  const fuelType =
+    order.fuel_types?.label || order.fuelTypes?.label || order.fuel_types?.code || "Unknown";
+  const litres =
+    order.actual_litres_delivered ??
+    order.actualLitresDelivered ??
+    order.actual_litres ??
+    order.litres ??
+    0;
+  const pricePerLitre =
+    (order.price_per_litre_cents ?? order.pricePerLitreCents ?? 0) / 100;
+  const totalPrice = (order.total_price_cents ?? order.totalPriceCents ?? 0) / 100;
   const orderDate = formatDate(order.created_at);
   const completedDate = order.completed_at ? formatDate(order.completed_at) : formatDate(order.updated_at);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-card text-card-foreground">
         <DialogHeader>
           <DialogTitle>Order Receipt</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
-          {/* Receipt Content */}
+          {/* Receipt: fixed light “document” palette so dark mode UI does not leak low-contrast theme tokens onto white */}
           <div
             ref={receiptRef}
-            className="bg-white p-8 rounded-lg border-2 border-primary/20 shadow-lg"
+            className="rounded-lg border-2 border-slate-300 bg-white p-8 text-slate-900 shadow-lg"
             style={{ minHeight: "800px" }}
           >
             {/* Header */}
-            <div className="flex items-center justify-between mb-8 pb-6 border-b-2 border-primary/30">
+            <div className="mb-8 flex items-center justify-between border-b-2 border-slate-300 pb-6">
               <div className="flex items-center gap-4">
-                <div className="h-16 w-16 rounded-lg flex items-center justify-center shadow-md" style={{ backgroundColor: "#0ce6db" }}>
+                <div className="h-16 w-16 rounded-lg flex items-center justify-center border border-slate-200 bg-white">
                   {logoLoaded ? (
                     <img 
                       src="/logo-easyfuel.png" 
@@ -206,52 +230,52 @@ export function DriverDepotOrderReceipt({ order, open, onOpenChange }: DriverDep
                   )}
                 </div>
                 <div>
-                  <h1 className="text-3xl font-bold text-primary" style={{ color: "#0ce6db" }}>
+                  <h1 className="text-3xl font-bold text-slate-900">
                     Easy Fuel
                   </h1>
-                  <p className="text-sm text-muted-foreground">Fuel Delivery Receipt</p>
+                  <p className="text-sm text-slate-600">Fuel Delivery Receipt</p>
                 </div>
               </div>
               <div className="text-right">
-                <p className="text-sm text-muted-foreground">Order ID</p>
-                <p className="text-lg font-bold">#{order.id.slice(0, 8).toUpperCase()}</p>
+                <p className="text-sm text-slate-600">Order ID</p>
+                <p className="text-lg font-bold text-slate-900">#{order.id.slice(0, 8).toUpperCase()}</p>
               </div>
             </div>
 
             {/* Order Information */}
-            <div className="space-y-6 mb-8">
+            <div className="mb-8 space-y-6">
               <div className="grid grid-cols-2 gap-6">
                 <div>
-                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                  <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-600">
                     Driver Information
                   </h3>
-                  <div className="bg-muted/30 rounded-lg p-4">
-                    <p className="font-semibold text-lg">{driverName}</p>
+                  <div className="rounded-lg border border-slate-200 bg-slate-100 p-4">
+                    <p className="text-lg font-semibold text-slate-900">{driverName}</p>
                     {order.drivers?.profile?.phone && (
-                      <p className="text-sm text-muted-foreground mt-1">{order.drivers.profile.phone}</p>
+                      <p className="mt-1 text-sm text-slate-600">{order.drivers.profile.phone}</p>
                     )}
                   </div>
                 </div>
                 <div>
-                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                  <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-600">
                     Depot Information
                   </h3>
-                  <div className="bg-muted/30 rounded-lg p-4">
-                    <p className="font-semibold text-lg">{depotName}</p>
+                  <div className="rounded-lg border border-slate-200 bg-slate-100 p-4">
+                    <p className="text-lg font-semibold text-slate-900">{depotName}</p>
                     {order.depots?.suppliers?.name && (
-                      <p className="text-sm text-muted-foreground mt-1">Supplier: {order.depots.suppliers.name || order.depots.suppliers.registered_name}</p>
+                      <p className="mt-1 text-sm text-slate-600">Supplier: {order.depots.suppliers.name || order.depots.suppliers.registered_name}</p>
                     )}
                   </div>
                 </div>
               </div>
 
               <div>
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-600">
                   Depot Address
                 </h3>
-                <div className="bg-muted/30 rounded-lg p-4">
+                <div className="rounded-lg border border-slate-200 bg-slate-100 p-4">
                   {order.depots?.address_street ? (
-                    <p className="text-sm text-muted-foreground">
+                    <p className="text-sm text-slate-800">
                       {[
                         order.depots.address_street,
                         order.depots.address_city,
@@ -262,7 +286,7 @@ export function DriverDepotOrderReceipt({ order, open, onOpenChange }: DriverDep
                         .join(", ")}
                     </p>
                   ) : (
-                    <p className="text-sm text-muted-foreground">Address not available</p>
+                    <p className="text-sm text-slate-600">Address not available</p>
                   )}
                 </div>
               </div>
@@ -270,22 +294,22 @@ export function DriverDepotOrderReceipt({ order, open, onOpenChange }: DriverDep
 
             {/* Fuel Details */}
             <div className="mb-8">
-              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-4">
+              <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-600">
                 Fuel Collection Details
               </h3>
-              <div className="bg-gradient-to-r from-primary/10 to-primary/5 rounded-lg p-6 border border-primary/20">
+              <div className="rounded-lg border border-slate-300 bg-slate-50 p-6">
                 <div className="grid grid-cols-3 gap-4">
                   <div>
-                    <p className="text-sm text-muted-foreground">Fuel Type</p>
-                    <p className="text-xl font-bold mt-1">{fuelType}</p>
+                    <p className="text-sm text-slate-600">Fuel Type</p>
+                    <p className="mt-1 text-xl font-bold text-slate-900">{fuelType}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Quantity</p>
-                    <p className="text-xl font-bold mt-1">{litres}L</p>
+                    <p className="text-sm text-slate-600">Quantity</p>
+                    <p className="mt-1 text-xl font-bold text-slate-900">{litres}L</p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Price per Litre</p>
-                    <p className="text-xl font-bold mt-1">{formatCurrency(pricePerLitre, currency)}</p>
+                    <p className="text-sm text-slate-600">Price per Litre</p>
+                    <p className="mt-1 text-xl font-bold text-slate-900">{formatCurrency(pricePerLitre, currency)}</p>
                   </div>
                 </div>
               </div>
@@ -293,17 +317,17 @@ export function DriverDepotOrderReceipt({ order, open, onOpenChange }: DriverDep
 
             {/* Pricing Breakdown */}
             <div className="mb-8">
-              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-4">
+              <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-600">
                 Pricing Breakdown
               </h3>
-              <div className="border rounded-lg overflow-hidden">
-                <div className="bg-muted/30 p-4 flex justify-between items-center">
-                  <span className="font-medium">Subtotal ({litres}L × {formatCurrency(pricePerLitre, currency)})</span>
-                  <span className="font-semibold">{formatCurrency(totalPrice, currency)}</span>
+              <div className="overflow-hidden rounded-lg border border-slate-200">
+                <div className="flex items-center justify-between bg-slate-100 p-4">
+                  <span className="font-medium text-slate-800">Subtotal ({litres}L × {formatCurrency(pricePerLitre, currency)})</span>
+                  <span className="font-semibold text-slate-900">{formatCurrency(totalPrice, currency)}</span>
                 </div>
-                <div className="bg-primary/5 p-4 flex justify-between items-center border-t">
-                  <span className="text-lg font-bold">Total Amount</span>
-                  <span className="text-2xl font-bold" style={{ color: "#0ce6db" }}>
+                <div className="flex items-center justify-between border-t border-slate-200 bg-slate-100 p-4">
+                  <span className="text-lg font-bold text-slate-900">Total Amount</span>
+                  <span className="text-2xl font-bold text-slate-900">
                     {formatCurrency(totalPrice, currency)}
                   </span>
                 </div>
@@ -311,84 +335,91 @@ export function DriverDepotOrderReceipt({ order, open, onOpenChange }: DriverDep
             </div>
 
             {/* Dates */}
-            <div className="grid grid-cols-2 gap-6 mb-8">
+            <div className="mb-8 grid grid-cols-2 gap-6">
               <div>
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-600">
                   Order Date
                 </h3>
-                <p className="text-lg">{orderDate}</p>
+                <p className="text-lg text-slate-900">{orderDate}</p>
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-600">
                   Completed Date
                 </h3>
-                <p className="text-lg">{completedDate}</p>
+                <p className="text-lg text-slate-900">{completedDate}</p>
               </div>
             </div>
 
             {/* Signatures */}
-            <div className="mt-8 pt-6 border-t-2 border-primary/30">
-              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-4">
+            <div className="mt-8 border-t-2 border-slate-300 pt-6">
+              <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-600">
                 Signatures
               </h3>
-              <div className="grid grid-cols-3 gap-4">
-                {order.driver_signature_url && (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                {driverSigCandidates[driverSigIndex] && (
                   <div className="text-center">
-                    <p className="text-xs text-muted-foreground mb-2">Driver Signature</p>
-                    <div className="bg-muted/30 rounded-lg p-3 border border-border">
+                    <p className="mb-2 text-xs text-slate-600">Driver Signature</p>
+                    <div className="rounded-lg border border-slate-200 bg-slate-100 p-3">
                       <img
-                        src={order.driver_signature_url}
+                        src={driverSigCandidates[driverSigIndex]}
                         alt="Driver Signature"
-                        className="max-h-24 mx-auto object-contain"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = "none";
+                        className="mx-auto max-h-32 object-contain"
+                        onError={() => {
+                          if (driverSigIndex + 1 < driverSigCandidates.length) {
+                            setDriverSigIndex((i) => i + 1);
+                          }
                         }}
                       />
                     </div>
-                    <p className="text-xs font-medium mt-2">{driverName}</p>
+                    <p className="mt-2 text-xs font-medium text-slate-800">{driverName}</p>
                   </div>
                 )}
-                {order.supplier_signature_url && (
+                {supplierSigCandidates[supplierSigIndex] && (
                   <div className="text-center">
-                    <p className="text-xs text-muted-foreground mb-2">Supplier Signature</p>
-                    <div className="bg-muted/30 rounded-lg p-3 border border-border">
+                    <p className="mb-2 text-xs text-slate-600">Supplier Signature</p>
+                    <div className="rounded-lg border border-slate-200 bg-slate-100 p-3">
                       <img
-                        src={order.supplier_signature_url}
+                        src={supplierSigCandidates[supplierSigIndex]}
                         alt="Supplier Signature"
-                        className="max-h-24 mx-auto object-contain"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = "none";
+                        className="mx-auto max-h-32 object-contain"
+                        onError={() => {
+                          if (supplierSigIndex + 1 < supplierSigCandidates.length) {
+                            setSupplierSigIndex((i) => i + 1);
+                          }
                         }}
                       />
                     </div>
-                    <p className="text-xs font-medium mt-2">{supplierName}</p>
+                    <p className="mt-2 text-xs font-medium text-slate-800">{supplierName}</p>
                   </div>
                 )}
-                {deliverySignatureUrl && (
+                {deliverySigCandidates[deliverySigIndex] && (
                   <div className="text-center">
-                    <p className="text-xs text-muted-foreground mb-2">Driver Receipt Confirmation</p>
-                    <div className="bg-muted/30 rounded-lg p-3 border border-border">
+                    <p className="mb-2 text-xs text-slate-600">Driver Receipt Confirmation</p>
+                    <div className="rounded-lg border border-slate-200 bg-slate-100 p-3">
                       <img
-                        src={deliverySignatureUrl}
+                        key={`${order?.id ?? "receipt"}-${deliverySigCandidates[deliverySigIndex]}`}
+                        src={deliverySigCandidates[deliverySigIndex]}
                         alt="Driver Receipt Signature"
-                        className="max-h-24 mx-auto object-contain"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = "none";
+                        className="mx-auto max-h-32 object-contain"
+                        onError={() => {
+                          if (deliverySigIndex + 1 < deliverySigCandidates.length) {
+                            setDeliverySigIndex((i) => i + 1);
+                          }
                         }}
                       />
                     </div>
-                    <p className="text-xs font-medium mt-2">{driverName}</p>
+                    <p className="mt-2 text-xs font-medium text-slate-800">{driverName}</p>
                   </div>
                 )}
               </div>
             </div>
 
             {/* Footer */}
-            <div className="mt-8 pt-6 border-t border-muted text-center">
-              <p className="text-xs text-muted-foreground">
+            <div className="mt-8 border-t border-slate-200 pt-6 text-center">
+              <p className="text-xs text-slate-600">
                 This is an official receipt from Easy Fuel. Please keep this document for your records.
               </p>
-              <p className="text-xs text-muted-foreground mt-2">
+              <p className="text-xs text-slate-600 mt-2">
                 Generated on {new Date().toLocaleDateString("en-ZA", { year: "numeric", month: "long", day: "numeric" })}
               </p>
             </div>

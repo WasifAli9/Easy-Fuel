@@ -35,6 +35,25 @@ type DeliveryAddress = {
   is_default: boolean;
   created_at: string;
 };
+type RawDeliveryAddress = DeliveryAddress & Record<string, any>;
+
+function normalizeAddress(address: RawDeliveryAddress): DeliveryAddress {
+  return {
+    id: address.id,
+    label: address.label ?? "",
+    address_street: address.address_street ?? address.addressStreet ?? "",
+    address_city: address.address_city ?? address.addressCity ?? "",
+    address_province: address.address_province ?? address.addressProvince ?? "",
+    address_postal_code: address.address_postal_code ?? address.addressPostalCode ?? "",
+    address_country: address.address_country ?? address.addressCountry ?? "South Africa",
+    lat: Number(address.lat ?? 0),
+    lng: Number(address.lng ?? 0),
+    access_instructions: address.access_instructions ?? address.accessInstructions ?? null,
+    verification_status: address.verification_status ?? address.verificationStatus ?? "pending",
+    is_default: Boolean(address.is_default ?? address.isDefault ?? false),
+    created_at: address.created_at ?? address.createdAt ?? "",
+  };
+}
 
 export default function SavedAddresses() {
   const { toast } = useToast();
@@ -44,9 +63,10 @@ export default function SavedAddresses() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [addressToDelete, setAddressToDelete] = useState<string | null>(null);
 
-  const { data: addresses = [], isLoading } = useQuery<DeliveryAddress[]>({
+  const { data: rawAddresses = [], isLoading } = useQuery<RawDeliveryAddress[]>({
     queryKey: ["/api/addresses"],
   });
+  const addresses = (rawAddresses || []).map(normalizeAddress);
 
   const deleteMutation = useMutation({
     mutationFn: async (addressId: string) => {

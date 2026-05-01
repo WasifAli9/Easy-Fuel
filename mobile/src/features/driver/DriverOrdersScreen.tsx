@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, Modal, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -16,6 +16,10 @@ import { apiClient } from "@/services/api/client";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { useUiOverlayStore } from "@/store/ui-overlay-store";
+import { OrderChatPanel } from "@/features/chat/OrderChatPanel";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Signature from "react-native-signature-canvas";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 type DriverOrder = {
   id: string;
@@ -32,15 +36,6 @@ type DriverOrder = {
     company_name?: string;
     profiles?: { full_name?: string; phone?: string };
   };
-};
-
-type ChatThread = { id: string };
-type ChatMessage = {
-  id: string;
-  senderType: "customer" | "driver";
-  senderName?: string;
-  message: string;
-  createdAt: string;
 };
 
 function formatAmount(cents?: number) {
@@ -61,105 +56,6 @@ function stateLabel(state: string) {
   return state.replace("_", " ").replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
-function OrderChat({ orderId }: { orderId: string }) {
-  const mode = useUiThemeStore((state) => state.mode);
-  const theme = mode === "dark" ? darkTheme : lightTheme;
-  const styles = getStyles(theme);
-  const [messageText, setMessageText] = useState("");
-  const queryClient = useQueryClient();
-
-  const threadQuery = useQuery({
-    queryKey: ["/api/chat/thread", orderId],
-    queryFn: async () => {
-      const { data } = await apiClient.get<ChatThread>(`/api/chat/thread/${orderId}`);
-      return data;
-    },
-    refetchInterval: 10_000,
-  });
-
-  const messagesQuery = useQuery({
-    queryKey: ["/api/chat/messages", threadQuery.data?.id],
-    enabled: !!threadQuery.data?.id,
-    queryFn: async () => {
-      const { data } = await apiClient.get<ChatMessage[]>(`/api/chat/messages/${threadQuery.data?.id}`);
-      return data;
-    },
-    refetchInterval: 5_000,
-  });
-
-  const sendMessageMutation = useMutation({
-    mutationFn: async () => {
-      if (!threadQuery.data?.id || !messageText.trim()) return;
-      await apiClient.post("/api/chat/messages", {
-        threadId: threadQuery.data.id,
-        message: messageText.trim(),
-        messageType: "text",
-      });
-    },
-    onSuccess: () => {
-      setMessageText("");
-      queryClient.invalidateQueries({ queryKey: ["/api/chat/messages", threadQuery.data?.id] });
-    },
-  });
-
-  if (threadQuery.isLoading || messagesQuery.isLoading) {
-    return (
-      <View style={styles.chatLoading}>
-        <ActivityIndicator />
-      </View>
-    );
-  }
-
-  if (threadQuery.isError) {
-    return <Text style={styles.chatError}>Chat is not available for this order yet.</Text>;
-  }
-
-  return (
-    <View style={styles.chatWrap}>
-      <Text variant="titleSmall" style={styles.chatTitle}>
-        Messages
-      </Text>
-      <FlatList
-        data={messagesQuery.data ?? []}
-        keyExtractor={(item) => item.id}
-        style={styles.chatList}
-        contentContainerStyle={styles.chatListContent}
-        nestedScrollEnabled
-        ListEmptyComponent={<Text style={styles.chatEmpty}>No messages yet.</Text>}
-        renderItem={({ item }) => {
-          const own = item.senderType === "driver";
-          return (
-            <View style={[styles.messageRow, own ? styles.messageRowOwn : null]}>
-              <Text style={styles.messageMeta}>
-                {own ? "You" : item.senderName || "Customer"}{" "}
-                {new Date(item.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-              </Text>
-              <Text style={[styles.messageBubble, own ? styles.messageBubbleOwn : null]}>{item.message}</Text>
-            </View>
-          );
-        }}
-      />
-      <View style={styles.chatInputRow}>
-        <TextInput
-          mode="outlined"
-          placeholder="Type a message..."
-          value={messageText}
-          onChangeText={setMessageText}
-          style={styles.chatInput}
-        />
-        <Button
-          mode="contained"
-          onPress={() => sendMessageMutation.mutate()}
-          loading={sendMessageMutation.isPending}
-          disabled={!messageText.trim() || sendMessageMutation.isPending}
-        >
-          Send
-        </Button>
-      </View>
-    </View>
-  );
-}
-
 export function DriverOrdersScreen() {
   const mode = useUiThemeStore((state) => state.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
@@ -168,13 +64,25 @@ export function DriverOrdersScreen() {
   const [selectedOrder, setSelectedOrder] = useState<DriverOrder | null>(null);
   const [chatVisible, setChatVisible] = useState(false);
   const [signatureName, setSignatureName] = useState("");
+  const [signatureData, setSignatureData] = useState<string | null>(null);
+  const [hasDrawnSignature, setHasDrawnSignature] = useState(false);
+  const [pendingCompleteOrderId, setPendingCompleteOrderId] = useState<string | null>(null);
+  const [signaturePadKey, setSignaturePadKey] = useState(0);
+  const signatureRef = useRef<any>(null);
   const queryClient = useQueryClient();
   const setHideDriverHeader = useUiOverlayStore((state) => state.setHideDriverHeader);
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     setHideDriverHeader(!!selectedOrder);
     return () => setHideDriverHeader(false);
   }, [selectedOrder, setHideDriverHeader]);
+
+  useEffect(() => {
+    if (!pendingCompleteOrderId || !signatureData) return;
+    statusMutation.mutate({ action: "complete", orderId: pendingCompleteOrderId });
+    setPendingCompleteOrderId(null);
+  }, [pendingCompleteOrderId, signatureData]);
 
   const assignedQuery = useQuery({
     queryKey: ["/api/driver/assigned-orders"],
@@ -190,14 +98,30 @@ export function DriverOrdersScreen() {
   const statusMutation = useMutation({
     mutationFn: async ({ action, orderId }: { action: "start" | "pickup" | "complete"; orderId: string }) => {
       if (action === "complete") {
-        return apiClient.post(`/api/driver/orders/${orderId}/complete`, {
-          signatureData: `mobile-signature-${Date.now()}-${signatureName || "driver"}`,
-          signatureName: signatureName || "Driver",
-        });
+        return (
+          await apiClient.post(`/api/driver/orders/${orderId}/complete`, {
+            signatureData: signatureData || `mobile-signature-${Date.now()}-${signatureName || "driver"}`,
+            signatureName: signatureName || "Driver",
+          })
+        ).data as DriverOrder;
       }
-      return apiClient.post(`/api/driver/orders/${orderId}/${action}`);
+      return (await apiClient.post(`/api/driver/orders/${orderId}/${action}`)).data as DriverOrder;
     },
-    onSuccess: async () => {
+    onSuccess: async (updatedOrder, variables) => {
+      setSelectedOrder((prev) => {
+        if (!prev || prev.id !== variables.orderId) return prev;
+        const nextState = (updatedOrder as any)?.state || prev.state;
+        return { ...prev, ...(updatedOrder as any), state: nextState };
+      });
+
+      const nextState = (updatedOrder as any)?.state;
+      if (nextState === "delivered") {
+        setSignatureData(null);
+        setHasDrawnSignature(false);
+        setPendingCompleteOrderId(null);
+        setSignaturePadKey((k) => k + 1);
+      }
+
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["/api/driver/assigned-orders"] }),
         queryClient.invalidateQueries({ queryKey: ["/api/driver/completed-orders"] }),
@@ -217,6 +141,12 @@ export function DriverOrdersScreen() {
     <View style={styles.container}>
       <Card style={styles.headerCard}>
         <Card.Content>
+          <View style={styles.brandRow}>
+            <View style={styles.brandBadge}>
+              <MaterialCommunityIcons name="gas-station" size={16} color="#5B21B6" />
+              <Text style={styles.brandText}>EasyFuel</Text>
+            </View>
+          </View>
           <Text variant="headlineSmall">Driver Orders</Text>
           <Text style={styles.headerSubtitle}>Open orders, update status, and chat with customers.</Text>
           <SegmentedButtons
@@ -266,6 +196,10 @@ export function DriverOrdersScreen() {
                   onPress={() => {
                     setSelectedOrder(item);
                     setChatVisible(false);
+                    setSignatureData(null);
+                    setHasDrawnSignature(false);
+                    setPendingCompleteOrderId(null);
+                    setSignaturePadKey((k) => k + 1);
                   }}
                 >
                   Open Order
@@ -280,11 +214,10 @@ export function DriverOrdersScreen() {
         visible={!!selectedOrder}
         animationType="slide"
         presentationStyle="fullScreen"
-        statusBarTranslucent
         onRequestClose={() => setSelectedOrder(null)}
       >
         <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
+          <View style={[styles.modalHeader, { paddingTop: Math.max(insets.top, 10) }]}>
             <Text variant="titleLarge">Order Details</Text>
             <Button onPress={() => setSelectedOrder(null)}>Close</Button>
           </View>
@@ -333,12 +266,51 @@ export function DriverOrdersScreen() {
                         onChangeText={setSignatureName}
                         style={styles.signatureInput}
                       />
+                      <Text style={styles.signatureLabel}>Customer Signature *</Text>
+                      <View style={styles.signatureCanvas}>
+                        <Signature
+                          key={`sig-pad-${signaturePadKey}`}
+                          ref={signatureRef}
+                          onOK={(sig) => setSignatureData(sig)}
+                          onEmpty={() => setSignatureData(null)}
+                          onClear={() => {
+                            setSignatureData(null);
+                            setHasDrawnSignature(false);
+                          }}
+                          onEnd={() => setHasDrawnSignature(true)}
+                          webStyle={`
+                            .m-signature-pad { box-shadow: none; border: none; }
+                            .m-signature-pad--footer { display: none; margin: 0; }
+                            body, html { width: 100%; height: 100%; }
+                            canvas { border: none; }
+                          `}
+                          autoClear={false}
+                          imageType="image/png"
+                          descriptionText=""
+                        />
+                      </View>
+                      <Button
+                        mode="outlined"
+                        onPress={() => {
+                          setSignatureData(null);
+                          setHasDrawnSignature(false);
+                          setPendingCompleteOrderId(null);
+                          setSignaturePadKey((k) => k + 1);
+                        }}
+                      >
+                        Clear Signature
+                      </Button>
                       <Button
                         mode="contained"
                         buttonColor={theme.colors.primary}
                         textColor={theme.colors.onPrimary}
-                        onPress={() => statusMutation.mutate({ action: "complete", orderId: selectedOrder.id })}
+                        onPress={() => {
+                          if (!selectedOrder?.id) return;
+                          setPendingCompleteOrderId(selectedOrder.id);
+                          signatureRef.current?.readSignature?.();
+                        }}
                         loading={statusMutation.isPending}
+                        disabled={statusMutation.isPending || !hasDrawnSignature}
                       >
                         Complete Delivery
                       </Button>
@@ -356,7 +328,7 @@ export function DriverOrdersScreen() {
                 </Button>
                 {chatVisible ? (
                   <View style={styles.chatSection}>
-                    <OrderChat orderId={selectedOrder.id} />
+                    <OrderChatPanel orderId={selectedOrder.id} viewerRole="driver" />
                   </View>
                 ) : null}
               </View>
@@ -377,6 +349,28 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
   headerCard: {
     marginBottom: 10,
     backgroundColor: theme.colors.surface,
+    borderRadius: 20,
+  },
+  brandRow: {
+    marginBottom: 8,
+    flexDirection: "row",
+    justifyContent: "flex-end",
+  },
+  brandBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: 999,
+    backgroundColor: "#EDE9FE",
+    borderWidth: 1,
+    borderColor: "#DDD6FE",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  brandText: {
+    color: "#5B21B6",
+    fontWeight: "700",
+    fontSize: 12,
   },
   headerSubtitle: {
     marginTop: 6,
@@ -401,6 +395,7 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
   },
   orderCard: {
     backgroundColor: theme.colors.surface,
+    borderRadius: 18,
   },
   rowBetween: {
     flexDirection: "row",
@@ -437,6 +432,21 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
   signatureInput: {
     backgroundColor: theme.colors.surface,
   },
+  signatureLabel: {
+    marginTop: 4,
+    color: theme.colors.onSurfaceVariant,
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  signatureCanvas: {
+    height: 180,
+    borderWidth: 1,
+    borderRadius: 12,
+    borderColor: theme.colors.primary,
+    backgroundColor: "#FFFFFF",
+    position: "relative",
+    overflow: "hidden",
+  },
   modalContainer: {
     flex: 1,
     backgroundColor: theme.colors.background,
@@ -465,62 +475,10 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
   chatSection: {
     marginTop: 10,
     flex: 1,
-  },
-  chatWrap: {
-    gap: 8,
-    flex: 1,
-  },
-  chatTitle: {
-    marginTop: 2,
-  },
-  chatLoading: {
-    paddingVertical: 20,
-    alignItems: "center",
-  },
-  chatError: {
-    color: theme.colors.onSurfaceVariant,
-  },
-  chatList: {
-    maxHeight: 420,
-    minHeight: 220,
-    borderRadius: 8,
-    overflow: "hidden",
-  },
-  chatListContent: {
-    gap: 8,
-    paddingBottom: 8,
-  },
-  chatEmpty: {
-    color: theme.colors.onSurfaceVariant,
-  },
-  messageRow: {
-    gap: 4,
-  },
-  messageRowOwn: {
-    alignItems: "flex-end",
-  },
-  messageMeta: {
-    fontSize: 12,
-    color: theme.colors.onSurfaceVariant,
-  },
-  messageBubble: {
-    backgroundColor: theme.colors.surfaceVariant,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 10,
-    maxWidth: "92%",
-  },
-  messageBubbleOwn: {
-    backgroundColor: theme.colors.primary,
-    color: theme.colors.onPrimary,
-  },
-  chatInputRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  chatInput: {
-    flex: 1,
-    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.outline,
+    borderRadius: 12,
+    padding: 10,
+    backgroundColor: theme.colors.background,
   },
 });

@@ -1,58 +1,16 @@
-import { signOut } from "@/services/api/auth";
 import { ApiCollectionScreen } from "@/features/common/ApiCollectionScreen";
+import { CustomerAddressesScreen } from "@/features/customer/CustomerAddressesScreen";
+import { CustomerDashboardScreen } from "@/features/customer/CustomerDashboardScreen";
+import { CustomerOrdersScreen } from "@/features/customer/CustomerOrdersScreen";
+import { CustomerProfileScreen } from "@/features/customer/CustomerProfileScreen";
+import { SupplierDashboardScreen } from "@/features/supplier/SupplierDashboardScreen";
+import { SupplierDepotsScreen } from "@/features/supplier/SupplierDepotsScreen";
+import { SupplierProfileScreen } from "@/features/supplier/SupplierProfileScreen";
+import { SupplierSubscriptionScreen } from "@/features/supplier/SupplierSubscriptionScreen";
+import { signOut } from "@/services/api/auth";
 
-export function CustomerDashboardScreen() {
-  return (
-    <ApiCollectionScreen
-      title="Customer Dashboard"
-      subtitle="Recent orders and activity."
-      endpoint="/api/orders"
-      emptyMessage="No customer orders found."
-      itemTitleKeys={["delivery_address", "fuel_type", "id"]}
-      itemSubtitleKeys={["status", "scheduled_date", "created_at"]}
-    />
-  );
-}
-
-export function CustomerOrdersScreen() {
-  return (
-    <ApiCollectionScreen
-      title="Orders"
-      subtitle="Create and track your fuel requests."
-      endpoint="/api/orders"
-      emptyMessage="No orders yet."
-      itemTitleKeys={["delivery_address", "fuel_type", "id"]}
-      itemSubtitleKeys={["status", "scheduled_date", "quantity"]}
-    />
-  );
-}
-
-export function CustomerAddressesScreen() {
-  return (
-    <ApiCollectionScreen
-      title="Saved Addresses"
-      subtitle="Manage your delivery locations."
-      endpoint="/api/addresses"
-      emptyMessage="No saved addresses."
-      itemTitleKeys={["label", "address_line_1", "city", "id"]}
-      itemSubtitleKeys={["city", "province", "postal_code"]}
-    />
-  );
-}
-
-export function CustomerProfileScreen() {
-  return (
-    <ApiCollectionScreen
-      title="Customer Profile"
-      subtitle="Account settings and payment setup."
-      endpoint="/api/profile"
-      emptyMessage="No profile data available."
-      itemTitleKeys={["full_name", "name", "email"]}
-      itemSubtitleKeys={["phone", "role", "updated_at"]}
-      extraAction={{ label: "Sign Out", onPress: () => void signOut() }}
-    />
-  );
-}
+export { CustomerDashboardScreen, CustomerOrdersScreen, CustomerAddressesScreen, CustomerProfileScreen };
+export { SupplierDashboardScreen, SupplierDepotsScreen, SupplierSubscriptionScreen, SupplierProfileScreen };
 
 export function DriverDashboardScreen() {
   return (
@@ -102,59 +60,6 @@ export function DriverProfileScreen() {
       emptyMessage="No driver profile found."
       itemTitleKeys={["full_name", "name", "email"]}
       itemSubtitleKeys={["phone", "license_number", "status"]}
-      extraAction={{ label: "Sign Out", onPress: () => void signOut() }}
-    />
-  );
-}
-
-export function SupplierDashboardScreen() {
-  return (
-    <ApiCollectionScreen
-      title="Supplier Dashboard"
-      subtitle="Orders, depots and operational overview."
-      endpoint="/api/supplier/driver-depot-orders"
-      emptyMessage="No supplier depot orders."
-      itemTitleKeys={["order_number", "depot_name", "id"]}
-      itemSubtitleKeys={["status", "created_at", "scheduled_date"]}
-    />
-  );
-}
-
-export function SupplierDepotsScreen() {
-  return (
-    <ApiCollectionScreen
-      title="Depots"
-      subtitle="Manage depot locations and inventory."
-      endpoint="/api/supplier/depots"
-      emptyMessage="No depots available."
-      itemTitleKeys={["name", "depot_name", "id"]}
-      itemSubtitleKeys={["city", "status", "updated_at"]}
-    />
-  );
-}
-
-export function SupplierSubscriptionScreen() {
-  return (
-    <ApiCollectionScreen
-      title="Supplier Subscription"
-      subtitle="Subscription plans and billing state."
-      endpoint="/api/supplier/subscription"
-      emptyMessage="No supplier subscription data."
-      itemTitleKeys={["plan_name", "planCode", "status", "id"]}
-      itemSubtitleKeys={["status", "next_billing_date", "amount"]}
-    />
-  );
-}
-
-export function SupplierProfileScreen() {
-  return (
-    <ApiCollectionScreen
-      title="Supplier Profile"
-      subtitle="Business details and compliance status."
-      endpoint="/api/supplier/profile"
-      emptyMessage="No supplier profile found."
-      itemTitleKeys={["business_name", "full_name", "email"]}
-      itemSubtitleKeys={["status", "phone", "updated_at"]}
       extraAction={{ label: "Sign Out", onPress: () => void signOut() }}
     />
   );

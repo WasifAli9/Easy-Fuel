@@ -767,7 +767,7 @@ export default function AdminDashboard() {
   const driverKYC = pendingKYC?.drivers?.map(driver => ({
     id: driver.id,
     userId: driver.user_id,
-    applicantName: driver.profiles.full_name,
+    applicantName: driver.profiles?.full_name || "Unknown Driver",
     applicantType: "driver" as const,
     documentType: driver.vehicle_registration || "Driver Application",
     submittedDate: new Date(driver.created_at).toLocaleString(),
@@ -811,15 +811,7 @@ export default function AdminDashboard() {
   // Use a Map to deduplicate by user_id/owner_id to prevent showing the same user twice
   const usersMap = new Map<string, any>();
   
-  // Add customers (only those with role === "customer")
-  customers?.filter(customer => customer.profiles?.role === "customer").forEach(customer => {
-    const key = customer.user_id;
-    if (!usersMap.has(key)) {
-      usersMap.set(key, { ...customer, userRole: "customer" as const });
-    }
-  });
-  
-  // Add drivers (only those with role === "driver")
+  // Add drivers first so a user with multiple records keeps higher-privilege role.
   allDrivers?.filter(driver => driver.profiles?.role === "driver").forEach(driver => {
     const key = driver.user_id;
     // Only add if not already added as a customer
@@ -836,8 +828,23 @@ export default function AdminDashboard() {
       usersMap.set(key, { ...supplier, userRole: "supplier" as const });
     }
   });
+
+  // Add customers last so they don't override existing driver/supplier roles.
+  customers?.forEach(customer => {
+    const key = customer.user_id || (customer as any).userId;
+    if (!key || usersMap.has(key)) return;
+    usersMap.set(key, {
+      ...customer,
+      user_id: key,
+      created_at: customer.created_at || (customer as any).createdAt,
+      userRole: "customer" as const,
+    });
+  });
   
-  const allUsers = Array.from(usersMap.values());
+  // Remove ghost/legacy rows that have no visible identity fields.
+  const allUsers = Array.from(usersMap.values()).filter((u) =>
+    Boolean(u?.profiles?.full_name || u?.profiles?.email || u?.company_name || u?.name)
+  );
 
   // Filter users based on search and role filter
   const filteredUsers = allUsers.filter((user) => {
@@ -875,12 +882,11 @@ export default function AdminDashboard() {
 
   // Keep filteredCustomers for stats (legacy)
   const filteredCustomers = customers?.filter((customer) => {
-    if (customer.profiles?.role !== "customer") {
-      return false;
-    }
+    const q = userSearch.toLowerCase();
     return (
-      customer.profiles?.full_name?.toLowerCase().includes(userSearch.toLowerCase()) ||
-      customer.company_name?.toLowerCase().includes(userSearch.toLowerCase())
+      customer.profiles?.full_name?.toLowerCase().includes(q) ||
+      customer.company_name?.toLowerCase().includes(q) ||
+      customer.profiles?.email?.toLowerCase().includes(q)
     );
   }) || [];
 

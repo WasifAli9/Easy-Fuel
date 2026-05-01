@@ -118,6 +118,10 @@ export function SignaturePad({
 
     ctx.lineTo(coordinates.x, coordinates.y);
     ctx.stroke();
+
+    // Persist signature continuously while drawing.
+    // Some devices/browsers can miss end events, causing parent validation to think no signature was provided.
+    onChange?.(canvas.toDataURL());
   };
 
   const handleEnd = () => {
@@ -156,6 +160,7 @@ export function SignaturePad({
         onTouchStart={handleStart}
         onTouchMove={handleMove}
         onTouchEnd={handleEnd}
+        onTouchCancel={handleEnd}
         aria-label="Signature pad"
         {...canvasProps}
       />

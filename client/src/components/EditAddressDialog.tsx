@@ -209,7 +209,15 @@ export function EditAddressDialog({ open, onOpenChange, address }: EditAddressDi
   });
 
   const onSubmit = (data: AddressFormData) => {
-    updateMutation.mutate(data);
+    const normalizedProvince =
+      typeof data.addressProvince === "string" && data.addressProvince.trim().length > 0
+        ? data.addressProvince.trim()
+        : "Gauteng";
+    updateMutation.mutate({
+      ...data,
+      addressProvince: normalizedProvince,
+      addressCountry: data.addressCountry?.trim() || "South Africa",
+    });
   };
 
   return (

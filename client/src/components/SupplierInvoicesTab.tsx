@@ -45,17 +45,18 @@ export function SupplierInvoicesTab({ hasSubscription }: { hasSubscription: bool
               {invoices.map((inv: any) => (
                 <li key={inv.id} className="flex items-center justify-between py-2 border-b last:border-0">
                   <div>
-                    <p className="font-medium">{inv.depotName} – {inv.fuelType}</p>
+                    <p className="font-medium">
+                      {inv.depotName || "Depot"} - {inv.fuelType || "Fuel"}
+                    </p>
                     <p className="text-xs text-muted-foreground">
-                      {inv.completedAt ? new Date(inv.completedAt).toLocaleDateString() : ""} • {inv.litres} L
+                      Order #{String(inv.id || "").slice(0, 8).toUpperCase()} •{" "}
+                      {inv.completedAt ? new Date(inv.completedAt).toLocaleDateString() : "No date"} • {inv.litres ?? 0} L
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="font-medium">{formatCurrency((inv.totalCents ?? 0) / 100)}</span>
                     <a
-                      href={`/api/supplier/invoices/${inv.id}/pdf`}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                      href={`/api/supplier/invoices/${inv.id}/pdf?download=1`}
                       className="text-primary hover:underline inline-flex items-center text-sm"
                     >
                       <Download className="h-4 w-4 mr-1" />

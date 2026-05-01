@@ -58,20 +58,21 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
       try {
         // Get WebSocket URL (convert http to ws)
         const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+
+        // Build host safely and guard against malformed runtime values like "localhost:undefined".
+        const parsed = new URL(window.location.href);
+        const hostname = parsed.hostname || "localhost";
+        const rawPort = (parsed.port || "").trim();
+        const validPort = /^\d+$/.test(rawPort) ? rawPort : "";
+        const fallbackPort = wsProtocol === "wss:" ? "443" : "5002";
+        const wsPort = validPort || fallbackPort;
+        const wsHost = `${hostname}:${wsPort}`;
         
-        // Construct host with fallback port to handle undefined port cases
-        let wsHost = window.location.host;
-        
-        // Check if host is invalid or contains "undefined" (can happen in some edge cases)
-        if (!wsHost || wsHost === "undefined" || wsHost.includes("undefined") || wsHost === "localhost" || wsHost === "localhost:") {
-          const hostname = window.location.hostname || "localhost";
-          const port = window.location.port;
-          // Default to 5002 if port is undefined, empty, or "undefined" (development server default)
-          const defaultPort = port && port !== "undefined" && port !== "" ? port : (wsProtocol === "wss:" ? "443" : "5002");
-          wsHost = `${hostname}:${defaultPort}`;
-        }
-        
-        const wsUrl = `${wsProtocol}//${wsHost}/ws?token=${session.access_token}`;
+        const tokenQuery =
+          session.access_token && session.access_token !== "cookie-session"
+            ? `?token=${encodeURIComponent(session.access_token)}`
+            : "";
+        const wsUrl = `${wsProtocol}//${wsHost}/ws${tokenQuery}`;
         
         // Validate URL before creating WebSocket
         if (wsUrl.includes("undefined")) {

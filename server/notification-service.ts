@@ -1,6 +1,11 @@
-import { supabaseAdmin } from "./supabase";
 import { websocketService } from "./websocket";
 import { pushNotificationService } from "./push-service";
+import {
+  createNotification,
+  findRecentDuplicateNotification,
+  markNotificationDelivered,
+  markNotificationFailed,
+} from "./data/notifications-repo";
 
 export type NotificationType = 
   // Order lifecycle - Customer
@@ -91,38 +96,62 @@ export interface CreateNotificationParams {
   title: string;
   message: string;
   data?: any;
+  dedupeKey?: string;
+  action?: string;
+  entityType?: "order" | "depot_order" | "chat_thread" | "profile" | "system";
+  entityId?: string;
   priority?: "low" | "medium" | "high" | "urgent";
   requireInteraction?: boolean;
 }
 
 class NotificationService {
+  private normalizePayload(params: CreateNotificationParams) {
+    const raw = params.data ?? {};
+    const orderId = raw.orderId ?? raw.order_id ?? null;
+    const threadId = raw.threadId ?? raw.thread_id ?? null;
+    const depotOrderId = raw.depotOrderId ?? raw.depot_order_id ?? null;
+    return {
+      type: params.type,
+      action:
+        params.action ??
+        (threadId ? "open_chat" : depotOrderId ? "open_depot_order" : orderId ? "open_order" : "open_notifications"),
+      entityType:
+        params.entityType ??
+        (threadId ? "chat_thread" : depotOrderId ? "depot_order" : orderId ? "order" : "system"),
+      entityId: params.entityId ?? threadId ?? depotOrderId ?? orderId ?? null,
+      orderId,
+      threadId,
+      depotOrderId,
+      ...raw,
+    };
+  }
+
   /**
    * Main method to create and send a notification
    * Handles database storage, WebSocket delivery, and push notification fallback
    */
   async createAndSend(params: CreateNotificationParams): Promise<string | null> {
-    const { userId, type, title, message, data, priority = "medium", requireInteraction = false } = params;
+    const { userId, type, title, message, priority = "medium", requireInteraction = false } = params;
+    const data = this.normalizePayload(params);
 
     try {
-      // 1. Store notification in database
-      const { data: notification, error } = await supabaseAdmin
-        .from("notifications")
-        .insert({
-          user_id: userId,
-          type,
-          title,
-          message,
-          data,
-          read: false,
-          delivery_status: "pending",
-        })
-        .select()
-        .single();
+      const dedupe = await findRecentDuplicateNotification({
+        userId,
+        type,
+        dedupeKey: params.dedupeKey ?? `${type}:${String(data.entityId ?? "none")}`,
+      });
+      if (dedupe) return dedupe.id;
 
-      if (error) {
-        if (error.code === 'PGRST205' || error.message?.includes('Could not find the table')) {
-          console.error("Notifications table missing. Run server/create-notifications-table.sql");
-        }
+      // 1. Store notification in database
+      const notification = await createNotification({
+        userId,
+        type,
+        title,
+        message,
+        data,
+      });
+
+      if (!notification) {
         return null;
       }
 
@@ -133,48 +162,50 @@ class NotificationService {
         title,
         message,
         data,
-        createdAt: notification.created_at,
+        createdAt: notification.createdAt,
       });
 
-      // 3. If user is not connected via WebSocket, send push notification
-      if (!wsDelivered) {
-        await pushNotificationService.sendToUser(userId, {
-          title,
-          body: message,
-          icon: "/icon-192.png",
-          badge: "/badge-72.png",
-          tag: `notification-${notification.id}`,
-          requireInteraction,
-          data: {
-            notificationId: notification.id,
-            type,
-            ...data,
-          },
-        });
+      // Also emit cache-friendly event names for existing realtime clients.
+      websocketService.sendToUser(userId, {
+        type: "order_state_changed",
+        payload: data,
+      });
+      websocketService.sendToUser(userId, {
+        type: "order_update",
+        payload: data,
+      });
 
-        // Update delivery status
-        await supabaseAdmin
-          .from("notifications")
-          .update({ 
-            delivery_status: "sent",
-            delivered_at: new Date().toISOString()
-          })
-          .eq("id", notification.id);
+      // 3. Push send for offline/background delivery (mobile/web push)
+      const pushSentCount = await pushNotificationService.sendToUser(userId, {
+        title,
+        body: message,
+        icon: "/icon-192.png",
+        badge: "/badge-72.png",
+        tag: `notification-${notification.id}`,
+        requireInteraction,
+        data: {
+          notificationId: notification.id,
+          ...data,
+        },
+      });
+
+      if (wsDelivered || pushSentCount > 0) {
+        await markNotificationDelivered(notification.id);
       } else {
-        // WebSocket delivered successfully
-        await supabaseAdmin
-          .from("notifications")
-          .update({ 
-            delivery_status: "sent",
-            delivered_at: new Date().toISOString()
-          })
-          .eq("id", notification.id);
+        await markNotificationFailed(notification.id);
       }
 
       return notification.id;
     } catch (error) {
       return null;
     }
+  }
+
+  /**
+   * Backward-compatible wrapper used across routes.
+   */
+  async createNotification(params: CreateNotificationParams): Promise<string | null> {
+    return this.createAndSend(params);
   }
 
   // ===== ORDER LIFECYCLE NOTIFICATIONS =====
@@ -242,6 +273,17 @@ class NotificationService {
       data: { orderId, driverName },
       priority: "urgent",
       requireInteraction: true,
+    });
+  }
+
+  async notifyDeliveryStarted(customerId: string, orderId: string, driverName: string) {
+    return this.createAndSend({
+      userId: customerId,
+      type: "delivery_started",
+      title: "Delivery Started",
+      message: `${driverName} has collected fuel and started delivery`,
+      data: { orderId, driverName },
+      priority: "high",
     });
   }
 

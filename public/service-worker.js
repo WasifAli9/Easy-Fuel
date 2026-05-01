@@ -1,8 +1,6 @@
-const CACHE_NAME = "easy-fuel-v3";
+const CACHE_NAME = "easy-fuel-v4";
 const OFFLINE_FALLBACK_PAGE = "/";
 const STATIC_ASSETS = [
-  "/",
-  "/index.html",
   "/manifest.webmanifest",
   "/icon-192.png",
   "/icon-512.png",
@@ -106,12 +104,12 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (request.mode === "navigate") {
-    event.respondWith(networkFirst(request));
+    event.respondWith(networkNavigate(request));
     return;
   }
 
   if (isStaticAsset(request, url)) {
-    event.respondWith(cacheFirst(request));
+    event.respondWith(staleWhileRevalidate(request));
     return;
   }
 
@@ -130,31 +128,12 @@ function isStaticAsset(request, url) {
   );
 }
 
-async function cacheFirst(request) {
-  const cache = await caches.open(CACHE_NAME);
-  const cachedResponse = await cache.match(request);
-  if (cachedResponse) {
-    return cachedResponse;
-  }
-
-  const networkResponse = await fetch(request);
-  cache.put(request, networkResponse.clone());
-  return networkResponse;
-}
-
-async function networkFirst(request) {
-  const cache = await caches.open(CACHE_NAME);
+async function networkNavigate(request) {
   try {
-    const networkResponse = await fetch(request);
-    cache.put(request, networkResponse.clone());
-    return networkResponse;
+    return await fetch(request);
   } catch (error) {
-    const cachedResponse = await cache.match(request);
-    if (cachedResponse) {
-      return cachedResponse;
-    }
-
-    return cache.match(OFFLINE_FALLBACK_PAGE);
+    const cache = await caches.open(CACHE_NAME);
+    return (await cache.match(OFFLINE_FALLBACK_PAGE)) || Response.error();
   }
 }
 
@@ -164,7 +143,9 @@ async function staleWhileRevalidate(request) {
 
   const fetchPromise = fetch(request)
     .then((networkResponse) => {
-      cache.put(request, networkResponse.clone());
+      if (networkResponse && networkResponse.ok) {
+        cache.put(request, networkResponse.clone());
+      }
       return networkResponse;
     })
     .catch(() => cachedResponse);

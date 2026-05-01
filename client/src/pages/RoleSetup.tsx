@@ -4,6 +4,7 @@ import { useLocation } from "wouter";
 import { RoleSelector } from "@/components/RoleSelector";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
+const AUTH_PROVIDER = (import.meta.env.VITE_AUTH_PROVIDER || "local").toLowerCase();
 
 export default function RoleSetup() {
   const [loading, setLoading] = useState(false);
@@ -18,6 +19,10 @@ export default function RoleSetup() {
       if (!user) return;
       
       try {
+        if (AUTH_PROVIDER === "local") {
+          setFullName((user as any)?.full_name || user?.email?.split("@")[0] || null);
+          return;
+        }
         // First check session user
         if (session?.user) {
           const sessionName = session.user.user_metadata?.full_name || 

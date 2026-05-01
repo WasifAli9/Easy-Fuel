@@ -1,6 +1,10 @@
 import { Router } from "express";
-import { supabaseAdmin } from "./supabase";
 import { z } from "zod";
+import {
+  createPushSubscription,
+  deletePushSubscription,
+  findPushSubscriptionByEndpoint,
+} from "./data/push-subscriptions-repo";
 
 const router = Router();
 
@@ -13,33 +17,48 @@ const subscriptionSchema = z.object({
   userAgent: z.string().optional(),
 });
 
+const expoSubscriptionSchema = z.object({
+  expoPushToken: z.string().min(10),
+  userAgent: z.string().optional(),
+});
+
 router.post("/subscribe", async (req, res) => {
   const user = (req as any).user;
 
   try {
+    const isExpo = typeof req.body?.expoPushToken === "string";
+    if (isExpo) {
+      const validatedExpo = expoSubscriptionSchema.parse(req.body);
+      const existingExpo = await findPushSubscriptionByEndpoint(validatedExpo.expoPushToken);
+      if (existingExpo) {
+        return res.json({ success: true, message: "Expo subscription already exists" });
+      }
+
+      await createPushSubscription({
+        userId: user.id,
+        endpoint: validatedExpo.expoPushToken,
+        p256dh: "expo",
+        auth: "expo",
+        userAgent: validatedExpo.userAgent || (req.headers["user-agent"] as string | undefined),
+      });
+      return res.json({ success: true, message: "Expo subscription created successfully" });
+    }
+
     const validated = subscriptionSchema.parse(req.body);
 
-    const { data: existing } = await supabaseAdmin
-      .from("push_subscriptions")
-      .select("id")
-      .eq("endpoint", validated.endpoint)
-      .single();
+    const existing = await findPushSubscriptionByEndpoint(validated.endpoint);
 
     if (existing) {
       return res.json({ success: true, message: "Subscription already exists" });
     }
 
-    const { error } = await supabaseAdmin
-      .from("push_subscriptions")
-      .insert({
-        user_id: user.id,
-        endpoint: validated.endpoint,
-        p256dh: validated.keys.p256dh,
-        auth: validated.keys.auth,
-        user_agent: validated.userAgent || req.headers["user-agent"],
-      });
-
-    if (error) throw error;
+    await createPushSubscription({
+      userId: user.id,
+      endpoint: validated.endpoint,
+      p256dh: validated.keys.p256dh,
+      auth: validated.keys.auth,
+      userAgent: validated.userAgent || (req.headers["user-agent"] as string | undefined),
+    });
 
     res.json({ success: true, message: "Subscription created successfully" });
   } catch (error: any) {
@@ -52,15 +71,13 @@ router.post("/unsubscribe", async (req, res) => {
   const user = (req as any).user;
 
   try {
-    const { endpoint } = z.object({ endpoint: z.string() }).parse(req.body);
+    const { endpoint } = z.object({ endpoint: z.string().optional(), expoPushToken: z.string().optional() }).parse(req.body);
+    const target = endpoint || req.body?.expoPushToken;
+    if (!target) {
+      return res.status(400).json({ error: "endpoint or expoPushToken is required" });
+    }
 
-    const { error } = await supabaseAdmin
-      .from("push_subscriptions")
-      .delete()
-      .eq("user_id", user.id)
-      .eq("endpoint", endpoint);
-
-    if (error) throw error;
+    await deletePushSubscription(user.id, target);
 
     res.json({ success: true, message: "Subscription removed successfully" });
   } catch (error: any) {

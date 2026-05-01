@@ -21,12 +21,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Package, CheckCircle, XCircle, CreditCard, FileSignature, Eye, Fuel, Receipt, AlertCircle } from "lucide-react";
+import { Loader2, Package, CheckCircle, XCircle, CreditCard, FileSignature, Eye, Fuel, FileText, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/utils";
 import { useCurrency } from "@/hooks/use-currency";
 import { SignaturePad } from "@/components/SignaturePad";
 import { DriverDepotOrderReceipt } from "@/components/DriverDepotOrderReceipt";
+import { normalizeFilePath } from "@/lib/utils";
 
 interface DriverDepotOrdersViewProps {
   statusFilter?: string[] | null;
@@ -53,7 +54,15 @@ export function DriverDepotOrdersView({ statusFilter }: DriverDepotOrdersViewPro
       setProofIsLoading(true);
       setProofImageError(false);
       
-      let objectPath = selectedOrderForProof.payment_proof_url;
+      const normalizedPaymentProofUrl = normalizeFilePath(selectedOrderForProof.payment_proof_url);
+      if (!normalizedPaymentProofUrl) {
+        setProofUrl(null);
+        setProofImageError(true);
+        setProofIsLoading(false);
+        return;
+      }
+
+      let objectPath = normalizedPaymentProofUrl;
       
       // If already a full URL, use it directly
       if (objectPath.startsWith('http://') || objectPath.startsWith('https://')) {
@@ -61,16 +70,16 @@ export function DriverDepotOrdersView({ statusFilter }: DriverDepotOrdersViewPro
         setProofIsLoading(false);
         return;
       }
-      
-      // Clean up the path
-      objectPath = objectPath.replace(/^\/+/, '');
-      
-      // Ensure proper format
-      if (!objectPath.includes('/')) {
-        objectPath = `private-objects/uploads/${objectPath}`;
-      } else if (!objectPath.startsWith('private-objects/') && !objectPath.startsWith('public-objects/')) {
-        objectPath = `private-objects/${objectPath}`;
+
+      // For local storage the normalized /objects/... URL is directly accessible.
+      if (objectPath.startsWith('/objects/')) {
+        setProofUrl(objectPath);
+        setProofIsLoading(false);
+        return;
       }
+
+      // Convert to relative object path for presigned endpoint.
+      objectPath = objectPath.replace(/^\/+/, '');
       
       try {
         console.log('Fetching presigned URL for objectPath:', objectPath);
@@ -90,9 +99,10 @@ export function DriverDepotOrdersView({ statusFilter }: DriverDepotOrdersViewPro
       } catch (error: any) {
         console.error("Error fetching presigned URL:", error);
         console.error("Error details:", error.message, error.stack);
-        // Fallback to direct endpoint - this requires authentication but might work
-        console.log('Falling back to direct endpoint:', `/api/objects/${objectPath}`);
-        setProofUrl(`/api/objects/${objectPath}`);
+        // Fallback to direct endpoint
+        const fallbackUrl = objectPath.startsWith('/objects/') ? objectPath : `/objects/${objectPath}`;
+        console.log('Falling back to direct endpoint:', fallbackUrl);
+        setProofUrl(fallbackUrl);
       } finally {
         setProofIsLoading(false);
       }
@@ -107,6 +117,15 @@ export function DriverDepotOrdersView({ statusFilter }: DriverDepotOrdersViewPro
   const [selectedOrderForDelivery, setSelectedOrderForDelivery] = useState<any>(null);
   const [receiptDialogOpen, setReceiptDialogOpen] = useState(false);
   const [selectedOrderForReceipt, setSelectedOrderForReceipt] = useState<any>(null);
+
+  const getDriverDisplayName = (order: any) =>
+    order?.drivers?.profile?.full_name ||
+    order?.drivers?.profile?.fullName ||
+    order?.drivers?.full_name ||
+    order?.drivers?.fullName ||
+    order?.driverName ||
+    (order?.drivers?.email ? String(order.drivers.email).split("@")[0] : null) ||
+    "Unknown Driver";
 
   const { data: ordersResponse, isLoading } = useQuery<any>({
     queryKey: ["/api/supplier/driver-depot-orders"],
@@ -232,64 +251,10 @@ export function DriverDepotOrdersView({ statusFilter }: DriverDepotOrdersViewPro
       return;
     }
 
-    try {
-      const response = await fetch(signatureData);
-      const blob = await response.blob();
-      const file = new File([blob], "signature.png", { type: "image/png" });
-
-      const { getAuthHeaders } = await import("@/lib/auth-headers");
-      const headers = await getAuthHeaders();
-      
-      // Get upload URL using the correct endpoint
-      const uploadUrlResponse = await fetch("/api/objects/upload", { 
-        method: "POST", 
-        headers 
-      });
-      
-      if (!uploadUrlResponse.ok) {
-        const errorText = await uploadUrlResponse.text();
-        console.error("Upload URL error:", errorText);
-        throw new Error("Failed to get upload URL");
-      }
-
-      const uploadUrlData = await uploadUrlResponse.json();
-      const uploadUrl = uploadUrlData.uploadURL || uploadUrlData.url;
-
-      if (!uploadUrl) {
-        throw new Error("No upload URL returned from server");
-      }
-
-      const uploadResponse = await fetch(uploadUrl, {
-        method: "PUT",
-        body: file,
-        headers: { "Content-Type": "image/png" },
-      });
-
-      if (!uploadResponse.ok) {
-        const errorText = await uploadResponse.text();
-        console.error("Upload error:", errorText);
-        throw new Error("Failed to upload signature");
-      }
-
-      // Extract object path from upload URL or use the objectPath from response
-      let signatureUrl: string;
-      if (uploadUrlData.objectPath) {
-        signatureUrl = uploadUrlData.objectPath;
-      } else if (uploadUrl.includes("/api/storage/upload/")) {
-        // Extract path from Supabase storage URL
-        const match = uploadUrl.match(/\/api\/storage\/upload\/([^/]+)\/(.+)/);
-        if (match) {
-          signatureUrl = `${match[1]}/${match[2]}`;
-        } else {
-          signatureUrl = uploadUrl.split("?")[0];
-        }
-      } else {
-        signatureUrl = uploadUrl.split("?")[0];
-      }
-      submitSignatureMutation.mutate({ orderId: selectedOrderForSignature.id, signatureUrl });
-    } catch (error: any) {
-      toast({ title: "Upload Error", description: error.message || "Failed to upload signature", variant: "destructive" });
-    }
+    submitSignatureMutation.mutate({
+      orderId: selectedOrderForSignature.id,
+      signatureUrl: signatureData,
+    });
   };
 
   const getStatusBadge = (order: any) => {
@@ -380,9 +345,7 @@ export function DriverDepotOrdersView({ statusFilter }: DriverDepotOrdersViewPro
               <TableCell className="font-medium">
                 #{order.id.slice(0, 8)}
               </TableCell>
-              <TableCell>
-                {order.drivers?.profile?.full_name || "Unknown Driver"}
-              </TableCell>
+              <TableCell>{getDriverDisplayName(order)}</TableCell>
               <TableCell>{order.depots?.name || "Unknown"}</TableCell>
               <TableCell>
                 {order.fuel_types?.label || "Unknown"}
@@ -480,8 +443,8 @@ export function DriverDepotOrdersView({ statusFilter }: DriverDepotOrdersViewPro
                         setReceiptDialogOpen(true);
                       }}
                     >
-                      <Receipt className="h-4 w-4 mr-1" />
-                      Receipt
+                      <FileText className="h-4 w-4 mr-1 text-black" />
+                      View Receipt
                     </Button>
                   )}
                 </div>
@@ -595,7 +558,7 @@ export function DriverDepotOrdersView({ statusFilter }: DriverDepotOrdersViewPro
                 <div className="bg-muted/50 rounded-lg p-3 space-y-1 text-sm">
                   <p className="font-semibold">Order Details:</p>
                   <p><span className="text-muted-foreground">Payment Method:</span> {selectedOrderForProof.payment_method?.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}</p>
-                  <p><span className="text-muted-foreground">Driver:</span> {selectedOrderForProof.drivers?.profile?.full_name || "Unknown"}</p>
+                  <p><span className="text-muted-foreground">Driver:</span> {getDriverDisplayName(selectedOrderForProof)}</p>
                   <p><span className="text-muted-foreground">Amount:</span> {formatCurrency(selectedOrderForProof.total_price_cents / 100, currency)}</p>
                 </div>
               </div>
@@ -664,7 +627,7 @@ export function DriverDepotOrdersView({ statusFilter }: DriverDepotOrdersViewPro
         <div className="space-y-4 py-4">
           {selectedOrderForSignature && (
             <div className="bg-muted/50 rounded-lg p-4 space-y-2 text-sm">
-              <p><span className="font-semibold">Driver:</span> {selectedOrderForSignature.drivers?.profile?.full_name || "Unknown"}</p>
+              <p><span className="font-semibold">Driver:</span> {getDriverDisplayName(selectedOrderForSignature)}</p>
               <p><span className="font-semibold">Fuel Type:</span> {selectedOrderForSignature.fuel_types?.label}</p>
               <p><span className="font-semibold">Quantity:</span> {selectedOrderForSignature.litres}L</p>
               <p><span className="font-semibold">Total:</span> {formatCurrency(selectedOrderForSignature.total_price_cents / 100, currency)}</p>
@@ -709,7 +672,7 @@ export function DriverDepotOrdersView({ statusFilter }: DriverDepotOrdersViewPro
         <div className="space-y-4 py-4">
           {selectedOrderForDelivery && (
             <div className="bg-muted/50 rounded-lg p-4 space-y-2 text-sm">
-              <p><span className="font-semibold">Driver:</span> {selectedOrderForDelivery.drivers?.profile?.full_name || "Unknown"}</p>
+              <p><span className="font-semibold">Driver:</span> {getDriverDisplayName(selectedOrderForDelivery)}</p>
               <p><span className="font-semibold">Fuel Type:</span> {selectedOrderForDelivery.fuel_types?.label}</p>
               <p><span className="font-semibold">Quantity:</span> {selectedOrderForDelivery.litres}L</p>
               <p><span className="font-semibold">Total:</span> {formatCurrency(selectedOrderForDelivery.total_price_cents / 100, currency)}</p>

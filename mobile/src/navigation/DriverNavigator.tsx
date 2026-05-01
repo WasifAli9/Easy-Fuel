@@ -56,9 +56,20 @@ function DriverPortalTabs() {
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarActiveTintColor: theme.colors.primary,
+        tabBarActiveTintColor: "#7C3AED",
         tabBarInactiveTintColor: theme.colors.onSurfaceVariant,
-        tabBarStyle: { backgroundColor: theme.colors.surface, borderTopColor: theme.colors.outline },
+        tabBarStyle: {
+          backgroundColor: theme.colors.surface,
+          borderTopColor: "#E9D5FF",
+          borderTopWidth: 1,
+          height: 62,
+          paddingBottom: 8,
+          paddingTop: 6,
+        },
+        tabBarLabelStyle: {
+          fontSize: 12,
+          fontWeight: "600",
+        },
         tabBarIcon: ({ color, size }) => {
           const iconByRoute: Record<string, string> = {
             DriverOrders: "truck-delivery-outline",
@@ -132,9 +143,15 @@ export function DriverNavigator() {
           <Pressable onPress={() => setMenuVisible(true)} style={styles.menuButton}>
             <MaterialCommunityIcons name="menu" size={24} color={theme.colors.onSurface} />
           </Pressable>
-          <Text variant="titleLarge" style={styles.headerTitle}>
-            {activeTitle}
-          </Text>
+          <View style={styles.headerTitleWrap}>
+            <Text variant="titleLarge" style={styles.headerTitle}>
+              {activeTitle}
+            </Text>
+            <View style={styles.brandPill}>
+              <MaterialCommunityIcons name="gas-station" size={14} color="#5B21B6" />
+              <Text style={styles.brandPillText}>EasyFuel</Text>
+            </View>
+          </View>
         </View>
       ) : null}
 
@@ -196,8 +213,8 @@ const getStyles = (theme: typeof lightTheme) =>
       backgroundColor: theme.colors.background,
     },
     header: {
-      height: 56,
-      paddingHorizontal: 12,
+      minHeight: 60,
+      paddingHorizontal: 14,
       flexDirection: "row",
       alignItems: "center",
       backgroundColor: theme.colors.surface,
@@ -210,10 +227,33 @@ const getStyles = (theme: typeof lightTheme) =>
       alignItems: "center",
       justifyContent: "center",
     },
+    headerTitleWrap: {
+      flex: 1,
+      marginLeft: 10,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 10,
+    },
     headerTitle: {
-      marginLeft: 8,
       color: theme.colors.onSurface,
       fontWeight: "600",
+    },
+    brandPill: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      backgroundColor: "#EDE9FE",
+      borderColor: "#DDD6FE",
+      borderWidth: 1,
+      borderRadius: 999,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+    },
+    brandPillText: {
+      fontSize: 12,
+      fontWeight: "700",
+      color: "#5B21B6",
     },
     content: {
       flex: 1,
@@ -254,7 +294,7 @@ const getStyles = (theme: typeof lightTheme) =>
       borderRadius: 10,
     },
     menuItemActive: {
-      backgroundColor: theme.colors.surfaceVariant,
+      backgroundColor: "#EDE9FE",
     },
     menuItemText: {
       color: theme.colors.onSurface,

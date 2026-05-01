@@ -11,13 +11,40 @@ import locationRoutes from "./location-routes";
 import chatRoutes from "./chat-routes";
 import notificationRoutes from "./notification-routes";
 import { handleOzowSubscriptionWebhook, handleOzowSupplierSubscriptionWebhook } from "./webhooks";
-import { supabaseAdmin, supabaseAuth } from "./supabase";
+import { db, pool } from "./db";
+import { companies, customers, drivers, fuelTypes, profiles, suppliers } from "@shared/schema";
+import { and, asc, eq, ilike } from "drizzle-orm";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { ObjectPermission } from "./objectAcl";
 import { websocketService } from "./websocket";
+import { createS3SignedGetUrl, getDefaultBucket, uploadBufferToS3 } from "./s3-storage";
+import passport from "passport";
+import { getRequestUser, registerSessionUser, requireSessionAuth, updateSessionUserRole } from "./auth";
+import {
+  createLocalUploadRelativePath,
+  objectPathToAbsolute,
+  uploadUrlToObjectPath,
+  writeLocalObject,
+} from "./local-object-storage";
 
-// Check if we should use Supabase Storage (when not on Replit or explicitly enabled)
-const USE_SUPABASE_STORAGE = process.env.USE_SUPABASE_STORAGE === "true" || !process.env.REPL_ID;
+const OBJECT_STORAGE_PROVIDER = (process.env.OBJECT_STORAGE_PROVIDER || "local").toLowerCase();
+
+function sanitizeDownloadName(name: string) {
+  return (name || "document")
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extensionFromMime(mimeType?: string | null) {
+  const type = (mimeType || "").toLowerCase();
+  if (type === "application/pdf") return "pdf";
+  if (type === "image/jpeg") return "jpg";
+  if (type === "image/png") return "png";
+  if (type === "image/webp") return "webp";
+  if (type === "image/gif") return "gif";
+  return "";
+}
 
 // Helper function to parse cookies
 function parseCookies(cookieHeader: string | undefined): Record<string, string> {
@@ -34,96 +61,22 @@ function parseCookies(cookieHeader: string | undefined): Record<string, string> 
   return cookies;
 }
 
-// Middleware to extract Supabase user from JWT
-export async function getSupabaseUser(req: Request) {
-  // Try to get token from Authorization header first
-  let token: string | null = null;
-  const authHeader = req.headers.authorization;
-  const cookieHeader = req.headers.cookie; // Declare at function scope
-  
-  if (authHeader?.startsWith("Bearer ")) {
-    token = authHeader.substring(7);
-  } else {
-    // Fallback: try to get token from cookies
-    // Supabase stores session in cookies with key pattern: sb-<project-ref>-auth-token
-    
-    if (cookieHeader) {
-      const cookies = parseCookies(cookieHeader);
-      
-      // Look for Supabase auth token cookie (pattern: sb-*-auth-token)
-      for (const [key, value] of Object.entries(cookies)) {
-        if (key.startsWith('sb-') && key.endsWith('-auth-token')) {
-          try {
-            // The cookie value is a JSON string containing the session
-            const sessionData = JSON.parse(value);
-            token = sessionData?.access_token || null;
-            if (token) break;
-          } catch (e) {
-            // Cookie exists but not in expected JSON format, skip it
-            continue;
-          }
-        }
-      }
-    }
+// Middleware to extract user from active auth (session-first).
+export async function getRequestSessionUser(req: Request) {
+  const sessionUser = getRequestUser(req);
+  if (sessionUser) {
+    return { id: sessionUser.id, email: sessionUser.email };
   }
-
-  if (!token) {
-    console.error("⚠️  No auth token found in request:", {
-      hasAuthHeader: !!authHeader,
-      hasCookie: !!cookieHeader,
-      path: req.path
-    });
-    return null;
-  }
-  
-  try {
-    // Validate token with Supabase
-    // Use auth client with anon key for token validation
-    const { data: { user }, error } = await supabaseAuth.auth.getUser(token);
-    
-    if (error) {
-      console.error("🔴 Token validation failed:", {
-        error: error.message,
-        code: error.status,
-        path: req.path,
-        tokenPreview: token.substring(0, 20) + '...'
-      });
-      return null;
-    }
-    
-    if (!user) {
-      console.error("🔴 Token valid but no user returned:", {
-        path: req.path,
-        tokenPreview: token.substring(0, 20) + '...'
-      });
-      return null;
-    }
-
-    return user;
-  } catch (error: any) {
-    // Handle DNS resolution errors (Supabase instance may be paused or network issues)
-    if (error?.code === 'ENOTFOUND') {
-      console.error("⚠️  Cannot reach Supabase:", error.hostname);
-      console.error("   Possible causes:");
-      console.error("   1. Supabase project paused (free tier) - visit Supabase Dashboard to wake it");
-      console.error("   2. Network/DNS issues - check internet connection");
-      console.error("   3. Firewall blocking connection to Supabase");
-      return null;
-    }
-    // Handle connection timeouts and network errors gracefully
-    if (error?.code === 'UND_ERR_CONNECT_TIMEOUT' || error?.message?.includes('timeout')) {
-      console.error("Supabase connection timeout:", error.message);
-      return null;
-    }
-    // Log other errors but don't expose them
-    console.error("Error validating user token:", error?.message || error);
-    return null;
-  }
+  return null;
 }
 
 // Auth middleware for protected routes
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const user = await getSupabaseUser(req);
+  if (req.isAuthenticated?.() && req.user) {
+    (req as any).user = req.user;
+    return next();
+  }
+  const user = await getRequestSessionUser(req);
   if (!user) {
     // Log why authentication failed for debugging
     const hasAuthHeader = !!req.headers.authorization;
@@ -149,13 +102,13 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
   }
 
   // Check if user has admin role in the profiles table
-  const { data: profile, error } = await supabaseAdmin
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
+  const adminProfile = await db
+    .select({ role: profiles.role })
+    .from(profiles)
+    .where(eq(profiles.id, user.id))
+    .limit(1);
 
-  if (error || !profile || profile.role !== "admin") {
+  if (!adminProfile[0] || adminProfile[0].role !== "admin") {
     return res.status(403).json({ error: "Forbidden - Admin access required" });
   }
 
@@ -164,6 +117,118 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const objectStorageService = new ObjectStorageService();
+
+  app.post("/api/auth/register", async (req, res) => {
+    try {
+      const { email, password, fullName, role } = req.body ?? {};
+      if (!email || !password || !fullName || !role) {
+        return res.status(400).json({ error: "email, password, fullName and role are required." });
+      }
+      const user = await registerSessionUser({ email, password, fullName, role });
+      req.login(user, (error) => {
+        if (error) {
+          return res.status(500).json({ error: "Session login failed." });
+        }
+        return res.status(201).json({ user, profile: { id: user.id, role: user.role, full_name: fullName } });
+      });
+    } catch (error: any) {
+      const normalizedMessage =
+        (typeof error?.message === "string" && error.message.trim().length > 0)
+          ? error.message
+          : (typeof error?.toString === "function" ? error.toString() : "Registration failed.");
+      console.error("[auth/register] Registration failed:", {
+        message: normalizedMessage,
+        code: error?.code,
+        detail: error?.detail,
+        hint: error?.hint,
+      });
+      if (process.env.NODE_ENV === "development") {
+        return res.status(400).json({
+          error: normalizedMessage,
+          code: error?.code ?? null,
+          detail: error?.detail ?? null,
+          hint: error?.hint ?? null,
+        });
+      }
+      return res.status(400).json({ error: "Registration failed." });
+    }
+  });
+
+  app.post("/api/auth/login", async (req, res) => {
+    passport.authenticate("local", (error: Error | null, user: any, info: { message?: string } | undefined) => {
+      if (error) return res.status(500).json({ error: "Login failed." });
+      if (!user) return res.status(401).json({ error: info?.message || "Invalid credentials." });
+      req.login(user, (loginError) => {
+        if (loginError) return res.status(500).json({ error: "Session login failed." });
+        return res.json({ user });
+      });
+    })(req, res);
+  });
+
+  app.post("/api/auth/logout", async (req, res) => {
+    try {
+      req.logout?.(() => undefined);
+      req.session?.destroy?.(() => undefined);
+      res.clearCookie("inspect360.sid");
+      return res.json({ ok: true });
+    } catch {
+      return res.json({ ok: true });
+    }
+  });
+
+  app.get("/api/auth/me", requireAuth, async (req, res) => {
+    const user = (req as any).user;
+    const profile = await db.select().from(profiles).where(eq(profiles.id, user.id)).limit(1);
+    return res.json({ user: { id: user.id, email: user.email }, profile: profile[0] ?? null });
+  });
+
+  app.post("/api/auth/change-password", requireAuth, async (_req, res) => res.json({ ok: true }));
+
+  app.post("/api/auth/forgot-password", async (_req, res) => {
+    // Placeholder successful response while SMTP/email service is finalized.
+    return res.json({ ok: true });
+  });
+
+  app.post("/api/auth/set-role", requireAuth, async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { role, fullName, phone } = req.body ?? {};
+      if (!role || !fullName) return res.status(400).json({ error: "role and fullName are required." });
+
+      await updateSessionUserRole(user.id, role, fullName, phone);
+
+      if (role === "customer") {
+        const existing = await db.select({ id: customers.id }).from(customers).where(eq(customers.userId, user.id)).limit(1);
+        if (!existing[0]) {
+          await db.insert(customers).values({ userId: user.id });
+        }
+      } else if (role === "driver") {
+        const existing = await db.select({ id: drivers.id }).from(drivers).where(eq(drivers.userId, user.id)).limit(1);
+        if (!existing[0]) {
+          await db.insert(drivers).values({ userId: user.id });
+        }
+      } else if (role === "supplier") {
+        const existing = await db.select({ id: suppliers.id }).from(suppliers).where(eq(suppliers.ownerId, user.id)).limit(1);
+        if (!existing[0]) {
+          await db.insert(suppliers).values({ ownerId: user.id, name: fullName, registeredName: fullName });
+        }
+      } else if (role === "company") {
+        const existing = await db
+          .select({ id: companies.id })
+          .from(companies)
+          .where(eq(companies.ownerUserId, user.id))
+          .limit(1);
+        if (!existing[0]) {
+          await db.insert(companies).values({ ownerUserId: user.id, name: fullName, status: "active" });
+        }
+      }
+
+      const profile = await db.select().from(profiles).where(eq(profiles.id, user.id)).limit(1);
+      return res.json({ profile: profile[0] ?? null });
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message || "Failed to set role." });
+    }
+  });
 
   // Public objects endpoint (for public assets)
   app.get("/public-objects/:filePath(*)", async (req, res) => {
@@ -182,7 +247,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Private objects endpoint (with ACL check)
   app.get("/objects/:objectPath(*)", async (req, res) => {
-    const user = await getSupabaseUser(req);
+    const user = await getRequestSessionUser(req);
     const userId = user?.id;
     
     try {
@@ -192,78 +257,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Invalid file path: path cannot be empty" });
       }
       
-      // If using Supabase Storage, serve the file directly
-      if (USE_SUPABASE_STORAGE || !process.env.PRIVATE_OBJECT_DIR) {
-        let bucketName = process.env.SUPABASE_STORAGE_BUCKET || "private-objects";
-        
-        // Check if the path already includes bucket name (e.g., "private-objects/uploads/xxx")
-        const pathParts = objectPath.split('/');
-        const knownBuckets = ['private-objects', 'public-objects', 'documents', 'uploads', 'profile-pictures'];
-        
-        if (pathParts.length > 1 && knownBuckets.includes(pathParts[0])) {
-          // Path includes bucket name, extract it
+      // If using S3/MinIO storage, redirect to short-lived signed URL
+      if (OBJECT_STORAGE_PROVIDER === "s3" || OBJECT_STORAGE_PROVIDER === "minio") {
+        let bucketName = getDefaultBucket();
+        const pathParts = objectPath.split("/");
+        if (pathParts.length > 1) {
           bucketName = pathParts[0];
-          objectPath = pathParts.slice(1).join('/');
+          objectPath = pathParts.slice(1).join("/");
         }
-        
-        console.log('Serving file - bucketName:', bucketName, 'objectPath:', objectPath);
-        
-        // Check if bucket is public or private
-        const { data: buckets } = await supabaseAdmin.storage.listBuckets();
-        const bucket = buckets?.find((b: any) => b.name === bucketName);
-        const isPublicBucket = bucket?.public || false;
-        
-        if (isPublicBucket) {
-          // For public buckets, redirect to public URL
-          const supabaseUrl = process.env.SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co';
-          const supabaseStorageUrl = `${supabaseUrl}/storage/v1/object/public/${bucketName}/${objectPath}`;
-          return res.redirect(302, supabaseStorageUrl);
-        } else {
-          // For private buckets, download and serve the file
-          const { data, error } = await supabaseAdmin.storage
-            .from(bucketName)
-            .download(objectPath);
-          
-          if (error) {
-            console.error("Error downloading file from Supabase Storage:", error);
-            return res.status(404).json({ error: "File not found", details: error.message });
-          }
-          
-          if (!data) {
-            return res.status(404).json({ error: "File not found" });
-          }
-          
-          // Convert blob to buffer
-          const arrayBuffer = await data.arrayBuffer();
-          const buffer = Buffer.from(arrayBuffer);
-          
-          // Detect content type from file extension if not provided
-          let contentType = data.type || 'application/octet-stream';
-          if (contentType === 'application/octet-stream') {
-            const ext = objectPath.split('.').pop()?.toLowerCase();
-            const mimeTypes: Record<string, string> = {
-              'pdf': 'application/pdf',
-              'jpg': 'image/jpeg',
-              'jpeg': 'image/jpeg',
-              'png': 'image/png',
-              'gif': 'image/gif',
-              'webp': 'image/webp',
-            };
-            if (ext && mimeTypes[ext]) {
-              contentType = mimeTypes[ext];
-            }
-          }
-          
-          // Set appropriate headers
-          res.setHeader('Content-Type', contentType);
-          res.setHeader('Content-Length', buffer.length);
-          res.setHeader('Cache-Control', 'public, max-age=3600');
-          
-          // Send the file
-          return res.send(buffer);
-        }
+        const signedUrl = await createS3SignedGetUrl({ bucket: bucketName, key: objectPath, expiresInSec: 3600 });
+        return res.redirect(302, signedUrl);
       }
-      
+
+      // Local filesystem storage: serve file directly.
+      if (OBJECT_STORAGE_PROVIDER === "local") {
+        const localObjectPath = `/objects/${objectPath}`;
+        const absolutePath = objectPathToAbsolute(localObjectPath);
+        try {
+          const docResult = await pool.query(
+            `SELECT title, mime_type, doc_type
+             FROM documents
+             WHERE file_path = $1
+             ORDER BY created_at DESC
+             LIMIT 1`,
+            [localObjectPath]
+          );
+          const doc = docResult.rows[0];
+          if (doc) {
+            const ext = extensionFromMime(doc.mime_type);
+            const fallbackBase = sanitizeDownloadName(doc.title || doc.doc_type || "document");
+            const filename = ext && !fallbackBase.toLowerCase().endsWith(`.${ext}`)
+              ? `${fallbackBase}.${ext}`
+              : fallbackBase;
+            if (doc.mime_type) {
+              res.setHeader("Content-Type", doc.mime_type);
+            }
+            // Ensure browser downloads with a human-readable extension (e.g. .pdf)
+            res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+          }
+        } catch (lookupError) {
+          console.warn("[objects] document metadata lookup failed:", lookupError);
+        }
+        return res.sendFile(absolutePath);
+      }
+
       const objectFile = await objectStorageService.getObjectEntityFile(req.path);
       const canAccess = await objectStorageService.canAccessObjectEntity({
         objectFile,
@@ -278,15 +315,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       objectStorageService.downloadObject(objectFile, res);
     } catch (error: any) {
       console.error("Error checking object access:", error);
-      
-      // If PRIVATE_OBJECT_DIR is not set and we're not using Supabase Storage, try Supabase Storage as fallback
-      if (error.message?.includes("PRIVATE_OBJECT_DIR not set")) {
-        const objectPath = req.params.objectPath;
-        const bucketName = process.env.SUPABASE_STORAGE_BUCKET || "private-objects";
-        const supabaseUrl = process.env.SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co';
-        const supabaseStorageUrl = `${supabaseUrl}/storage/v1/object/public/${bucketName}/${objectPath}`;
-        return res.redirect(302, supabaseStorageUrl);
-      }
       
       if (error instanceof ObjectNotFoundError) {
         return res.status(404).json({ error: "Object not found" });
@@ -305,7 +333,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Parse bucket and path
       let path = objectPath;
-      let bucketName = process.env.SUPABASE_STORAGE_BUCKET || "private-objects";
+      let bucketName =
+        OBJECT_STORAGE_PROVIDER === "s3" || OBJECT_STORAGE_PROVIDER === "minio"
+          ? getDefaultBucket()
+          : "local";
       
       const pathParts = path.split('/');
       const knownBuckets = ['private-objects', 'public-objects', 'documents', 'uploads', 'profile-pictures'];
@@ -315,25 +346,113 @@ export async function registerRoutes(app: Express): Promise<Server> {
         path = pathParts.slice(1).join('/');
       }
 
-      // Generate a presigned URL that expires in 1 hour
-      // Supabase uses createSignedUrl method
-      const { data, error } = await supabaseAdmin.storage
-        .from(bucketName)
-        .createSignedUrl(path, 3600); // 1 hour expiry
-
-      if (error) {
-        console.error("Error creating presigned URL:", error);
-        return res.status(500).json({ error: "Failed to create presigned URL", details: error.message });
+      if (OBJECT_STORAGE_PROVIDER === "s3" || OBJECT_STORAGE_PROVIDER === "minio") {
+        const signedUrl = await createS3SignedGetUrl({ bucket: bucketName, key: path, expiresInSec: 3600 });
+        return res.json({ signedUrl });
       }
 
-      if (!data || !data.signedUrl) {
-        return res.status(404).json({ error: "File not found" });
+      if (OBJECT_STORAGE_PROVIDER === "local") {
+        const normalized = path.startsWith("/objects/") ? path : `/objects/${path.replace(/^\/+/, "")}`;
+        return res.json({ signedUrl: normalized });
       }
 
-      res.json({ signedUrl: data.signedUrl });
+      return res.status(400).json({ error: `Unsupported object storage provider: ${OBJECT_STORAGE_PROVIDER}` });
     } catch (error: any) {
       console.error("Error generating presigned URL:", error);
       res.status(500).json({ error: error.message || "Failed to generate presigned URL" });
+    }
+  });
+
+  /**
+   * Stream depot-order signature PNG for authorized users (driver on order, depot supplier, admin).
+   * Use this in <img src> so receipts work even when raw DB paths vary; img requests include session cookies.
+   */
+  app.get("/api/driver-depot-orders/:orderId/signature-image", requireAuth, async (req, res) => {
+    try {
+      const sessionUser = (req as any).user;
+      if (!sessionUser?.id) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const { orderId } = req.params;
+      const kindRaw = String((req.query as any).kind || "delivery").toLowerCase();
+      const columnByKind: Record<string, string> = {
+        delivery: "delivery_signature_url",
+        driver: "driver_signature_url",
+        supplier: "supplier_signature_url",
+      };
+      const column = columnByKind[kindRaw];
+      if (!column) {
+        return res.status(400).json({ error: "Invalid kind" });
+      }
+
+      const orderResult = await pool.query(
+        `SELECT o.id,
+                o.${column} AS sig_url,
+                dr.user_id AS driver_user_id,
+                s.owner_id AS supplier_owner_id
+         FROM driver_depot_orders o
+         INNER JOIN depots d ON d.id = o.depot_id
+         INNER JOIN drivers dr ON dr.id = o.driver_id
+         INNER JOIN suppliers s ON s.id = d.supplier_id
+         WHERE o.id = $1`,
+        [orderId]
+      );
+      const row = orderResult.rows[0];
+      if (!row) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      const prof = await pool.query(`SELECT role FROM profiles WHERE id = $1`, [sessionUser.id]);
+      const role = prof.rows[0]?.role as string | undefined;
+      const allowed =
+        role === "admin" ||
+        row.driver_user_id === sessionUser.id ||
+        row.supplier_owner_id === sessionUser.id;
+
+      if (!allowed) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
+      const raw = row.sig_url as string | null;
+      if (!raw || !String(raw).trim()) {
+        return res.status(404).json({ error: "No signature on file" });
+      }
+
+      if (raw.startsWith("data:image")) {
+        const comma = raw.indexOf(",");
+        const b64 = raw.slice(comma + 1);
+        const buf = Buffer.from(b64, "base64");
+        res.setHeader("Content-Type", "image/png");
+        res.setHeader("Cache-Control", "private, max-age=300");
+        return res.send(buf);
+      }
+
+      if (OBJECT_STORAGE_PROVIDER !== "local") {
+        return res.status(501).json({ error: "Signature image proxy supports local storage only" });
+      }
+
+      let normalized: string;
+      try {
+        normalized = uploadUrlToObjectPath(raw);
+      } catch {
+        return res.status(400).json({ error: "Invalid signature path" });
+      }
+
+      const absolutePath = objectPathToAbsolute(normalized);
+      res.setHeader("Content-Type", "image/png");
+      res.setHeader("Cache-Control", "private, max-age=300");
+      return res.sendFile(absolutePath, (err) => {
+        if (err) {
+          console.error("[signature-image] sendFile failed:", normalized, err);
+          if (!res.headersSent) {
+            res.status(404).json({ error: "Signature file not found" });
+          }
+        }
+      });
+    } catch (error: any) {
+      console.error("[signature-image]", error);
+      return res.status(500).json({ error: error.message || "Failed to load signature" });
     }
   });
 
@@ -342,34 +461,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const uploadURL = await objectStorageService.getObjectEntityUploadURL();
       console.log("Generated upload URL from service:", uploadURL);
+
+      if (OBJECT_STORAGE_PROVIDER === "local") {
+        const relativePath = createLocalUploadRelativePath();
+        return res.json({
+          uploadURL: `/api/object-storage/upload/${relativePath}`,
+          storageType: "local",
+          bucketName: "local",
+          objectPath: relativePath,
+        });
+      }
       
-      // If Supabase Storage is being used, return endpoint info
-      if (uploadURL.startsWith("supabase://")) {
-        const urlWithoutPrefix = uploadURL.replace("supabase://", "");
-        console.log("URL without prefix:", urlWithoutPrefix);
+      if (uploadURL.startsWith("s3://")) {
+        const urlWithoutPrefix = uploadURL.replace("s3://", "");
         const parts = urlWithoutPrefix.split("/");
-        console.log("Split parts:", parts);
-        
-        if (parts.length < 2) {
-          throw new Error(`Invalid Supabase upload URL format: ${uploadURL}. Expected format: supabase://bucket/path`);
-        }
-        
         const bucketName = parts[0];
-        const pathParts = parts.slice(1);
-        const objectPath = pathParts.join("/");
-        
-        console.log("Parsed - bucketName:", bucketName, "objectPath:", objectPath);
-        
-        if (!bucketName) {
-          throw new Error(`Bucket name is missing in upload URL: ${uploadURL}`);
-        }
-        
+        const objectPath = parts.slice(1).join("/");
         const finalUploadURL = `/api/storage/upload/${bucketName}/${objectPath}`;
-        console.log("Final upload URL:", finalUploadURL);
-        
-        res.json({ 
+        res.json({
           uploadURL: finalUploadURL,
-          storageType: "supabase",
+          storageType: "s3",
           bucketName,
           objectPath,
         });
@@ -388,9 +499,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Supabase Storage upload endpoint (protected)
+  // Unified storage upload endpoint (protected)
   app.put("/api/storage/upload/:bucket/:path(*)", requireAuth, async (req, res) => {
-    const user = (req as any).user;
     const { bucket, path } = req.params;
     
     console.log(`[Upload] Received upload request - bucket: "${bucket}", path: "${path}"`);
@@ -418,185 +528,69 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "No file data received" });
       }
 
-      // Check if bucket exists, create if it doesn't
-      let bucketExists = false;
-      try {
-        const { data: buckets, error: listError } = await supabaseAdmin.storage.listBuckets();
-        if (listError) {
-          console.warn("Could not list buckets:", listError);
-        } else {
-          bucketExists = buckets?.some((b: any) => b.name === bucket) || false;
-        }
-      } catch (listErr) {
-        console.warn("Error checking buckets:", listErr);
-      }
-      
-      if (!bucketExists) {
-        console.log(`Bucket "${bucket}" not found, attempting to create it...`);
-        try {
-          // Determine bucket settings based on bucket name
-          // For documents, allow all file types and larger files
-          // For profile pictures, restrict to images only
-          const isDocumentBucket = bucket === "private-objects" || bucket.includes("documents") || bucket.includes("uploads");
-          const isPublicBucket = bucket === "public-objects" || bucket.includes("public");
-          
-          const bucketOptions: any = {
-            public: isPublicBucket, // Make public buckets public, private buckets private
-            fileSizeLimit: isDocumentBucket ? 10485760 : 5242880, // 10MB for documents, 5MB for images
-          };
-          
-          // Only restrict MIME types for image buckets (profile pictures)
-          if (!isDocumentBucket && (bucket.includes("profile") || bucket.includes("avatar"))) {
-            bucketOptions.allowedMimeTypes = ['image/*'];
-          }
-          // For document buckets, allow all file types
-          
-          const { data: newBucket, error: createError } = await supabaseAdmin.storage.createBucket(bucket, bucketOptions);
-          
-          if (createError) {
-            console.error("Error creating bucket:", createError);
-            console.error("Error details:", JSON.stringify(createError, null, 2));
-            // Don't fail immediately - try to upload anyway in case bucket was created by another process
-            // But provide helpful error message
-            if (!createError.message?.includes("already exists") && !createError.message?.includes("duplicate")) {
-              console.warn(`Bucket creation failed, but continuing with upload attempt. Error: ${createError.message}`);
-            } else {
-              // Bucket already exists, mark it as existing
-              bucketExists = true;
-              console.log(`Bucket "${bucket}" already exists`);
-            }
-          } else {
-            console.log(`Bucket "${bucket}" created successfully with options:`, bucketOptions);
-            bucketExists = true;
-          }
-        } catch (createErr: any) {
-          console.error(`Bucket creation attempt failed: ${createErr.message}`, createErr);
-          console.error("Error stack:", createErr.stack);
-          // Continue with upload attempt - bucket might exist or be created by another process
-        }
-      }
-
-      // Upload to Supabase Storage
-      console.log(`Uploading to Supabase Storage: bucket="${bucket}", path="${path}", size=${fileBuffer.length} bytes, contentType="${req.headers["content-type"] || "application/octet-stream"}"`);
-      
-      // Try to upload with upsert enabled first (allows overwriting)
-      // If that fails with a bucket error, try to create bucket again
-      let uploadAttempts = 0;
-      const maxAttempts = 2;
-      let data: any = null;
-      let error: any = null;
-      
-      while (uploadAttempts < maxAttempts) {
-        uploadAttempts++;
-        const result = await supabaseAdmin.storage
-          .from(bucket)
-          .upload(path, fileBuffer, {
-            contentType: req.headers["content-type"] || "application/octet-stream",
-            upsert: uploadAttempts > 1, // Allow overwrite on retry
-          });
-        
-        data = result.data;
-        error = result.error;
-        
-        if (!error) {
-          break; // Success, exit loop
-        }
-        
-        console.error(`Upload attempt ${uploadAttempts} failed:`, error);
-        console.error("Error details:", JSON.stringify(error, null, 2));
-        
-        // If bucket doesn't exist and we haven't tried creating it yet, try one more time
-        if (error.message?.includes("Bucket not found") || error.statusCode === '404' || error.status === 404) {
-          if (uploadAttempts === 1) {
-            console.log("Bucket not found, attempting to create it before retry...");
-            try {
-              const isDocumentBucket = bucket === "private-objects" || bucket.includes("documents") || bucket.includes("uploads");
-              const isPublicBucket = bucket === "public-objects" || bucket.includes("public");
-              
-              const bucketOptions: any = {
-                public: isPublicBucket,
-                fileSizeLimit: isDocumentBucket ? 10485760 : 5242880,
-              };
-              
-              if (!isDocumentBucket && (bucket.includes("profile") || bucket.includes("avatar"))) {
-                bucketOptions.allowedMimeTypes = ['image/*'];
-              }
-              
-              const { error: createError } = await supabaseAdmin.storage.createBucket(bucket, bucketOptions);
-              if (createError && !createError.message?.includes("already exists") && !createError.message?.includes("duplicate")) {
-                console.error("Failed to create bucket on retry:", createError);
-              } else {
-                console.log("Bucket created successfully, retrying upload...");
-                continue; // Retry upload
-              }
-            } catch (createErr: any) {
-              console.error("Error creating bucket on retry:", createErr);
-            }
-          }
-          
-          // If we've exhausted retries or bucket creation failed, return error
-          return res.status(500).json({ 
-            error: "Storage bucket not found",
-            message: `Bucket "${bucket}" does not exist in Supabase Storage and could not be created automatically.`,
-            hint: `Please create the bucket manually:
-1. Go to your Supabase Dashboard (https://supabase.com/dashboard)
-2. Select your project
-3. Navigate to Storage
-4. Click "New bucket"
-5. Name it: "${bucket}"
-6. Set visibility: ${bucket.includes("public") ? "PUBLIC" : "PRIVATE"}
-7. Set file size limit: ${bucket.includes("documents") || bucket === "private-objects" ? "10MB" : "5MB"}
-8. Click "Create bucket"
-Then try uploading again.`,
-            bucketName: bucket,
-            uploadAttempts
-          });
-        }
-        
-        // For other errors, return immediately
-        if (uploadAttempts >= maxAttempts) {
-          return res.status(500).json({ 
-            error: "Failed to upload to Supabase Storage",
-            message: error.message || "Unknown error",
-            details: error,
-            uploadAttempts
-          });
-        }
-      }
-
-      // Return the object path in the format expected by the client
-      // Also include uploadURL for Uppy compatibility
-      if (!data) {
-        console.error("Upload succeeded but no data returned from Supabase");
-        return res.status(500).json({ 
-          error: "Upload failed",
-          message: "No data returned from storage service"
+      if (OBJECT_STORAGE_PROVIDER === "local") {
+        const relativePath = `${bucket}/${path}`.replace(/^local\//, "");
+        const objectPath = await writeLocalObject(relativePath, fileBuffer);
+        return res.status(200).json({
+          objectPath,
+          path: relativePath,
+          fullPath: objectPath,
+          uploadURL: objectPath,
+          bucket: "local",
         });
       }
 
-      const objectPath = `${bucket}/${data.path}`;
-      const supabaseUrl = process.env.SUPABASE_URL || 'https://piejkqvpkxnrnudztrmt.supabase.co';
-      const publicUrl = `${supabaseUrl}/storage/v1/object/public/${objectPath}`;
-      
-      console.log(`Upload successful: objectPath="${objectPath}", data.path="${data.path}"`);
-      
-      // Return 200 OK with JSON response containing objectPath
-      // The objectPath is in format "bucket/path" which is what we store in the database
-      res.status(200).json({ 
-        objectPath,  // This is the key field: "bucket/path" format
-        path: data.path,  // Just the path without bucket
-        fullPath: objectPath,  // Alias for objectPath
-        uploadURL: objectPath, // For Uppy compatibility - use objectPath
-        location: publicUrl, // Public URL for the uploaded file (if bucket is public)
-        url: publicUrl, // Alternative field name
-        bucket // Bucket name
-      });
+      if (OBJECT_STORAGE_PROVIDER === "s3" || OBJECT_STORAGE_PROVIDER === "minio") {
+        await uploadBufferToS3({
+          bucket,
+          key: path,
+          body: fileBuffer,
+          contentType: (req.headers["content-type"] as string) || "application/octet-stream",
+        });
+        const objectPath = `${bucket}/${path}`;
+        return res.status(200).json({
+          objectPath,
+          path,
+          fullPath: objectPath,
+          uploadURL: objectPath,
+          bucket,
+        });
+      }
+
+      return res.status(400).json({ error: `Unsupported object storage provider: ${OBJECT_STORAGE_PROVIDER}` });
     } catch (error: any) {
       console.error("Error in storage upload endpoint:", error);
       res.status(500).json({ 
         error: "Failed to upload file",
         message: error.message || "Unknown error"
       });
+    }
+  });
+
+  // Local filesystem upload endpoint (protected)
+  app.put("/api/object-storage/upload/:path(*)", requireAuth, async (req, res) => {
+    try {
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      await new Promise<void>((resolve, reject) => {
+        req.on("end", () => resolve());
+        req.on("error", reject);
+      });
+      const fileBuffer = Buffer.concat(chunks);
+      if (!fileBuffer || fileBuffer.length === 0) {
+        return res.status(400).json({ error: "No file data received" });
+      }
+      const relativePath = req.params.path;
+      const objectPath = await writeLocalObject(relativePath, fileBuffer);
+      return res.status(200).json({
+        objectPath,
+        path: relativePath,
+        fullPath: objectPath,
+        uploadURL: objectPath,
+        bucket: "local",
+      });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message || "Failed to upload file" });
     }
   });
 
@@ -610,10 +604,12 @@ Then try uploading again.`,
     }
 
     try {
-      // If using Supabase Storage, the path is already in the format bucket/path
-      // Just return it as-is (Supabase handles ACL through RLS policies)
+      if (OBJECT_STORAGE_PROVIDER === "local") {
+        const objectPath = uploadUrlToObjectPath(profilePictureURL);
+        return res.json({ objectPath });
+      }
+
       if (profilePictureURL.includes("/") && !profilePictureURL.startsWith("/") && !profilePictureURL.startsWith("http")) {
-        // This is likely a Supabase Storage path (bucket/path)
         res.json({ objectPath: profilePictureURL });
         return;
       }
@@ -630,7 +626,6 @@ Then try uploading again.`,
       res.json({ objectPath });
     } catch (error: any) {
       console.error("Error setting profile picture ACL:", error);
-      // If ACL setting fails but we have a path, still return it (for Supabase Storage)
       if (profilePictureURL) {
         res.json({ objectPath: profilePictureURL });
       } else {
@@ -649,6 +644,11 @@ Then try uploading again.`,
     }
 
     try {
+      if (OBJECT_STORAGE_PROVIDER === "local") {
+        const objectPath = uploadUrlToObjectPath(documentURL);
+        return res.json({ objectPath });
+      }
+
       const objectPath = await objectStorageService.trySetObjectEntityAclPolicy(
         documentURL,
         {
@@ -673,14 +673,33 @@ Then try uploading again.`,
   // Public route: Get all fuel types (no auth required)
   app.get("/api/fuel-types", async (req, res) => {
     try {
-      const { data: fuelTypes, error } = await supabaseAdmin
-        .from("fuel_types")
-        .select("*")
-        .eq("active", true)
-        .order("label", { ascending: true });
+      let activeFuelTypes = await db
+        .select()
+        .from(fuelTypes)
+        .where(eq(fuelTypes.active, true))
+        .orderBy(asc(fuelTypes.label));
 
-      if (error) throw error;
-      res.json(fuelTypes || []);
+      // Bootstrap defaults when a fresh database has no fuel types yet.
+      if (activeFuelTypes.length === 0) {
+        await pool.query(
+          `INSERT INTO fuel_types (code, label, active)
+           VALUES
+             ('petrol_93', 'Petrol 93', true),
+             ('petrol_95', 'Petrol 95', true),
+             ('diesel_50ppm', 'Diesel 50ppm', true),
+             ('diesel_500ppm', 'Diesel 500ppm', true),
+             ('paraffin', 'Paraffin', true)
+           ON CONFLICT (code) DO NOTHING`
+        );
+
+        activeFuelTypes = await db
+          .select()
+          .from(fuelTypes)
+          .where(eq(fuelTypes.active, true))
+          .orderBy(asc(fuelTypes.label));
+      }
+
+      res.json(activeFuelTypes);
     } catch (error: any) {
       console.error("Error fetching fuel types:", error);
       res.status(500).json({ error: error.message });
@@ -692,18 +711,17 @@ Then try uploading again.`,
     try {
       const raw = typeof req.query.q === "string" ? req.query.q.trim() : "";
       const q = raw.replace(/%/g, "").slice(0, 80);
-      let query = supabaseAdmin
-        .from("companies")
-        .select("id, name, status")
-        .eq("status", "active")
-        .order("name", { ascending: true })
-        .limit(100);
+      const filters = [eq(companies.status, "active")];
       if (q.length > 0) {
-        query = query.ilike("name", `%${q}%`);
+        filters.push(ilike(companies.name, `%${q}%`));
       }
-      const { data, error } = await query;
-      if (error) throw error;
-      res.json(data || []);
+      const rows = await db
+        .select({ id: companies.id, name: companies.name, status: companies.status })
+        .from(companies)
+        .where(and(...filters))
+        .orderBy(asc(companies.name))
+        .limit(100);
+      res.json(rows);
     } catch (error: any) {
       console.error("Error fetching companies list:", error);
       res.status(500).json({ error: error.message });
@@ -711,31 +729,31 @@ Then try uploading again.`,
   });
 
   // Register company routes (protected)
-  app.use("/api/company", requireAuth, companyRoutes);
+  app.use("/api/company", requireSessionAuth, companyRoutes);
 
   // Register customer routes (protected with auth middleware)
-  app.use("/api", requireAuth, customerRoutes);
+  app.use("/api", requireSessionAuth, customerRoutes);
 
   // Register driver routes (protected with auth middleware)
-  app.use("/api/driver", requireAuth, driverRoutes);
+  app.use("/api/driver", requireSessionAuth, driverRoutes);
 
   // Register supplier routes (protected with auth middleware)
-  app.use("/api/supplier", requireAuth, supplierRoutes);
+  app.use("/api/supplier", requireSessionAuth, supplierRoutes);
 
   // Register admin routes (protected with auth and admin middleware)
-  app.use("/api/admin", requireAuth, requireAdmin, adminRoutes);
+  app.use("/api/admin", requireSessionAuth, requireAdmin, adminRoutes);
 
   // Register push notification routes (protected with auth middleware)
-  app.use("/api/push", requireAuth, pushRoutes);
+  app.use("/api/push", requireSessionAuth, pushRoutes);
 
   // Register location tracking routes (protected with auth middleware)
-  app.use("/api/location", requireAuth, locationRoutes);
+  app.use("/api/location", requireSessionAuth, locationRoutes);
 
   // Register chat routes (protected with auth middleware)
   app.use("/api/chat", chatRoutes);
 
   // Register notification routes (protected with auth middleware)
-  app.use("/api/notifications", requireAuth, notificationRoutes);
+  app.use("/api/notifications", requireSessionAuth, notificationRoutes);
 
   const httpServer = createServer(app);
 

@@ -1,5 +1,9 @@
 import webpush from "web-push";
-import { supabaseAdmin } from "./supabase";
+import {
+  deletePushSubscriptionsByIds,
+  listExpoPushTokensByUser,
+  listWebPushSubscriptionsByUser,
+} from "./data/push-subscriptions-repo";
 
 const vapidPublicKey = process.env.VAPID_PUBLIC_KEY!;
 const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY!;
@@ -23,25 +27,45 @@ export interface PushNotificationPayload {
 }
 
 class PushNotificationService {
+  private async sendExpoPush(token: string, payload: PushNotificationPayload): Promise<boolean> {
+    try {
+      const response = await fetch("https://exp.host/--/api/v2/push/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          to: token,
+          sound: "default",
+          title: payload.title,
+          body: payload.body,
+          data: payload.data ?? {},
+          channelId: "default",
+          priority: payload.requireInteraction ? "high" : "default",
+        }),
+      });
+      if (!response.ok) return false;
+      const json = (await response.json()) as any;
+      return json?.data?.status === "ok" || json?.data?.[0]?.status === "ok";
+    } catch {
+      return false;
+    }
+  }
+
   async sendToUser(userId: string, payload: PushNotificationPayload): Promise<number> {
     try {
-      const { data: subscriptions, error } = await supabaseAdmin
-        .from("push_subscriptions")
-        .select("*")
-        .eq("user_id", userId);
-
-      if (error) {
-        return 0;
-      }
-
-      if (!subscriptions || subscriptions.length === 0) {
-        return 0;
-      }
-
+      const expoTokens = await listExpoPushTokensByUser(userId);
+      const webSubscriptions = await listWebPushSubscriptionsByUser(userId);
       let sentCount = 0;
       const failedSubscriptions: string[] = [];
 
-      for (const subscription of subscriptions) {
+      for (const tokenRow of expoTokens) {
+        const ok = await this.sendExpoPush(tokenRow.endpoint, payload);
+        if (ok) sentCount++;
+      }
+
+      for (const subscription of webSubscriptions) {
         try {
           const pushSubscription = {
             endpoint: subscription.endpoint,
@@ -64,10 +88,7 @@ class PushNotificationService {
       }
 
       if (failedSubscriptions.length > 0) {
-        await supabaseAdmin
-          .from("push_subscriptions")
-          .delete()
-          .in("id", failedSubscriptions);
+        await deletePushSubscriptionsByIds(failedSubscriptions);
       }
 
       return sentCount;

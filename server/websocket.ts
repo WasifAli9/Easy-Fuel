@@ -1,8 +1,12 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
-import { supabaseAuth } from "./supabase";
 import type { IncomingMessage } from "http";
 import { parse } from "url";
+import { getLocalUserFromAccessToken } from "./auth-local";
+import { db } from "./db";
+import { profiles } from "@shared/schema";
+import { eq } from "drizzle-orm";
+import { pool } from "./db";
 
 interface AuthenticatedWebSocket extends WebSocket {
   userId?: string;
@@ -13,6 +17,44 @@ interface AuthenticatedWebSocket extends WebSocket {
 interface WebSocketMessage {
   type: string;
   payload: any;
+}
+
+function parseCookies(cookieHeader?: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!cookieHeader) return out;
+  for (const raw of cookieHeader.split(";")) {
+    const [key, ...rest] = raw.trim().split("=");
+    if (!key || rest.length === 0) continue;
+    out[key] = decodeURIComponent(rest.join("="));
+  }
+  return out;
+}
+
+async function getLocalUserFromSessionCookie(req: IncomingMessage): Promise<{ id: string } | null> {
+  const cookies = parseCookies(req.headers.cookie);
+  const rawSessionCookie = cookies["inspect360.sid"];
+  if (!rawSessionCookie) return null;
+
+  // express-session signed cookie format: s:<sid>.<sig>
+  const unsigned = rawSessionCookie.startsWith("s:") ? rawSessionCookie.slice(2) : rawSessionCookie;
+  const sid = unsigned.split(".")[0];
+  if (!sid) return null;
+
+  const sessionRows = await pool.query(
+    `SELECT sess FROM user_sessions WHERE sid = $1 AND expire >= now() LIMIT 1`,
+    [sid],
+  );
+  const sessionRow = sessionRows.rows[0];
+  if (!sessionRow?.sess) return null;
+
+  const sess =
+    typeof sessionRow.sess === "string"
+      ? JSON.parse(sessionRow.sess)
+      : sessionRow.sess;
+
+  const userId = sess?.passport?.user;
+  if (!userId || typeof userId !== "string") return null;
+  return { id: userId };
 }
 
 class WebSocketService {
@@ -32,13 +74,23 @@ class WebSocketService {
         const { query } = parse(req.url || "", true);
         const token = query.token as string;
 
-        if (!token) {
-          ws.close(1008, "Authentication required");
-          return;
+        let user: { id: string } | null = null;
+        let error: { message?: string } | null = null;
+        if (token && token !== "cookie-session") {
+          const localUser = await getLocalUserFromAccessToken(token);
+          if (!localUser) {
+            error = { message: "Invalid local token" };
+          } else {
+            user = { id: localUser.id };
+          }
+        } else {
+          const cookieUser = await getLocalUserFromSessionCookie(req);
+          if (!cookieUser) {
+            error = { message: "Authentication required" };
+          } else {
+            user = { id: cookieUser.id };
+          }
         }
-
-        // Verify token with Supabase
-        const { data: { user }, error } = await supabaseAuth.auth.getUser(token);
 
         if (error || !user) {
           // Log auth errors for debugging (but not for expired tokens in production)
@@ -55,15 +107,14 @@ class WebSocketService {
         ws.isAlive = true;
 
         // Fetch user role from database
-        const { supabaseAdmin } = await import("./supabase");
-        const { data: profile } = await supabaseAdmin
-          .from("profiles")
-          .select("role")
-          .eq("id", user.id)
-          .maybeSingle();
-        
-        if (profile?.role) {
-          ws.userRole = profile.role;
+        const profileRows = await db
+          .select({ role: profiles.role })
+          .from(profiles)
+          .where(eq(profiles.id, user.id))
+          .limit(1);
+
+        if (profileRows[0]?.role) {
+          ws.userRole = profileRows[0].role;
         }
 
         // Add client to the map
@@ -100,15 +151,16 @@ class WebSocketService {
           }
         });
 
+        const authedUserId = ws.userId as string;
         // Send welcome message
         this.sendToSocket(ws, {
           type: "connected",
-          payload: { userId: user.id, timestamp: new Date().toISOString() },
+          payload: { userId: authedUserId, timestamp: new Date().toISOString() },
         });
 
         // Log successful connection (only in development)
         if (process.env.NODE_ENV === "development") {
-          console.log(`[WebSocket] User ${user.id} connected`);
+          console.log(`[WebSocket] User ${authedUserId} connected`);
         }
       } catch (error) {
         console.error("[WebSocket] Error in connection handler:", error);
@@ -140,7 +192,7 @@ class WebSocketService {
       });
     }, 30000); // 30 seconds
 
-    this.wss.on("close", () => {
+    this.wss?.on("close", () => {
       clearInterval(heartbeatInterval);
     });
 
@@ -247,17 +299,15 @@ class WebSocketService {
   async broadcastToRole(role: string, message: WebSocketMessage): Promise<void> {
     if (!this.wss) return;
 
-    const { supabaseAdmin } = await import("./supabase");
-    
     // Get all user IDs with this role
-    const { data: profiles } = await supabaseAdmin
-      .from("profiles")
-      .select("id")
-      .eq("role", role);
+    const roleProfiles = await db
+      .select({ id: profiles.id })
+      .from(profiles)
+      .where(eq(profiles.role, role as any));
 
-    if (!profiles || profiles.length === 0) return;
+    if (roleProfiles.length === 0) return;
 
-    const userIds = new Set(profiles.map(p => p.id));
+    const userIds = new Set(roleProfiles.map((p) => p.id));
 
     // Send to all connected users with this role
     this.wss.clients.forEach((ws: WebSocket) => {

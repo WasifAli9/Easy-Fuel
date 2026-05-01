@@ -1,28 +1,51 @@
 import { Router } from "express";
-import { supabaseAdmin } from "./supabase";
 import { z } from "zod";
 import { vehicleToCamelCase, syncDriverVehicleCapacityLitres } from "./vehicle-utils";
 import { websocketService } from "./websocket";
+import { db } from "./db";
+import { companies, driverCompanyMemberships, drivers, orders, profiles, vehicles } from "@shared/schema";
+import { and, desc, eq, gte, inArray } from "drizzle-orm";
 
 const router = Router();
+
+function toVehicleRecord(row: any) {
+  return {
+    id: row.id,
+    driver_id: row.driverId,
+    company_id: row.companyId,
+    registration_number: row.registrationNumber,
+    make: row.make,
+    model: row.model,
+    year: row.year,
+    capacity_litres: row.capacityLitres,
+    fuel_types: row.fuelTypes,
+    license_disk_expiry: row.licenseDiskExpiry,
+    roadworthy_expiry: row.roadworthyExpiry,
+    insurance_expiry: row.insuranceExpiry,
+    tracker_installed: row.trackerInstalled,
+    tracker_provider: row.trackerProvider,
+    vehicle_registration_cert_doc_id: row.vehicleRegistrationCertDocId,
+    vehicle_status: row.vehicleStatus,
+    created_at: row.createdAt,
+    updated_at: row.updatedAt,
+  };
+}
 
 async function requireCompany(req: any, res: any, next: any) {
   try {
     const user = req.user;
-    const { data: profile, error: pErr } = await supabaseAdmin
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .maybeSingle();
-    if (pErr || !profile || profile.role !== "company") {
+    const profileRows = await db.select({ role: profiles.role }).from(profiles).where(eq(profiles.id, user.id)).limit(1);
+    const profile = profileRows[0];
+    if (!profile || profile.role !== "company") {
       return res.status(403).json({ error: "Company access required" });
     }
-    const { data: company, error: cErr } = await supabaseAdmin
-      .from("companies")
-      .select("id, name, status")
-      .eq("owner_user_id", user.id)
-      .maybeSingle();
-    if (cErr || !company) {
+    const companyRows = await db
+      .select({ id: companies.id, name: companies.name, status: companies.status })
+      .from(companies)
+      .where(eq(companies.ownerUserId, user.id))
+      .limit(1);
+    const company = companyRows[0];
+    if (!company) {
       return res.status(404).json({ error: "Company record not found" });
     }
     req.companyRecord = company;
@@ -37,13 +60,11 @@ async function requireCompany(req: any, res: any, next: any) {
 router.use(requireCompany);
 
 async function driverLinkedToCompany(driverId: string, companyId: string): Promise<boolean> {
-  const { data, error } = await supabaseAdmin
-    .from("driver_company_memberships")
-    .select("id")
-    .eq("company_id", companyId)
-    .eq("driver_id", driverId)
-    .maybeSingle();
-  if (error) return false;
+  const data = await db
+    .select({ id: driverCompanyMemberships.id })
+    .from(driverCompanyMemberships)
+    .where(and(eq(driverCompanyMemberships.companyId, companyId), eq(driverCompanyMemberships.driverId, driverId)))
+    .limit(1);
   return !!data;
 }
 
@@ -69,21 +90,18 @@ const assignBody = z.object({
 router.get("/vehicles", async (req, res) => {
   const companyId = (req as any).companyId as string;
   try {
-    const { data: vehs, error } = await supabaseAdmin
-      .from("vehicles")
-      .select("*")
-      .eq("company_id", companyId)
-      .order("created_at", { ascending: false });
-    if (error) throw error;
+    const vehs = await db.select().from(vehicles).where(eq(vehicles.companyId, companyId)).orderBy(desc(vehicles.createdAt));
 
     const driverIds = Array.from(
-      new Set((vehs || []).map((v: any) => v.driver_id).filter(Boolean))
+      new Set((vehs || []).map((v: any) => v.driverId).filter(Boolean))
     ) as string[];
     let profileByDriver = new Map<string, string | null>();
     if (driverIds.length > 0) {
-      const { data: drs } = await supabaseAdmin.from("drivers").select("id, user_id").in("id", driverIds);
-      const userIds = (drs || []).map((d: any) => d.user_id);
-      const { data: profs } = await supabaseAdmin.from("profiles").select("id, full_name").in("id", userIds);
+      const drs = await db.select({ id: drivers.id, user_id: drivers.userId }).from(drivers).where(inArray(drivers.id, driverIds));
+      const userIds = Array.from(new Set((drs || []).map((d: any) => d.user_id).filter(Boolean)));
+      const profs = userIds.length > 0
+        ? await db.select({ id: profiles.id, full_name: profiles.fullName }).from(profiles).where(inArray(profiles.id, userIds as string[]))
+        : [];
       const nameByUser = new Map((profs || []).map((p: any) => [p.id, p.full_name]));
       for (const d of drs || []) {
         profileByDriver.set((d as any).id, nameByUser.get((d as any).user_id) ?? null);
@@ -91,8 +109,8 @@ router.get("/vehicles", async (req, res) => {
     }
 
     const list = (vehs || []).map((v: any) => ({
-      ...vehicleToCamelCase(v),
-      assignedDriverName: v.driver_id ? profileByDriver.get(v.driver_id) ?? null : null,
+      ...vehicleToCamelCase(toVehicleRecord(v)),
+      assignedDriverName: v.driverId ? profileByDriver.get(v.driverId) ?? null : null,
     }));
     res.json(list);
   } catch (e: any) {
@@ -108,23 +126,23 @@ router.post("/vehicles", async (req, res) => {
   const b = parsed.data;
   try {
     const insert = {
-      company_id: companyId,
-      driver_id: null as string | null,
-      registration_number: b.registration_number,
+      companyId: companyId,
+      driverId: null as string | null,
+      registrationNumber: b.registration_number,
       make: b.make ?? null,
       model: b.model ?? null,
       year: b.year ?? null,
-      capacity_litres: b.capacity_litres ?? null,
-      fuel_types: b.fuel_types ?? null,
-      license_disk_expiry: b.license_disk_expiry ?? null,
-      roadworthy_expiry: b.roadworthy_expiry ?? null,
-      insurance_expiry: b.insurance_expiry ?? null,
-      tracker_installed: b.tracker_installed ?? false,
-      tracker_provider: b.tracker_provider ?? null,
+      capacityLitres: b.capacity_litres ?? null,
+      fuelTypes: b.fuel_types ?? null,
+      licenseDiskExpiry: b.license_disk_expiry ? new Date(b.license_disk_expiry) : null,
+      roadworthyExpiry: b.roadworthy_expiry ? new Date(b.roadworthy_expiry) : null,
+      insuranceExpiry: b.insurance_expiry ? new Date(b.insurance_expiry) : null,
+      trackerInstalled: b.tracker_installed ?? false,
+      trackerProvider: b.tracker_provider ?? null,
     };
-    const { data: vehicle, error } = await supabaseAdmin.from("vehicles").insert(insert).select().single();
-    if (error) throw error;
-    res.json(vehicleToCamelCase(vehicle));
+    const inserted = await db.insert(vehicles).values(insert).returning();
+    const vehicle = inserted[0];
+    res.json(vehicleToCamelCase(toVehicleRecord(vehicle)));
   } catch (e: any) {
     console.error("POST /company/vehicles:", e);
     res.status(500).json({ error: e.message });
@@ -135,40 +153,35 @@ router.patch("/vehicles/:vehicleId", async (req, res) => {
   const companyId = (req as any).companyId as string;
   const { vehicleId } = req.params;
   try {
-    const { data: existing, error: e0 } = await supabaseAdmin
-      .from("vehicles")
-      .select("id, company_id")
-      .eq("id", vehicleId)
-      .maybeSingle();
-    if (e0) throw e0;
+    const existingRows = await db
+      .select({ id: vehicles.id, company_id: vehicles.companyId })
+      .from(vehicles)
+      .where(eq(vehicles.id, vehicleId))
+      .limit(1);
+    const existing = existingRows[0];
     if (!existing || existing.company_id !== companyId) {
       return res.status(404).json({ error: "Vehicle not found" });
     }
     const updateData: Record<string, unknown> = {};
     const b = req.body || {};
-    if (b.registration_number !== undefined) updateData.registration_number = b.registration_number;
+    if (b.registration_number !== undefined) updateData.registrationNumber = b.registration_number;
     if (b.make !== undefined) updateData.make = b.make;
     if (b.model !== undefined) updateData.model = b.model;
     if (b.year !== undefined) updateData.year = b.year;
-    if (b.capacity_litres !== undefined) updateData.capacity_litres = b.capacity_litres;
-    if (b.fuel_types !== undefined) updateData.fuel_types = b.fuel_types;
-    if (b.license_disk_expiry !== undefined) updateData.license_disk_expiry = b.license_disk_expiry;
-    if (b.roadworthy_expiry !== undefined) updateData.roadworthy_expiry = b.roadworthy_expiry;
-    if (b.insurance_expiry !== undefined) updateData.insurance_expiry = b.insurance_expiry;
-    if (b.tracker_installed !== undefined) updateData.tracker_installed = b.tracker_installed;
-    if (b.tracker_provider !== undefined) updateData.tracker_provider = b.tracker_provider;
-    updateData.updated_at = new Date().toISOString();
+    if (b.capacity_litres !== undefined) updateData.capacityLitres = b.capacity_litres;
+    if (b.fuel_types !== undefined) updateData.fuelTypes = b.fuel_types;
+    if (b.license_disk_expiry !== undefined) updateData.licenseDiskExpiry = b.license_disk_expiry ? new Date(b.license_disk_expiry) : null;
+    if (b.roadworthy_expiry !== undefined) updateData.roadworthyExpiry = b.roadworthy_expiry ? new Date(b.roadworthy_expiry) : null;
+    if (b.insurance_expiry !== undefined) updateData.insuranceExpiry = b.insurance_expiry ? new Date(b.insurance_expiry) : null;
+    if (b.tracker_installed !== undefined) updateData.trackerInstalled = b.tracker_installed;
+    if (b.tracker_provider !== undefined) updateData.trackerProvider = b.tracker_provider;
+    updateData.updatedAt = new Date();
 
-    const { data: vehicle, error } = await supabaseAdmin
-      .from("vehicles")
-      .update(updateData)
-      .eq("id", vehicleId)
-      .select()
-      .single();
-    if (error) throw error;
-    const assignedId = vehicle.driver_id as string | null;
+    const updated = await db.update(vehicles).set(updateData).where(eq(vehicles.id, vehicleId)).returning();
+    const vehicle = updated[0];
+    const assignedId = vehicle.driverId as string | null;
     if (assignedId) await syncDriverVehicleCapacityLitres(assignedId);
-    res.json(vehicleToCamelCase(vehicle));
+    res.json(vehicleToCamelCase(toVehicleRecord(vehicle)));
   } catch (e: any) {
     console.error("PATCH /company/vehicles:", e);
     res.status(500).json({ error: e.message });
@@ -179,20 +192,19 @@ router.delete("/vehicles/:vehicleId", async (req, res) => {
   const companyId = (req as any).companyId as string;
   const { vehicleId } = req.params;
   try {
-    const { data: existing, error: e0 } = await supabaseAdmin
-      .from("vehicles")
-      .select("id, company_id, driver_id")
-      .eq("id", vehicleId)
-      .maybeSingle();
-    if (e0) throw e0;
+    const existingRows = await db
+      .select({ id: vehicles.id, company_id: vehicles.companyId, driver_id: vehicles.driverId })
+      .from(vehicles)
+      .where(eq(vehicles.id, vehicleId))
+      .limit(1);
+    const existing = existingRows[0];
     if (!existing || existing.company_id !== companyId) {
       return res.status(404).json({ error: "Vehicle not found" });
     }
     if (existing.driver_id) {
       return res.status(400).json({ error: "Unassign the vehicle from the driver before deleting" });
     }
-    const { error } = await supabaseAdmin.from("vehicles").delete().eq("id", vehicleId);
-    if (error) throw error;
+    await db.delete(vehicles).where(eq(vehicles.id, vehicleId));
     res.json({ ok: true });
   } catch (e: any) {
     console.error("DELETE /company/vehicles:", e);
@@ -208,12 +220,12 @@ router.post("/vehicles/:vehicleId/assign", async (req, res) => {
   const newDriverId = parsed.data.driverId;
 
   try {
-    const { data: vehicle, error: e0 } = await supabaseAdmin
-      .from("vehicles")
-      .select("id, company_id, driver_id")
-      .eq("id", vehicleId)
-      .maybeSingle();
-    if (e0) throw e0;
+    const vehicleRows = await db
+      .select({ id: vehicles.id, company_id: vehicles.companyId, driver_id: vehicles.driverId })
+      .from(vehicles)
+      .where(eq(vehicles.id, vehicleId))
+      .limit(1);
+    const vehicle = vehicleRows[0];
     if (!vehicle || vehicle.company_id !== companyId) {
       return res.status(404).json({ error: "Vehicle not found" });
     }
@@ -222,23 +234,23 @@ router.post("/vehicles/:vehicleId/assign", async (req, res) => {
 
     const previousDriverId = vehicle.driver_id as string | null;
 
-    const { data: updated, error } = await supabaseAdmin
-      .from("vehicles")
-      .update({
-        driver_id: newDriverId,
-        updated_at: new Date().toISOString(),
+    const updatedRows = await db
+      .update(vehicles)
+      .set({
+        driverId: newDriverId,
+        updatedAt: new Date(),
       })
-      .eq("id", vehicleId)
-      .select()
-      .single();
-    if (error) throw error;
+      .where(eq(vehicles.id, vehicleId))
+      .returning();
+    const updated = updatedRows[0];
 
     if (previousDriverId && previousDriverId !== newDriverId) {
       await syncDriverVehicleCapacityLitres(previousDriverId);
     }
     await syncDriverVehicleCapacityLitres(newDriverId);
 
-    const { data: drow } = await supabaseAdmin.from("drivers").select("user_id").eq("id", newDriverId).single();
+    const drowRows = await db.select({ user_id: drivers.userId }).from(drivers).where(eq(drivers.id, newDriverId)).limit(1);
+    const drow = drowRows[0];
     if (drow?.user_id) {
       websocketService.sendToUser(drow.user_id, {
         type: "vehicle_updated",
@@ -246,7 +258,7 @@ router.post("/vehicles/:vehicleId/assign", async (req, res) => {
       });
     }
 
-    res.json(vehicleToCamelCase(updated));
+    res.json(vehicleToCamelCase(toVehicleRecord(updated)));
   } catch (e: any) {
     console.error("POST /company/vehicles/assign:", e);
     res.status(500).json({ error: e.message });
@@ -257,32 +269,32 @@ router.post("/vehicles/:vehicleId/unassign", async (req, res) => {
   const companyId = (req as any).companyId as string;
   const { vehicleId } = req.params;
   try {
-    const { data: vehicle, error: e0 } = await supabaseAdmin
-      .from("vehicles")
-      .select("id, company_id, driver_id")
-      .eq("id", vehicleId)
-      .maybeSingle();
-    if (e0) throw e0;
+    const vehicleRows = await db
+      .select({ id: vehicles.id, company_id: vehicles.companyId, driver_id: vehicles.driverId })
+      .from(vehicles)
+      .where(eq(vehicles.id, vehicleId))
+      .limit(1);
+    const vehicle = vehicleRows[0];
     if (!vehicle || vehicle.company_id !== companyId) {
       return res.status(404).json({ error: "Vehicle not found" });
     }
     const prev = vehicle.driver_id as string | null;
-    if (!prev) return res.json(vehicleToCamelCase(vehicle));
+    if (!prev) return res.json(vehicleToCamelCase(toVehicleRecord(vehicle)));
 
-    const { data: updated, error } = await supabaseAdmin
-      .from("vehicles")
-      .update({
-        driver_id: null,
-        updated_at: new Date().toISOString(),
+    const updatedRows = await db
+      .update(vehicles)
+      .set({
+        driverId: null,
+        updatedAt: new Date(),
       })
-      .eq("id", vehicleId)
-      .select()
-      .single();
-    if (error) throw error;
+      .where(eq(vehicles.id, vehicleId))
+      .returning();
+    const updated = updatedRows[0];
 
     await syncDriverVehicleCapacityLitres(prev);
 
-    const { data: drow } = await supabaseAdmin.from("drivers").select("user_id").eq("id", prev).single();
+    const drowRows = await db.select({ user_id: drivers.userId }).from(drivers).where(eq(drivers.id, prev)).limit(1);
+    const drow = drowRows[0];
     if (drow?.user_id) {
       websocketService.sendToUser(drow.user_id, {
         type: "vehicle_updated",
@@ -290,7 +302,7 @@ router.post("/vehicles/:vehicleId/unassign", async (req, res) => {
       });
     }
 
-    res.json(vehicleToCamelCase(updated));
+    res.json(vehicleToCamelCase(toVehicleRecord(updated)));
   } catch (e: any) {
     console.error("POST /company/vehicles/unassign:", e);
     res.status(500).json({ error: e.message });
@@ -301,11 +313,13 @@ router.post("/vehicles/:vehicleId/unassign", async (req, res) => {
 router.get("/overview", async (req, res) => {
   const companyId = (req as any).companyId as string;
   try {
-    const { data: memberships, error: mErr } = await supabaseAdmin
-      .from("driver_company_memberships")
-      .select("driver_id, is_disabled_by_company")
-      .eq("company_id", companyId);
-    if (mErr) throw mErr;
+    const memberships = await db
+      .select({
+        driver_id: driverCompanyMemberships.driverId,
+        is_disabled_by_company: driverCompanyMemberships.isDisabledByCompany,
+      })
+      .from(driverCompanyMemberships)
+      .where(eq(driverCompanyMemberships.companyId, companyId));
 
     const rows = (memberships || []).filter((r: any) => r.driver_id);
     const driverIds = rows.map((r: any) => r.driver_id);
@@ -316,14 +330,12 @@ router.get("/overview", async (req, res) => {
     let completedDeliveries = 0;
     let revenueCents = 0;
     if (driverIds.length > 0) {
-      const { data: orders, error: oErr } = await supabaseAdmin
-        .from("orders")
-        .select("id, state, total_cents")
-        .in("assigned_driver_id", driverIds)
-        .eq("state", "delivered");
-      if (oErr) throw oErr;
-      completedDeliveries = (orders || []).length;
-      revenueCents = (orders || []).reduce((s: number, o: any) => s + (o.total_cents || 0), 0);
+      const orderRows = await db
+        .select({ id: orders.id, total_cents: orders.totalCents })
+        .from(orders)
+        .where(and(inArray(orders.assignedDriverId, driverIds), eq(orders.state, "delivered")));
+      completedDeliveries = orderRows.length;
+      revenueCents = orderRows.reduce((s: number, o: any) => s + (o.total_cents || 0), 0);
     }
 
     return res.json({
@@ -344,34 +356,44 @@ router.get("/overview", async (req, res) => {
 router.get("/drivers", async (req, res) => {
   const companyId = (req as any).companyId as string;
   try {
-    const { data: memberships, error: mErr } = await supabaseAdmin
-      .from("driver_company_memberships")
-      .select("driver_id, is_disabled_by_company, disabled_reason, updated_at")
-      .eq("company_id", companyId);
-    if (mErr) throw mErr;
+    const memberships = await db
+      .select({
+        driver_id: driverCompanyMemberships.driverId,
+        is_disabled_by_company: driverCompanyMemberships.isDisabledByCompany,
+        disabled_reason: driverCompanyMemberships.disabledReason,
+        updated_at: driverCompanyMemberships.updatedAt,
+      })
+      .from(driverCompanyMemberships)
+      .where(eq(driverCompanyMemberships.companyId, companyId));
     const rows = (memberships || []).filter((r: any) => r.driver_id);
     if (rows.length === 0) return res.json([]);
 
-    const driverIds = [...new Set(rows.map((r: any) => r.driver_id as string))];
+    const driverIds = Array.from(new Set(rows.map((r: any) => r.driver_id as string)));
 
     let drivers: any[] = [];
     if (driverIds.length > 0) {
-      const { data: dRows, error: dErr } = await supabaseAdmin
-        .from("drivers")
-        .select("id, user_id, status, compliance_status")
-        .in("id", driverIds);
-      if (dErr) throw dErr;
+      const dRows = await db
+        .select({
+          id: drivers.id,
+          user_id: drivers.userId,
+          status: drivers.status,
+          compliance_status: drivers.complianceStatus,
+          availability_status: drivers.availabilityStatus,
+          completed_trips: drivers.completedTrips,
+          rating: drivers.rating,
+        })
+        .from(drivers)
+        .where(inArray(drivers.id, driverIds));
       drivers = dRows || [];
     }
 
-    const userIds = [...new Set(drivers.map((d: any) => d.user_id).filter(Boolean))];
+    const userIds = Array.from(new Set(drivers.map((d: any) => d.user_id).filter(Boolean)));
     let profiles: any[] = [];
     if (userIds.length > 0) {
-      const { data: pRows, error: pErr } = await supabaseAdmin
-        .from("profiles")
-        .select("id, full_name, phone")
-        .in("id", userIds);
-      if (pErr) throw pErr;
+      const pRows = await db
+        .select({ id: profiles.id, full_name: profiles.fullName, phone: profiles.phone })
+        .from(profiles)
+        .where(inArray(profiles.id, userIds as string[]));
       profiles = pRows || [];
     }
 
@@ -414,24 +436,22 @@ router.post("/drivers/:driverId/disable", async (req, res) => {
   const parsed = disableBody.safeParse(req.body || {});
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const { data: mem, error } = await supabaseAdmin
-    .from("driver_company_memberships")
-    .select("id")
-    .eq("company_id", companyId)
-    .eq("driver_id", driverId)
-    .maybeSingle();
-  if (error) return res.status(500).json({ error: error.message });
+  const memRows = await db
+    .select({ id: driverCompanyMemberships.id })
+    .from(driverCompanyMemberships)
+    .where(and(eq(driverCompanyMemberships.companyId, companyId), eq(driverCompanyMemberships.driverId, driverId)))
+    .limit(1);
+  const mem = memRows[0];
   if (!mem) return res.status(404).json({ error: "Driver is not linked to your company" });
 
-  const { error: uErr } = await supabaseAdmin
-    .from("driver_company_memberships")
-    .update({
-      is_disabled_by_company: true,
-      disabled_reason: parsed.data.reason ?? null,
-      updated_at: new Date().toISOString(),
+  await db
+    .update(driverCompanyMemberships)
+    .set({
+      isDisabledByCompany: true,
+      disabledReason: parsed.data.reason ?? null,
+      updatedAt: new Date(),
     })
-    .eq("id", mem.id);
-  if (uErr) return res.status(500).json({ error: uErr.message });
+    .where(eq(driverCompanyMemberships.id, mem.id));
   res.json({ ok: true });
 });
 
@@ -439,24 +459,22 @@ router.post("/drivers/:driverId/enable", async (req, res) => {
   const companyId = (req as any).companyId as string;
   const driverId = req.params.driverId;
 
-  const { data: mem, error } = await supabaseAdmin
-    .from("driver_company_memberships")
-    .select("id")
-    .eq("company_id", companyId)
-    .eq("driver_id", driverId)
-    .maybeSingle();
-  if (error) return res.status(500).json({ error: error.message });
+  const memRows = await db
+    .select({ id: driverCompanyMemberships.id })
+    .from(driverCompanyMemberships)
+    .where(and(eq(driverCompanyMemberships.companyId, companyId), eq(driverCompanyMemberships.driverId, driverId)))
+    .limit(1);
+  const mem = memRows[0];
   if (!mem) return res.status(404).json({ error: "Driver is not linked to your company" });
 
-  const { error: uErr } = await supabaseAdmin
-    .from("driver_company_memberships")
-    .update({
-      is_disabled_by_company: false,
-      disabled_reason: null,
-      updated_at: new Date().toISOString(),
+  await db
+    .update(driverCompanyMemberships)
+    .set({
+      isDisabledByCompany: false,
+      disabledReason: null,
+      updatedAt: new Date(),
     })
-    .eq("id", mem.id);
-  if (uErr) return res.status(500).json({ error: uErr.message });
+    .where(eq(driverCompanyMemberships.id, mem.id));
   res.json({ ok: true });
 });
 
@@ -464,51 +482,57 @@ router.get("/drivers/:driverId/orders", async (req, res) => {
   const companyId = (req as any).companyId as string;
   const driverId = req.params.driverId;
 
-  const { data: mem, error } = await supabaseAdmin
-    .from("driver_company_memberships")
-    .select("id")
-    .eq("company_id", companyId)
-    .eq("driver_id", driverId)
-    .maybeSingle();
-  if (error) return res.status(500).json({ error: error.message });
+  const memRows = await db
+    .select({ id: driverCompanyMemberships.id })
+    .from(driverCompanyMemberships)
+    .where(and(eq(driverCompanyMemberships.companyId, companyId), eq(driverCompanyMemberships.driverId, driverId)))
+    .limit(1);
+  const mem = memRows[0];
   if (!mem) return res.status(404).json({ error: "Driver is not linked to your company" });
 
-  const { data: orders, error: oErr } = await supabaseAdmin
-    .from("orders")
-    .select("id, state, total_cents, litres, created_at, delivered_at, paid_at")
-    .eq("assigned_driver_id", driverId)
-    .order("created_at", { ascending: false })
+  const orderRows = await db
+    .select({
+      id: orders.id,
+      state: orders.state,
+      total_cents: orders.totalCents,
+      litres: orders.litres,
+      created_at: orders.createdAt,
+      delivered_at: orders.deliveredAt,
+      paid_at: orders.paidAt,
+    })
+    .from(orders)
+    .where(eq(orders.assignedDriverId, driverId))
+    .orderBy(desc(orders.createdAt))
     .limit(100);
-  if (oErr) return res.status(500).json({ error: oErr.message });
-  res.json(orders || []);
+  res.json(orderRows || []);
 });
 
 /** Daily delivered order counts for charts (last 30 days) */
 router.get("/analytics/daily-deliveries", async (req, res) => {
   const companyId = (req as any).companyId as string;
   try {
-    const { data: memberships, error: mErr } = await supabaseAdmin
-      .from("driver_company_memberships")
-      .select("driver_id")
-      .eq("company_id", companyId);
-    if (mErr) throw mErr;
+    const memberships = await db
+      .select({ driver_id: driverCompanyMemberships.driverId })
+      .from(driverCompanyMemberships)
+      .where(eq(driverCompanyMemberships.companyId, companyId));
     const driverIds = (memberships || []).map((r: any) => r.driver_id);
     if (driverIds.length === 0) return res.json([]);
 
     const since = new Date();
     since.setDate(since.getDate() - 30);
-    const sinceIso = since.toISOString();
-
-    const { data: orders, error: oErr } = await supabaseAdmin
-      .from("orders")
-      .select("delivered_at")
-      .in("assigned_driver_id", driverIds)
-      .eq("state", "delivered")
-      .gte("delivered_at", sinceIso);
-    if (oErr) throw oErr;
+    const orderRows = await db
+      .select({ delivered_at: orders.deliveredAt })
+      .from(orders)
+      .where(
+        and(
+          inArray(orders.assignedDriverId, driverIds),
+          eq(orders.state, "delivered"),
+          gte(orders.deliveredAt, since),
+        ),
+      );
 
     const byDay = new Map<string, number>();
-    for (const o of orders || []) {
+    for (const o of orderRows || []) {
       const d = (o as any).delivered_at;
       if (!d) continue;
       const day = String(d).slice(0, 10);

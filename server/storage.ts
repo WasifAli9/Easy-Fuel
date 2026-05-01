@@ -1,6 +1,6 @@
-// Storage interface - will be replaced with Supabase client
+// Storage interface placeholder for future backing service.
 export interface IStorage {
-  // Will be implemented with Supabase
+  // Implement concrete storage methods here when needed.
 }
 
 export class MemStorage implements IStorage {

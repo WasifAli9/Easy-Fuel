@@ -15,7 +15,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Input } from "@/components/ui/input";
 import { Loader2, CreditCard, Building2, Wallet, Upload } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, normalizeFilePath } from "@/lib/utils";
 import { useCurrency } from "@/hooks/use-currency";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
@@ -330,7 +330,19 @@ export function DriverDepotOrderPaymentDialog({
                                   const match = uploadURL.match(/\/api\/storage\/upload\/([^/]+)\/(.+)/);
                                   if (match) {
                                     url = `${match[1]}/${match[2]}`;
-                                    console.log('Extracted path from upload URL:', url);
+                                    console.log('Extracted path from storage upload URL:', url);
+                                  }
+                                }
+                                // Local object storage upload URL format:
+                                // /api/object-storage/upload/private/<id>
+                                if (!url && uploadURL && uploadURL.includes('/api/object-storage/upload/')) {
+                                  try {
+                                    const parsed = new URL(uploadURL, window.location.origin);
+                                    url = normalizeFilePath(parsed.pathname);
+                                    console.log('Normalized object-storage upload path:', url);
+                                  } catch {
+                                    // fallback
+                                    url = normalizeFilePath(String(uploadURL));
                                   }
                                 }
                               }
@@ -345,8 +357,18 @@ export function DriverDepotOrderPaymentDialog({
                                 return;
                               }
                               
-                              console.log('Final payment proof URL to store:', url);
-                              setPaymentProofUrl(url);
+                              const normalizedProofPath = normalizeFilePath(url);
+                              if (!normalizedProofPath) {
+                                toast({
+                                  title: "Upload Error",
+                                  description: "Could not normalize payment proof path. Please try again.",
+                                  variant: "destructive",
+                                });
+                                return;
+                              }
+
+                              console.log('Final payment proof URL to store:', normalizedProofPath);
+                              setPaymentProofUrl(normalizedProofPath);
                             }
                           }}
                         >

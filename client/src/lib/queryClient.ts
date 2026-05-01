@@ -1,6 +1,7 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 import { getAuthHeaders } from "./auth-headers";
 import { invalidateRelatedQueries } from "./queryInvalidation";
+import { withCaseAliasesDeep } from "./case-normalize";
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
@@ -48,10 +49,22 @@ export async function apiRequest(
     "Expires": "0",
   };
 
+  const shouldSerializeJson =
+    data !== undefined &&
+    !(data instanceof FormData) &&
+    !(data instanceof URLSearchParams) &&
+    !(data instanceof Blob) &&
+    !(data instanceof ArrayBuffer) &&
+    typeof data !== "string";
+
+  const normalizedBody = shouldSerializeJson
+    ? withCaseAliasesDeep(data as any)
+    : data;
+
   const res = await fetch(url, {
     method,
     headers: cacheHeaders,
-    body: data ? JSON.stringify(data) : undefined,
+    body: shouldSerializeJson ? JSON.stringify(normalizedBody) : (data as BodyInit | null | undefined),
     credentials: "include",
     cache: "no-store", // Ensure browser doesn't cache API responses
   });
@@ -78,6 +91,15 @@ export async function apiRequest(
   }
 
   await throwIfResNotOk(res);
+
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    const originalJson = res.json.bind(res);
+    (res as any).json = async () => {
+      const payload = await originalJson();
+      return withCaseAliasesDeep(payload);
+    };
+  }
 
   // Automatically invalidate related queries for successful mutations
   const shouldInvalidate = options?.invalidateQueries !== false && 
@@ -166,7 +188,8 @@ export const getQueryFn: <T>(options: {
       throw new Error(`${res.status}: ${text}`);
     }
     
-    return await res.json();
+    const payload = await res.json();
+    return withCaseAliasesDeep(payload);
   };
 
 // Global error handler for auto-logout on 401
