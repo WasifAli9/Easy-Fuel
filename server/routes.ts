@@ -129,7 +129,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (error) {
           return res.status(500).json({ error: "Session login failed." });
         }
-        return res.status(201).json({ user, profile: { id: user.id, role: user.role, full_name: fullName } });
+        // connect-pg-simple persists asynchronously; ensure session is stored before the client
+        // immediately calls /api/auth/me or /api/auth/set-role (avoids flaky 401 right after signup).
+        req.session.save((saveErr) => {
+          if (saveErr) {
+            console.error("[auth/register] session save failed:", saveErr);
+            return res.status(500).json({ error: "Session login failed." });
+          }
+          return res.status(201).json({ user, profile: { id: user.id, role: user.role, full_name: fullName } });
+        });
       });
     } catch (error: any) {
       const normalizedMessage =
@@ -160,7 +168,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!user) return res.status(401).json({ error: info?.message || "Invalid credentials." });
       req.login(user, (loginError) => {
         if (loginError) return res.status(500).json({ error: "Session login failed." });
-        return res.json({ user });
+        req.session.save((saveErr) => {
+          if (saveErr) {
+            console.error("[auth/login] session save failed:", saveErr);
+            return res.status(500).json({ error: "Session login failed." });
+          }
+          return res.json({ user });
+        });
       });
     })(req, res);
   });
