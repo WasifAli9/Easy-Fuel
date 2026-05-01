@@ -87,11 +87,24 @@ export function setupAuth(app: Express) {
   const sameSiteRaw = (process.env.SESSION_COOKIE_SAME_SITE || (isProd ? "lax" : "lax")).toLowerCase();
   const sameSite =
     sameSiteRaw === "none" ? "none" : sameSiteRaw === "strict" ? "strict" : "lax";
+  // IMPORTANT: In production, do NOT default secure=true. Browsers will refuse to store/send
+  // Secure cookies on plain http:// (e.g. http://host:5002), so login returns 200 but /api/auth/me
+  // sees no cookies (hasCookie: false). Use https:// in front, then set SESSION_COOKIE_SECURE=true.
   const cookieSecure =
-    process.env.SESSION_COOKIE_SECURE === "0" || process.env.SESSION_COOKIE_SECURE === "false"
-      ? false
-      : isProd;
+    process.env.SESSION_COOKIE_SECURE === "1" ||
+    process.env.SESSION_COOKIE_SECURE === "true";
   const cookieDomain = process.env.SESSION_COOKIE_DOMAIN?.trim() || undefined;
+
+  if (isProd && !cookieSecure) {
+    console.warn(
+      "[auth] Session cookie secure=false (default). If the site is served over HTTPS, set SESSION_COOKIE_SECURE=true in .env",
+    );
+  }
+
+  const effectiveSecure = sameSite === "none" ? true : cookieSecure;
+  if (sameSite === "none" && !cookieSecure) {
+    console.warn("[auth] SameSite=none requires Secure cookies; using secure=true");
+  }
 
   app.use(
     session({
@@ -109,7 +122,7 @@ export function setupAuth(app: Express) {
         httpOnly: true,
         path: "/",
         sameSite,
-        secure: cookieSecure,
+        secure: effectiveSecure,
         maxAge: 1000 * 60 * 60 * 24 * 30,
         ...(cookieDomain ? { domain: cookieDomain } : {}),
       },
