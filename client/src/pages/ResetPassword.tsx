@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { KeyRound } from "lucide-react";
-import { supabase } from "@/lib/supabase";
 
 export default function ResetPassword() {
   const [newPassword, setNewPassword] = useState("");
@@ -19,35 +18,21 @@ export default function ResetPassword() {
   const [, setLocation] = useLocation();
 
   useEffect(() => {
-    // Check for password recovery session from URL hash
     const checkSession = async () => {
-      const { data: { session }, error } = await supabase.auth.getSession();
-      
-      if (error) {
-        console.error("Session error:", error);
+      const res = await fetch("/api/auth/me", { credentials: "include" });
+      if (!res.ok) {
         toast({
-          title: "Invalid reset link",
-          description: "This password reset link is invalid or has expired",
+          title: "Sign in required",
+          description: "Open this page while signed in to change your password, or use Forgot password from the sign-in screen.",
           variant: "destructive",
         });
-        setTimeout(() => setLocation("/auth"), 2000);
+        setTimeout(() => setLocation("/auth"), 2500);
         return;
       }
-
-      if (!session) {
-        toast({
-          title: "Session expired",
-          description: "Please request a new password reset link",
-          variant: "destructive",
-        });
-        setTimeout(() => setLocation("/auth"), 2000);
-        return;
-      }
-
       setIsReady(true);
     };
 
-    checkSession();
+    void checkSession();
   }, [toast, setLocation]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -79,7 +64,6 @@ export default function ResetPassword() {
         title: "Password updated!",
         description: "Your password has been successfully changed",
       });
-      // Redirect to auth page to sign in with new password
       setTimeout(() => {
         setLocation("/auth");
       }, 2000);
@@ -100,7 +84,7 @@ export default function ResetPassword() {
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-          <p className="mt-4 text-muted-foreground">Verifying reset link...</p>
+          <p className="mt-4 text-muted-foreground">Checking your session…</p>
         </div>
       </div>
     );
@@ -148,18 +132,11 @@ export default function ResetPassword() {
                 data-testid="input-confirm-password"
               />
             </div>
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={loading}
-              data-testid="button-update-password"
-            >
+            <Button type="submit" className="w-full" disabled={loading} data-testid="button-update-password">
               <KeyRound className="h-4 w-4 mr-2" />
               {loading ? "Updating..." : "Update Password"}
             </Button>
-            <p className="text-xs text-center text-muted-foreground">
-              Password must be at least 6 characters long
-            </p>
+            <p className="text-xs text-center text-muted-foreground">Password must be at least 6 characters long</p>
           </form>
         </CardContent>
       </Card>

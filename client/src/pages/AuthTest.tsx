@@ -3,7 +3,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { CheckCircle2, XCircle, AlertCircle } from "lucide-react";
-import { supabase } from "@/lib/supabase";
 import { Logo } from "@/components/Logo";
 
 interface HealthCheck {
@@ -20,82 +19,45 @@ export default function AuthTest() {
     setIsRunning(true);
     const results: HealthCheck[] = [];
 
-    // Check 1: Supabase connection
     try {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) throw error;
-      results.push({
-        name: "Supabase Connection",
-        status: "pass",
-        message: "Successfully connected to Supabase",
-      });
+      const res = await fetch("/api/auth/me", { credentials: "include" });
+      if (res.ok) {
+        results.push({
+          name: "Session API",
+          status: "pass",
+          message: "GET /api/auth/me returned 200 — cookie session is working.",
+        });
+      } else if (res.status === 401) {
+        results.push({
+          name: "Session API",
+          status: "warning",
+          message: "GET /api/auth/me returned 401 — sign in first, or check cookie / proxy settings.",
+        });
+      } else {
+        results.push({
+          name: "Session API",
+          status: "fail",
+          message: `Unexpected status ${res.status} from /api/auth/me`,
+        });
+      }
     } catch (error: any) {
       results.push({
-        name: "Supabase Connection",
+        name: "Session API",
         status: "fail",
-        message: `Connection failed: ${error.message}`,
+        message: `Request failed: ${error.message}`,
       });
     }
     setChecks([...results]);
 
-    // Check 2: Auth configuration
-    try {
-      const { data: settings } = await supabase.auth.getSession();
-      results.push({
-        name: "Auth Configuration",
-        status: "pass",
-        message: "Auth client configured correctly",
-      });
-    } catch (error: any) {
-      results.push({
-        name: "Auth Configuration",
-        status: "fail",
-        message: `Auth config error: ${error.message}`,
-      });
-    }
-    setChecks([...results]);
-
-    // Check 3: Current URL matches expected
-    const currentUrl = window.location.origin;
-    const expectedUrls = [
-      "http://devportal.easyfuel.ai",
-      "http://localhost:5000",
-      "http://localhost:5002",
-    ];
-    const isExpectedUrl = expectedUrls.some(url => currentUrl.startsWith(url));
-    
+    const origin = window.location.origin;
+    const isLocalhost = origin.includes("localhost") || origin.includes("127.0.0.1");
     results.push({
-      name: "URL Configuration",
-      status: isExpectedUrl ? "pass" : "warning",
-      message: isExpectedUrl 
-        ? `Current URL (${currentUrl}) is configured in Supabase`
-        : `Current URL (${currentUrl}) may not be in Supabase redirect URLs. Add ${currentUrl}/** to redirect URLs in Supabase Dashboard.`,
+      name: "Origin",
+      status: isLocalhost ? "pass" : "warning",
+      message: isLocalhost
+        ? `Developing at ${origin}`
+        : `Production origin ${origin} — ensure SESSION_COOKIE_* and HTTPS match your deployment.`,
     });
-    setChecks([...results]);
-
-    // Check 4: Test magic link send (won't actually send)
-    results.push({
-      name: "Email Provider",
-      status: "warning",
-      message: "Email provider status must be checked manually in Supabase Dashboard → Authentication → Providers → Email",
-    });
-    setChecks([...results]);
-
-    // Check 5: Storage configuration
-    try {
-      const session = await supabase.auth.getSession();
-      results.push({
-        name: "Session Storage",
-        status: "pass",
-        message: "Session storage (cookies) configured correctly",
-      });
-    } catch (error) {
-      results.push({
-        name: "Session Storage",
-        status: "fail",
-        message: "Session storage not working properly",
-      });
-    }
     setChecks([...results]);
 
     setIsRunning(false);
@@ -127,26 +89,20 @@ export default function AuthTest() {
     <div className="min-h-screen bg-gradient-to-br from-primary/20 via-background to-background p-4">
       <div className="max-w-3xl mx-auto space-y-6 py-8">
         <div className="text-center mb-8">
-          <Logo size="lg" className="mx-auto mb-4" />
+          <div className="flex justify-center mb-4">
+            <Logo size="lg" />
+          </div>
           <h1 className="text-3xl font-bold mb-2">Authentication Health Check</h1>
-          <p className="text-muted-foreground">
-            Verify your Supabase authentication configuration
-          </p>
+          <p className="text-muted-foreground">Verify local session auth against the API</p>
         </div>
 
         <Card>
           <CardHeader>
-            <CardTitle>System Configuration Check</CardTitle>
-            <CardDescription>
-              Run these checks to ensure magic links and email confirmation are properly configured
-            </CardDescription>
+            <CardTitle>Quick checks</CardTitle>
+            <CardDescription>Calls your backend with credentials (same-origin cookie).</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Button 
-              onClick={runHealthChecks} 
-              disabled={isRunning}
-              className="w-full"
-            >
+            <Button onClick={runHealthChecks} disabled={isRunning} className="w-full">
               {isRunning ? "Running Checks..." : "Run Health Checks"}
             </Button>
 
@@ -168,78 +124,8 @@ export default function AuthTest() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Manual Configuration Checklist</CardTitle>
-            <CardDescription>
-              These settings must be configured in Supabase Dashboard
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div>
-                <h4 className="font-semibold mb-2">1. Site URL Configuration</h4>
-                <code className="block bg-muted p-2 rounded text-sm">
-                  {window.location.origin}
-                </code>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Set this in: Authentication → URL Configuration → Site URL
-                </p>
-              </div>
-
-              <div>
-                <h4 className="font-semibold mb-2">2. Redirect URLs</h4>
-                <code className="block bg-muted p-2 rounded text-sm">
-                  {window.location.origin}/**
-                </code>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Add this to: Authentication → URL Configuration → Redirect URLs
-                </p>
-              </div>
-
-              <div>
-                <h4 className="font-semibold mb-2">3. Email Provider Settings</h4>
-                <ul className="text-sm space-y-1 mt-2 list-disc list-inside">
-                  <li>✅ Enable Email provider</li>
-                  <li>✅ Confirm email (for production)</li>
-                  <li>✅ Enable Email OTP (for magic links)</li>
-                </ul>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Configure in: Authentication → Providers → Email
-                </p>
-              </div>
-
-              <div>
-                <h4 className="font-semibold mb-2">4. Email Templates</h4>
-                <p className="text-sm text-muted-foreground">
-                  Update all email templates to use: {window.location.origin}
-                </p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Configure in: Authentication → Email Templates
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Documentation</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2 text-sm">
-              <p>📖 <strong>QUICK_FIX_GUIDE.md</strong> - Step-by-step fix instructions</p>
-              <p>📖 <strong>PRODUCTION_DEPLOYMENT_FIX.md</strong> - Detailed production setup</p>
-              <p>📖 <strong>SUPABASE_SETUP.md</strong> - Complete Supabase configuration</p>
-            </div>
-          </CardContent>
-        </Card>
-
         <div className="text-center">
-          <Button
-            variant="outline"
-            onClick={() => window.location.href = "/auth"}
-          >
+          <Button variant="outline" onClick={() => (window.location.href = "/auth")}>
             Go to Auth Page
           </Button>
         </div>
@@ -247,4 +133,3 @@ export default function AuthTest() {
     </div>
   );
 }
-

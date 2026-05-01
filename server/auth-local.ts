@@ -23,8 +23,6 @@ const ACCESS_TTL_SECONDS = Number(process.env.ACCESS_TOKEN_TTL_SECONDS || 60 * 6
 const REFRESH_TTL_SECONDS = Number(process.env.REFRESH_TOKEN_TTL_SECONDS || 60 * 60 * 24 * 30);
 const JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || "dev_access_secret_change_me";
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "dev_refresh_secret_change_me";
-const AUTH_PROVIDER = (process.env.AUTH_PROVIDER || "local").toLowerCase();
-
 let initialized = false;
 
 async function ensureAuthTables() {
@@ -199,7 +197,7 @@ export async function changeLocalPassword(userId: string, currentPassword: strin
 }
 
 export function isLocalAuthEnabled() {
-  return AUTH_PROVIDER === "local";
+  return true;
 }
 
 function parseBearer(authHeader?: string) {

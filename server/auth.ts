@@ -87,23 +87,27 @@ export function setupAuth(app: Express) {
   const sameSiteRaw = (process.env.SESSION_COOKIE_SAME_SITE || (isProd ? "lax" : "lax")).toLowerCase();
   const sameSite =
     sameSiteRaw === "none" ? "none" : sameSiteRaw === "strict" ? "strict" : "lax";
-  // IMPORTANT: In production, do NOT default secure=true. Browsers will refuse to store/send
-  // Secure cookies on plain http:// (e.g. http://host:5002), so login returns 200 but /api/auth/me
-  // sees no cookies (hasCookie: false). Use https:// in front, then set SESSION_COOKIE_SECURE=true.
-  const cookieSecure =
-    process.env.SESSION_COOKIE_SECURE === "1" ||
-    process.env.SESSION_COOKIE_SECURE === "true";
   const cookieDomain = process.env.SESSION_COOKIE_DOMAIN?.trim() || undefined;
+  const secureEnv = process.env.SESSION_COOKIE_SECURE?.toLowerCase();
 
-  if (isProd && !cookieSecure) {
-    console.warn(
-      "[auth] Session cookie secure=false (default). If the site is served over HTTPS, set SESSION_COOKIE_SECURE=true in .env",
-    );
+  // express-session skips Set-Cookie entirely when cookie.secure is true but the request is not
+  // "secure" (req.secure / X-Forwarded-Proto). Default to "auto" so HTTPS gets Secure cookies and
+  // local http:// does not. Explicit SESSION_COOKIE_SECURE=true|false still overrides (except SameSite=none).
+  let cookieSecure: boolean | "auto";
+  if (sameSite === "none") {
+    cookieSecure = true;
+  } else if (secureEnv === "1" || secureEnv === "true") {
+    cookieSecure = true;
+  } else if (secureEnv === "0" || secureEnv === "false") {
+    cookieSecure = false;
+  } else {
+    cookieSecure = "auto";
   }
 
-  const effectiveSecure = sameSite === "none" ? true : cookieSecure;
-  if (sameSite === "none" && !cookieSecure) {
-    console.warn("[auth] SameSite=none requires Secure cookies; using secure=true");
+  if (isProd && cookieSecure === true) {
+    console.warn(
+      "[auth] Session cookie secure=true. If Node runs behind nginx/ALB on HTTP, set trust proxy (see server/index.ts) and forward X-Forwarded-Proto=https, or login will return 200 without Set-Cookie.",
+    );
   }
 
   app.use(
@@ -116,13 +120,14 @@ export function setupAuth(app: Express) {
       name: "easyfuel.sid",
       secret: sessionSecret,
       resave: false,
-      saveUninitialized: false,
+      // Passport calls session.regenerate() on login; false can prevent Set-Cookie in some cases.
+      saveUninitialized: true,
       proxy: true,
       cookie: {
         httpOnly: true,
         path: "/",
         sameSite,
-        secure: effectiveSecure,
+        secure: cookieSecure,
         maxAge: 1000 * 60 * 60 * 24 * 30,
         ...(cookieDomain ? { domain: cookieDomain } : {}),
       },
