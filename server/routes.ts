@@ -169,7 +169,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       req.logout?.(() => undefined);
       req.session?.destroy?.(() => undefined);
-      res.clearCookie("inspect360.sid");
+      res.clearCookie("easyfuel.sid");
       return res.json({ ok: true });
     } catch {
       return res.json({ ok: true });

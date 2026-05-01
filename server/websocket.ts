@@ -32,7 +32,7 @@ function parseCookies(cookieHeader?: string): Record<string, string> {
 
 async function getLocalUserFromSessionCookie(req: IncomingMessage): Promise<{ id: string } | null> {
   const cookies = parseCookies(req.headers.cookie);
-  const rawSessionCookie = cookies["inspect360.sid"];
+  const rawSessionCookie = cookies["easyfuel.sid"];
   if (!rawSessionCookie) return null;
 
   // express-session signed cookie format: s:<sid>.<sig>

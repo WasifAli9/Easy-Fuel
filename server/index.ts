@@ -4,6 +4,17 @@ import { setupVite, serveStatic, log } from "./vite";
 import { setupAuth } from "./auth";
 
 const app = express();
+
+// Behind nginx / another HTTPS terminator, Express must trust X-Forwarded-* so
+// sessions and Secure cookies behave correctly. Set TRUST_PROXY=0 to disable.
+const trustProxyEnv = process.env.TRUST_PROXY;
+const useTrustProxy =
+  trustProxyEnv === "1" ||
+  trustProxyEnv === "true" ||
+  (process.env.NODE_ENV === "production" && trustProxyEnv !== "0" && trustProxyEnv !== "false");
+if (useTrustProxy) {
+  app.set("trust proxy", 1);
+}
 // Depot-order signatures may be stored as base64 data URLs (digital signatures).
 app.use(express.json({ limit: "15mb" }));
 app.use(express.urlencoded({ extended: false }));

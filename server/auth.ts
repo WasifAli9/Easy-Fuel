@@ -82,6 +82,15 @@ export function setupAuth(app: Express) {
   const PgStore = connectPg(session);
   const sessionSecret = process.env.SESSION_SECRET || "change_me_session_secret";
   const isProd = process.env.NODE_ENV === "production";
+  // Same-origin SPA + API (typical): "lax" works and avoids stricter "none" requirements.
+  // Cross-subdomain auth: set SESSION_COOKIE_SAME_SITE=none (still requires secure: true).
+  const sameSiteRaw = (process.env.SESSION_COOKIE_SAME_SITE || (isProd ? "lax" : "lax")).toLowerCase();
+  const sameSite =
+    sameSiteRaw === "none" ? "none" : sameSiteRaw === "strict" ? "strict" : "lax";
+  const cookieSecure =
+    process.env.SESSION_COOKIE_SECURE === "0" || process.env.SESSION_COOKIE_SECURE === "false"
+      ? false
+      : isProd;
 
   app.use(
     session({
@@ -90,14 +99,15 @@ export function setupAuth(app: Express) {
         tableName: "user_sessions",
         createTableIfMissing: true,
       }),
-      name: "inspect360.sid",
+      name: "easyfuel.sid",
       secret: sessionSecret,
       resave: false,
       saveUninitialized: false,
+      proxy: true,
       cookie: {
         httpOnly: true,
-        sameSite: isProd ? "none" : "lax",
-        secure: isProd,
+        sameSite,
+        secure: cookieSecure,
         maxAge: 1000 * 60 * 60 * 24 * 30,
       },
     }),
