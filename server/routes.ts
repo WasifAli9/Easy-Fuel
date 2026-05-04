@@ -742,8 +742,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(eq(fuelTypes.active, true))
         .orderBy(asc(fuelTypes.label));
 
-      // Bootstrap defaults when a fresh database has no fuel types yet.
-      if (activeFuelTypes.length === 0) {
+      // Ensure canonical defaults exist (idempotent). Previously we only seeded when the table had
+      // zero *active* rows — production DBs that already had 1–4 types never received the rest.
+      const expectedCodes = new Set([
+        "petrol_93",
+        "petrol_95",
+        "diesel_50ppm",
+        "diesel_500ppm",
+        "paraffin",
+      ]);
+      const haveCodes = new Set(activeFuelTypes.map((r) => r.code));
+      const missingDefaults = [...expectedCodes].some((c) => !haveCodes.has(c));
+
+      if (activeFuelTypes.length === 0 || missingDefaults) {
         await pool.query(
           `INSERT INTO fuel_types (code, label, active)
            VALUES

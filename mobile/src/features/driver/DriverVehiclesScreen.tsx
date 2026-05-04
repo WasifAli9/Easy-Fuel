@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Linking, ScrollView, StyleSheet, View } from "react-native";
+import { ScrollView, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as DocumentPicker from "expo-document-picker";
 import {
@@ -16,6 +16,8 @@ import {
   TextInput,
 } from "react-native-paper";
 import { apiClient } from "@/services/api/client";
+import { openStoredDocument, putFileToUploadUrl } from "@/lib/files";
+import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 
@@ -229,13 +231,11 @@ export function DriverVehiclesScreen() {
       }
 
       const fileBlob = await (await fetch(file.uri)).blob();
-      const uploadResponse = await fetch(uploadMeta.uploadURL, {
-        method: "PUT",
-        headers: {
-          "Content-Type": file.mimeType || "application/octet-stream",
-        },
-        body: fileBlob,
-      });
+      const uploadResponse = await putFileToUploadUrl(
+        uploadMeta.uploadURL,
+        fileBlob,
+        file.mimeType || "application/octet-stream",
+      );
       if (!uploadResponse.ok) {
         throw new Error("File upload failed.");
       }
@@ -243,7 +243,9 @@ export function DriverVehiclesScreen() {
       const aclResponse = await apiClient.put("/api/documents", {
         documentURL: uploadMeta.uploadURL,
       });
-      const objectPath = (aclResponse.data as { objectPath?: string }).objectPath;
+      const objectPath =
+        (aclResponse.data as { objectPath?: string }).objectPath ||
+        (uploadMeta as { objectPath?: string }).objectPath;
       if (!objectPath) {
         throw new Error("Could not secure uploaded document.");
       }
@@ -273,12 +275,7 @@ export function DriverVehiclesScreen() {
   const viewVehicleDocument = async (doc: VehicleDocument) => {
     if (!doc.file_path) return;
     try {
-      const { data } = await apiClient.post<{ signedUrl: string }>("/api/objects/presigned-url", {
-        objectPath: doc.file_path,
-      });
-      if (data?.signedUrl) {
-        await Linking.openURL(data.signedUrl);
-      }
+      await openStoredDocument(doc.file_path);
     } catch {
       setUploadError("Could not open document.");
     }
@@ -300,7 +297,7 @@ export function DriverVehiclesScreen() {
   if (selectedVehicle) {
     return (
       <View style={styles.container}>
-        <Card style={styles.headerCard}>
+        <Card mode="contained" style={styles.headerCard}>
           <Card.Content style={styles.complianceHeaderRow}>
             <View>
               <Text variant="headlineSmall">Vehicle Compliance</Text>
@@ -322,7 +319,7 @@ export function DriverVehiclesScreen() {
           {complianceStatusQuery.isLoading ? (
             <ActivityIndicator />
           ) : (
-            <Card style={styles.complianceSummary}>
+            <Card mode="outlined" style={styles.complianceSummary}>
               <Card.Content>
                 <Text variant="titleSmall">
                   {(complianceStatusQuery.data?.approvedDocuments ?? 0)} /{" "}
@@ -351,7 +348,7 @@ export function DriverVehiclesScreen() {
             const complianceDoc = complianceStatusQuery.data?.documents?.find((d) => d.docType === docDef.docType);
             const status = complianceDoc?.status ?? uploaded?.verification_status ?? "pending";
             return (
-              <Card key={docDef.docType} style={styles.docCard}>
+              <Card key={docDef.docType} mode="outlined" style={styles.docCard}>
                 <Card.Content>
                   <View style={styles.docTopRow}>
                     <View style={{ flex: 1 }}>
@@ -395,7 +392,7 @@ export function DriverVehiclesScreen() {
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.pageContent}>
-        <Card style={styles.headerCard}>
+        <Card mode="contained" style={styles.headerCard}>
           <Card.Content>
             <Text variant="headlineSmall">Fleet company</Text>
             <Text style={styles.subtitle}>
@@ -478,7 +475,7 @@ export function DriverVehiclesScreen() {
           </Card.Content>
         </Card>
 
-        <Card style={styles.headerCard}>
+        <Card mode="contained" style={styles.headerCard}>
           <Card.Content>
             <Text variant="headlineSmall">My Vehicles</Text>
             <Text style={styles.subtitle}>View and manage your delivery vehicles.</Text>
@@ -500,7 +497,7 @@ export function DriverVehiclesScreen() {
           <Text style={styles.empty}>No vehicles yet. Add your first vehicle.</Text>
         ) : (
           vehicles.map((item) => (
-            <Card key={item.id} style={styles.vehicleCard}>
+            <Card key={item.id} mode="outlined" style={styles.vehicleCard}>
               <Card.Content>
                 <Text variant="titleMedium">{item.registrationNumber || "Unnamed vehicle"}</Text>
                 <Text style={styles.meta}>
@@ -599,15 +596,17 @@ export function DriverVehiclesScreen() {
   );
 }
 
-const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
+const getStyles = (theme: typeof lightTheme) => {
+  const p = getPortalUiStyleDefs(theme);
+  return StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
     padding: 14,
   },
   headerCard: {
+    ...p.hero,
     marginBottom: 10,
-    backgroundColor: theme.colors.surface,
   },
   subtitle: {
     marginTop: 6,
@@ -620,11 +619,7 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
   mt12: {
     marginTop: 12,
   },
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  center: p.center,
   list: {
     gap: 10,
     paddingBottom: 20,
@@ -634,14 +629,10 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
     paddingBottom: 20,
   },
   empty: {
-    textAlign: "center",
-    color: theme.colors.onSurfaceVariant,
+    ...p.empty,
     marginTop: 20,
   },
-  vehicleCard: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: 0,
-  },
+  vehicleCard: p.listCard,
   meta: {
     marginTop: 4,
     color: theme.colors.onSurfaceVariant,
@@ -679,13 +670,8 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
   companyBtn: {
     justifyContent: "flex-start",
   },
-  input: {
-    marginTop: 8,
-    backgroundColor: theme.colors.surface,
-  },
-  complianceSummary: {
-    backgroundColor: theme.colors.surface,
-  },
+  input: p.input,
+  complianceSummary: p.sectionCard,
   complianceHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -718,4 +704,5 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
     gap: 8,
     paddingBottom: 8,
   },
-});
+  });
+};

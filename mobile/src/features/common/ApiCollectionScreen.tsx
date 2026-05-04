@@ -3,7 +3,9 @@ import { RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { ActivityIndicator, Button, Card, Text } from "react-native-paper";
 import { apiClient } from "@/services/api/client";
-import { appTheme } from "@/design/theme";
+import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
+import { darkTheme, lightTheme } from "@/design/theme";
+import { useUiThemeStore } from "@/store/ui-theme-store";
 
 type ApiCollectionScreenProps = {
   title: string;
@@ -47,6 +49,10 @@ export function ApiCollectionScreen({
   itemSubtitleKeys = ["status", "state", "email", "created_at"],
   extraAction,
 }: ApiCollectionScreenProps) {
+  const mode = useUiThemeStore((s) => s.mode);
+  const theme = mode === "dark" ? darkTheme : lightTheme;
+  const styles = useMemo(() => getStyles(theme), [theme]);
+
   const query = useQuery({
     queryKey: [endpoint],
     queryFn: async () => {
@@ -75,14 +81,20 @@ export function ApiCollectionScreen({
       contentContainerStyle={styles.content}
       refreshControl={<RefreshControl refreshing={query.isRefetching} onRefresh={() => query.refetch()} />}
     >
-      <Card style={styles.headerCard}>
+      <Card mode="contained" style={styles.hero}>
         <Card.Content>
           <Text variant="headlineSmall">{title}</Text>
-          <Text variant="bodyMedium" style={styles.subtitle}>
+          <Text variant="bodyMedium" style={styles.heroSubtitle}>
             {subtitle}
           </Text>
           {extraAction ? (
-            <Button style={styles.headerButton} mode="contained-tonal" onPress={extraAction.onPress}>
+            <Button
+              style={styles.headerButton}
+              mode="contained"
+              buttonColor={theme.colors.primary}
+              textColor={theme.colors.onPrimary}
+              onPress={extraAction.onPress}
+            >
               {extraAction.label}
             </Button>
           ) : null}
@@ -94,26 +106,34 @@ export function ApiCollectionScreen({
           <ActivityIndicator />
         </View>
       ) : query.isError ? (
-        <Card style={styles.errorCard}>
+        <Card mode="outlined" style={styles.errorCard}>
           <Card.Content>
             <Text variant="titleMedium">Could not load data</Text>
             <Text variant="bodySmall" style={styles.errorText}>
               {(query.error as Error)?.message ?? "Please try again."}
             </Text>
-            <Button mode="contained" onPress={() => query.refetch()} style={styles.retryButton}>
+            <Button
+              mode="contained"
+              buttonColor={theme.colors.primary}
+              textColor={theme.colors.onPrimary}
+              onPress={() => query.refetch()}
+              style={styles.retryButton}
+            >
               Retry
             </Button>
           </Card.Content>
         </Card>
       ) : items.length === 0 ? (
-        <Card>
+        <Card mode="outlined" style={styles.emptyCard}>
           <Card.Content>
-            <Text variant="bodyMedium">{emptyMessage}</Text>
+            <Text variant="bodyMedium" style={styles.emptyText}>
+              {emptyMessage}
+            </Text>
           </Card.Content>
         </Card>
       ) : (
         items.map((item, index) => (
-          <Card key={`${endpoint}-${index}`} style={styles.itemCard}>
+          <Card key={`${endpoint}-${index}`} mode="outlined" style={styles.itemCard}>
             <Card.Content>
               <Text variant="titleMedium">
                 {pickFirstMatch(item, itemTitleKeys) ?? `Item ${index + 1}`}
@@ -129,48 +149,21 @@ export function ApiCollectionScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: appTheme.colors.background,
-  },
-  content: {
-    padding: 16,
-    gap: 12,
-  },
-  headerCard: {
-    backgroundColor: appTheme.colors.surface,
-  },
-  subtitle: {
-    marginTop: 6,
-    color: "#4B5563",
-  },
-  headerButton: {
-    marginTop: 12,
-    alignSelf: "flex-start",
-  },
-  centerWrap: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 32,
-  },
-  errorCard: {
-    borderColor: appTheme.colors.error,
-    borderWidth: 1,
-  },
-  errorText: {
-    marginTop: 6,
-    color: "#6B7280",
-  },
-  retryButton: {
-    marginTop: 12,
-    alignSelf: "flex-start",
-  },
-  itemCard: {
-    backgroundColor: appTheme.colors.surface,
-  },
-  itemSubtitle: {
-    marginTop: 4,
-    color: "#6B7280",
-  },
-});
+function getStyles(theme: typeof lightTheme) {
+  const p = getPortalUiStyleDefs(theme);
+  return StyleSheet.create({
+    container: p.screenContainer,
+    content: p.screenScrollContentCompact,
+    hero: p.hero,
+    heroSubtitle: { ...p.heroSubtitle, marginTop: 8 },
+    headerButton: p.headerButton,
+    centerWrap: p.centerWrap,
+    errorCard: p.errorCard,
+    errorText: p.errorText,
+    retryButton: p.retryButton,
+    emptyCard: p.sectionCard,
+    emptyText: { color: theme.colors.onSurface },
+    itemCard: p.itemCard,
+    itemSubtitle: p.itemSubtitle,
+  });
+}

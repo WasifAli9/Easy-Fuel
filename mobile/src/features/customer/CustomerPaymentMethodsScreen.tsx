@@ -3,6 +3,7 @@ import { Alert, FlatList, Modal, ScrollView, StyleSheet, View } from "react-nati
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, SegmentedButtons, Switch, Text, TextInput } from "react-native-paper";
 import { apiClient } from "@/services/api/client";
+import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 
@@ -131,7 +132,7 @@ export function CustomerPaymentMethodsScreen() {
 
   return (
     <View style={styles.container}>
-      <Card style={styles.header}>
+      <Card mode="contained" style={styles.header}>
         <Card.Content>
           <Text variant="headlineSmall">Payment methods</Text>
           <Text style={styles.subtitle}>Saved methods for checkout (same data as the web portal).</Text>
@@ -154,7 +155,7 @@ export function CustomerPaymentMethodsScreen() {
         onRefresh={() => listQuery.refetch()}
         ListEmptyComponent={<Text style={styles.muted}>No payment methods yet.</Text>}
         renderItem={({ item }) => (
-          <Card style={styles.row}>
+          <Card mode="outlined" style={styles.methodCard}>
             <Card.Content>
               <View style={styles.rowBetween}>
                 <Text variant="titleSmall">{item.label ?? "Method"}</Text>
@@ -251,16 +252,17 @@ export function CustomerPaymentMethodsScreen() {
 }
 
 function getStyles(theme: typeof lightTheme) {
+  const p = getPortalUiStyleDefs(theme);
   return StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.colors.background },
-    header: { margin: 12, backgroundColor: theme.colors.surface },
+    container: p.screenContainer,
+    header: { ...p.hero, margin: 12 },
     subtitle: { marginVertical: 8, color: theme.colors.onSurfaceVariant },
     list: { padding: 12, paddingBottom: 32, gap: 10 },
-    row: { backgroundColor: theme.colors.surface, marginBottom: 8 },
-    rowBetween: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+    methodCard: { ...p.listCard, marginBottom: 8 },
+    rowBetween: p.rowBetween,
     meta: { color: theme.colors.onSurfaceVariant, marginTop: 4 },
     badge: { fontSize: 12, color: theme.colors.primary, fontWeight: "600" },
-    muted: { textAlign: "center", color: theme.colors.onSurfaceVariant, marginTop: 24 },
+    muted: { ...p.empty },
     modalBackdrop: {
       flex: 1,
       backgroundColor: "rgba(0,0,0,0.45)",
@@ -271,9 +273,14 @@ function getStyles(theme: typeof lightTheme) {
       backgroundColor: theme.colors.surface,
       borderTopLeftRadius: 16,
       borderTopRightRadius: 16,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderLeftWidth: 3,
+      borderRightWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.colors.outline,
+      borderLeftColor: theme.colors.primary,
       padding: 16,
     },
-    modalTitle: { marginBottom: 8 },
+    modalTitle: { marginBottom: 8, fontWeight: "700" },
     segment: { marginVertical: 8 },
     form: { gap: 10, paddingBottom: 24 },
     modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 8, marginTop: 8 },

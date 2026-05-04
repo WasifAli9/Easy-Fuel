@@ -3,6 +3,7 @@ import { ScrollView, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Text, TextInput } from "react-native-paper";
 import { apiClient } from "@/services/api/client";
+import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { signOut } from "@/services/api/auth";
@@ -75,7 +76,7 @@ export function SupplierProfileScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Card style={styles.card}>
+      <Card mode="outlined" style={styles.card}>
         <Card.Content>
           <Text variant="headlineSmall">Supplier profile</Text>
           <Text style={styles.subtitle}>Business details and compliance (same API as web).</Text>
@@ -85,7 +86,7 @@ export function SupplierProfileScreen() {
         </Card.Content>
       </Card>
 
-      <Card style={styles.card}>
+      <Card mode="outlined" style={styles.card}>
         <Card.Content>
           <Text variant="titleMedium">Contact & address</Text>
           <TextInput mode="outlined" label="Full name" value={fullName} onChangeText={setFullName} style={styles.input} />
@@ -115,7 +116,7 @@ export function SupplierProfileScreen() {
         </Card.Content>
       </Card>
 
-      <Card style={styles.card}>
+      <Card mode="outlined" style={styles.card}>
         <Card.Content>
           <Text variant="titleMedium">Documents</Text>
           {(documentsQuery.data ?? []).length === 0 ? (
@@ -138,14 +139,16 @@ export function SupplierProfileScreen() {
   );
 }
 
-const getStyles = (theme: typeof lightTheme) =>
-  StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.colors.background },
-    content: { padding: 14, gap: 12, paddingBottom: 32 },
-    card: { backgroundColor: theme.colors.surface },
-    subtitle: { marginTop: 4, color: theme.colors.onSurfaceVariant },
+const getStyles = (theme: typeof lightTheme) => {
+  const p = getPortalUiStyleDefs(theme);
+  return StyleSheet.create({
+    container: p.screenContainer,
+    content: { ...p.screenScrollContentCompact, paddingBottom: 32 },
+    card: p.sectionCard,
+    subtitle: p.subtitle,
     meta: { marginTop: 6, color: theme.colors.onSurfaceVariant },
-    input: { marginTop: 8, backgroundColor: theme.colors.surface },
+    input: p.input,
     hint: { marginTop: 8, color: theme.colors.onSurfaceVariant, fontSize: 12 },
-    center: { flex: 1, alignItems: "center", justifyContent: "center" },
+    center: p.center,
   });
+};

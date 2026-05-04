@@ -3,6 +3,7 @@ import { Alert, Image, KeyboardAvoidingView, Platform, StyleSheet, View } from "
 import { Button, Text, TextInput } from "react-native-paper";
 import { AxiosError } from "axios";
 import { signInWithPassword } from "@/services/api/auth";
+import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { appConfig } from "@/services/config";
 import { useUiThemeStore } from "@/store/ui-theme-store";
@@ -105,7 +106,9 @@ export function SignInScreen() {
   );
 }
 
-const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
+const getStyles = (theme: typeof lightTheme) => {
+  const p = getPortalUiStyleDefs(theme);
+  return StyleSheet.create({
   container: {
     flex: 1,
     justifyContent: "center",
@@ -113,14 +116,8 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
     backgroundColor: theme.colors.background,
   },
   card: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: 20,
-    padding: 20,
-    shadowColor: "#000000",
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
+    ...p.hero,
+    padding: 22,
   },
   logoWrap: {
     width: 68,
@@ -164,4 +161,5 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
   buttonContent: {
     height: 48,
   },
-});
+  });
+};

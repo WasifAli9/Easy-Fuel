@@ -1,5 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
-import { FlatList, Linking, Modal, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  Alert,
+  FlatList,
+  Modal,
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+} from "react-native";
+import DateTimePicker, { DateTimePickerAndroid, type DateTimePickerEvent } from "@react-native-community/datetimepicker";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as DocumentPicker from "expo-document-picker";
 import * as ExpoLocation from "expo-location";
@@ -10,16 +23,59 @@ import {
   Chip,
   Divider,
   IconButton,
+  Menu,
   Switch,
   Text,
   TextInput,
 } from "react-native-paper";
 import { apiClient } from "@/services/api/client";
+import { openStoredDocument, putFileToUploadUrl } from "@/lib/files";
+import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { changePasswordWithCurrent, signOut } from "@/services/api/auth";
 import { saveThemeMode } from "@/services/storage";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useUiThemeStore } from "@/store/ui-theme-store";
+
+function mergeStreetAddress(line1?: string | null, line2?: string | null): string {
+  const a = (line1 || "").trim();
+  const b = (line2 || "").trim();
+  if (!b) return a;
+  if (!a) return b;
+  return `${a}, ${b}`;
+}
+
+function normalizeDriverIdType(raw: string | undefined | null): string {
+  if (!raw?.trim()) return "";
+  const t = raw.trim();
+  const u = t.toUpperCase().replace(/\s+/g, "_");
+  if (u === "SA_ID" || u === "SOUTH_AFRICA" || u === "NATIONAL_ID" || u === "RSA_ID" || u === "ZA_ID") return "SA_ID";
+  if (u === "PASSPORT") return "Passport";
+  if (t === "Passport") return "Passport";
+  return "";
+}
+
+function parseYmdToLocalDate(s: string): Date {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec((s || "").trim());
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return new Date();
+}
+
+function formatLocalDateToYmd(d: Date): string {
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${mo}-${day}`;
+}
+
+type KycDateKey =
+  | "licenseIssue"
+  | "licenseExpiry"
+  | "prdpIssue"
+  | "prdpExpiry"
+  | "dgIssue"
+  | "dgExpiry"
+  | "criminal";
 
 type DriverProfile = {
   full_name?: string;
@@ -67,6 +123,23 @@ type DriverDocument = {
   verification_status?: string;
   created_at?: string;
 };
+
+const KYC_REQUIRED_DOC_TYPES = [
+  { docType: "za_id", aliases: ["id_document"], title: "South African ID", required: true },
+  { docType: "passport", aliases: [], title: "Passport", required: true },
+  { docType: "proof_of_address", aliases: [], title: "Proof of Address", required: true },
+  { docType: "drivers_license", aliases: [], title: "Driver's License", required: true },
+  { docType: "prdp", aliases: ["prdp_document"], title: "Professional Driving Permit (PrDP-D)", required: true },
+  {
+    docType: "dangerous_goods_training",
+    aliases: [],
+    title: "Dangerous Goods Training Certificate",
+    required: true,
+  },
+  { docType: "criminal_check", aliases: [], title: "Criminal Clearance", required: true },
+  { docType: "banking_proof", aliases: ["bank_proof"], title: "Banking Proof", required: false },
+  { docType: "medical_fitness", aliases: [], title: "Medical Fitness Certificate", required: false },
+];
 
 type DriverSubscription = {
   subscription?: { id: string; status: string; planCode?: string; nextBillingAt?: string; plan?: { name?: string } };
@@ -151,7 +224,11 @@ const driverPlanDetails: Record<
 };
 
 function cardContainer(children: React.ReactNode, styles: ReturnType<typeof getStyles>) {
-  return <Card style={styles.card}><Card.Content>{children}</Card.Content></Card>;
+  return (
+    <Card mode="contained" style={styles.card}>
+      <Card.Content>{children}</Card.Content>
+    </Card>
+  );
 }
 
 export function DriverProfileMenuScreen() {
@@ -171,7 +248,8 @@ export function DriverProfileMenuScreen() {
   });
 
   const saveMutation = useMutation({
-    mutationFn: async () => apiClient.put("/api/driver/profile", { full_name: fullName, phone }),
+    mutationFn: async () =>
+      apiClient.put("/api/driver/profile", { fullName, phone: phone.trim() || null }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] }),
   });
 
@@ -203,7 +281,7 @@ export function DriverProfileMenuScreen() {
   useEffect(() => {
     if (profileQuery.data) {
       setFullName(profileQuery.data.full_name || "");
-      setPhone(profileQuery.data.phone || "");
+      setPhone(profileQuery.data.phone || profileQuery.data.mobile_number || "");
     }
   }, [profileQuery.data]);
 
@@ -216,8 +294,8 @@ export function DriverProfileMenuScreen() {
           <Text variant="headlineSmall">Profile</Text>
           <Text style={styles.subtitle}>View and update your profile details.</Text>
           <TextInput mode="outlined" label="Full Name" value={fullName} onChangeText={setFullName} style={styles.input} />
-          <TextInput mode="outlined" label="Phone" value={phone} onChangeText={setPhone} style={styles.input} />
           <TextInput mode="outlined" label="Email" value={profileQuery.data?.email || ""} disabled style={styles.input} />
+          <TextInput mode="outlined" label="Mobile Number" value={phone} onChangeText={setPhone} style={styles.input} keyboardType="phone-pad" />
           <View style={styles.row}>
             <Button mode="contained" buttonColor={theme.colors.primary} textColor={theme.colors.onPrimary} onPress={() => saveMutation.mutate()} loading={saveMutation.isPending}>Save Changes</Button>
             <Button mode="contained" buttonColor={theme.colors.primary} textColor={theme.colors.onPrimary} onPress={() => void signOut()}>Sign Out</Button>
@@ -276,13 +354,10 @@ export function DriverKycDocumentsScreen() {
   const styles = getStyles(theme);
   const queryClient = useQueryClient();
   const [uploadingType, setUploadingType] = useState<string | null>(null);
-  const [driverType, setDriverType] = useState("");
-  const [mobileNumber, setMobileNumber] = useState("");
   const [idType, setIdType] = useState("");
   const [idNumber, setIdNumber] = useState("");
   const [idIssueCountry, setIdIssueCountry] = useState("");
   const [addressLine1, setAddressLine1] = useState("");
-  const [addressLine2, setAddressLine2] = useState("");
   const [city, setCity] = useState("");
   const [province, setProvince] = useState("");
   const [postalCode, setPostalCode] = useState("");
@@ -308,21 +383,23 @@ export function DriverKycDocumentsScreen() {
   const [bankName, setBankName] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [branchCode, setBranchCode] = useState("");
+  const [idTypeMenuOpen, setIdTypeMenuOpen] = useState(false);
+  const [iosDateKey, setIosDateKey] = useState<KycDateKey | null>(null);
 
   const profileQuery = useQuery({
     queryKey: ["/api/driver/profile"],
     queryFn: async () => (await apiClient.get<DriverProfile>("/api/driver/profile")).data,
+    refetchOnWindowFocus: false,
   });
 
   useEffect(() => {
     if (!profileQuery.data) return;
-    setDriverType(profileQuery.data.driver_type || "");
-    setMobileNumber(profileQuery.data.mobile_number || profileQuery.data.phone || "");
-    setIdType(profileQuery.data.id_type || "");
+    setIdType(normalizeDriverIdType(profileQuery.data.id_type));
     setIdNumber(profileQuery.data.id_number || "");
     setIdIssueCountry(profileQuery.data.id_issue_country || "");
-    setAddressLine1(profileQuery.data.address_line_1 || "");
-    setAddressLine2(profileQuery.data.address_line_2 || "");
+    setAddressLine1(
+      mergeStreetAddress(profileQuery.data.address_line_1, profileQuery.data.address_line_2),
+    );
     setCity(profileQuery.data.city || "");
     setProvince(profileQuery.data.province || "");
     setPostalCode(profileQuery.data.postal_code || "");
@@ -351,43 +428,88 @@ export function DriverKycDocumentsScreen() {
   }, [profileQuery.data]);
 
   const saveComplianceMutation = useMutation({
-    mutationFn: async () =>
-      apiClient.put("/api/driver/compliance", {
-        driver_type: driverType || null,
-        mobile_number: mobileNumber || null,
-        id_type: idType || null,
-        id_number: idNumber || null,
-        id_issue_country: idType === "Passport" ? (idIssueCountry || null) : null,
-        address_line_1: addressLine1 || null,
-        address_line_2: addressLine2 || null,
-        city: city || null,
-        province: province || null,
-        postal_code: postalCode || null,
-        country: country || null,
-        license_number: licenseNumber || null,
-        license_code: licenseCode || null,
-        license_issue_date: licenseIssueDate || null,
-        license_expiry_date: licenseExpiryDate || null,
+    mutationFn: async () => {
+      const idNum = idNumber.trim();
+      if (idNum && !idType.trim()) {
+        throw new Error("SELECT_ID_TYPE");
+      }
+      const res = await apiClient.put<Record<string, unknown>>("/api/driver/compliance", {
+        id_type: idType.trim() || null,
+        id_number: idNum || null,
+        id_issue_country: idType === "Passport" ? (idIssueCountry.trim() || null) : null,
+        address_line_1: addressLine1.trim() || null,
+        address_line_2: null,
+        city: city.trim() || null,
+        province: province.trim() || null,
+        postal_code: postalCode.trim() || null,
+        country: country.trim() || null,
+        license_number: licenseNumber.trim() || null,
+        license_code: licenseCode.trim() || null,
+        license_issue_date: licenseIssueDate.trim() || null,
+        license_expiry_date: licenseExpiryDate.trim() || null,
         prdp_required: prdpRequired,
-        prdp_number: prdpRequired ? (prdpNumber || null) : null,
-        prdp_category: prdpRequired ? (prdpCategory || null) : null,
-        prdp_issue_date: prdpRequired ? (prdpIssueDate || null) : null,
-        prdp_expiry_date: prdpRequired ? (prdpExpiryDate || null) : null,
+        prdp_number: prdpRequired ? (prdpNumber.trim() || null) : null,
+        prdp_category: prdpRequired ? (prdpCategory.trim() || null) : null,
+        prdp_issue_date: prdpRequired ? (prdpIssueDate.trim() || null) : null,
+        prdp_expiry_date: prdpRequired ? (prdpExpiryDate.trim() || null) : null,
         dg_training_required: dgTrainingRequired,
-        dg_training_provider: dgTrainingRequired ? (dgTrainingProvider || null) : null,
-        dg_training_certificate_number: dgTrainingRequired ? (dgTrainingCertificateNumber || null) : null,
-        dg_training_issue_date: dgTrainingRequired ? (dgTrainingIssueDate || null) : null,
-        dg_training_expiry_date: dgTrainingRequired ? (dgTrainingExpiryDate || null) : null,
+        dg_training_provider: dgTrainingRequired ? (dgTrainingProvider.trim() || null) : null,
+        dg_training_certificate_number: dgTrainingRequired ? (dgTrainingCertificateNumber.trim() || null) : null,
+        dg_training_issue_date: dgTrainingRequired ? (dgTrainingIssueDate.trim() || null) : null,
+        dg_training_expiry_date: dgTrainingRequired ? (dgTrainingExpiryDate.trim() || null) : null,
         criminal_check_done: criminalCheckDone,
-        criminal_check_reference: criminalCheckDone ? (criminalCheckReference || null) : null,
-        criminal_check_date: criminalCheckDone ? (criminalCheckDate || null) : null,
-        bank_account_holder: bankAccountHolder || null,
-        bank_name: bankName || null,
-        account_number: accountNumber || null,
-        branch_code: branchCode || null,
-      }),
-    onSuccess: async () => {
+        criminal_check_reference: criminalCheckDone ? (criminalCheckReference.trim() || null) : null,
+        criminal_check_date: criminalCheckDone ? (criminalCheckDate.trim() || null) : null,
+        bank_account_holder: bankAccountHolder.trim() || null,
+        bank_name: bankName.trim() || null,
+        account_number: accountNumber.trim() || null,
+        branch_code: branchCode.trim() || null,
+      });
+      return res.data;
+    },
+    onSuccess: async (data) => {
+      if (!data || typeof data !== "object") {
+        Alert.alert(
+          "Save unclear",
+          "The server returned an empty response. Pull to refresh or open the screen again to confirm your details.",
+        );
+        await queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
+        return;
+      }
+      if ("message" in data && data.message === "No fields to update") {
+        Alert.alert(
+          "Nothing was saved",
+          "The server did not apply any changes. Fill in at least one field, confirm ID type if you entered an ID number, and try again.",
+        );
+        return;
+      }
+      const apiErr =
+        "error" in data &&
+        typeof (data as { error?: unknown }).error === "string" &&
+        String((data as { error: string }).error).trim().length > 0
+          ? String((data as { error: string }).error).trim()
+          : null;
+      if (apiErr) {
+        Alert.alert("Save failed", apiErr);
+        return;
+      }
       await queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/driver/profile"] });
+      Alert.alert("Saved", "Your compliance details were saved.");
+    },
+    onError: (err: unknown) => {
+      if (err instanceof Error && err.message === "SELECT_ID_TYPE") {
+        Alert.alert("ID type required", "Choose South African ID or Passport before saving an ID number.");
+        return;
+      }
+      const ax = err as { response?: { data?: { error?: string; details?: string } }; message?: string };
+      const d = ax.response?.data;
+      const msg =
+        (typeof d?.error === "string" && d.error) ||
+        (typeof d?.details === "string" && d.details) ||
+        ax.message ||
+        "Could not save compliance. Check your connection and that you are still signed in.";
+      Alert.alert("Save failed", msg);
     },
   });
   const docsQuery = useQuery({
@@ -396,44 +518,27 @@ export function DriverKycDocumentsScreen() {
     refetchInterval: 8_000,
   });
 
-  const requiredDocTypes = [
-    { docType: "za_id", aliases: ["id_document"], title: "South African ID", required: true },
-    { docType: "passport", aliases: [], title: "Passport", required: true },
-    { docType: "proof_of_address", aliases: [], title: "Proof of Address", required: true },
-    { docType: "drivers_license", aliases: [], title: "Driver's License", required: true },
-    { docType: "prdp", aliases: ["prdp_document"], title: "Professional Driving Permit (PrDP-D)", required: true },
-    {
-      docType: "dangerous_goods_training",
-      aliases: [],
-      title: "Dangerous Goods Training Certificate",
-      required: true,
-    },
-    { docType: "criminal_check", aliases: [], title: "Criminal Clearance", required: true },
-    { docType: "banking_proof", aliases: ["bank_proof"], title: "Banking Proof", required: false },
-    { docType: "medical_fitness", aliases: [], title: "Medical Fitness Certificate", required: false },
-  ];
-
   const uploadDoc = async (docType: string, title: string) => {
     setUploadingType(docType);
     try {
-      const picked = await DocumentPicker.getDocumentAsync({ type: ["image/*", "application/pdf"], multiple: false });
+      const picked = await DocumentPicker.getDocumentAsync({
+        type: ["image/*", "application/pdf"],
+        multiple: false,
+        copyToCacheDirectory: true,
+      });
       if (picked.canceled || !picked.assets?.length) return;
       const file = picked.assets[0];
       const uploadMeta = (await apiClient.post("/api/objects/upload")).data as { uploadURL: string; objectPath?: string };
       const blob = await (await fetch(file.uri)).blob();
-      const uploaded = await fetch(uploadMeta.uploadURL, { method: "PUT", headers: { "Content-Type": file.mimeType || "application/octet-stream" }, body: blob });
+      const uploaded = await putFileToUploadUrl(
+        uploadMeta.uploadURL,
+        blob,
+        file.mimeType || "application/octet-stream",
+      );
       if (!uploaded.ok) throw new Error("Upload failed");
-      let objectPath = uploadMeta.objectPath || "";
-      if (!objectPath) {
-        const raw = uploadMeta.uploadURL.split("?")[0];
-        if (raw.includes("/api/storage/upload/")) {
-          const m = raw.match(/\/api\/storage\/upload\/([^/]+)\/(.+)/);
-          if (m) objectPath = `${m[1]}/${m[2]}`;
-        } else {
-          objectPath = raw;
-        }
-      }
-      await apiClient.put("/api/documents", { documentURL: uploadMeta.uploadURL });
+      const aclRes = await apiClient.put("/api/documents", { documentURL: uploadMeta.uploadURL });
+      const objectPath = (aclRes.data as { objectPath?: string }).objectPath || uploadMeta.objectPath;
+      if (!objectPath) throw new Error("Could not resolve uploaded file path");
       await apiClient.post("/api/driver/documents", {
         doc_type: docType,
         title,
@@ -442,133 +547,436 @@ export function DriverKycDocumentsScreen() {
         file_size: file.size || null,
       });
       await queryClient.invalidateQueries({ queryKey: ["/api/driver/documents"] });
+    } catch (e) {
+      Alert.alert("Upload failed", (e as Error)?.message || "Could not upload document.");
     } finally {
       setUploadingType(null);
     }
   };
 
   const openDoc = async (filePath?: string) => {
-    if (!filePath) return;
-    const { data } = await apiClient.post<{ signedUrl: string }>("/api/objects/presigned-url", { objectPath: filePath });
-    if (data?.signedUrl) await Linking.openURL(data.signedUrl);
+    try {
+      await openStoredDocument(filePath);
+    } catch {
+      Alert.alert("Could not open document", "Check your connection and try again.");
+    }
   };
 
+  const isDark = mode === "dark";
+
+  const docProgress = useMemo(() => {
+    const required = KYC_REQUIRED_DOC_TYPES.filter((d) => d.required);
+    let approved = 0;
+    for (const def of required) {
+      const uploaded = (docsQuery.data ?? []).find((row) =>
+        ([def.docType, ...def.aliases] as string[]).includes(row.doc_type),
+      );
+      const normalizedStatus = (uploaded?.verification_status || "pending").toLowerCase();
+      if (normalizedStatus === "verified" || normalizedStatus === "approved") approved += 1;
+    }
+    return { approved, total: required.length };
+  }, [docsQuery.data]);
+
+  const progressPct = docProgress.total > 0 ? Math.round((docProgress.approved / docProgress.total) * 100) : 0;
+
+  const getKycYmd = (key: KycDateKey): string => {
+    switch (key) {
+      case "licenseIssue":
+        return licenseIssueDate;
+      case "licenseExpiry":
+        return licenseExpiryDate;
+      case "prdpIssue":
+        return prdpIssueDate;
+      case "prdpExpiry":
+        return prdpExpiryDate;
+      case "dgIssue":
+        return dgTrainingIssueDate;
+      case "dgExpiry":
+        return dgTrainingExpiryDate;
+      case "criminal":
+        return criminalCheckDate;
+    }
+  };
+
+  const setKycYmd = (key: KycDateKey, ymd: string) => {
+    switch (key) {
+      case "licenseIssue":
+        setLicenseIssueDate(ymd);
+        break;
+      case "licenseExpiry":
+        setLicenseExpiryDate(ymd);
+        break;
+      case "prdpIssue":
+        setPrdpIssueDate(ymd);
+        break;
+      case "prdpExpiry":
+        setPrdpExpiryDate(ymd);
+        break;
+      case "dgIssue":
+        setDgTrainingIssueDate(ymd);
+        break;
+      case "dgExpiry":
+        setDgTrainingExpiryDate(ymd);
+        break;
+      case "criminal":
+        setCriminalCheckDate(ymd);
+        break;
+    }
+  };
+
+  const openKycDatePicker = (key: KycDateKey) => {
+    const cur = getKycYmd(key);
+    const base = cur && /^\d{4}-\d{2}-\d{2}$/.test(cur) ? parseYmdToLocalDate(cur) : new Date();
+    if (Platform.OS === "android") {
+      DateTimePickerAndroid.open({
+        value: base,
+        mode: "date",
+        onChange: (event, date) => {
+          if (event.type === "dismissed" || !date) return;
+          setKycYmd(key, formatLocalDateToYmd(date));
+        },
+      });
+      return;
+    }
+    setIosDateKey(key);
+  };
+
+  const onIosKycDateChange = (event: DateTimePickerEvent, date?: Date) => {
+    const key = iosDateKey;
+    if (Platform.OS === "ios") {
+      setIosDateKey(null);
+    }
+    if (event.type === "dismissed" || !date || !key) return;
+    setKycYmd(key, formatLocalDateToYmd(date));
+  };
+
+  const kycDateRow = (key: KycDateKey, label: string) => {
+    const value = getKycYmd(key);
+    const display =
+      value && /^\d{4}-\d{2}-\d{2}$/.test(value)
+        ? parseYmdToLocalDate(value).toLocaleDateString("en-ZA", { dateStyle: "medium" })
+        : "Select date";
+    return (
+      <View key={key} style={styles.kycDateRow}>
+        <Text variant="labelLarge" style={styles.kycDateLabel}>
+          {label}
+        </Text>
+        <Button mode="outlined" onPress={() => openKycDatePicker(key)} style={styles.input} contentStyle={styles.kycDateButtonContent}>
+          {display}
+        </Button>
+      </View>
+    );
+  };
+
+  const kycDocIcon = (docType: string) => {
+    const map: Record<string, string> = {
+      za_id: "card-account-details-outline",
+      passport: "passport",
+      proof_of_address: "map-marker-outline",
+      drivers_license: "card-text-outline",
+      prdp: "badge-account-horizontal-outline",
+      dangerous_goods_training: "school-outline",
+      criminal_check: "shield-search",
+      banking_proof: "bank-outline",
+      medical_fitness: "heart-pulse",
+    };
+    return map[docType] ?? "file-document-outline";
+  };
+
+  const statusChipStyle = (label: string) => {
+    if (label === "approved") {
+      return {
+        backgroundColor: isDark ? "rgba(34, 197, 94, 0.22)" : "#DCFCE7",
+        textColor: isDark ? "#86EFAC" : "#166534",
+      };
+    }
+    if (label === "rejected") {
+      return {
+        backgroundColor: isDark ? "rgba(239, 68, 68, 0.22)" : "#FEE2E2",
+        textColor: isDark ? "#FCA5A5" : "#991B1B",
+      };
+    }
+    return {
+      backgroundColor: isDark ? "rgba(251, 191, 36, 0.18)" : "#FEF3C7",
+      textColor: isDark ? "#FCD34D" : "#92400E",
+    };
+  };
+
+  const kycFormCard = (children: ReactNode) => (
+    <Card style={[styles.card, styles.kycFormCard]} mode="contained">
+      <Card.Content style={styles.kycFormCardContent}>{children}</Card.Content>
+    </Card>
+  );
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {cardContainer(
-        <>
-          <Text variant="headlineSmall">KYC Documents</Text>
-          <Text style={styles.subtitle}>Upload and view your compliance documents.</Text>
-        </>
-      , styles)}
-      {cardContainer(
-        <>
-          <Text variant="titleLarge">A. Basic Profile</Text>
-          <View style={styles.twoCol}>
-            <TextInput mode="outlined" label="Driver Type" value={driverType} onChangeText={setDriverType} style={styles.input} placeholder="individual / company_driver" />
-            <TextInput mode="outlined" label="Mobile Number" value={mobileNumber} onChangeText={setMobileNumber} style={styles.input} />
-            <TextInput mode="outlined" label="Email" value={profileQuery.data?.email || ""} disabled style={styles.input} />
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.kycScrollContent}
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={profileQuery.isRefetching}
+          onRefresh={() => void profileQuery.refetch()}
+          tintColor={theme.colors.primary}
+        />
+      }
+    >
+      {profileQuery.isError ? (
+        <Text style={[styles.kycBlockHint, { color: theme.colors.error, marginBottom: 8 }]}>
+          Could not load your saved details. Open this screen again or check you are signed in. Saves may fail until your profile loads.
+        </Text>
+      ) : null}
+      <View style={styles.kycHero}>
+        <View style={styles.kycHeroTopRow}>
+          <View style={[styles.kycHeroIconWrap, { backgroundColor: isDark ? "rgba(38, 237, 217, 0.15)" : "rgba(38, 237, 217, 0.2)" }]}>
+            <MaterialCommunityIcons name="shield-check-outline" size={26} color={theme.colors.primary} />
           </View>
-        </>
-      , styles)}
-      {cardContainer(
+          <View style={styles.kycHeroTextCol}>
+            <Text variant="headlineSmall" style={styles.kycHeroTitle}>
+              Verification {"\u0026"} KYC
+            </Text>
+            <Text variant="bodyMedium" style={styles.kycHeroSubtitle}>
+              Complete your compliance details, then upload each document. Clear PDFs or photos speed up review.
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.kycProgressBlock}>
+          <View style={styles.kycProgressHeader}>
+            <Text variant="labelLarge" style={styles.kycProgressLabel}>
+              Required documents
+            </Text>
+            <Text variant="labelLarge" style={[styles.kycProgressCount, { color: theme.colors.primary }]}>
+              {docProgress.approved}/{docProgress.total} approved
+            </Text>
+          </View>
+          <View style={styles.kycProgressTrack}>
+            <View
+              style={[
+                styles.kycProgressFill,
+                { width: `${progressPct}%` as `${number}%`, backgroundColor: theme.colors.primary },
+              ]}
+            />
+          </View>
+        </View>
+      </View>
+
+      <Text variant="titleMedium" style={styles.kycBlockTitle}>
+        Your details
+      </Text>
+      <Text variant="bodySmall" style={styles.kycBlockHint}>
+        Save as you go — use the buttons at the end of PrDP and banking sections.
+      </Text>
+
+      {kycFormCard(
         <>
-          <Text variant="titleLarge">B. SA ID / Passport</Text>
+          <Text style={styles.kycSectionLetter}>Section A</Text>
+          <Text variant="titleMedium" style={styles.kycSectionTitle}>
+            SA ID / Passport
+          </Text>
           <View style={styles.twoCol}>
-            <TextInput mode="outlined" label="ID Type" value={idType} onChangeText={setIdType} style={styles.input} placeholder="SA_ID or Passport" />
+            <View style={styles.kycIdTypeBlock}>
+              <Menu
+                visible={idTypeMenuOpen}
+                onDismiss={() => setIdTypeMenuOpen(false)}
+                contentStyle={styles.kycMenuContent}
+                anchor={
+                  <Pressable
+                    onPress={() => setIdTypeMenuOpen(true)}
+                    style={({ pressed }) => [
+                      styles.kycSelectField,
+                      {
+                        borderColor: theme.colors.outline,
+                        backgroundColor: theme.colors.surface,
+                        opacity: pressed ? 0.88 : 1,
+                      },
+                    ]}
+                  >
+                    <View style={styles.kycSelectFieldInner}>
+                      <Text style={[styles.kycSelectFloatingLabel, { color: theme.colors.primary }]}>
+                        ID type <Text style={{ color: theme.colors.error }}>*</Text>
+                      </Text>
+                      <View style={styles.kycSelectValueRow}>
+                        <Text
+                          style={[
+                            styles.kycSelectValueText,
+                            {
+                              color:
+                                idType === ""
+                                  ? theme.colors.onSurfaceVariant
+                                  : theme.colors.onSurface,
+                            },
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {idType === "SA_ID"
+                            ? "SA_ID — South African ID"
+                            : idType === "Passport"
+                              ? "Passport"
+                              : "Choose an option"}
+                        </Text>
+                        <MaterialCommunityIcons
+                          name="menu-down"
+                          size={22}
+                          color={theme.colors.onSurfaceVariant}
+                        />
+                      </View>
+                    </View>
+                  </Pressable>
+                }
+              >
+                <Menu.Item
+                  leadingIcon={idType === "SA_ID" ? "check" : undefined}
+                  onPress={() => {
+                    setIdType("SA_ID");
+                    setIdTypeMenuOpen(false);
+                  }}
+                  title="SA_ID"
+                  titleStyle={{
+                    color: idType === "SA_ID" ? theme.colors.primary : theme.colors.onSurface,
+                    fontWeight: idType === "SA_ID" ? "600" : "400",
+                  }}
+                />
+                <Menu.Item
+                  leadingIcon={idType === "Passport" ? "check" : undefined}
+                  onPress={() => {
+                    setIdType("Passport");
+                    setIdTypeMenuOpen(false);
+                  }}
+                  title="Passport"
+                  titleStyle={{
+                    color: idType === "Passport" ? theme.colors.primary : theme.colors.onSurface,
+                    fontWeight: idType === "Passport" ? "600" : "400",
+                  }}
+                />
+              </Menu>
+            </View>
             <TextInput mode="outlined" label="ID Number / Passport Number" value={idNumber} onChangeText={setIdNumber} style={styles.input} />
             {idType === "Passport" ? (
               <TextInput mode="outlined" label="Passport Issue Country" value={idIssueCountry} onChangeText={setIdIssueCountry} style={styles.input} />
             ) : null}
           </View>
-        </>
-      , styles)}
-      {cardContainer(
+        </>,
+      )}
+
+      {kycFormCard(
         <>
-          <Text variant="titleLarge">C. Proof of Address</Text>
+          <Text style={styles.kycSectionLetter}>Section B</Text>
+          <Text variant="titleMedium" style={styles.kycSectionTitle}>
+            Proof of address
+          </Text>
           <View style={styles.twoCol}>
-            <TextInput mode="outlined" label="Address Line 1" value={addressLine1} onChangeText={setAddressLine1} style={styles.input} />
-            <TextInput mode="outlined" label="Address Line 2" value={addressLine2} onChangeText={setAddressLine2} style={styles.input} />
+            <TextInput
+              mode="outlined"
+              label="Street address"
+              value={addressLine1}
+              onChangeText={setAddressLine1}
+              style={styles.input}
+              placeholder="Street, unit, building (one line)"
+            />
             <TextInput mode="outlined" label="City" value={city} onChangeText={setCity} style={styles.input} />
             <TextInput mode="outlined" label="Province" value={province} onChangeText={setProvince} style={styles.input} />
             <TextInput mode="outlined" label="Postal Code" value={postalCode} onChangeText={setPostalCode} style={styles.input} />
             <TextInput mode="outlined" label="Country" value={country} onChangeText={setCountry} style={styles.input} />
           </View>
-        </>
-      , styles)}
-      {cardContainer(
+        </>,
+      )}
+
+      {kycFormCard(
         <>
-          <Text variant="titleLarge">D. Driver's License</Text>
+          <Text style={styles.kycSectionLetter}>Section C</Text>
+          <Text variant="titleMedium" style={styles.kycSectionTitle}>
+            {"Driver's license"}
+          </Text>
           <View style={styles.twoCol}>
             <TextInput mode="outlined" label="License Number *" value={licenseNumber} onChangeText={setLicenseNumber} style={styles.input} />
             <TextInput mode="outlined" label="License Code *" value={licenseCode} onChangeText={setLicenseCode} style={styles.input} />
-            <TextInput mode="outlined" label="License Issue Date * (YYYY-MM-DD)" value={licenseIssueDate} onChangeText={setLicenseIssueDate} style={styles.input} />
-            <TextInput mode="outlined" label="License Expiry Date * (YYYY-MM-DD)" value={licenseExpiryDate} onChangeText={setLicenseExpiryDate} style={styles.input} />
+            {kycDateRow("licenseIssue", "License issue date *")}
+            {kycDateRow("licenseExpiry", "License expiry date *")}
           </View>
-        </>
-      , styles)}
-      {cardContainer(
+        </>,
+      )}
+
+      {kycFormCard(
         <>
-          <Text variant="titleLarge">E. Professional Driving Permit (PrDP - Dangerous Goods)</Text>
-          <View style={styles.rowBetween}>
-            <Text>PrDP Required</Text>
+          <Text style={styles.kycSectionLetter}>Section D</Text>
+          <Text variant="titleMedium" style={styles.kycSectionTitle}>
+            PrDP (dangerous goods)
+          </Text>
+          <View style={[styles.rowBetween, styles.kycSwitchRow]}>
+            <Text variant="bodyLarge">PrDP required</Text>
             <Switch value={prdpRequired} onValueChange={setPrdpRequired} />
           </View>
           {prdpRequired ? (
             <View style={styles.twoCol}>
               <TextInput mode="outlined" label="PrDP Number *" value={prdpNumber} onChangeText={setPrdpNumber} style={styles.input} />
               <TextInput mode="outlined" label="PrDP Category *" value={prdpCategory} onChangeText={setPrdpCategory} style={styles.input} />
-              <TextInput mode="outlined" label="PrDP Issue Date * (YYYY-MM-DD)" value={prdpIssueDate} onChangeText={setPrdpIssueDate} style={styles.input} />
-              <TextInput mode="outlined" label="PrDP Expiry Date * (YYYY-MM-DD)" value={prdpExpiryDate} onChangeText={setPrdpExpiryDate} style={styles.input} />
+              {kycDateRow("prdpIssue", "PrDP issue date *")}
+              {kycDateRow("prdpExpiry", "PrDP expiry date *")}
             </View>
           ) : null}
           <Button
             mode="contained"
+            compact
             buttonColor={theme.colors.primary}
             textColor={theme.colors.onPrimary}
-            style={styles.mt8}
+            style={styles.kycPrimaryButton}
+            contentStyle={styles.kycPrimaryButtonContent}
+            labelStyle={styles.kycButtonLabel}
             onPress={() => saveComplianceMutation.mutate()}
             loading={saveComplianceMutation.isPending}
           >
-            Save Compliance Details
+            Save compliance details
           </Button>
-        </>
-      , styles)}
-      {cardContainer(
+        </>,
+      )}
+
+      {kycFormCard(
         <>
-          <Text variant="titleLarge">F. Dangerous Goods / Hazchem Training</Text>
-          <View style={styles.rowBetween}>
-            <Text>Dangerous Goods Training Required</Text>
+          <Text style={styles.kycSectionLetter}>Section E</Text>
+          <Text variant="titleMedium" style={styles.kycSectionTitle}>
+            Dangerous goods / Hazchem training
+          </Text>
+          <View style={[styles.rowBetween, styles.kycSwitchRow]}>
+            <Text variant="bodyLarge">Training required</Text>
             <Switch value={dgTrainingRequired} onValueChange={setDgTrainingRequired} />
           </View>
           {dgTrainingRequired ? (
             <View style={styles.twoCol}>
               <TextInput mode="outlined" label="Training Provider" value={dgTrainingProvider} onChangeText={setDgTrainingProvider} style={styles.input} />
               <TextInput mode="outlined" label="Certificate Number" value={dgTrainingCertificateNumber} onChangeText={setDgTrainingCertificateNumber} style={styles.input} />
-              <TextInput mode="outlined" label="Training Issue Date (YYYY-MM-DD)" value={dgTrainingIssueDate} onChangeText={setDgTrainingIssueDate} style={styles.input} />
-              <TextInput mode="outlined" label="Training Expiry Date (YYYY-MM-DD)" value={dgTrainingExpiryDate} onChangeText={setDgTrainingExpiryDate} style={styles.input} />
+              {kycDateRow("dgIssue", "Training issue date *")}
+              {kycDateRow("dgExpiry", "Training expiry date (if applicable)")}
             </View>
           ) : null}
-        </>
-      , styles)}
-      {cardContainer(
+        </>,
+      )}
+
+      {kycFormCard(
         <>
-          <Text variant="titleLarge">G. Criminal / Clearance</Text>
-          <View style={styles.rowBetween}>
-            <Text>Criminal Check Completed</Text>
+          <Text style={styles.kycSectionLetter}>Section F</Text>
+          <Text variant="titleMedium" style={styles.kycSectionTitle}>
+            Criminal clearance
+          </Text>
+          <View style={[styles.rowBetween, styles.kycSwitchRow]}>
+            <Text variant="bodyLarge">Criminal check completed</Text>
             <Switch value={criminalCheckDone} onValueChange={setCriminalCheckDone} />
           </View>
           {criminalCheckDone ? (
             <View style={styles.twoCol}>
               <TextInput mode="outlined" label="Criminal Check Reference" value={criminalCheckReference} onChangeText={setCriminalCheckReference} style={styles.input} />
-              <TextInput mode="outlined" label="Criminal Check Date (YYYY-MM-DD)" value={criminalCheckDate} onChangeText={setCriminalCheckDate} style={styles.input} />
+              {kycDateRow("criminal", "Criminal check date *")}
             </View>
           ) : null}
-        </>
-      , styles)}
-      {cardContainer(
+        </>,
+      )}
+
+      {kycFormCard(
         <>
-          <Text variant="titleLarge">2. Driver - Bank & Payment Details</Text>
+          <Text style={styles.kycSectionLetter}>Section G</Text>
+          <Text variant="titleMedium" style={styles.kycSectionTitle}>
+            Payment details
+          </Text>
           <View style={styles.twoCol}>
             <TextInput mode="outlined" label="Account Holder Name" value={bankAccountHolder} onChangeText={setBankAccountHolder} style={styles.input} />
             <TextInput mode="outlined" label="Bank Name" value={bankName} onChangeText={setBankName} style={styles.input} />
@@ -577,18 +985,33 @@ export function DriverKycDocumentsScreen() {
           </View>
           <Button
             mode="contained"
+            compact
             buttonColor={theme.colors.primary}
             textColor={theme.colors.onPrimary}
-            style={styles.mt8}
+            style={styles.kycPrimaryButton}
+            contentStyle={styles.kycPrimaryButtonContent}
+            labelStyle={styles.kycButtonLabel}
             onPress={() => saveComplianceMutation.mutate()}
             loading={saveComplianceMutation.isPending}
           >
-            Save All Compliance Information
+            Save all compliance information
           </Button>
-        </>
-      , styles)}
-      {requiredDocTypes.map((def) => {
-        const uploaded = (docsQuery.data ?? []).find((d) => [def.docType, ...def.aliases].includes(d.doc_type));
+        </>,
+      )}
+
+      <Divider style={styles.kycDivider} />
+
+      <Text variant="titleMedium" style={styles.kycBlockTitle}>
+        Documents to upload
+      </Text>
+      <Text variant="bodySmall" style={styles.kycBlockHint}>
+        PDF or image (JPG/PNG). Tap upload to attach a file from your device.
+      </Text>
+
+      {KYC_REQUIRED_DOC_TYPES.map((def) => {
+        const uploaded = (docsQuery.data ?? []).find((d) =>
+          ([def.docType, ...def.aliases] as string[]).includes(d.doc_type),
+        );
         const normalizedStatus = (uploaded?.verification_status || "pending").toLowerCase();
         const statusLabel =
           normalizedStatus === "verified" || normalizedStatus === "approved"
@@ -596,27 +1019,68 @@ export function DriverKycDocumentsScreen() {
             : normalizedStatus === "rejected"
               ? "rejected"
               : "pending";
+        const chip = statusChipStyle(statusLabel);
+        const iconName = kycDocIcon(def.docType);
         return (
-          <Card key={def.docType} style={styles.card}>
-            <Card.Content>
-              <View style={styles.rowBetween}>
-                <View>
-                  <Text variant="titleSmall">{def.title}</Text>
-                  <Text style={styles.meta}>{def.required ? "Required" : "Optional"}</Text>
+          <Card key={def.docType} style={[styles.card, styles.kycDocCard]} mode="outlined">
+            <Card.Content style={styles.kycDocCardContent}>
+              <View style={styles.kycDocTopRow}>
+                <View style={[styles.kycDocIconBox, { backgroundColor: isDark ? "rgba(38, 237, 217, 0.12)" : "rgba(38, 237, 217, 0.15)" }]}>
+                  <MaterialCommunityIcons name={iconName as never} size={22} color={theme.colors.primary} />
                 </View>
-                <Chip compact>{statusLabel}</Chip>
+                <View style={styles.kycDocTitleCol}>
+                  <Text variant="titleSmall" style={styles.kycDocTitle} numberOfLines={2}>
+                    {def.title}
+                  </Text>
+                  <Text style={styles.kycDocMeta}>{def.required ? "Required for verification" : "Optional"}</Text>
+                  {uploaded?.created_at ? (
+                    <Text style={styles.kycDocMeta}>Uploaded {new Date(uploaded.created_at).toLocaleDateString("en-ZA")}</Text>
+                  ) : (
+                    <Text style={styles.kycDocMetaMuted}>Not uploaded yet</Text>
+                  )}
+                </View>
+                <Chip compact style={{ backgroundColor: chip.backgroundColor }} textStyle={{ color: chip.textColor, fontWeight: "600", fontSize: 11 }}>
+                  {statusLabel}
+                </Chip>
               </View>
-              {uploaded?.created_at ? <Text style={styles.meta}>Uploaded: {new Date(uploaded.created_at).toLocaleDateString("en-ZA")}</Text> : null}
-              <View style={styles.row}>
-                <Button mode="contained" buttonColor={theme.colors.primary} textColor={theme.colors.onPrimary} disabled={!uploaded?.file_path} onPress={() => openDoc(uploaded?.file_path)}>View</Button>
-                <Button mode="contained" buttonColor={theme.colors.primary} textColor={theme.colors.onPrimary} loading={uploadingType === def.docType} onPress={() => uploadDoc(def.docType, def.title)}>
-                  {uploaded ? "Reupload" : "Upload"}
+              <View style={styles.kycDocActions}>
+                <Button
+                  mode="outlined"
+                  compact
+                  onPress={() => openDoc(uploaded?.file_path)}
+                  disabled={!uploaded?.file_path}
+                  style={[styles.kycDocButton, styles.kycDocButtonHalf]}
+                  contentStyle={styles.kycDocButtonContent}
+                  labelStyle={styles.kycDocButtonLabel}
+                >
+                  View
+                </Button>
+                <Button
+                  mode="contained"
+                  compact
+                  buttonColor={theme.colors.primary}
+                  textColor={theme.colors.onPrimary}
+                  loading={uploadingType === def.docType}
+                  onPress={() => uploadDoc(def.docType, def.title)}
+                  style={[styles.kycDocButton, styles.kycDocButtonHalf]}
+                  contentStyle={styles.kycDocButtonContent}
+                  labelStyle={styles.kycDocButtonLabel}
+                >
+                  {uploaded ? "Replace" : "Upload"}
                 </Button>
               </View>
             </Card.Content>
           </Card>
         );
       })}
+      {Platform.OS === "ios" && iosDateKey ? (
+        <DateTimePicker
+          value={parseYmdToLocalDate(getKycYmd(iosDateKey))}
+          mode="date"
+          display="spinner"
+          onChange={onIosKycDateChange}
+        />
+      ) : null}
     </ScrollView>
   );
 }
@@ -626,7 +1090,6 @@ export function DriverSubscriptionMenuScreen() {
   const theme = mode === "dark" ? darkTheme : lightTheme;
   const styles = getStyles(theme);
   const queryClient = useQueryClient();
-  const [expandedPlanCode, setExpandedPlanCode] = useState<string | null>(null);
   const subQuery = useQuery({
     queryKey: ["/api/driver/subscription"],
     queryFn: async () => (await apiClient.get<DriverSubscription>("/api/driver/subscription")).data,
@@ -661,31 +1124,21 @@ export function DriverSubscriptionMenuScreen() {
       {(plansQuery.data?.plans || []).map((plan) => (
         <Card key={plan.code} style={styles.card}>
           <Card.Content>
-            <View style={styles.rowBetween}>
-              <Text variant="titleMedium">{plan.name}</Text>
-              <Button
-                mode="text"
-                onPress={() => setExpandedPlanCode((prev) => (prev === plan.code ? null : plan.code))}
-              >
-                {expandedPlanCode === plan.code ? "Hide details" : "Show details"}
-              </Button>
-            </View>
+            <Text variant="titleMedium">{plan.name}</Text>
             <Text style={styles.meta}>R {(plan.priceCents / 100).toFixed(2)} / month</Text>
-            {expandedPlanCode === plan.code ? (
-              <View style={styles.planDetailBox}>
-                <Text style={styles.metaStrong}>
-                  {driverPlanDetails[plan.code.toLowerCase()]?.bestFor || "Plan details for this subscription tier."}
+            <View style={styles.planDetailBox}>
+              <Text style={styles.metaStrong}>
+                {driverPlanDetails[plan.code.toLowerCase()]?.bestFor || "Plan details for this subscription tier."}
+              </Text>
+              {(driverPlanDetails[plan.code.toLowerCase()]?.features || [
+                "Access to driver portal workflows.",
+                "Monthly billing with subscription management in-app.",
+              ]).map((feature) => (
+                <Text key={`${plan.code}-${feature}`} style={styles.meta}>
+                  - {feature}
                 </Text>
-                {(driverPlanDetails[plan.code.toLowerCase()]?.features || [
-                  "Access to driver portal workflows.",
-                  "Monthly billing with subscription management in-app.",
-                ]).map((feature) => (
-                  <Text key={`${plan.code}-${feature}`} style={styles.meta}>
-                    - {feature}
-                  </Text>
-                ))}
-              </View>
-            ) : null}
+              ))}
+            </View>
             <Button mode="contained" buttonColor={theme.colors.primary} textColor={theme.colors.onPrimary} style={styles.mt8} onPress={() => createMutation.mutate(plan.code)} loading={createMutation.isPending}>
               Choose {plan.name}
             </Button>
@@ -786,80 +1239,82 @@ export function DriverPricingMenuScreen() {
   });
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {cardContainer(
-        <>
-          <View style={styles.rowBetween}>
-            <View style={styles.pricingHeaderTextWrap}>
-              <Text variant="headlineSmall">Pricing</Text>
-              <Text style={styles.subtitle}>Set your fuel prices per liter for each fuel type.</Text>
-            </View>
-            <Button
-              mode="contained"
-              compact
-              buttonColor={theme.colors.primary}
-              textColor={theme.colors.onPrimary}
-              onPress={() => setHistoryVisible(true)}
-              style={styles.pricingHistoryButton}
-            >
-              History
-            </Button>
-          </View>
-        </>
-      , styles)}
-      {pricingItems.map((item, index) => {
-        const draft = drafts[item.fuelTypeId] ?? (item.priceCents / 100).toFixed(2);
-        return (
-          <Card key={`${item.fuelTypeId}-${index}`} style={styles.card}>
-            <Card.Content>
-              <View style={styles.rowBetween}>
-                <View>
-                  <Text variant="titleSmall">{item.label}</Text>
-                  <Text style={styles.meta}>{item.code.toUpperCase()}</Text>
-                </View>
-                <View style={styles.rightAligned}>
-                  <Text variant="titleLarge" style={styles.priceValue}>
-                    R {(item.priceCents / 100).toFixed(2)}
-                  </Text>
-                  <Text style={styles.meta}>per liter</Text>
-                </View>
+    <>
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        {cardContainer(
+          <>
+            <View style={styles.rowBetween}>
+              <View style={styles.pricingHeaderTextWrap}>
+                <Text variant="headlineSmall">Pricing</Text>
+                <Text style={styles.subtitle}>Set your fuel prices per liter for each fuel type.</Text>
               </View>
-              <TextInput
-                mode="outlined"
-                label="Price per Litre (ZAR)"
-                value={draft}
-                onChangeText={(v) => setDrafts((p) => ({ ...p, [item.fuelTypeId]: v }))}
-                style={styles.input}
-                keyboardType="numeric"
-              />
-              <TextInput
-                mode="outlined"
-                label="Notes (Optional)"
-                value={notes[item.fuelTypeId] || ""}
-                onChangeText={(v) => setNotes((p) => ({ ...p, [item.fuelTypeId]: v }))}
-                style={styles.input}
-                multiline
-              />
               <Button
                 mode="contained"
+                compact
                 buttonColor={theme.colors.primary}
                 textColor={theme.colors.onPrimary}
-                style={styles.mt8}
-                onPress={() =>
-                  updateMutation.mutate({
-                    fuelTypeId: item.fuelTypeId,
-                    cents: Math.round((Number(draft) || 0) * 100),
-                    note: notes[item.fuelTypeId] || undefined,
-                  })
-                }
-                loading={updateMutation.isPending}
+                onPress={() => setHistoryVisible(true)}
+                style={styles.pricingHistoryButton}
               >
-                Save
+                History
               </Button>
-            </Card.Content>
-          </Card>
-        );
-      })}
+            </View>
+          </>
+        , styles)}
+        {pricingItems.map((item, index) => {
+          const draft = drafts[item.fuelTypeId] ?? (item.priceCents / 100).toFixed(2);
+          return (
+            <Card key={`${item.fuelTypeId}-${index}`} style={styles.card}>
+              <Card.Content>
+                <View style={styles.rowBetween}>
+                  <View>
+                    <Text variant="titleSmall">{item.label}</Text>
+                    <Text style={styles.meta}>{item.code.toUpperCase()}</Text>
+                  </View>
+                  <View style={styles.rightAligned}>
+                    <Text variant="titleLarge" style={styles.priceValue}>
+                      R {(item.priceCents / 100).toFixed(2)}
+                    </Text>
+                    <Text style={styles.meta}>per liter</Text>
+                  </View>
+                </View>
+                <TextInput
+                  mode="outlined"
+                  label="Price per Litre (ZAR)"
+                  value={draft}
+                  onChangeText={(v) => setDrafts((p) => ({ ...p, [item.fuelTypeId]: v }))}
+                  style={styles.input}
+                  keyboardType="numeric"
+                />
+                <TextInput
+                  mode="outlined"
+                  label="Notes (Optional)"
+                  value={notes[item.fuelTypeId] || ""}
+                  onChangeText={(v) => setNotes((p) => ({ ...p, [item.fuelTypeId]: v }))}
+                  style={styles.input}
+                  multiline
+                />
+                <Button
+                  mode="contained"
+                  buttonColor={theme.colors.primary}
+                  textColor={theme.colors.onPrimary}
+                  style={styles.mt8}
+                  onPress={() =>
+                    updateMutation.mutate({
+                      fuelTypeId: item.fuelTypeId,
+                      cents: Math.round((Number(draft) || 0) * 100),
+                      note: notes[item.fuelTypeId] || undefined,
+                    })
+                  }
+                  loading={updateMutation.isPending}
+                >
+                  Save
+                </Button>
+              </Card.Content>
+            </Card>
+          );
+        })}
+      </ScrollView>
       <Modal
         visible={historyVisible}
         animationType="slide"
@@ -943,7 +1398,7 @@ export function DriverPricingMenuScreen() {
           </View>
         </View>
       </Modal>
-    </ScrollView>
+    </>
   );
 }
 
@@ -1077,34 +1532,30 @@ export function DriverSettingsMenuScreen() {
   );
 }
 
-const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.colors.background },
-  content: { padding: 14, gap: 10, paddingBottom: 20 },
-  card: { backgroundColor: theme.colors.surface },
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  subtitle: { marginTop: 4, color: theme.colors.onSurfaceVariant },
-  meta: { marginTop: 4, color: theme.colors.onSurfaceVariant },
-  metaStrong: { marginTop: 2, marginBottom: 2, color: theme.colors.onSurface, fontWeight: "600" },
-  input: { marginTop: 8, backgroundColor: theme.colors.surface },
-  row: { flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap" },
-  rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
-  pricingHeaderTextWrap: { flex: 1, minWidth: 0, paddingRight: 4 },
-  pricingHistoryButton: { alignSelf: "flex-start" },
-  twoCol: { marginTop: 8, gap: 8 },
-  rightAligned: { alignItems: "flex-end" },
-  priceValue: { fontWeight: "700" },
-  empty: { textAlign: "center", marginTop: 24, color: theme.colors.onSurfaceVariant },
-  mt8: { marginTop: 8 },
-  planDetailBox: {
-    marginTop: 10,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: theme.colors.outline,
-    borderRadius: 10,
-    backgroundColor: theme.colors.background,
-  },
-  errorText: { marginTop: 8, color: "#DC2626" },
-  historyBackdrop: {
+const getStyles = (theme: typeof lightTheme) => {
+  const p = getPortalUiStyleDefs(theme);
+  return StyleSheet.create({
+    ...p,
+    container: p.screenContainer,
+    content: p.screenScrollContentCompact,
+    card: p.sectionCard,
+    center: p.center,
+    subtitle: p.subtitle,
+    meta: p.meta,
+    metaStrong: p.metaStrong,
+    input: p.input,
+    row: p.row,
+    rowBetween: p.rowBetween,
+    twoCol: p.twoCol,
+    empty: p.empty,
+    mt8: p.mt8,
+    planDetailBox: p.planDetailBox,
+    errorText: p.errorText,
+    pricingHeaderTextWrap: { flex: 1, minWidth: 0, paddingRight: 4 },
+    pricingHistoryButton: { alignSelf: "flex-start" },
+    rightAligned: { alignItems: "flex-end" },
+    priceValue: { fontWeight: "700" },
+    historyBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.45)",
     justifyContent: "flex-end",
@@ -1137,7 +1588,9 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
   historyEntryCard: {
     marginBottom: 10,
     borderRadius: 14,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.outline,
   },
   historyEntryInner: { paddingVertical: 6 },
   historyMeta: { marginTop: 6, color: theme.colors.onSurfaceVariant, fontSize: 13 },
@@ -1147,4 +1600,100 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
   historyFooter: { paddingHorizontal: 16, paddingTop: 10 },
   historyCloseButton: { borderRadius: 12 },
   historyCloseButtonContent: { paddingVertical: 10 },
-});
+
+    kycScrollContent: p.screenScrollContent,
+    kycHero: p.hero,
+    kycHeroTopRow: p.heroTopRow,
+    kycHeroIconWrap: p.heroIconWrap,
+    kycHeroTextCol: p.heroTextCol,
+    kycHeroTitle: p.heroTitle,
+    kycHeroSubtitle: p.heroSubtitle,
+  kycProgressBlock: { marginTop: 18 },
+  kycProgressHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+  kycProgressLabel: { color: theme.colors.onSurfaceVariant },
+  kycProgressCount: { fontWeight: "700" },
+  kycProgressTrack: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: theme.colors.surfaceVariant,
+    overflow: "hidden",
+  },
+  kycProgressFill: { height: 8, borderRadius: 4 },
+    kycBlockTitle: { ...p.blockTitle, marginTop: 6 },
+    kycBlockHint: p.blockHint,
+    kycFormCard: p.sectionCard,
+  kycFormCardContent: { paddingVertical: 8 },
+    kycSectionLetter: p.sectionKicker,
+  kycSectionTitle: { marginBottom: 10, fontWeight: "600", color: theme.colors.onSurface },
+  kycIdTypeBlock: { width: "100%" },
+  kycMenuContent: {
+    marginTop: 6,
+    borderRadius: 12,
+    backgroundColor: theme.colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.outline,
+    minWidth: 240,
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+  },
+  kycSelectField: {
+    borderRadius: 4,
+    minHeight: 56,
+    paddingHorizontal: 12,
+    paddingTop: 6,
+    paddingBottom: 8,
+    justifyContent: "center",
+  },
+  kycSelectFieldInner: { gap: 2 },
+  kycSelectFloatingLabel: { fontSize: 12, fontWeight: "500", letterSpacing: 0.2, marginBottom: 2 },
+  kycSelectValueRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  kycSelectValueText: { flex: 1, fontSize: 16, lineHeight: 22 },
+  kycDateRow: { marginBottom: 8, width: "100%" },
+  kycDateLabel: { marginBottom: 6, color: theme.colors.onSurfaceVariant },
+  kycDateButtonContent: { justifyContent: "flex-start" },
+  kycSwitchRow: { marginBottom: 8, paddingVertical: 4 },
+  kycPrimaryButton: { marginTop: 12, alignSelf: "flex-start", borderRadius: 8 },
+  kycPrimaryButtonContent: {
+    paddingVertical: 2,
+    paddingHorizontal: 14,
+    minHeight: 36,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  kycButtonLabel: { fontSize: 13, letterSpacing: 0.1, marginVertical: 0 },
+  kycDocButtonContent: {
+    paddingVertical: 0,
+    paddingHorizontal: 10,
+    minHeight: 32,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  kycDocButtonLabel: { fontSize: 12, marginVertical: 0 },
+  kycDivider: { marginVertical: 8 },
+    kycDocCard: p.listCard,
+  kycDocCardContent: { paddingVertical: 8 },
+  kycDocTopRow: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
+  kycDocIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  kycDocTitleCol: { flex: 1, minWidth: 0 },
+  kycDocTitle: { fontWeight: "600", color: theme.colors.onSurface },
+  kycDocMeta: { marginTop: 4, fontSize: 12, color: theme.colors.onSurfaceVariant },
+  kycDocMetaMuted: { marginTop: 4, fontSize: 12, color: theme.colors.outline, fontStyle: "italic" },
+  kycDocActions: { flexDirection: "row", gap: 10, marginTop: 16 },
+  kycDocButton: { borderRadius: 8 },
+  kycDocButtonHalf: { flex: 1 },
+  });
+};

@@ -3,6 +3,7 @@ import { FlatList, Modal, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Switch, Text, TextInput } from "react-native-paper";
 import { apiClient } from "@/services/api/client";
+import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 
@@ -109,7 +110,7 @@ export function CustomerAddressesScreen() {
 
   return (
     <View style={styles.container}>
-      <Card style={styles.header}>
+      <Card mode="contained" style={styles.header}>
         <Card.Content>
           <Text variant="headlineSmall">Saved addresses</Text>
           <Text style={styles.subtitle}>Used when you place fuel orders</Text>
@@ -135,7 +136,7 @@ export function CustomerAddressesScreen() {
         onRefresh={() => listQuery.refetch()}
         ListEmptyComponent={<Text style={styles.muted}>No addresses yet.</Text>}
         renderItem={({ item }) => (
-          <Card style={styles.card}>
+          <Card mode="outlined" style={styles.card}>
             <Card.Content>
               <Text variant="titleSmall">{item.label || "Address"}</Text>
               <Text style={styles.meta}>
@@ -194,29 +195,33 @@ export function CustomerAddressesScreen() {
   );
 }
 
-const getStyles = (theme: typeof lightTheme) =>
-  StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.colors.background },
-    header: { margin: 12, backgroundColor: theme.colors.surface },
+const getStyles = (theme: typeof lightTheme) => {
+  const p = getPortalUiStyleDefs(theme);
+  return StyleSheet.create({
+    container: p.screenContainer,
+    header: { ...p.hero, margin: 12 },
     subtitle: { marginTop: 4, color: theme.colors.onSurfaceVariant, marginBottom: 8 },
     list: { paddingHorizontal: 12, paddingBottom: 24, gap: 10 },
-    card: { backgroundColor: theme.colors.surface },
+    card: p.listCard,
     meta: { marginTop: 6, color: theme.colors.onSurfaceVariant },
     badge: { marginTop: 4, color: theme.colors.primary, fontWeight: "600" },
     row: { flexDirection: "row", gap: 8, marginTop: 8 },
-    muted: { textAlign: "center", color: theme.colors.onSurfaceVariant, marginTop: 24 },
+    muted: { ...p.empty },
     modal: { flex: 1, backgroundColor: theme.colors.background },
     modalHeader: {
       flexDirection: "row",
       justifyContent: "space-between",
       alignItems: "center",
       padding: 14,
-      borderBottomWidth: 1,
+      borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: theme.colors.outline,
       backgroundColor: theme.colors.surface,
+      borderLeftWidth: 3,
+      borderLeftColor: theme.colors.primary,
     },
     modalBody: { padding: 16, gap: 8 },
-    input: { backgroundColor: theme.colors.surface },
+    input: p.input,
     switchRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginVertical: 8 },
-    error: { color: theme.colors.error },
+    error: p.errorText,
   });
+};

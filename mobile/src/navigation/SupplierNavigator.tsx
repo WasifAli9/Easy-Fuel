@@ -12,20 +12,31 @@ import { PortalSettingsScreen } from "@/features/common/PortalSettingsScreen";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { SupplierDepotOrdersPanel } from "@/features/supplier/SupplierDepotOrdersPanel";
+import { SupplierPricingScreen } from "@/features/supplier/SupplierPricingScreen";
+import { SupplierReceiptScreen } from "@/features/supplier/SupplierReceiptScreen";
 
 const Tab = createBottomTabNavigator();
 
 const supplierMenuItems: PortalMenuItem[] = [
   { key: "portal", label: "Supplier Portal", icon: "view-dashboard-outline" },
-  { key: "dashboard", label: "Workspace", icon: "chart-box-outline" },
   { key: "depot-orders", label: "Depot Orders", icon: "clipboard-list-outline" },
   { key: "depots", label: "Depots", icon: "map-marker-outline" },
+  { key: "pricing", label: "Pricing", icon: "cash-multiple" },
+  { key: "receipt", label: "Receipt", icon: "file-document-outline" },
   { key: "subscription", label: "Subscription", icon: "credit-card-outline" },
   { key: "profile", label: "Profile", icon: "account-circle-outline" },
   { key: "settings", label: "Settings", icon: "cog-outline" },
 ];
 
-type SupplierSection = "portal" | "dashboard" | "depot-orders" | "depots" | "subscription" | "profile" | "settings";
+type SupplierSection =
+  | "portal"
+  | "depot-orders"
+  | "depots"
+  | "pricing"
+  | "receipt"
+  | "subscription"
+  | "profile"
+  | "settings";
 
 function SupplierTabNavigator() {
   const mode = useUiThemeStore((s) => s.mode);
@@ -62,7 +73,7 @@ function SupplierTabNavigator() {
         },
       })}
     >
-      <Tab.Screen name="SupplierDashboard" component={SupplierDashboardScreen} options={{ tabBarLabel: "Workspace" }} />
+      <Tab.Screen name="SupplierDashboard" component={SupplierDashboardScreen} options={{ tabBarLabel: "Portal" }} />
       <Tab.Screen name="SupplierDepots" component={SupplierDepotsScreen} options={{ tabBarLabel: "Depots" }} />
       <Tab.Screen name="SupplierSubscription" component={SupplierSubscriptionScreen} options={{ tabBarLabel: "Billing" }} />
       <Tab.Screen name="SupplierProfile" component={SupplierProfileScreen} options={{ tabBarLabel: "Profile" }} />
@@ -76,17 +87,19 @@ export function SupplierNavigator() {
   const title =
     section === "settings"
       ? "Settings"
-      : section === "dashboard"
-        ? "Workspace"
-        : section === "depot-orders"
-          ? "Depot Orders"
-          : section === "depots"
-            ? "Depots"
-            : section === "subscription"
-              ? "Subscription"
-              : section === "profile"
-                ? "Profile"
-                : "Supplier Portal";
+      : section === "depot-orders"
+        ? "Depot Orders"
+        : section === "depots"
+          ? "Depots"
+          : section === "pricing"
+            ? "Pricing"
+            : section === "receipt"
+              ? "Receipt"
+              : section === "subscription"
+                ? "Subscription"
+                : section === "profile"
+                  ? "Profile"
+                  : "Supplier Portal";
 
   return (
     <PortalShell
@@ -99,12 +112,14 @@ export function SupplierNavigator() {
     >
       {section === "portal" ? (
         <SupplierTabNavigator />
-      ) : section === "dashboard" ? (
-        <SupplierDashboardScreen />
       ) : section === "depot-orders" ? (
         <SupplierDepotOrdersPanel />
       ) : section === "depots" ? (
         <SupplierDepotsScreen />
+      ) : section === "pricing" ? (
+        <SupplierPricingScreen />
+      ) : section === "receipt" ? (
+        <SupplierReceiptScreen />
       ) : section === "subscription" ? (
         <SupplierSubscriptionScreen />
       ) : section === "profile" ? (

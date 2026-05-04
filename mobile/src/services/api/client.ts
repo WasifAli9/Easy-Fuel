@@ -1,6 +1,6 @@
 import axios from "axios";
 import { appConfig } from "@/services/config";
-import { clearSecureSession } from "@/services/storage";
+import { clearSecureSession, readSessionCookie } from "@/services/storage";
 import { useSessionStore } from "@/store/session-store";
 
 export const apiClient = axios.create({
@@ -18,7 +18,12 @@ function toCamelCase(key: string) {
 }
 
 function isPlainObject(value: unknown): value is Record<string, any> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
+  if (value === null || typeof value !== "object") return false;
+  if (Array.isArray(value)) return false;
+  if (typeof ArrayBuffer !== "undefined" && value instanceof ArrayBuffer) return false;
+  if (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView(value)) return false;
+  const proto = Object.getPrototypeOf(value as object);
+  return proto === Object.prototype || proto === null;
 }
 
 function withCaseAliasesDeep<T>(input: T): T {
@@ -42,11 +47,19 @@ function withCaseAliasesDeep<T>(input: T): T {
 
 apiClient.interceptors.response.use(
   (response) => {
+    const rt = response.config.responseType;
+    if (rt === "arraybuffer" || rt === "blob") {
+      return response;
+    }
     response.data = withCaseAliasesDeep(response.data);
     return response;
   },
   async (error) => {
     if (error.response?.status !== 401) {
+      return Promise.reject(error);
+    }
+    const url = String(error.config?.url || "");
+    if (url.includes("/api/auth/login") || url.includes("/api/auth/register")) {
       return Promise.reject(error);
     }
     await clearSecureSession();
@@ -55,7 +68,18 @@ apiClient.interceptors.response.use(
   },
 );
 
-apiClient.interceptors.request.use((config) => {
+apiClient.interceptors.request.use(async (config) => {
+  const sessionCookie = await readSessionCookie();
+  if (sessionCookie) {
+    const h: any = config.headers ?? {};
+    if (typeof h.set === "function") {
+      h.set("Cookie", sessionCookie);
+    } else {
+      h.Cookie = sessionCookie;
+    }
+    config.headers = h;
+  }
+
   const contentType =
     (config.headers as any)?.["Content-Type"] ||
     (config.headers as any)?.["content-type"] ||

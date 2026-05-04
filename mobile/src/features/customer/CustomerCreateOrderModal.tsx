@@ -11,6 +11,7 @@ import {
   TextInput,
 } from "react-native-paper";
 import { apiClient } from "@/services/api/client";
+import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 
@@ -173,7 +174,7 @@ export function CustomerCreateOrderModal({
           </View>
         ) : (
           <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-            <Card style={styles.sectionCard}>
+            <Card mode="outlined" style={styles.sectionCard}>
               <Card.Content>
                 <Text variant="labelLarge">Fuel type</Text>
                 <Button
@@ -211,7 +212,7 @@ export function CustomerCreateOrderModal({
               </Card.Content>
             </Card>
 
-            <Card style={styles.sectionCard}>
+            <Card mode="outlined" style={styles.sectionCard}>
               <Card.Content>
                 <Text variant="labelLarge">Delivery address</Text>
                 <Button
@@ -359,26 +360,29 @@ export function CustomerCreateOrderModal({
   );
 }
 
-const getStyles = (theme: typeof lightTheme) =>
-  StyleSheet.create({
-    sheet: { flex: 1, backgroundColor: theme.colors.background },
+const getStyles = (theme: typeof lightTheme) => {
+  const p = getPortalUiStyleDefs(theme);
+  return StyleSheet.create({
+    sheet: p.screenContainer,
     header: {
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "space-between",
       padding: 14,
-      borderBottomWidth: 1,
+      borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: theme.colors.outline,
       backgroundColor: theme.colors.surface,
+      borderLeftWidth: 3,
+      borderLeftColor: theme.colors.primary,
     },
     scroll: { padding: 16, paddingBottom: 40, gap: 10 },
-    center: { flex: 1, alignItems: "center", justifyContent: "center" },
-    sectionCard: { backgroundColor: theme.colors.surface, borderRadius: 14 },
+    center: p.center,
+    sectionCard: p.sectionCard,
     menuAnchor: { marginTop: 8, justifyContent: "space-between" },
     dropdownButtonContent: { justifyContent: "space-between" },
     dropdownList: {
       marginTop: 8,
-      borderWidth: 1,
+      borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.outlineVariant || theme.colors.outline,
       borderRadius: 10,
       backgroundColor: theme.colors.surface,
@@ -392,12 +396,13 @@ const getStyles = (theme: typeof lightTheme) =>
     },
     chips: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
     chip: { marginBottom: 4 },
-    input: { marginTop: 8, backgroundColor: theme.colors.surface },
+    input: p.input,
     row: { flexDirection: "row", gap: 8 },
     flex: { flex: 1 },
     mt: { marginTop: 12 },
     hint: { color: theme.colors.onSurfaceVariant, marginTop: 4 },
     termsRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 12 },
-    submit: { marginTop: 16 },
-    error: { color: theme.colors.error, marginTop: 8 },
+    submit: { marginTop: 16, borderRadius: 10 },
+    error: p.errorText,
   });
+};

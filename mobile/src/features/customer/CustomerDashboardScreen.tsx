@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, Card, Chip, Text } from "react-native-paper";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { apiClient } from "@/services/api/client";
+import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { filterOutOldCustomerOrders, formatCustomerOrderAddress } from "@/features/customer/customerOrderUtils";
@@ -53,12 +54,12 @@ export function CustomerDashboardScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Card style={styles.hero}>
+      <Card mode="contained" style={styles.hero}>
         <Card.Content>
           <View style={styles.brandRow}>
-            <View style={styles.brandBadge}>
-              <MaterialCommunityIcons name="gas-station" size={16} color="#0F766E" />
-              <Text style={styles.brandText}>EasyFuel</Text>
+            <View style={styles.brandPill}>
+              <MaterialCommunityIcons name="gas-station" size={16} color={theme.colors.primary} />
+              <Text style={styles.brandPillText}>EasyFuel</Text>
             </View>
           </View>
           <Text variant="labelLarge" style={styles.kicker}>
@@ -79,13 +80,13 @@ export function CustomerDashboardScreen() {
       </Card>
 
       <View style={styles.statsRow}>
-        <Card style={[styles.statCard, styles.statCardActive]}>
+        <Card mode="outlined" style={[styles.statCard, styles.statCardActive]}>
           <Card.Content>
             <Text variant="labelSmall" style={styles.statLabelActive}>Active</Text>
             <Text variant="headlineMedium">{summary.active}</Text>
           </Card.Content>
         </Card>
-        <Card style={[styles.statCard, styles.statCardRecent]}>
+        <Card mode="outlined" style={[styles.statCard, styles.statCardRecent]}>
           <Card.Content>
             <Text variant="labelSmall" style={styles.statLabelRecent}>Recent (visible)</Text>
             <Text variant="headlineMedium">{summary.total}</Text>
@@ -100,7 +101,7 @@ export function CustomerDashboardScreen() {
         <Text style={styles.muted}>No orders yet. Create your first delivery request.</Text>
       ) : (
         summary.recent.map((item) => (
-          <Card key={item.id} style={styles.card}>
+          <Card key={item.id} mode="outlined" style={styles.card}>
             <Card.Content>
               <View style={styles.orderHeader}>
                 <Text variant="titleSmall">{item.fuel_types?.label ?? "Fuel"}</Text>
@@ -147,37 +148,29 @@ function formatOrderStatus(state?: string) {
     .join(" ");
 }
 
-const getStyles = (theme: typeof lightTheme) =>
-  StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.colors.background },
-    content: { padding: 14, paddingBottom: 32, gap: 12 },
-    hero: { backgroundColor: theme.colors.surface, borderRadius: 20 },
-    brandRow: { marginBottom: 6, flexDirection: "row", justifyContent: "flex-end" },
-    brandBadge: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 6,
-      borderRadius: 999,
-      backgroundColor: "#CCFBF1",
-      borderWidth: 1,
-      borderColor: "#99F6E4",
-      paddingHorizontal: 10,
-      paddingVertical: 4,
-    },
-    brandText: { color: "#0F766E", fontWeight: "700", fontSize: 12 },
-    kicker: { color: theme.colors.primary },
-    subtitle: { marginTop: 4, color: theme.colors.onSurfaceVariant },
-    cta: { marginTop: 12, alignSelf: "flex-start" },
-    statsRow: { flexDirection: "row", gap: 10 },
-    statCard: { flex: 1, borderRadius: 18 },
-    statCardActive: { backgroundColor: "#ECFEFF", borderWidth: 1, borderColor: "#A5F3FC" },
-    statCardRecent: { backgroundColor: "#EEF2FF", borderWidth: 1, borderColor: "#C7D2FE" },
-    statLabelActive: { color: "#0E7490", fontWeight: "700" },
-    statLabelRecent: { color: "#4338CA", fontWeight: "700" },
-    sectionTitle: { marginTop: 8 },
-    card: { backgroundColor: theme.colors.surface, borderRadius: 18 },
+const getStyles = (theme: typeof lightTheme) => {
+  const p = getPortalUiStyleDefs(theme);
+  return StyleSheet.create({
+    container: p.screenContainer,
+    content: { ...p.screenScrollContentCompact, paddingBottom: 32 },
+    hero: p.hero,
+    brandRow: p.brandRow,
+    brandPill: p.brandPill,
+    brandPillText: p.brandPillText,
+    kicker: { color: theme.colors.primary, fontWeight: "600" },
+    subtitle: p.subtitle,
+    cta: { marginTop: 12, alignSelf: "flex-start", borderRadius: 10 },
+    statsRow: p.statsRow,
+    statCard: p.statCard,
+    statCardActive: p.statCardActive,
+    statCardRecent: p.statCardRecent,
+    statLabelActive: p.statLabelActive,
+    statLabelRecent: p.statLabelRecent,
+    sectionTitle: { marginTop: 8, fontWeight: "600", color: theme.colors.onSurface },
+    card: p.listCard,
     orderHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
     statusChip: { backgroundColor: theme.colors.secondaryContainer },
     meta: { marginTop: 6, color: theme.colors.onSurfaceVariant },
-    muted: { color: theme.colors.onSurfaceVariant },
+    muted: p.muted,
   });
+};

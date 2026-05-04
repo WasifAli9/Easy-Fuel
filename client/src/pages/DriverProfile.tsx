@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, type Control } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -18,7 +18,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/contexts/AuthContext";
-import { User, Lock, Upload, FileText, AlertTriangle, CheckCircle2, XCircle, Shield, Building, MapPin, Loader2, Menu } from "lucide-react";
+import { User, Lock, Upload, FileText, AlertTriangle, CheckCircle2, XCircle, Shield, Building, MapPin, Loader2, Menu, Calendar as CalendarIcon } from "lucide-react";
 import { normalizeFilePath, normalizeProfilePhotoUrl, cn } from "@/lib/utils";
 import { normalizeDocuments } from "@/lib/document-normalize";
 import { ObjectUploader } from "@/components/ObjectUploader";
@@ -32,16 +32,91 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ChevronRight, ArrowLeft } from "lucide-react";
 import { Link } from "wouter";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Label } from "@/components/ui/label";
+
+function mergeStreetAddress(line1?: string | null, line2?: string | null): string {
+  const a = (line1 ?? "").trim();
+  const b = (line2 ?? "").trim();
+  if (!b) return a;
+  if (!a) return b;
+  return `${a}, ${b}`;
+}
+
+function parseLocalYmd(ymd: string | undefined): Date | undefined {
+  if (!ymd?.trim()) return undefined;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd.trim());
+  if (!m) return undefined;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+
+function formatLocalYmd(d: Date): string {
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${mo}-${day}`;
+}
+
+function ComplianceDateField({
+  control,
+  name,
+  label,
+}: {
+  control: Control<any>;
+  name: string;
+  label: string;
+}) {
+  return (
+    <FormField
+      control={control}
+      name={name}
+      render={({ field }) => {
+        const selected = parseLocalYmd(field.value);
+        return (
+          <FormItem>
+            <FormLabel>{label}</FormLabel>
+            <Popover>
+              <PopoverTrigger asChild>
+                <FormControl>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={cn(
+                      "w-full pl-3 text-left font-normal h-9",
+                      !field.value && "text-muted-foreground",
+                    )}
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4 shrink-0 opacity-70" />
+                    {selected
+                      ? selected.toLocaleDateString("en-ZA", { dateStyle: "medium" })
+                      : "Pick a date"}
+                  </Button>
+                </FormControl>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                  mode="single"
+                  selected={selected}
+                  onSelect={(d) => field.onChange(d ? formatLocalYmd(d) : "")}
+                  initialFocus
+                />
+              </PopoverContent>
+            </Popover>
+            <FormMessage />
+          </FormItem>
+        );
+      }}
+    />
+  );
+}
 
 const profileSchema = z.object({
   fullName: z.string().min(2, "Full name is required"),
+  phone: z.string().optional(),
 });
 
 const passwordSchema = z.object({
@@ -114,60 +189,6 @@ export default function DriverProfile() {
     queryKey: ["/api/driver/compliance/status"],
   });
 
-  const { data: membership, isLoading: membershipLoading, refetch: refetchMembership } = useQuery<{
-    mode: "independent" | "company";
-    companyId: string | null;
-    companyName: string | null;
-    isDisabledByCompany: boolean;
-    disabledReason: string | null;
-  }>({
-    queryKey: ["/api/driver/company-membership"],
-  });
-
-  const [workMode, setWorkMode] = useState<"independent" | "company">("independent");
-  const [companySearch, setCompanySearch] = useState("");
-  const [selectedCompanyId, setSelectedCompanyId] = useState<string>("");
-
-  useEffect(() => {
-    if (!membership) return;
-    if (membership.mode === "independent") {
-      setWorkMode("independent");
-      setSelectedCompanyId("");
-    } else {
-      setWorkMode("company");
-      setSelectedCompanyId(membership.companyId || "");
-    }
-  }, [membership]);
-
-  const { data: companiesList = [] } = useQuery<Array<{ id: string; name: string; status: string }>>({
-    queryKey: ["/api/companies/public-list", companySearch],
-    enabled: workMode === "company",
-    queryFn: async () => {
-      const qs = companySearch.trim() ? `?q=${encodeURIComponent(companySearch.trim())}` : "";
-      const r = await fetch(`/api/companies/public-list${qs}`, { credentials: "include", cache: "no-store" });
-      if (!r.ok) throw new Error(await r.text());
-      return r.json();
-    },
-  });
-
-  const saveMembershipMutation = useMutation({
-    mutationFn: async () => {
-      const companyId = workMode === "independent" ? null : selectedCompanyId || null;
-      if (workMode === "company" && !companyId) {
-        throw new Error("Select a fleet company");
-      }
-      await apiRequest("PUT", "/api/driver/company-membership", { companyId });
-    },
-    onSuccess: () => {
-      toast({ title: "Saved", description: "Fleet company settings updated." });
-      refetchMembership();
-      queryClient.invalidateQueries({ queryKey: ["/api/driver/company-membership"] });
-    },
-    onError: (e: any) => {
-      toast({ title: "Error", description: e?.message || "Could not save", variant: "destructive" });
-    },
-  });
-
   // Helper function to find document by type
   const findDocument = (docType: string, title?: string) => {
     return normalizedDocuments.find((d) => {
@@ -180,16 +201,12 @@ export default function DriverProfile() {
   // Compliance form
   const complianceForm = useForm<any>({
     defaultValues: {
-      // Basic Profile
-      driver_type: profile?.driver_type || "",
-      mobile_number: profile?.mobile_number || "",
       // SA ID / Passport
       id_type: profile?.id_type || "",
       id_number: profile?.id_number || "",
       id_issue_country: profile?.id_issue_country || "",
       // Proof of Address
-      address_line_1: profile?.address_line_1 || "",
-      address_line_2: profile?.address_line_2 || "",
+      address_line_1: mergeStreetAddress(profile?.address_line_1, profile?.address_line_2),
       city: profile?.city || "",
       province: profile?.province || "",
       postal_code: profile?.postal_code || "",
@@ -222,13 +239,10 @@ export default function DriverProfile() {
       branch_code: profile?.branch_code || "",
     },
     values: profile ? {
-      driver_type: profile.driver_type || "",
-      mobile_number: profile.mobile_number || "",
       id_type: profile.id_type || "",
       id_number: profile.id_number || "",
       id_issue_country: profile.id_issue_country || "",
-      address_line_1: profile.address_line_1 || "",
-      address_line_2: profile.address_line_2 || "",
+      address_line_1: mergeStreetAddress(profile.address_line_1, profile.address_line_2),
       city: profile.city || "",
       province: profile.province || "",
       postal_code: profile.postal_code || "",
@@ -310,11 +324,14 @@ export default function DriverProfile() {
     resolver: zodResolver(profileSchema),
     defaultValues: {
       fullName: "",
+      phone: "",
     },
     values: normalizedProfile ? {
       fullName: normalizedProfile.full_name || "",
+      phone: normalizedProfile.phone || normalizedProfile.mobile_number || "",
     } : {
       fullName: "",
+      phone: "",
     },
   });
 
@@ -328,7 +345,7 @@ export default function DriverProfile() {
   });
 
   const updateProfileMutation = useMutation({
-    mutationFn: async (data: { fullName: string }) => {
+    mutationFn: async (data: { fullName: string; phone?: string }) => {
       return apiRequest("PUT", "/api/driver/profile", data);
     },
     onSuccess: () => {
@@ -684,7 +701,10 @@ export default function DriverProfile() {
   }
 
   const onProfileSubmit = (data: ProfileFormData) => {
-    updateProfileMutation.mutate({ fullName: data.fullName });
+    updateProfileMutation.mutate({
+      fullName: data.fullName,
+      phone: data.phone?.trim() ?? "",
+    });
   };
 
   const onPasswordSubmit = (data: PasswordFormData) => {
@@ -740,76 +760,76 @@ export default function DriverProfile() {
           <p className="text-muted-foreground">Manage your profile, documents, and compliance</p>
         </div>
 
-        {/* Regulation Information - Collapsible */}
+        {/* Regulation Information - Collapsible (light: pale amber panel; dark: deep amber so theme text contrasts) */}
         <Collapsible className="mb-6">
-          <Card className="border-amber-200 bg-amber-50/50">
+          <Card className="border-amber-200 bg-amber-50/50 dark:border-amber-800/80 dark:bg-amber-950/85 dark:text-amber-50">
             <CollapsibleTrigger className="w-full">
-              <CardHeader className="hover:bg-amber-100/50 transition-colors">
-                <CardTitle className="flex items-center justify-between gap-2">
+              <CardHeader className="hover:bg-amber-100/50 dark:hover:bg-amber-900/40 transition-colors">
+                <CardTitle className="flex items-center justify-between gap-2 text-amber-950 dark:text-amber-50">
                   <div className="flex items-center gap-2">
-                    <AlertTriangle className="h-5 w-5 text-amber-600" />
+                    <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
                     <span>Diesel Transport Regulations (&gt;1000 Litres)</span>
                   </div>
-                  <ChevronRight className="h-5 w-5 text-amber-600 transition-transform duration-200 data-[state=open]:rotate-90" />
+                  <ChevronRight className="h-5 w-5 shrink-0 text-amber-700 dark:text-amber-300 transition-transform duration-200 data-[state=open]:rotate-90" />
                 </CardTitle>
               </CardHeader>
             </CollapsibleTrigger>
             <CollapsibleContent>
-              <CardContent>
-                <Alert className="mb-4">
+              <CardContent className="text-amber-950 dark:text-amber-100">
+                <Alert className="mb-4 border-amber-200/80 bg-amber-100/60 dark:border-amber-800 dark:bg-amber-900/50 [&>svg]:text-amber-700 dark:[&>svg]:text-amber-400">
                   <AlertTriangle className="h-4 w-4" />
-                  <AlertTitle>Compliance Required</AlertTitle>
-                  <AlertDescription>
+                  <AlertTitle className="text-amber-950 dark:text-amber-50">Compliance Required</AlertTitle>
+                  <AlertDescription className="text-amber-900 dark:text-amber-100/90">
                     In South Africa, trucks carrying more than 1000 litres of diesel are classified as transporting dangerous goods and must comply with Chapter 8 of the National Road Traffic Act, Regulation 276, and SANS 10231.
                   </AlertDescription>
                 </Alert>
-                
+
                 <div className="space-y-4 text-sm">
                   <div>
-                    <h4 className="font-semibold mb-2">1. Dangerous Goods Classification</h4>
-                    <p className="text-muted-foreground">
+                    <h4 className="font-semibold mb-2 text-amber-950 dark:text-amber-50">1. Dangerous Goods Classification</h4>
+                    <p className="text-amber-900/90 dark:text-amber-200/95">
                       Diesel above 1000 litres is treated as a hazardous material. Trucks must be registered as dangerous goods carriers under SANS 10231.
                     </p>
                   </div>
-                  
+
                   <div>
-                    <h4 className="font-semibold mb-2">2. Vehicle Requirements</h4>
-                    <ul className="list-disc list-inside text-muted-foreground space-y-1">
+                    <h4 className="font-semibold mb-2 text-amber-950 dark:text-amber-50">2. Vehicle Requirements</h4>
+                    <ul className="list-disc list-inside space-y-1 text-amber-900/90 dark:text-amber-200/95">
                       <li>Dangerous Goods Vehicle License</li>
                       <li>Hazard warning placards (UN 1202 for diesel)</li>
                       <li>Minimum of two approved fire extinguishers</li>
                       <li>Tanks must comply with SANS 1518</li>
                     </ul>
                   </div>
-                  
+
                   <div>
-                    <h4 className="font-semibold mb-2">3. Driver Requirements</h4>
-                    <ul className="list-disc list-inside text-muted-foreground space-y-1">
+                    <h4 className="font-semibold mb-2 text-amber-950 dark:text-amber-50">3. Driver Requirements</h4>
+                    <ul className="list-disc list-inside space-y-1 text-amber-900/90 dark:text-amber-200/95">
                       <li>Professional Driving Permit (PrDP-D) for Dangerous Goods</li>
                       <li>Accredited Dangerous Goods Training</li>
                       <li>Medical Fitness Certificate</li>
                     </ul>
                   </div>
-                  
+
                   <div>
-                    <h4 className="font-semibold mb-2">4. Documentation</h4>
-                    <ul className="list-disc list-inside text-muted-foreground space-y-1">
+                    <h4 className="font-semibold mb-2 text-amber-950 dark:text-amber-50">4. Documentation</h4>
+                    <ul className="list-disc list-inside space-y-1 text-amber-900/90 dark:text-amber-200/95">
                       <li>Transport Emergency Card (TREMCARD)</li>
                       <li>Consignment Note</li>
                       <li>Operational Agreement (SANS 10231)</li>
                     </ul>
                   </div>
-                  
+
                   <div>
-                    <h4 className="font-semibold mb-2">5. Insurance & Liability</h4>
-                    <p className="text-muted-foreground">
+                    <h4 className="font-semibold mb-2 text-amber-950 dark:text-amber-50">5. Insurance & Liability</h4>
+                    <p className="text-amber-900/90 dark:text-amber-200/95">
                       Operators must carry civil liability insurance covering accidents, pollution, and environmental rehabilitation.
                     </p>
                   </div>
-                  
-                  <div className="pt-2 border-t">
-                    <p className="text-xs text-muted-foreground">
-                      <strong>References:</strong> National Road Traffic Act – Chapter 8, Regulation 276, SANS 10231, SANS 1518
+
+                  <div className="pt-2 border-t border-amber-200/80 dark:border-amber-800">
+                    <p className="text-xs text-amber-800 dark:text-amber-300/90">
+                      <strong className="text-amber-950 dark:text-amber-100">References:</strong> National Road Traffic Act – Chapter 8, Regulation 276, SANS 10231, SANS 1518
                     </p>
                   </div>
                 </div>
@@ -817,101 +837,6 @@ export default function DriverProfile() {
             </CollapsibleContent>
           </Card>
         </Collapsible>
-
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Building className="h-5 w-5" />
-              Fleet company
-            </CardTitle>
-            <CardDescription>
-              Work independently on the platform or link to one fleet company. You can change this anytime.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {membershipLoading ? (
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" /> Loading…
-              </div>
-            ) : (
-              <>
-                {membership?.isDisabledByCompany && (
-                  <Alert variant="destructive">
-                    <AlertTriangle className="h-4 w-4" />
-                    <AlertTitle>Disabled by your fleet company</AlertTitle>
-                    <AlertDescription>
-                      {membership.disabledReason || "Your company has disabled you for fleet operations. You will not receive dispatch offers until they re-enable you or you switch to independent."}
-                    </AlertDescription>
-                  </Alert>
-                )}
-                <RadioGroup
-                  value={workMode}
-                  onValueChange={(v) => setWorkMode(v as "independent" | "company")}
-                  className="space-y-3"
-                >
-                  <div className="flex items-start space-x-3 space-y-0 rounded-md border p-4">
-                    <RadioGroupItem value="independent" id="fleet-independent" className="mt-1" />
-                    <div className="flex-1">
-                      <Label htmlFor="fleet-independent" className="font-medium cursor-pointer">
-                        Work independently
-                      </Label>
-                      <p className="text-sm text-muted-foreground">Take platform jobs without a fleet company link.</p>
-                    </div>
-                  </div>
-                  <div className="flex items-start space-x-3 space-y-0 rounded-md border p-4">
-                    <RadioGroupItem value="company" id="fleet-company" className="mt-1" />
-                    <div className="flex-1 space-y-3">
-                      <Label htmlFor="fleet-company" className="font-medium cursor-pointer">
-                        Work under a fleet company
-                      </Label>
-                      <p className="text-sm text-muted-foreground">Link your driver account to one company. They can view your deliveries and disable fleet access (without closing your account).</p>
-                      {workMode === "company" && (
-                        <div className="space-y-2 max-w-md">
-                          <Label htmlFor="company-search">Search companies</Label>
-                          <Input
-                            id="company-search"
-                            placeholder="Type to filter…"
-                            value={companySearch}
-                            onChange={(e) => setCompanySearch(e.target.value)}
-                          />
-                          <Label htmlFor="company-select">Company</Label>
-                          <Select value={selectedCompanyId} onValueChange={setSelectedCompanyId}>
-                            <SelectTrigger id="company-select">
-                              <SelectValue placeholder="Select a company" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {companiesList.map((c) => (
-                                <SelectItem key={c.id} value={c.id}>
-                                  {c.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          {companiesList.length === 0 && (
-                            <p className="text-xs text-muted-foreground">No companies match your search.</p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </RadioGroup>
-                <Button
-                  type="button"
-                  disabled={saveMembershipMutation.isPending}
-                  onClick={() => saveMembershipMutation.mutate()}
-                >
-                  {saveMembershipMutation.isPending ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Saving…
-                    </>
-                  ) : (
-                    "Save fleet settings"
-                  )}
-                </Button>
-              </>
-            )}
-          </CardContent>
-        </Card>
 
         <div className="grid gap-6">
           {/* Profile Picture & Basic Info */}
@@ -1006,6 +931,20 @@ export default function DriverProfile() {
                       Email cannot be changed
                     </p>
                   </div>
+
+                  <FormField
+                    control={profileForm.control}
+                    name="phone"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Mobile Number</FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder="Enter your mobile number" inputMode="tel" autoComplete="tel" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
                   <Button type="submit" disabled={updateProfileMutation.isPending}>
                     {updateProfileMutation.isPending ? "Saving..." : "Save Changes"}
@@ -1174,7 +1113,9 @@ export default function DriverProfile() {
             <CardContent>
               <Form {...complianceForm}>
                 <form 
-                  onSubmit={complianceForm.handleSubmit((data) => updateComplianceMutation.mutate(data))} 
+                  onSubmit={complianceForm.handleSubmit((data) =>
+                    updateComplianceMutation.mutate({ ...data, address_line_2: "" }),
+                  )}
                   className="space-y-8"
                 >
                   {/* ========== SECTION 1: DRIVER (PERSON) – IDENTITY & LEGAL ========== */}
@@ -1186,64 +1127,9 @@ export default function DriverProfile() {
                       </h2>
                     </div>
 
-                    {/* A. Basic Profile */}
+                    {/* A. SA ID / Passport */}
                     <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
-                      <h3 className="text-lg font-semibold text-primary">A. Basic Profile</h3>
-                      
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <FormField
-                          control={complianceForm.control}
-                          name="driver_type"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Driver Type *</FormLabel>
-                              <Select onValueChange={field.onChange} value={field.value}>
-                                <FormControl>
-                                  <SelectTrigger>
-                                    <SelectValue placeholder="Select driver type" />
-                                  </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                  <SelectItem value="individual">Individual</SelectItem>
-                                  <SelectItem value="company_driver">Company Driver</SelectItem>
-                                </SelectContent>
-                              </Select>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        <FormField
-                          control={complianceForm.control}
-                          name="mobile_number"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Mobile Number *</FormLabel>
-                              <FormControl>
-                                <Input {...field} placeholder="Enter mobile number" />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-sm font-medium">Email</label>
-                        <Input
-                          value={profile?.email || ""}
-                          disabled
-                          className="mt-1 bg-muted"
-                        />
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Email cannot be changed
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* B. SA ID / Passport */}
-                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
-                      <h3 className="text-lg font-semibold text-primary">B. SA ID / Passport</h3>
+                      <h3 className="text-lg font-semibold text-primary">A. SA ID / Passport</h3>
                       
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <FormField
@@ -1252,17 +1138,23 @@ export default function DriverProfile() {
                           render={({ field }) => (
                             <FormItem>
                               <FormLabel>ID Type *</FormLabel>
-                              <Select onValueChange={field.onChange} value={field.value}>
-                                <FormControl>
-                                  <SelectTrigger>
-                                    <SelectValue placeholder="Select ID type" />
-                                  </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                  <SelectItem value="SA_ID">South African ID</SelectItem>
-                                  <SelectItem value="Passport">Passport</SelectItem>
-                                </SelectContent>
-                              </Select>
+                              <FormControl>
+                                <select
+                                  className={cn(
+                                    "flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background",
+                                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                                    "disabled:cursor-not-allowed disabled:opacity-50",
+                                  )}
+                                  value={field.value ?? ""}
+                                  onChange={(e) => field.onChange(e.target.value)}
+                                  onBlur={field.onBlur}
+                                  ref={field.ref}
+                                >
+                                  <option value="">Select ID type</option>
+                                  <option value="SA_ID">SA_ID</option>
+                                  <option value="Passport">Passport</option>
+                                </select>
+                              </FormControl>
                               <FormMessage />
                             </FormItem>
                           )}
@@ -1369,30 +1261,16 @@ export default function DriverProfile() {
 
                     {/* C. Proof of Address */}
                     <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
-                      <h3 className="text-lg font-semibold text-primary">C. Proof of Address</h3>
+                      <h3 className="text-lg font-semibold text-primary">B. Proof of Address</h3>
                       
                       <FormField
                         control={complianceForm.control}
                         name="address_line_1"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Address Line 1 *</FormLabel>
+                            <FormLabel>Street address *</FormLabel>
                             <FormControl>
-                              <Input {...field} placeholder="Street address" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={complianceForm.control}
-                        name="address_line_2"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Address Line 2 (Optional)</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="Apartment, suite, etc." />
+                              <Input {...field} placeholder="Street, unit, building (one line)" />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -1462,7 +1340,7 @@ export default function DriverProfile() {
 
                     {/* D. Driver's Licence */}
                     <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
-                      <h3 className="text-lg font-semibold text-primary">D. Driver's Licence</h3>
+                      <h3 className="text-lg font-semibold text-primary">C. Driver's Licence</h3>
                       
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <FormField
@@ -1495,32 +1373,16 @@ export default function DriverProfile() {
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <FormField
+                        <ComplianceDateField
                           control={complianceForm.control}
                           name="license_issue_date"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>License Issue Date *</FormLabel>
-                              <FormControl>
-                                <Input type="date" {...field} />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
+                          label="License Issue Date *"
                         />
 
-                        <FormField
+                        <ComplianceDateField
                           control={complianceForm.control}
                           name="license_expiry_date"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>License Expiry Date *</FormLabel>
-                              <FormControl>
-                                <Input type="date" {...field} />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
+                          label="License Expiry Date *"
                         />
                       </div>
 
@@ -1587,7 +1449,7 @@ export default function DriverProfile() {
 
                     {/* E. Professional Driving Permit (PrDP) */}
                     <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
-                      <h3 className="text-lg font-semibold text-primary">E. Professional Driving Permit (PrDP – Dangerous Goods)</h3>
+                      <h3 className="text-lg font-semibold text-primary">D. Professional Driving Permit (PrDP – Dangerous Goods)</h3>
                       <p className="text-sm text-muted-foreground">For fuel transport, this is critical.</p>
                       
                       <FormField
@@ -1644,32 +1506,16 @@ export default function DriverProfile() {
                           </div>
 
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <FormField
+                            <ComplianceDateField
                               control={complianceForm.control}
                               name="prdp_issue_date"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel>PrDP Issue Date *</FormLabel>
-                                  <FormControl>
-                                    <Input type="date" {...field} />
-                                  </FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
+                              label="PrDP Issue Date *"
                             />
 
-                            <FormField
+                            <ComplianceDateField
                               control={complianceForm.control}
                               name="prdp_expiry_date"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel>PrDP Expiry Date *</FormLabel>
-                                  <FormControl>
-                                    <Input type="date" {...field} />
-                                  </FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
+                              label="PrDP Expiry Date *"
                             />
                           </div>
 
@@ -1738,7 +1584,7 @@ export default function DriverProfile() {
 
                     {/* F. Dangerous Goods / Hazchem Training */}
                     <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
-                      <h3 className="text-lg font-semibold text-primary">F. Dangerous Goods / Hazchem Training</h3>
+                      <h3 className="text-lg font-semibold text-primary">E. Dangerous Goods / Hazchem Training</h3>
                       
                       <FormField
                         control={complianceForm.control}
@@ -1794,32 +1640,16 @@ export default function DriverProfile() {
                           </div>
 
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <FormField
+                            <ComplianceDateField
                               control={complianceForm.control}
                               name="dg_training_issue_date"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel>Training Issue Date *</FormLabel>
-                                  <FormControl>
-                                    <Input type="date" {...field} />
-                                  </FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
+                              label="Training Issue Date *"
                             />
 
-                            <FormField
+                            <ComplianceDateField
                               control={complianceForm.control}
                               name="dg_training_expiry_date"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel>Training Expiry Date (if applicable)</FormLabel>
-                                  <FormControl>
-                                    <Input type="date" {...field} />
-                                  </FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
+                              label="Training Expiry Date (if applicable)"
                             />
                           </div>
 
@@ -1888,7 +1718,7 @@ export default function DriverProfile() {
 
                     {/* G. Criminal / Clearance */}
                     <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
-                      <h3 className="text-lg font-semibold text-primary">G. Criminal / Clearance</h3>
+                      <h3 className="text-lg font-semibold text-primary">F. Criminal / Clearance</h3>
                       
                       <FormField
                         control={complianceForm.control}
@@ -1925,18 +1755,10 @@ export default function DriverProfile() {
                               )}
                             />
 
-                            <FormField
+                            <ComplianceDateField
                               control={complianceForm.control}
                               name="criminal_check_date"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel>Criminal Check Date *</FormLabel>
-                                  <FormControl>
-                                    <Input type="date" {...field} />
-                                  </FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
+                              label="Criminal Check Date *"
                             />
                           </div>
 

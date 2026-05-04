@@ -16,6 +16,8 @@ import {
   RadioButton,
 } from "react-native-paper";
 import { apiClient } from "@/services/api/client";
+import { putFileToUploadUrl } from "@/lib/files";
+import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import Signature from "react-native-signature-canvas";
@@ -205,24 +207,18 @@ export function DriverDepotScreen() {
       if (!uploadMeta?.uploadURL) throw new Error("Could not get upload URL.");
 
       const blob = await (await fetch(file.uri)).blob();
-      const uploaded = await fetch(uploadMeta.uploadURL, {
-        method: "PUT",
-        headers: { "Content-Type": file.mimeType || "application/octet-stream" },
-        body: blob,
-      });
+      const uploaded = await putFileToUploadUrl(
+        uploadMeta.uploadURL,
+        blob,
+        file.mimeType || "application/octet-stream",
+      );
       if (!uploaded.ok) throw new Error("Upload failed.");
 
-      // Prefer explicit objectPath; otherwise derive from upload URL.
-      let path = uploadMeta.objectPath || "";
-      if (!path) {
-        const raw = uploadMeta.uploadURL.split("?")[0];
-        if (raw.includes("/api/storage/upload/")) {
-          const match = raw.match(/\/api\/storage\/upload\/([^/]+)\/(.+)/);
-          if (match) path = `${match[1]}/${match[2]}`;
-        } else {
-          path = raw;
-        }
-      }
+      const aclRes = await apiClient.put("/api/documents", { documentURL: uploadMeta.uploadURL });
+      const path =
+        (aclRes.data as { objectPath?: string }).objectPath ||
+        uploadMeta.objectPath ||
+        "";
       if (!path) throw new Error("Could not resolve uploaded file path.");
       setPaymentProofUrl(path);
     } catch (error) {
@@ -356,7 +352,7 @@ export function DriverDepotScreen() {
 
   return (
     <View style={styles.container}>
-      <Card style={styles.headerCard}>
+      <Card mode="contained" style={styles.headerCard}>
         <Card.Content>
           <Text variant="headlineSmall">Depot</Text>
           <Text style={styles.subtitle}>My depot orders and available depots.</Text>
@@ -384,7 +380,7 @@ export function DriverDepotScreen() {
             contentContainerStyle={styles.list}
             ListEmptyComponent={<Text style={styles.empty}>No depot orders yet.</Text>}
             renderItem={({ item }) => (
-              <Card style={styles.itemCard}>
+              <Card mode="outlined" style={styles.itemCard}>
                 <Card.Content>
                   <View style={styles.rowBetween}>
                     <Text variant="titleMedium">{item.depots?.name || "Depot"}</Text>
@@ -451,7 +447,7 @@ export function DriverDepotScreen() {
           contentContainerStyle={styles.list}
           ListEmptyComponent={<Text style={styles.empty}>No depots available.</Text>}
           renderItem={({ item }) => (
-            <Card style={styles.itemCard}>
+            <Card mode="outlined" style={styles.itemCard}>
               <Card.Content>
                 <Text variant="titleMedium">{item.name || "Depot"}</Text>
                 <Text style={styles.meta}>
@@ -489,7 +485,7 @@ export function DriverDepotScreen() {
               <Button onPress={() => setSelectedDepot(null)}>Close</Button>
             </View>
             <ScrollView contentContainerStyle={styles.modalScroll}>
-              <Card style={styles.modalCard}>
+              <Card mode="outlined" style={styles.modalCard}>
                 <Card.Content>
                   <Text variant="titleMedium">{selectedDepot?.name || "Depot"}</Text>
                   <Text style={styles.meta}>
@@ -771,16 +767,18 @@ export function DriverDepotScreen() {
   );
 }
 
-const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
+const getStyles = (theme: typeof lightTheme) => {
+  const p = getPortalUiStyleDefs(theme);
+  return StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.background, padding: 14 },
-  headerCard: { marginBottom: 10, backgroundColor: theme.colors.surface },
+  headerCard: { ...p.hero, marginBottom: 10 },
   subtitle: { marginTop: 6, color: theme.colors.onSurfaceVariant },
   segment: { marginTop: 12 },
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
+  center: p.center,
   list: { gap: 10, paddingBottom: 20 },
-  empty: { textAlign: "center", marginTop: 20, color: theme.colors.onSurfaceVariant },
-  itemCard: { backgroundColor: theme.colors.surface },
-  rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
+  empty: { ...p.empty, marginTop: 20 },
+  itemCard: p.listCard,
+  rowBetween: p.rowBetween,
   meta: { marginTop: 4, color: theme.colors.onSurfaceVariant },
   amount: { marginTop: 6, fontWeight: "700", color: theme.colors.primary },
   actionRow: { flexDirection: "row", gap: 8, marginTop: 10 },
@@ -794,12 +792,14 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    borderBottomWidth: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.colors.outline,
     backgroundColor: theme.colors.surface,
+    borderLeftWidth: 3,
+    borderLeftColor: theme.colors.primary,
   },
   modalScroll: { padding: 14, paddingBottom: 100 },
-  modalCard: { borderRadius: 12, backgroundColor: theme.colors.surface },
+  modalCard: p.sectionCard,
   modalFooter: {
     position: "absolute",
     left: 0,
@@ -831,7 +831,7 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
     justifyContent: "flex-start",
     borderColor: theme.colors.outline,
   },
-  input: { marginTop: 8, backgroundColor: theme.colors.surface },
+  input: p.input,
   stockText: { marginTop: 8, color: theme.colors.primary, fontWeight: "700" },
   signatureCanvas: {
     height: 180,
@@ -882,5 +882,6 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
   paymentOptions: { marginTop: 12, gap: 4 },
   radioRow: { flexDirection: "row", alignItems: "center" },
   bankProofWrap: { marginTop: 10, gap: 6 },
-  errorText: { marginTop: 8, color: "#DC2626" },
-});
+  errorText: p.errorText,
+  });
+};

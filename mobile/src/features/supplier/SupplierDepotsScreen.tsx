@@ -3,6 +3,7 @@ import { FlatList, Modal, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActivityIndicator, Button, Card, Switch, Text, TextInput } from "react-native-paper";
 import { apiClient } from "@/services/api/client";
+import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 
@@ -75,7 +76,7 @@ export function SupplierDepotsScreen() {
 
   return (
     <View style={styles.container}>
-      <Card style={styles.header}>
+      <Card mode="contained" style={styles.header}>
         <Card.Content>
           <Text variant="headlineSmall">Depots</Text>
           <Text style={styles.subtitle}>Fuel supply locations (aligned with web depot management).</Text>
@@ -115,7 +116,12 @@ export function SupplierDepotsScreen() {
                   {[item.address_city, item.address_province].filter(Boolean).join(", ") || "—"}
                 </Text>
                 <Text style={styles.meta}>{item.is_active === false ? "Inactive" : "Active"}</Text>
-                <Button textColor={theme.colors.error} onPress={() => deleteMutation.mutate(item.id)}>
+                <Button
+                  mode="outlined"
+                  textColor={theme.colors.error}
+                  style={styles.deleteBtn}
+                  onPress={() => deleteMutation.mutate(item.id)}
+                >
                   Delete
                 </Button>
               </Card.Content>
@@ -159,28 +165,40 @@ export function SupplierDepotsScreen() {
   );
 }
 
-const getStyles = (theme: typeof lightTheme) =>
-  StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.colors.background },
-    header: { margin: 12, backgroundColor: theme.colors.surface },
+const getStyles = (theme: typeof lightTheme) => {
+  const p = getPortalUiStyleDefs(theme);
+  return StyleSheet.create({
+    container: p.screenContainer,
+    header: { ...p.hero, margin: 12 },
     subtitle: { marginTop: 4, color: theme.colors.onSurfaceVariant, marginBottom: 8 },
-    warn: { color: "#B45309", marginTop: 8 },
-    center: { flex: 1, alignItems: "center", justifyContent: "center" },
+    warn: { color: theme.colors.error, marginTop: 8 },
+    center: p.center,
     list: { paddingHorizontal: 12, paddingBottom: 24, gap: 10 },
-    card: { backgroundColor: theme.colors.surface },
+    card: p.listCard,
     meta: { marginTop: 6, color: theme.colors.onSurfaceVariant },
-    muted: { textAlign: "center", color: theme.colors.onSurfaceVariant, marginTop: 24 },
+    deleteBtn: {
+      marginTop: 12,
+      alignSelf: "flex-start",
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: theme.colors.error,
+    },
+    muted: { ...p.empty },
     modal: { flex: 1, backgroundColor: theme.colors.background },
     modalHeader: {
       flexDirection: "row",
       justifyContent: "space-between",
+      alignItems: "center",
       padding: 14,
-      borderBottomWidth: 1,
+      borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: theme.colors.outline,
       backgroundColor: theme.colors.surface,
+      borderLeftWidth: 3,
+      borderLeftColor: theme.colors.primary,
     },
     modalBody: { padding: 16, gap: 8 },
-    input: { backgroundColor: theme.colors.surface },
+    input: p.input,
     switchRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-    error: { color: theme.colors.error },
+    error: p.errorText,
   });
+};

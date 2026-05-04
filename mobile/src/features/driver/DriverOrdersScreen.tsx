@@ -13,6 +13,7 @@ import {
   TextInput,
 } from "react-native-paper";
 import { apiClient } from "@/services/api/client";
+import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { useUiOverlayStore } from "@/store/ui-overlay-store";
@@ -139,12 +140,12 @@ export function DriverOrdersScreen() {
 
   return (
     <View style={styles.container}>
-      <Card style={styles.headerCard}>
+      <Card mode="contained" style={styles.headerCard}>
         <Card.Content>
           <View style={styles.brandRow}>
-            <View style={styles.brandBadge}>
-              <MaterialCommunityIcons name="gas-station" size={16} color="#5B21B6" />
-              <Text style={styles.brandText}>EasyFuel</Text>
+            <View style={styles.brandPill}>
+              <MaterialCommunityIcons name="gas-station" size={16} color={theme.colors.primary} />
+              <Text style={styles.brandPillText}>EasyFuel</Text>
             </View>
           </View>
           <Text variant="headlineSmall">Driver Orders</Text>
@@ -176,7 +177,7 @@ export function DriverOrdersScreen() {
           contentContainerStyle={styles.listContent}
           ListEmptyComponent={<Text style={styles.emptyText}>No orders found.</Text>}
           renderItem={({ item }) => (
-            <Card style={styles.orderCard}>
+            <Card mode="outlined" style={styles.orderCard}>
               <Card.Content>
                 <View style={styles.rowBetween}>
                   <Text variant="titleMedium">
@@ -340,38 +341,21 @@ export function DriverOrdersScreen() {
   );
 }
 
-const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
+const getStyles = (theme: typeof lightTheme) => {
+  const p = getPortalUiStyleDefs(theme);
+  return StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
     padding: 14,
   },
   headerCard: {
+    ...p.hero,
     marginBottom: 10,
-    backgroundColor: theme.colors.surface,
-    borderRadius: 20,
   },
-  brandRow: {
-    marginBottom: 8,
-    flexDirection: "row",
-    justifyContent: "flex-end",
-  },
-  brandBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    borderRadius: 999,
-    backgroundColor: "#EDE9FE",
-    borderWidth: 1,
-    borderColor: "#DDD6FE",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  brandText: {
-    color: "#5B21B6",
-    fontWeight: "700",
-    fontSize: 12,
-  },
+  brandRow: p.brandRow,
+  brandPill: p.brandPill,
+  brandPillText: p.brandPillText,
   headerSubtitle: {
     marginTop: 6,
     color: theme.colors.onSurfaceVariant,
@@ -379,30 +363,17 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
   segment: {
     marginTop: 12,
   },
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  center: p.center,
   listContent: {
     gap: 10,
     paddingBottom: 28,
   },
   emptyText: {
-    textAlign: "center",
-    color: theme.colors.onSurfaceVariant,
+    ...p.empty,
     marginTop: 20,
   },
-  orderCard: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: 18,
-  },
-  rowBetween: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 8,
-  },
+  orderCard: p.listCard,
+  rowBetween: p.rowBetween,
   orderMeta: {
     marginTop: 6,
     color: theme.colors.onSurfaceVariant,
@@ -458,27 +429,29 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    borderBottomWidth: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.colors.outline,
     backgroundColor: theme.colors.surface,
+    borderLeftWidth: 3,
+    borderLeftColor: theme.colors.primary,
   },
   modalContent: {
     padding: 14,
     flex: 1,
   },
   detailCard: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: 12,
+    ...p.sectionCard,
     padding: 12,
     flex: 1,
   },
   chatSection: {
     marginTop: 10,
     flex: 1,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.outline,
-    borderRadius: 12,
-    padding: 10,
+    borderRadius: 14,
+    padding: 12,
     backgroundColor: theme.colors.background,
   },
-});
+  });
+};

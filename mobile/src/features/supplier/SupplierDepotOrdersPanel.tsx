@@ -1,10 +1,12 @@
 import { useMemo, useState } from "react";
-import { FlatList, StyleSheet, View } from "react-native";
+import { Alert, FlatList, Modal, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActivityIndicator, Button, Card, Chip, Text, TextInput } from "react-native-paper";
 import { apiClient } from "@/services/api/client";
+import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
+import { downloadAndShareSupplierInvoicePdf } from "@/features/supplier/supplierInvoicePdf";
 
 type DepotOrder = {
   id: string;
@@ -26,6 +28,8 @@ export function SupplierDepotOrdersPanel() {
   const styles = getStyles(theme);
   const queryClient = useQueryClient();
   const [rejectReason, setRejectReason] = useState<Record<string, string>>({});
+  const [receiptOrder, setReceiptOrder] = useState<DepotOrder | null>(null);
+  const [receiptPdfLoading, setReceiptPdfLoading] = useState(false);
 
   const ordersQuery = useQuery({
     queryKey: ["/api/supplier/driver-depot-orders"],
@@ -78,6 +82,7 @@ export function SupplierDepotOrdersPanel() {
   }
 
   return (
+    <>
     <FlatList
       style={{ flex: 1 }}
       data={orders}
@@ -85,7 +90,7 @@ export function SupplierDepotOrdersPanel() {
       contentContainerStyle={styles.list}
       ListEmptyComponent={<Text style={styles.muted}>No driver depot orders yet.</Text>}
       renderItem={({ item }) => (
-        <Card style={styles.card}>
+        <Card mode="outlined" style={styles.card}>
           <Card.Content>
             <View style={styles.rowBetween}>
               <Text variant="titleSmall">#{item.id.slice(0, 8)}</Text>
@@ -139,21 +144,110 @@ export function SupplierDepotOrdersPanel() {
                 </Button>
               </View>
             ) : null}
+            {item.status === "completed" ? (
+              <View style={styles.actions}>
+                <Button mode="outlined" onPress={() => setReceiptOrder(item)}>
+                  Receipt
+                </Button>
+                <Button
+                  mode="contained"
+                  buttonColor={theme.colors.primary}
+                  textColor={theme.colors.onPrimary}
+                  onPress={async () => {
+                    try {
+                      await downloadAndShareSupplierInvoicePdf(item.id);
+                    } catch (e) {
+                      const msg =
+                        (e as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+                        (e as Error).message ||
+                        "Could not download receipt.";
+                      Alert.alert("PDF", msg);
+                    }
+                  }}
+                >
+                  Download PDF
+                </Button>
+              </View>
+            ) : null}
           </Card.Content>
         </Card>
       )}
+      ListFooterComponent={<View style={{ height: 8 }} />}
     />
+      <Modal visible={!!receiptOrder} animationType="slide" onRequestClose={() => setReceiptOrder(null)}>
+        <View style={styles.receiptModal}>
+          <View style={styles.receiptHeader}>
+            <Text variant="titleLarge">Receipt</Text>
+            <Button onPress={() => setReceiptOrder(null)}>Close</Button>
+          </View>
+          {receiptOrder ? (
+            <View style={styles.receiptBody}>
+              <Text style={styles.meta}>Order #{receiptOrder.id.slice(0, 8).toUpperCase()}</Text>
+              <Text style={styles.meta}>{receiptOrder.depots?.name ?? "Depot"} · {receiptOrder.fuel_types?.label ?? "Fuel"}</Text>
+              <Text style={styles.meta}>
+                Driver: {receiptOrder.drivers?.profile?.full_name ?? "—"} · {receiptOrder.litres ?? 0} L
+              </Text>
+              <Text style={styles.metaStrong}>
+                Total R {((receiptOrder.total_price_cents ?? 0) / 100).toFixed(2)}
+              </Text>
+              <Text style={styles.meta}>
+                {receiptOrder.created_at ? `Created ${new Date(receiptOrder.created_at).toLocaleString("en-ZA")}` : ""}
+              </Text>
+              <Button
+                mode="contained"
+                buttonColor={theme.colors.primary}
+                textColor={theme.colors.onPrimary}
+                style={styles.receiptDownload}
+                loading={receiptPdfLoading}
+                onPress={async () => {
+                  if (!receiptOrder) return;
+                  setReceiptPdfLoading(true);
+                  try {
+                    await downloadAndShareSupplierInvoicePdf(receiptOrder.id);
+                  } catch (e) {
+                    const msg =
+                      (e as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+                      (e as Error).message ||
+                      "Could not download receipt.";
+                    Alert.alert("PDF", msg);
+                  } finally {
+                    setReceiptPdfLoading(false);
+                  }
+                }}
+              >
+                Download PDF
+              </Button>
+            </View>
+          ) : null}
+        </View>
+      </Modal>
+    </>
   );
 }
 
-const getStyles = (theme: typeof lightTheme) =>
-  StyleSheet.create({
+const getStyles = (theme: typeof lightTheme) => {
+  const p = getPortalUiStyleDefs(theme);
+  return StyleSheet.create({
     center: { padding: 24, alignItems: "center" },
-    list: { gap: 10, paddingBottom: 24 },
-    card: { backgroundColor: theme.colors.surface },
-    rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+    list: { gap: 10, paddingBottom: 24, paddingHorizontal: 4 },
+    card: p.listCard,
+    rowBetween: p.rowBetween,
     meta: { marginTop: 6, color: theme.colors.onSurfaceVariant },
     actions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
-    input: { marginTop: 8, backgroundColor: theme.colors.surface },
-    muted: { textAlign: "center", color: theme.colors.onSurfaceVariant },
+    input: p.input,
+    muted: { ...p.empty, paddingVertical: 8 },
+    receiptModal: { flex: 1, backgroundColor: theme.colors.background },
+    receiptHeader: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      padding: 14,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.colors.outline,
+      backgroundColor: theme.colors.surface,
+    },
+    receiptBody: { padding: 16, gap: 4 },
+    metaStrong: { marginTop: 8, fontWeight: "700", color: theme.colors.onSurface, fontSize: 18 },
+    receiptDownload: { marginTop: 20 },
   });
+};

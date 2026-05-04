@@ -300,18 +300,18 @@ export default function DriverDashboard() {
     return anyIn30.some((d) => d <= in30 && d >= now);
   }).length;
 
-  // Critical alerts (all tiers)
-  const criticalAlerts: { label: string; href?: string }[] = [];
+  // Critical alerts (all tiers). Use `tab` for same-page sections — plain `/driver` links do not change the active tab in wouter.
+  const criticalAlerts: { label: string; href?: string; tab?: DriverTab }[] = [];
   if (!hasActiveSubscription) criticalAlerts.push({ label: "Subscribe to start working", href: "/driver/subscription" });
   const isKYCApproved = driverProfile?.status === "active" && driverProfile?.compliance_status === "approved";
   if (!isKYCApproved && driverProfile) criticalAlerts.push({ label: "Complete compliance", href: "/driver/profile" });
   const hasPricing = pricingData.length > 0 && pricingData.some((p: any) => p.pricing && p.pricing.active);
-  if (!hasPricing) criticalAlerts.push({ label: "Set fuel pricing", href: "/driver" });
-  if (vehiclesData.length === 0) criticalAlerts.push({ label: "Add a vehicle", href: "/driver" });
+  if (!hasPricing) criticalAlerts.push({ label: "Set fuel pricing", tab: "pricing" });
+  if (vehiclesData.length === 0) criticalAlerts.push({ label: "Add a vehicle", tab: "vehicles" });
   const hasCoordinates = driverProfile?.current_lat && driverProfile?.current_lng;
-  if (!hasCoordinates && driverProfile) criticalAlerts.push({ label: "Set your location in Settings", href: "/driver" });
+  if (!hasCoordinates && driverProfile) criticalAlerts.push({ label: "Set your location in Settings", tab: "settings" });
   if (docExpiringIn7 + (vehicleExpiringIn7 > 0 ? 1 : 0) > 0) criticalAlerts.push({ label: `Documents expiring (${docExpiringIn7})`, href: "/driver/profile" });
-  if (vehicleExpiringIn7 > 0) criticalAlerts.push({ label: `Vehicle renewals due (${vehicleExpiringIn7})`, href: "/driver" });
+  if (vehicleExpiringIn7 > 0) criticalAlerts.push({ label: `Vehicle renewals due (${vehicleExpiringIn7})`, tab: "vehicles" });
 
   // Set up WebSocket to refresh data when changes occur
   useWebSocket((message) => {
@@ -619,8 +619,20 @@ export default function DriverDashboard() {
             <AlertDescription>
               <ul className="list-disc list-inside mt-2 space-y-1">
                 {criticalAlerts.map((a, i) => (
-                  <li key={i}>
-                    {a.href ? (
+                  <li key={`${i}-${a.label}`}>
+                    {a.tab ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab(a.tab!);
+                          setSidebarOpen(false);
+                          window.scrollTo({ top: 0, behavior: "smooth" });
+                        }}
+                        className="text-primary hover:underline bg-transparent border-0 cursor-pointer p-0 text-left font-inherit inline"
+                      >
+                        {a.label}
+                      </button>
+                    ) : a.href ? (
                       <Link href={a.href} className="text-primary hover:underline">{a.label}</Link>
                     ) : (
                       a.label

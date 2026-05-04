@@ -2635,7 +2635,8 @@ router.put("/location", async (req, res) => {
 // Update driver profile
 router.put("/profile", async (req, res) => {
   const user = (req as any).user;
-  const { fullName, profilePhotoUrl } = req.body;
+  const { fullName, profilePhotoUrl, phone } = req.body;
+  const resolvedFullName = fullName ?? req.body.full_name;
   
   try {
     // Update profile table
@@ -2643,8 +2644,13 @@ router.put("/profile", async (req, res) => {
       updated_at: new Date()
     };
     
-    if (fullName) {
-      updateData.full_name = fullName;
+    if (resolvedFullName) {
+      updateData.full_name = typeof resolvedFullName === "string" ? resolvedFullName.trim() : resolvedFullName;
+    }
+    
+    if (phone !== undefined) {
+      const raw = typeof phone === "string" ? phone.trim() : phone;
+      updateData.phone = raw === "" || raw == null ? null : String(raw);
     }
     
     if (profilePhotoUrl) {

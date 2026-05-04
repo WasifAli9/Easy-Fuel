@@ -1,5 +1,6 @@
 import { ScrollView, StyleSheet, View } from "react-native";
 import { Card, Switch, Text } from "react-native-paper";
+import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { saveThemeMode } from "@/services/storage";
 import { useUiThemeStore } from "@/store/ui-theme-store";
@@ -21,7 +22,7 @@ export function PortalSettingsScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Card style={styles.card}>
+      <Card mode="contained" style={styles.card}>
         <Card.Content>
           <Text variant="headlineSmall">Appearance</Text>
           <Text style={styles.subtitle}>Match the web portal light and dark themes.</Text>
@@ -31,7 +32,7 @@ export function PortalSettingsScreen() {
           </View>
         </Card.Content>
       </Card>
-      <Card style={styles.card}>
+      <Card mode="contained" style={styles.card}>
         <Card.Content>
           <Text variant="titleMedium">About</Text>
           <Text style={styles.subtitle}>Use the menu to switch sections. Sign out is available from the menu drawer.</Text>
@@ -42,17 +43,13 @@ export function PortalSettingsScreen() {
 }
 
 function getStyles(theme: typeof lightTheme) {
+  const p = getPortalUiStyleDefs(theme);
   return StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.colors.background },
-    content: { padding: 14, gap: 12, paddingBottom: 24 },
-    card: { backgroundColor: theme.colors.surface },
+    container: p.screenContainer,
+    content: { ...p.screenScrollContentCompact, paddingBottom: 24 },
+    card: p.sectionCard,
     subtitle: { marginTop: 6, color: theme.colors.onSurfaceVariant },
     label: { color: theme.colors.onSurface },
-    rowBetween: {
-      marginTop: 12,
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-    },
+    rowBetween: { ...p.rowBetween, marginTop: 12 },
   });
 }

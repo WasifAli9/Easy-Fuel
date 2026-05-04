@@ -13,6 +13,7 @@ import {
 import { useFocusEffect } from "@react-navigation/native";
 import { useCallback } from "react";
 import { apiClient } from "@/services/api/client";
+import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import {
@@ -96,7 +97,7 @@ export function CustomerOrdersScreen() {
 
   return (
     <View style={styles.container}>
-      <Card style={styles.headerCard}>
+      <Card mode="contained" style={styles.headerCard}>
         <Card.Content>
           <View style={styles.headerRow}>
             <View style={styles.headerInfo}>
@@ -161,7 +162,7 @@ export function CustomerOrdersScreen() {
           refreshControl={<RefreshControl refreshing={manualRefreshing} onRefresh={handleRefresh} />}
           ListEmptyComponent={<Text style={styles.empty}>No orders match your filters.</Text>}
           renderItem={({ item }) => (
-            <Card style={styles.card}>
+            <Card mode="outlined" style={styles.card}>
               <Card.Content>
                 <View style={styles.rowBetween}>
                   <Text variant="titleMedium">{item.fuel_types?.label ?? "Fuel"}</Text>
@@ -202,21 +203,23 @@ function formatOrderStatus(state?: string) {
     .join(" ");
 }
 
-const getStyles = (theme: typeof lightTheme) =>
-  StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.colors.background },
-    headerCard: { margin: 12, backgroundColor: theme.colors.surface },
+const getStyles = (theme: typeof lightTheme) => {
+  const p = getPortalUiStyleDefs(theme);
+  return StyleSheet.create({
+    container: p.screenContainer,
+    headerCard: { ...p.hero, margin: 12 },
     headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
     headerInfo: { flex: 1, paddingRight: 6 },
-    newOrderBtn: { alignSelf: "flex-start" },
-    subtitle: { marginTop: 4, color: theme.colors.onSurfaceVariant },
+    newOrderBtn: { alignSelf: "flex-start", borderRadius: 10 },
+    subtitle: p.subtitle,
     rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 8 },
     segment: { marginTop: 12 },
-    filterHint: { marginTop: 8, color: theme.colors.primary },
+    filterHint: { marginTop: 8, color: theme.colors.primary, fontWeight: "600" },
     list: { paddingHorizontal: 12, paddingBottom: 24, gap: 10 },
-    card: { backgroundColor: theme.colors.surface },
+    card: p.listCard,
     meta: { marginTop: 6, color: theme.colors.onSurfaceVariant },
     open: { marginTop: 10, alignSelf: "flex-start" },
-    center: { flex: 1, alignItems: "center", justifyContent: "center" },
-    empty: { textAlign: "center", color: theme.colors.onSurfaceVariant, marginTop: 24 },
+    center: p.center,
+    empty: { ...p.empty, marginTop: 24 },
   });
+};

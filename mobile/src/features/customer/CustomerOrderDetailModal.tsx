@@ -2,6 +2,7 @@ import { Modal, ScrollView, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActivityIndicator, Button, Card, Chip, Divider, Text } from "react-native-paper";
 import { apiClient } from "@/services/api/client";
+import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { OrderChatPanel } from "@/features/chat/OrderChatPanel";
@@ -89,93 +90,108 @@ export function CustomerOrderDetailModal({
         ) : orderQuery.isError || !order ? (
           <Text style={styles.center}>Could not load this order.</Text>
         ) : (
-          <ScrollView contentContainerStyle={styles.scroll}>
-            <Card style={styles.card}>
-              <Card.Content>
-                <View style={styles.rowBetween}>
-                  <Text variant="titleMedium">{order.fuel_types?.label ?? "Fuel"}</Text>
-                  <Chip>{order.state ?? ""}</Chip>
-                </View>
-                <Text style={styles.meta}>
-                  {order.litres != null ? `${order.litres} L` : ""} · R {((order.total_cents ?? 0) / 100).toFixed(2)}
-                </Text>
-                <Text style={styles.meta}>{formatCustomerOrderAddress(order as any)}</Text>
-                <Text style={styles.meta}>
-                  {order.created_at ? new Date(order.created_at).toLocaleString("en-ZA") : ""}
-                </Text>
-              </Card.Content>
-            </Card>
+          <View style={styles.bodySplit}>
+            <ScrollView
+              style={styles.bodyScroll}
+              contentContainerStyle={styles.scroll}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Card mode="outlined" style={styles.card}>
+                <Card.Content>
+                  <View style={styles.rowBetween}>
+                    <Text variant="titleMedium">{order.fuel_types?.label ?? "Fuel"}</Text>
+                    <Chip>{order.state ?? ""}</Chip>
+                  </View>
+                  <Text style={styles.meta}>
+                    {order.litres != null ? `${order.litres} L` : ""} · R {((order.total_cents ?? 0) / 100).toFixed(2)}
+                  </Text>
+                  <Text style={styles.meta}>{formatCustomerOrderAddress(order as any)}</Text>
+                  <Text style={styles.meta}>
+                    {order.created_at ? new Date(order.created_at).toLocaleString("en-ZA") : ""}
+                  </Text>
+                </Card.Content>
+              </Card>
 
-            <Text variant="titleSmall" style={styles.sectionTitle}>
-              Driver offers
-            </Text>
-            {sortedOffers.length === 0 ? (
-              <Text style={styles.meta}>No offers yet. Drivers will appear here when available.</Text>
-            ) : (
-              sortedOffers.map((offer) => (
-                <Card key={offer.id} style={styles.card}>
-                  <Card.Content>
-                    <Text variant="titleSmall">{offer.driver?.profile?.fullName ?? "Driver"}</Text>
-                    <Text style={styles.meta}>
-                      {offer.estimatedPricing?.total != null
-                        ? `Est. total R ${offer.estimatedPricing.total.toFixed(2)}`
-                        : "Quote pending"}
-                    </Text>
-                    <Text style={styles.meta}>
-                      Distance:{" "}
-                      {offer.estimatedPricing?.distanceKm != null && Number.isFinite(offer.estimatedPricing.distanceKm)
-                        ? `${offer.estimatedPricing.distanceKm.toFixed(1)} km away`
-                        : "Not available"}
-                    </Text>
-                    <Text style={styles.meta}>Status: {offer.state ?? ""}</Text>
-                    {offer.state === "pending_customer" || offer.state === "offered" ? (
-                      <Button
-                        mode="contained"
-                        buttonColor={theme.colors.primary}
-                        textColor={theme.colors.onPrimary}
-                        style={styles.mt}
-                        onPress={() => acceptMutation.mutate(offer.id)}
-                        loading={acceptMutation.isPending}
-                      >
-                        Accept offer
-                      </Button>
-                    ) : null}
-                  </Card.Content>
-                </Card>
-              ))
-            )}
-            {acceptMutation.isError ? (
-              <Text style={styles.error}>{(acceptMutation.error as Error).message}</Text>
-            ) : null}
+              <Text variant="titleSmall" style={styles.sectionTitle}>
+                Driver offers
+              </Text>
+              {sortedOffers.length === 0 ? (
+                <Text style={styles.meta}>No offers yet. Drivers will appear here when available.</Text>
+              ) : (
+                sortedOffers.map((offer) => (
+                  <Card key={offer.id} mode="outlined" style={styles.card}>
+                    <Card.Content>
+                      <Text variant="titleSmall">{offer.driver?.profile?.fullName ?? "Driver"}</Text>
+                      <Text style={styles.meta}>
+                        {offer.estimatedPricing?.total != null
+                          ? `Est. total R ${offer.estimatedPricing.total.toFixed(2)}`
+                          : "Quote pending"}
+                      </Text>
+                      <Text style={styles.meta}>
+                        Distance:{" "}
+                        {offer.estimatedPricing?.distanceKm != null && Number.isFinite(offer.estimatedPricing.distanceKm)
+                          ? `${offer.estimatedPricing.distanceKm.toFixed(1)} km away`
+                          : "Not available"}
+                      </Text>
+                      <Text style={styles.meta}>Status: {offer.state ?? ""}</Text>
+                      {offer.state === "pending_customer" || offer.state === "offered" ? (
+                        <Button
+                          mode="contained"
+                          buttonColor={theme.colors.primary}
+                          textColor={theme.colors.onPrimary}
+                          style={styles.mt}
+                          onPress={() => acceptMutation.mutate(offer.id)}
+                          loading={acceptMutation.isPending}
+                        >
+                          Accept offer
+                        </Button>
+                      ) : null}
+                    </Card.Content>
+                  </Card>
+                ))
+              )}
+              {acceptMutation.isError ? (
+                <Text style={styles.error}>{(acceptMutation.error as Error).message}</Text>
+              ) : null}
 
-            <Divider style={styles.divider} />
-            <OrderChatPanel orderId={orderId!} viewerRole="customer" />
-          </ScrollView>
+              <Divider style={styles.divider} />
+            </ScrollView>
+            <View style={styles.chatPane}>
+              <OrderChatPanel orderId={orderId!} viewerRole="customer" />
+            </View>
+          </View>
         )}
       </View>
     </Modal>
   );
 }
 
-const getStyles = (theme: typeof lightTheme) =>
-  StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.colors.background },
+const getStyles = (theme: typeof lightTheme) => {
+  const p = getPortalUiStyleDefs(theme);
+  return StyleSheet.create({
+    container: p.screenContainer,
     header: {
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "space-between",
       padding: 14,
-      borderBottomWidth: 1,
+      borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: theme.colors.outline,
       backgroundColor: theme.colors.surface,
+      borderLeftWidth: 3,
+      borderLeftColor: theme.colors.primary,
     },
-    scroll: { padding: 14, paddingBottom: 40, gap: 10 },
-    center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
-    card: { backgroundColor: theme.colors.surface },
-    rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
+    bodySplit: { flex: 1, flexDirection: "column" as const },
+    bodyScroll: { flex: 1 },
+    chatPane: { flex: 1, minHeight: 200, paddingHorizontal: 14, paddingBottom: 14 },
+    scroll: { padding: 14, paddingBottom: 24, gap: 10 },
+    center: { ...p.center, padding: 24 },
+    card: p.listCard,
+    rowBetween: p.rowBetween,
     meta: { marginTop: 6, color: theme.colors.onSurfaceVariant },
-    sectionTitle: { marginTop: 8 },
-    mt: { marginTop: 10 },
+    sectionTitle: { marginTop: 8, fontWeight: "600" },
+    mt: { marginTop: 10, borderRadius: 10 },
     divider: { marginVertical: 12 },
-    error: { color: theme.colors.error },
+    error: p.errorText,
   });
+};

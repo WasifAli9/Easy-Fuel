@@ -18,6 +18,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
 import type { Vehicle } from "@shared/schema";
+import { DriverFleetCompanySettings } from "@/components/DriverFleetCompanySettings";
 
 export function DriverVehicleManager() {
   const { toast } = useToast();
@@ -321,33 +322,23 @@ export function DriverVehicleManager() {
     return dateObj.toLocaleDateString("en-ZA");
   };
 
-  if (isLoading) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Truck className="h-5 w-5" />
-            My Vehicles
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-muted-foreground text-center py-8">Loading vehicles...</p>
-        </CardContent>
-      </Card>
-    );
-  }
-
   return (
     <>
-      {membership?.mode === "company" && membership?.isDisabledByCompany && (
-        <Alert variant="destructive" className="mb-6">
-          <AlertTriangle className="h-4 w-4" />
-          <AlertDescription>
-            Your fleet company has disabled your access. You cannot select a company vehicle until they re-enable you.
-          </AlertDescription>
-        </Alert>
-      )}
-
+      <DriverFleetCompanySettings />
+      {isLoading ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Truck className="h-5 w-5" />
+              My Vehicles
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-muted-foreground text-center py-8">Loading vehicles...</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <>
       {linkedToCompany && (
         <Card className="mb-6 border-primary/20">
           <CardHeader>
@@ -639,6 +630,11 @@ export function DriverVehicleManager() {
 
               <div className="col-span-2">
                 <Label>Fuel Types</Label>
+                <p className="text-sm text-muted-foreground mt-1 mb-2">
+                  {fuelTypes.length > 0
+                    ? `All fuel types on the platform: ${fuelTypes.map((ft: { label: string }) => ft.label).join(", ")}.`
+                    : "Loading fuel types…"}
+                </p>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2">
                   {fuelTypes.map((fuelType: any) => (
                     <label key={fuelType.id} className="flex items-center gap-2 cursor-pointer">
@@ -1145,6 +1141,8 @@ export function DriverVehicleManager() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+        </>
+      )}
     </>
   );
 }

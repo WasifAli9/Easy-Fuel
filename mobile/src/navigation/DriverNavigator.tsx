@@ -3,6 +3,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Button, Text } from "react-native-paper";
+import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { DriverOrdersScreen } from "@/features/driver/DriverOrdersScreen";
 import { DriverVehiclesScreen } from "@/features/driver/DriverVehiclesScreen";
@@ -56,12 +57,12 @@ function DriverPortalTabs() {
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarActiveTintColor: "#7C3AED",
+        tabBarActiveTintColor: theme.colors.primary,
         tabBarInactiveTintColor: theme.colors.onSurfaceVariant,
         tabBarStyle: {
           backgroundColor: theme.colors.surface,
-          borderTopColor: "#E9D5FF",
-          borderTopWidth: 1,
+          borderTopColor: theme.colors.outline,
+          borderTopWidth: StyleSheet.hairlineWidth,
           height: 62,
           paddingBottom: 8,
           paddingTop: 6,
@@ -148,7 +149,7 @@ export function DriverNavigator() {
               {activeTitle}
             </Text>
             <View style={styles.brandPill}>
-              <MaterialCommunityIcons name="gas-station" size={14} color="#5B21B6" />
+              <MaterialCommunityIcons name="gas-station" size={14} color={theme.colors.primary} />
               <Text style={styles.brandPillText}>EasyFuel</Text>
             </View>
           </View>
@@ -206,8 +207,11 @@ export function DriverNavigator() {
   );
 }
 
-const getStyles = (theme: typeof lightTheme) =>
-  StyleSheet.create({
+const getStyles = (theme: typeof lightTheme) => {
+  const p = getPortalUiStyleDefs(theme);
+  const isDark = "dark" in theme && (theme as { dark?: boolean }).dark === true;
+  const menuActiveBg = isDark ? "rgba(38, 237, 217, 0.14)" : "rgba(38, 237, 217, 0.16)";
+  return StyleSheet.create({
     root: {
       flex: 1,
       backgroundColor: theme.colors.background,
@@ -218,8 +222,10 @@ const getStyles = (theme: typeof lightTheme) =>
       flexDirection: "row",
       alignItems: "center",
       backgroundColor: theme.colors.surface,
-      borderBottomWidth: 1,
+      borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: theme.colors.outline,
+      borderLeftWidth: 3,
+      borderLeftColor: theme.colors.primary,
     },
     menuButton: {
       width: 36,
@@ -239,22 +245,8 @@ const getStyles = (theme: typeof lightTheme) =>
       color: theme.colors.onSurface,
       fontWeight: "600",
     },
-    brandPill: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 6,
-      backgroundColor: "#EDE9FE",
-      borderColor: "#DDD6FE",
-      borderWidth: 1,
-      borderRadius: 999,
-      paddingHorizontal: 10,
-      paddingVertical: 4,
-    },
-    brandPillText: {
-      fontSize: 12,
-      fontWeight: "700",
-      color: "#5B21B6",
-    },
+    brandPill: p.brandPill,
+    brandPillText: p.brandPillText,
     content: {
       flex: 1,
     },
@@ -294,7 +286,7 @@ const getStyles = (theme: typeof lightTheme) =>
       borderRadius: 10,
     },
     menuItemActive: {
-      backgroundColor: "#EDE9FE",
+      backgroundColor: menuActiveBg,
     },
     menuItemText: {
       color: theme.colors.onSurface,
@@ -312,3 +304,4 @@ const getStyles = (theme: typeof lightTheme) =>
       flex: 1,
     },
   });
+};

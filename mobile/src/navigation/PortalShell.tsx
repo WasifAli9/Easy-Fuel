@@ -2,6 +2,7 @@ import { ReactNode, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Button, Text } from "react-native-paper";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { signOut } from "@/services/api/auth";
@@ -27,25 +28,19 @@ type PortalShellProps = {
  */
 const brandStylesByVariant = {
   customer: {
-    badgeBg: "#CCFBF1",
-    badgeBorder: "#99F6E4",
-    badgeText: "#0F766E",
     iconName: "gas-station" as const,
-    menuActiveBg: "#DBEAFE",
+    menuActiveBgLight: "rgba(38, 237, 217, 0.16)",
+    menuActiveBgDark: "rgba(38, 237, 217, 0.14)",
   },
   supplier: {
-    badgeBg: "#DBEAFE",
-    badgeBorder: "#BFDBFE",
-    badgeText: "#1E3A8A",
     iconName: "warehouse" as const,
-    menuActiveBg: "#DBEAFE",
+    menuActiveBgLight: "rgba(38, 237, 217, 0.16)",
+    menuActiveBgDark: "rgba(38, 237, 217, 0.14)",
   },
   company: {
-    badgeBg: "#FFEDD5",
-    badgeBorder: "#FED7AA",
-    badgeText: "#9A3412",
     iconName: "domain" as const,
-    menuActiveBg: "#FFEDD5",
+    menuActiveBgLight: "rgba(38, 237, 217, 0.16)",
+    menuActiveBgDark: "rgba(38, 237, 217, 0.14)",
   },
 };
 
@@ -61,7 +56,8 @@ export function PortalShell({
   const mode = useUiThemeStore((state) => state.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
   const brand = brandStylesByVariant[brandVariant];
-  const styles = getStyles(theme, brand.menuActiveBg);
+  const menuActiveBg = mode === "dark" ? brand.menuActiveBgDark : brand.menuActiveBgLight;
+  const styles = getStyles(theme, menuActiveBg);
   const [menuVisible, setMenuVisible] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
 
@@ -85,9 +81,9 @@ export function PortalShell({
           <Text variant="titleLarge" style={styles.headerTitle}>
             {title}
           </Text>
-          <View style={[styles.brandPill, { backgroundColor: brand.badgeBg, borderColor: brand.badgeBorder }]}>
-            <MaterialCommunityIcons name={brand.iconName} size={14} color={brand.badgeText} />
-            <Text style={[styles.brandPillText, { color: brand.badgeText }]}>EasyFuel</Text>
+          <View style={styles.brandPill}>
+            <MaterialCommunityIcons name={brand.iconName} size={14} color={theme.colors.primary} />
+            <Text style={styles.brandPillText}>EasyFuel</Text>
           </View>
         </View>
       </View>
@@ -143,8 +139,9 @@ export function PortalShell({
   );
 }
 
-const getStyles = (theme: typeof lightTheme, menuActiveBg: string) =>
-  StyleSheet.create({
+const getStyles = (theme: typeof lightTheme, menuActiveBg: string) => {
+  const p = getPortalUiStyleDefs(theme);
+  return StyleSheet.create({
     root: {
       flex: 1,
       backgroundColor: theme.colors.background,
@@ -155,8 +152,10 @@ const getStyles = (theme: typeof lightTheme, menuActiveBg: string) =>
       flexDirection: "row",
       alignItems: "center",
       backgroundColor: theme.colors.surface,
-      borderBottomWidth: 1,
+      borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: theme.colors.outline,
+      borderLeftWidth: 3,
+      borderLeftColor: theme.colors.primary,
     },
     menuButton: {
       width: 36,
@@ -176,20 +175,8 @@ const getStyles = (theme: typeof lightTheme, menuActiveBg: string) =>
       color: theme.colors.onSurface,
       fontWeight: "600",
     },
-    brandPill: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 6,
-      borderWidth: 1,
-      borderRadius: 999,
-      paddingHorizontal: 10,
-      paddingVertical: 4,
-    },
-    brandPillText: {
-      fontSize: 12,
-      fontWeight: "700",
-      color: "#0F766E",
-    },
+    brandPill: p.brandPill,
+    brandPillText: p.brandPillText,
     content: {
       flex: 1,
     },
@@ -247,3 +234,4 @@ const getStyles = (theme: typeof lightTheme, menuActiveBg: string) =>
       flex: 1,
     },
   });
+};

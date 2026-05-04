@@ -3,6 +3,7 @@ import { ScrollView, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Menu, Text, TextInput } from "react-native-paper";
 import { apiClient } from "@/services/api/client";
+import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { signOut } from "@/services/api/auth";
@@ -101,7 +102,7 @@ export function CustomerProfileScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Card style={styles.card}>
+      <Card mode="outlined" style={styles.card}>
         <Card.Content>
           <Text variant="headlineSmall">My profile</Text>
           <Text style={styles.subtitle}>Account details (same fields as the web portal)</Text>
@@ -111,7 +112,7 @@ export function CustomerProfileScreen() {
         </Card.Content>
       </Card>
 
-      <Card style={styles.card}>
+      <Card mode="outlined" style={styles.card}>
         <Card.Content>
           <Text variant="titleMedium">Company</Text>
           <TextInput mode="outlined" label="Company name" value={companyName} onChangeText={setCompanyName} style={styles.input} />
@@ -120,7 +121,7 @@ export function CustomerProfileScreen() {
         </Card.Content>
       </Card>
 
-      <Card style={styles.card}>
+      <Card mode="outlined" style={styles.card}>
         <Card.Content>
           <Text variant="titleMedium">Billing address</Text>
           <TextInput mode="outlined" label="Street" value={billingStreet} onChangeText={setBillingStreet} style={styles.input} />
@@ -168,15 +169,17 @@ export function CustomerProfileScreen() {
   );
 }
 
-const getStyles = (theme: typeof lightTheme) =>
-  StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.colors.background },
-    content: { padding: 14, gap: 12, paddingBottom: 32 },
-    card: { backgroundColor: theme.colors.surface },
-    subtitle: { marginTop: 4, color: theme.colors.onSurfaceVariant },
-    input: { marginTop: 8, backgroundColor: theme.colors.surface },
+const getStyles = (theme: typeof lightTheme) => {
+  const p = getPortalUiStyleDefs(theme);
+  return StyleSheet.create({
+    container: p.screenContainer,
+    content: { ...p.screenScrollContentCompact, paddingBottom: 32 },
+    card: p.sectionCard,
+    subtitle: p.subtitle,
+    input: p.input,
     meta: { marginTop: 8, color: theme.colors.onSurfaceVariant },
-    center: { flex: 1, alignItems: "center", justifyContent: "center" },
-    error: { color: theme.colors.error },
-    signOut: { marginTop: 8 },
+    center: p.center,
+    error: p.errorText,
+    signOut: { marginTop: 8, borderRadius: 10 },
   });
+};

@@ -3,6 +3,7 @@ import { FlatList, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActivityIndicator, Button, Text, TextInput } from "react-native-paper";
 import { apiClient } from "@/services/api/client";
+import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 
@@ -90,7 +91,6 @@ export function OrderChatPanel({ orderId, viewerRole }: { orderId: string; viewe
         keyExtractor={(item) => item.id}
         style={styles.chatList}
         contentContainerStyle={styles.chatListContent}
-        nestedScrollEnabled
         ListEmptyComponent={<Text style={styles.chatEmpty}>No messages yet.</Text>}
         renderItem={({ item }) => {
           const own = isOwnMessage(item.senderType, viewerRole);
@@ -128,14 +128,17 @@ export function OrderChatPanel({ orderId, viewerRole }: { orderId: string; viewe
   );
 }
 
-const getStyles = (theme: typeof lightTheme) =>
-  StyleSheet.create({
+const getStyles = (theme: typeof lightTheme) => {
+  const p = getPortalUiStyleDefs(theme);
+  return StyleSheet.create({
     chatWrap: {
       gap: 8,
       flex: 1,
     },
     chatTitle: {
       marginTop: 2,
+      fontWeight: "600",
+      color: theme.colors.onSurface,
     },
     chatLoading: {
       paddingVertical: 20,
@@ -145,17 +148,25 @@ const getStyles = (theme: typeof lightTheme) =>
       color: theme.colors.onSurfaceVariant,
     },
     chatList: {
-      maxHeight: 420,
-      minHeight: 220,
-      borderRadius: 8,
+      flex: 1,
+      minHeight: 120,
+      borderRadius: 14,
       overflow: "hidden",
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.colors.outline,
+      backgroundColor: theme.colors.background,
+      borderLeftWidth: 3,
+      borderLeftColor: theme.colors.primary,
     },
     chatListContent: {
       gap: 8,
       paddingBottom: 8,
+      paddingHorizontal: 8,
+      paddingTop: 8,
     },
     chatEmpty: {
-      color: theme.colors.onSurfaceVariant,
+      ...p.muted,
+      textAlign: "center",
     },
     messageRow: {
       gap: 4,
@@ -188,3 +199,4 @@ const getStyles = (theme: typeof lightTheme) =>
       backgroundColor: theme.colors.surface,
     },
   });
+};
