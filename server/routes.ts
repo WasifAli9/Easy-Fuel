@@ -742,14 +742,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(eq(fuelTypes.active, true))
         .orderBy(asc(fuelTypes.label));
 
-      // Ensure canonical defaults exist (idempotent). Previously we only seeded when the table had
-      // zero *active* rows — production DBs that already had 1–4 types never received the rest.
+      // Ensure canonical fuel types exist (idempotent). Match the full set used in dev/local DBs;
+      // older production only had the first five from an earlier bootstrap.
       const expectedCodes = new Set([
-        "petrol_93",
-        "petrol_95",
+        "adblue",
+        "diesel",
         "diesel_50ppm",
         "diesel_500ppm",
+        "lpg",
         "paraffin",
+        "petrol_93",
+        "petrol_95",
+        "petrol_97",
+        "petrol_premium",
       ]);
       const haveCodes = new Set(activeFuelTypes.map((r) => r.code));
       const missingDefaults = [...expectedCodes].some((c) => !haveCodes.has(c));
@@ -758,11 +763,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await pool.query(
           `INSERT INTO fuel_types (code, label, active)
            VALUES
-             ('petrol_93', 'Petrol 93', true),
-             ('petrol_95', 'Petrol 95', true),
-             ('diesel_50ppm', 'Diesel 50ppm', true),
+             ('adblue', 'AdBlue (Diesel Exhaust Fluid)', true),
+             ('diesel', 'Diesel', true),
+             ('diesel_50ppm', 'Diesel 50ppm (Ultra Low Sulphur Diesel)', true),
              ('diesel_500ppm', 'Diesel 500ppm', true),
-             ('paraffin', 'Paraffin', true)
+             ('lpg', 'LPG (Liquefied Petroleum Gas)', true),
+             ('paraffin', 'Illuminating Paraffin', true),
+             ('petrol_93', 'Petrol 93 (Unleaded)', true),
+             ('petrol_95', 'Petrol 95 (Unleaded)', true),
+             ('petrol_97', 'Petrol 97 (Premium Unleaded)', true),
+             ('petrol_premium', 'Premium Petrol', true)
            ON CONFLICT (code) DO NOTHING`
         );
 
