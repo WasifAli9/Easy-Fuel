@@ -4,8 +4,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActivityIndicator, Card, Chip, Divider, Text } from "react-native-paper";
 import { Button } from "@/design/paper-button";
 import { apiClient } from "@/services/api/client";
-import { appConfig } from "@/services/config";
-import { readSessionCookie } from "@/services/storage";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
@@ -40,21 +38,8 @@ function normalizeOffersResponse(raw: unknown): Offer[] {
 }
 
 async function fetchOrderOffers(orderId: string): Promise<Offer[]> {
-  const base = appConfig.apiBaseUrl.replace(/\/$/, "");
-  const cookie = await readSessionCookie();
-  const res = await fetch(`${base}/api/orders/${encodeURIComponent(orderId)}/offers`, {
-    method: "GET",
-    headers: {
-      Accept: "application/json",
-      ...(cookie ? { Cookie: cookie } : {}),
-    },
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || `Offers request failed (${res.status})`);
-  }
-  const json: unknown = await res.json();
-  return normalizeOffersResponse(json);
+  const { data } = await apiClient.get(`/api/orders/${encodeURIComponent(orderId)}/offers`);
+  return normalizeOffersResponse(data);
 }
 
 export function CustomerOrderDetailModal({

@@ -448,7 +448,7 @@ export default function SupplierProfile() {
 
   const updatePasswordMutation = useMutation({
     mutationFn: async (data: { currentPassword: string; newPassword: string }) => {
-      await updatePassword(data.newPassword);
+      await updatePassword(data.newPassword, data.currentPassword);
     },
     onSuccess: () => {
       passwordForm.reset();

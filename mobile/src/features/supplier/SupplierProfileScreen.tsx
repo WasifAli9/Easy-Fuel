@@ -7,7 +7,7 @@ import { apiClient } from "@/services/api/client";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
-import { signOut } from "@/services/api/auth";
+import { useAuth } from "@/contexts/AuthContext";
 
 function toTitleCase(value: string) {
   return value
@@ -23,6 +23,7 @@ function asStringList(value: unknown): string[] {
 }
 
 export function SupplierProfileScreen() {
+  const { logout } = useAuth();
   const mode = useUiThemeStore((s) => s.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
   const styles = getStyles(theme);
@@ -204,7 +205,7 @@ export function SupplierProfileScreen() {
         </Card.Content>
       </Card>
 
-      <Button mode="contained-tonal" onPress={() => void signOut()}>
+      <Button mode="contained-tonal" onPress={() => void logout()}>
         Sign out
       </Button>
     </ScrollView>

@@ -1,7 +1,7 @@
 import { Linking } from "react-native";
 import { appConfig } from "@/services/config";
 import { apiClient } from "@/services/api/client";
-import { readSessionCookie } from "@/services/storage";
+import { useSessionStore } from "@/store/session-store";
 
 /**
  * Match web `client/src/lib/utils.ts` so DB paths from the web app resolve the same way on mobile.
@@ -60,15 +60,15 @@ export function resolveApiUrl(baseUrl: string, pathOrUrl: string): string {
   return `${base}${path}`;
 }
 
-/** PUT binary to a relative upload URL from `/api/objects/upload` (requires session cookie on RN). */
+/** PUT binary to a relative upload URL from `/api/objects/upload` (Bearer session on RN). */
 export async function putFileToUploadUrl(uploadPath: string, body: Blob, contentType: string): Promise<Response> {
   const url = resolveApiUrl(appConfig.apiBaseUrl, uploadPath);
-  const cookieHeader = await readSessionCookie();
+  const token = useSessionStore.getState().accessToken;
   const headers: Record<string, string> = {
     "Content-Type": contentType || "application/octet-stream",
   };
-  if (cookieHeader) {
-    headers.Cookie = cookieHeader;
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
   }
   return fetch(url, { method: "PUT", headers, body });
 }

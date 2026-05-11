@@ -718,7 +718,7 @@ export default function DriverDashboard() {
                         </div>
                       </CardHeader>
                       <CardContent className="p-0">
-                        <div className="flex flex-col border-t border-border/80 lg:flex-row">
+                        <div className="flex flex-col border-t border-border/80 lg:flex-row lg:items-start">
                           <div className="flex-1 min-w-0 space-y-6 bg-muted/25 p-6 dark:bg-muted/15">
                             <div className="flex items-start gap-3 rounded-xl border border-border/60 bg-background/60 p-3 shadow-sm dark:bg-background/40">
                               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
@@ -788,21 +788,23 @@ export default function DriverDashboard() {
                             </div>
                           </div>
                           <div
-                            className="relative flex min-h-0 flex-col border-t border-primary/25 bg-gradient-to-b from-primary/[0.08] via-muted/30 to-background p-6 dark:from-primary/[0.12] dark:via-muted/20 lg:w-[min(100%,420px)] lg:shrink-0 lg:border-l-2 lg:border-t-0 lg:border-primary/35 xl:w-[440px]"
+                            className="relative flex max-h-[min(70vh,640px)] min-h-0 w-full flex-col overflow-hidden border-t border-primary/25 bg-gradient-to-b from-primary/[0.08] via-muted/30 to-background p-6 dark:from-primary/[0.12] dark:via-muted/20 lg:max-h-[min(75vh,680px)] lg:w-[min(100%,420px)] lg:shrink-0 lg:border-l-2 lg:border-t-0 lg:border-primary/35 xl:w-[440px]"
                             aria-label="Order chat"
                           >
                             <span
                               className="pointer-events-none absolute left-0 top-4 bottom-4 hidden w-1 rounded-full bg-gradient-to-b from-primary from-40% via-primary/50 to-transparent lg:block"
                               aria-hidden
                             />
-                            <div className="mb-4 flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/10 px-3 py-2 dark:bg-primary/15">
+                            <div className="mb-4 flex shrink-0 items-center gap-2 rounded-lg border border-primary/20 bg-primary/10 px-3 py-2 dark:bg-primary/15">
                               <MessageCircle className="h-5 w-5 shrink-0 text-primary" />
                               <div>
                                 <p className="text-sm font-semibold leading-tight">Messages</p>
                                 <p className="text-xs text-muted-foreground">Chat with the customer about this order</p>
                               </div>
                             </div>
-                            <OrderChat orderId={order.id} currentUserType="driver" variant="embedded" />
+                            <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+                              <OrderChat orderId={order.id} currentUserType="driver" variant="embedded" />
+                            </div>
                           </div>
                         </div>
                       </CardContent>
@@ -1371,7 +1373,7 @@ export default function DriverDashboard() {
                         </div>
                       </CardHeader>
                       <CardContent className="p-0">
-                        <div className="flex flex-col border-t border-border/80 lg:flex-row">
+                        <div className="flex flex-col border-t border-border/80 lg:flex-row lg:items-start">
                           <div className="flex-1 min-w-0 space-y-6 bg-muted/25 p-6 dark:bg-muted/15">
                             <div className="flex items-start gap-3 rounded-xl border border-border/60 bg-background/60 p-3 shadow-sm dark:bg-background/40">
                               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
@@ -1492,21 +1494,23 @@ export default function DriverDashboard() {
                           </div>
 
                           <div
-                            className="relative flex min-h-0 flex-col border-t border-primary/25 bg-gradient-to-b from-primary/[0.08] via-muted/30 to-background p-6 dark:from-primary/[0.12] dark:via-muted/20 lg:w-[min(100%,420px)] lg:shrink-0 lg:border-l-2 lg:border-t-0 lg:border-primary/35 xl:w-[440px]"
+                            className="relative flex max-h-[min(70vh,640px)] min-h-0 w-full flex-col overflow-hidden border-t border-primary/25 bg-gradient-to-b from-primary/[0.08] via-muted/30 to-background p-6 dark:from-primary/[0.12] dark:via-muted/20 lg:max-h-[min(75vh,680px)] lg:w-[min(100%,420px)] lg:shrink-0 lg:border-l-2 lg:border-t-0 lg:border-primary/35 xl:w-[440px]"
                             aria-label="Order chat"
                           >
                             <span
                               className="pointer-events-none absolute left-0 top-4 bottom-4 hidden w-1 rounded-full bg-gradient-to-b from-primary from-40% via-primary/50 to-transparent lg:block"
                               aria-hidden
                             />
-                            <div className="mb-4 flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/10 px-3 py-2 dark:bg-primary/15">
+                            <div className="mb-4 flex shrink-0 items-center gap-2 rounded-lg border border-primary/20 bg-primary/10 px-3 py-2 dark:bg-primary/15">
                               <MessageCircle className="h-5 w-5 shrink-0 text-primary" />
                               <div>
                                 <p className="text-sm font-semibold leading-tight">Messages</p>
                                 <p className="text-xs text-muted-foreground">Chat with the customer about this order</p>
                               </div>
                             </div>
-                            <OrderChat orderId={order.id} currentUserType="driver" variant="embedded" />
+                            <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+                              <OrderChat orderId={order.id} currentUserType="driver" variant="embedded" />
+                            </div>
                           </div>
                         </div>
                       </CardContent>

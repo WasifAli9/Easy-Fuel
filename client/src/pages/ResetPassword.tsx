@@ -6,9 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
+import { getStoredAccessToken } from "@/lib/session-tokens";
 import { KeyRound } from "lucide-react";
 
 export default function ResetPassword() {
+  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -19,11 +21,10 @@ export default function ResetPassword() {
 
   useEffect(() => {
     const checkSession = async () => {
-      const res = await fetch("/api/auth/me", { credentials: "include" });
-      if (!res.ok) {
+      if (!getStoredAccessToken()) {
         toast({
           title: "Sign in required",
-          description: "Open this page while signed in to change your password, or use Forgot password from the sign-in screen.",
+          description: "Sign in first, then open this page to change your password.",
           variant: "destructive",
         });
         setTimeout(() => setLocation("/auth"), 2500);
@@ -59,7 +60,7 @@ export default function ResetPassword() {
     setLoading(true);
 
     try {
-      await updatePassword(newPassword);
+      await updatePassword(newPassword, currentPassword);
       toast({
         title: "Password updated!",
         description: "Your password has been successfully changed",
@@ -104,6 +105,20 @@ export default function ResetPassword() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <label htmlFor="current-password" className="text-sm font-medium">
+                Current password
+              </label>
+              <Input
+                id="current-password"
+                type="password"
+                placeholder="Enter your current password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                required
+                data-testid="input-current-password"
+              />
+            </div>
             <div className="space-y-2">
               <label htmlFor="new-password" className="text-sm font-medium">
                 New Password

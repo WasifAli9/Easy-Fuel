@@ -1,115 +1,156 @@
 import axios from "axios";
-import { appConfig } from "@/services/config";
-import { clearSecureSession, readSessionCookie } from "@/services/storage";
+import * as Network from "expo-network";
+import Constants from "expo-constants";
+import { Platform } from "react-native";
+import { getDefaultApiHeaders } from "@/services/api/native-http";
+import {
+  getResolvedApiBaseUrl,
+  rewriteApiBaseUrlWithExpoHost,
+} from "@/services/config";
+import { clearSecureSession, readSecureSession, saveSecureSession } from "@/services/storage";
 import { useSessionStore } from "@/store/session-store";
+import type { UserRole } from "@/navigation/types";
 
 export const apiClient = axios.create({
-  baseURL: appConfig.apiBaseUrl,
+  baseURL: "",
   timeout: 15_000,
-  withCredentials: true,
 });
 
-function toSnakeCase(key: string) {
-  return key.replace(/([A-Z])/g, "_$1").toLowerCase();
+function isNetworkishError(error: unknown): boolean {
+  const msg = String((error as { message?: string })?.message ?? error ?? "");
+  const code = (error as { code?: string })?.code;
+  return (
+    code === "ERR_NETWORK" ||
+    msg.includes("Network Error") ||
+    msg.includes("Network request failed") ||
+    msg.includes("Failed to fetch") ||
+    msg.includes("ERR_CONNECTION_REFUSED")
+  );
 }
-
-function toCamelCase(key: string) {
-  return key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
-}
-
-function isPlainObject(value: unknown): value is Record<string, any> {
-  if (value === null || typeof value !== "object") return false;
-  if (Array.isArray(value)) return false;
-  if (typeof ArrayBuffer !== "undefined" && value instanceof ArrayBuffer) return false;
-  if (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView(value)) return false;
-  const proto = Object.getPrototypeOf(value as object);
-  return proto === Object.prototype || proto === null;
-}
-
-function withCaseAliasesDeep<T>(input: T): T {
-  if (Array.isArray(input)) {
-    return input.map((item) => withCaseAliasesDeep(item)) as T;
-  }
-  if (!isPlainObject(input)) return input;
-
-  const out: Record<string, any> = {};
-  for (const [key, value] of Object.entries(input)) {
-    const normalizedValue = withCaseAliasesDeep(value);
-    out[key] = normalizedValue;
-
-    const snake = toSnakeCase(key);
-    const camel = toCamelCase(key);
-    if (out[snake] === undefined) out[snake] = normalizedValue;
-    if (out[camel] === undefined) out[camel] = normalizedValue;
-  }
-  return out as T;
-}
-
-apiClient.interceptors.response.use(
-  (response) => {
-    const rt = response.config.responseType;
-    if (rt === "arraybuffer" || rt === "blob") {
-      return response;
-    }
-    response.data = withCaseAliasesDeep(response.data);
-    return response;
-  },
-  async (error) => {
-    if (error.response?.status !== 401) {
-      return Promise.reject(error);
-    }
-    const url = String(error.config?.url || "");
-    if (url.includes("/api/auth/login") || url.includes("/api/auth/register")) {
-      return Promise.reject(error);
-    }
-    await clearSecureSession();
-    useSessionStore.getState().clearSession();
-    return Promise.reject(error);
-  },
-);
 
 apiClient.interceptors.request.use(async (config) => {
-  const sessionCookie = await readSessionCookie();
-  if (sessionCookie) {
-    const h: any = config.headers ?? {};
-    if (typeof h.set === "function") {
-      h.set("Cookie", sessionCookie);
-    } else {
-      h.Cookie = sessionCookie;
-    }
-    config.headers = h;
-  }
-
-  const contentType =
-    (config.headers as any)?.["Content-Type"] ||
-    (config.headers as any)?.["content-type"] ||
-    "";
-
-  const isFormData =
-    typeof FormData !== "undefined" && config.data instanceof FormData;
-
-  if (!isFormData && Array.isArray(config.data)) {
-    config.data = withCaseAliasesDeep(config.data);
-    return config;
-  }
-
-  if (!isFormData && isPlainObject(config.data)) {
-    config.data = withCaseAliasesDeep(config.data);
-    return config;
-  }
-
-  if (
-    !isFormData &&
-    typeof config.data === "string" &&
-    String(contentType).includes("application/json")
-  ) {
-    try {
-      const parsed = JSON.parse(config.data);
-      config.data = JSON.stringify(withCaseAliasesDeep(parsed));
-    } catch {
-      // Ignore invalid JSON string body and send as-is.
+  config.baseURL = getResolvedApiBaseUrl();
+  if (Platform.OS !== "web") {
+    const uaHeaders = getDefaultApiHeaders();
+    config.headers.Accept = uaHeaders.Accept ?? "application/json";
+    if (uaHeaders["User-Agent"]) {
+      config.headers["User-Agent"] = uaHeaders["User-Agent"];
     }
   }
 
+  const isDev =
+    Constants.executionEnvironment !== "standalone" &&
+    Constants.executionEnvironment !== "storeClient";
+  if (isDev) {
+    const networkCheck = Network.getNetworkStateAsync().catch(() => ({ isConnected: true }));
+    const networkState = (await Promise.race([
+      networkCheck,
+      new Promise((resolve) => setTimeout(() => resolve({ isConnected: true }), 500)),
+    ])) as { isConnected?: boolean };
+    if (networkState.isConnected === false) {
+      throw new Error("No network connection. Please check your internet connection.");
+    }
+  }
+
+  const token = useSessionStore.getState().accessToken;
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
   return config;
 });
+
+apiClient.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+    const isDev =
+      Constants.executionEnvironment !== "standalone" &&
+      Constants.executionEnvironment !== "storeClient";
+
+    if (
+      isDev &&
+      originalRequest &&
+      !originalRequest._retryWithExpoHost &&
+      isNetworkishError(error)
+    ) {
+      const altBase = rewriteApiBaseUrlWithExpoHost(String(originalRequest.baseURL || ""));
+      if (altBase) {
+        originalRequest._retryWithExpoHost = true;
+        originalRequest.baseURL = altBase;
+        return apiClient.request(originalRequest);
+      }
+    }
+
+    if (error.response?.status !== 401 || originalRequest?._retry) {
+      return Promise.reject(error);
+    }
+
+    if (String(originalRequest?.url ?? "").includes("/api/auth/refresh")) {
+      return Promise.reject(error);
+    }
+
+    originalRequest._retry = true;
+    const session = await readSecureSession();
+    if (!session.refreshToken) {
+      await clearSecureSession();
+      useSessionStore.getState().clearSession();
+      return Promise.reject(error);
+    }
+
+    try {
+      const base = getResolvedApiBaseUrl();
+      const refreshRes = await fetch(`${base}/api/auth/refresh`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ refreshToken: session.refreshToken }),
+      });
+      const refreshText = await refreshRes.text();
+      let refreshJson: { accessToken?: string; refreshToken?: string; role?: string };
+      try {
+        refreshJson = refreshText ? JSON.parse(refreshText) : {};
+      } catch {
+        throw new Error(refreshText.slice(0, 200) || "Session refresh failed.");
+      }
+      if (!refreshRes.ok || !refreshJson.accessToken || !refreshJson.refreshToken) {
+        throw new Error(
+          (refreshJson as { message?: string }).message ?? "Session refresh failed.",
+        );
+      }
+
+      const role: UserRole =
+        (refreshJson.role as UserRole | undefined) ??
+        useSessionStore.getState().role ??
+        (session.role as UserRole) ??
+        "customer";
+
+      const userId = useSessionStore.getState().userId ?? "";
+      const email = useSessionStore.getState().email ?? "";
+
+      await saveSecureSession({
+        accessToken: refreshJson.accessToken,
+        refreshToken: refreshJson.refreshToken,
+        role,
+        userId,
+        email,
+      });
+
+      useSessionStore.getState().setSession({
+        accessToken: refreshJson.accessToken,
+        refreshToken: refreshJson.refreshToken,
+        role,
+        userId,
+        email,
+      });
+
+      originalRequest.headers.Authorization = `Bearer ${refreshJson.accessToken}`;
+      return apiClient(originalRequest);
+    } catch (refreshError) {
+      await clearSecureSession();
+      useSessionStore.getState().clearSession();
+      return Promise.reject(refreshError);
+    }
+  },
+);

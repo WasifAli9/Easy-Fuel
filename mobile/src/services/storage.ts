@@ -3,30 +3,36 @@ import * as SecureStore from "expo-secure-store";
 const ACCESS_TOKEN_KEY = "easy_fuel_access_token";
 const REFRESH_TOKEN_KEY = "easy_fuel_refresh_token";
 const USER_ROLE_KEY = "easy_fuel_user_role";
+const USER_ID_KEY = "easy_fuel_user_id";
+const USER_EMAIL_KEY = "easy_fuel_user_email";
 const THEME_MODE_KEY = "easy_fuel_theme_mode";
-/** Raw `Cookie` header value for `easyfuel.sid` (React Native does not persist Set-Cookie like browsers). */
-const SESSION_COOKIE_KEY = "easy_fuel_session_cookie";
 
 export async function saveSecureSession(data: {
   accessToken: string;
   refreshToken: string;
   role: string;
+  userId: string;
+  email: string;
 }) {
   await Promise.all([
     SecureStore.setItemAsync(ACCESS_TOKEN_KEY, data.accessToken),
     SecureStore.setItemAsync(REFRESH_TOKEN_KEY, data.refreshToken),
     SecureStore.setItemAsync(USER_ROLE_KEY, data.role),
+    SecureStore.setItemAsync(USER_ID_KEY, data.userId),
+    SecureStore.setItemAsync(USER_EMAIL_KEY, data.email),
   ]);
 }
 
 export async function readSecureSession() {
-  const [accessToken, refreshToken, role] = await Promise.all([
+  const [accessToken, refreshToken, role, userId, email] = await Promise.all([
     SecureStore.getItemAsync(ACCESS_TOKEN_KEY),
     SecureStore.getItemAsync(REFRESH_TOKEN_KEY),
     SecureStore.getItemAsync(USER_ROLE_KEY),
+    SecureStore.getItemAsync(USER_ID_KEY),
+    SecureStore.getItemAsync(USER_EMAIL_KEY),
   ]);
 
-  return { accessToken, refreshToken, role };
+  return { accessToken, refreshToken, role, userId, email };
 }
 
 export async function clearSecureSession() {
@@ -34,58 +40,9 @@ export async function clearSecureSession() {
     SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY),
     SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY),
     SecureStore.deleteItemAsync(USER_ROLE_KEY),
-    SecureStore.deleteItemAsync(SESSION_COOKIE_KEY).catch(() => undefined),
+    SecureStore.deleteItemAsync(USER_ID_KEY),
+    SecureStore.deleteItemAsync(USER_EMAIL_KEY),
   ]);
-}
-
-/** Parse `Set-Cookie` from login response; persists `easyfuel.sid=...` for API requests. */
-export function extractEasyfuelSessionCookie(setCookie: string | string[] | undefined): string | null {
-  if (setCookie == null) {
-    return null;
-  }
-  const lines = Array.isArray(setCookie) ? setCookie : [setCookie];
-  for (const line of lines) {
-    const m = String(line).match(/easyfuel\.sid=([^;]+)/);
-    if (m?.[1]) {
-      return `easyfuel.sid=${m[1].trim()}`;
-    }
-  }
-  return null;
-}
-
-export async function saveSessionCookieFromSetCookie(setCookie: string | string[] | undefined) {
-  const value = extractEasyfuelSessionCookie(setCookie);
-  if (value) {
-    await SecureStore.setItemAsync(SESSION_COOKIE_KEY, value);
-  }
-}
-
-/** When `Set-Cookie` is not exposed to the client (some React Native stacks), server may return `sessionCookie` on login. */
-export async function saveSessionCookieFromLoginBody(sessionCookie: string | undefined | null) {
-  if (typeof sessionCookie !== "string") return;
-  const t = sessionCookie.trim();
-  if (t.startsWith("easyfuel.sid=")) {
-    await SecureStore.setItemAsync(SESSION_COOKIE_KEY, t);
-  }
-}
-
-export async function persistLoginSessionCookie(opts: {
-  setCookie?: string | string[] | undefined;
-  sessionCookie?: string | undefined | null;
-}) {
-  await saveSessionCookieFromSetCookie(opts.setCookie);
-  const existing = await readSessionCookie();
-  if (!existing) {
-    await saveSessionCookieFromLoginBody(opts.sessionCookie);
-  }
-}
-
-export async function readSessionCookie(): Promise<string | null> {
-  try {
-    return await SecureStore.getItemAsync(SESSION_COOKIE_KEY);
-  } catch {
-    return null;
-  }
 }
 
 export async function saveThemeMode(mode: "light" | "dark") {

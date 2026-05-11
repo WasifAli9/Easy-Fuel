@@ -24,7 +24,7 @@ export function navigateToNotificationTarget(payload: any) {
   }
 
   // customer/default
-  navigationRef.navigate("CustomerRoot");
+  navigationRef.navigate("CustomerHome");
   // Deep entity navigation is screen-local modal based in current app structure;
   // we keep a safe root redirect and rely on realtime/query invalidation for state sync.
   void action;

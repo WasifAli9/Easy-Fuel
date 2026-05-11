@@ -32,7 +32,7 @@ import { apiClient } from "@/services/api/client";
 import { openStoredDocument, putFileToUploadUrl } from "@/lib/files";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
-import { changePasswordWithCurrent, signOut } from "@/services/api/auth";
+import { useAuth } from "@/contexts/AuthContext";
 import { saveThemeMode } from "@/services/storage";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useUiThemeStore } from "@/store/ui-theme-store";
@@ -193,6 +193,7 @@ function cardContainer(children: React.ReactNode, styles: ReturnType<typeof getS
 }
 
 export function DriverProfileMenuScreen() {
+  const { logout, changePasswordWithCurrent } = useAuth();
   const mode = useUiThemeStore((state) => state.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
   const styles = getStyles(theme);
@@ -259,7 +260,7 @@ export function DriverProfileMenuScreen() {
           <TextInput mode="outlined" label="Mobile Number" value={phone} onChangeText={setPhone} style={styles.input} keyboardType="phone-pad" />
           <View style={styles.row}>
             <Button mode="contained" buttonColor={theme.colors.primary} textColor={theme.colors.onPrimary} onPress={() => saveMutation.mutate()} loading={saveMutation.isPending}>Save Changes</Button>
-            <Button mode="contained" buttonColor={theme.colors.primary} textColor={theme.colors.onPrimary} onPress={() => void signOut()}>Sign Out</Button>
+            <Button mode="contained" buttonColor={theme.colors.primary} textColor={theme.colors.onPrimary} onPress={() => void logout()}>Sign Out</Button>
           </View>
         </>
       , styles)}

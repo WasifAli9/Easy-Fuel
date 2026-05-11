@@ -6,7 +6,7 @@ import { CustomerProfileScreen } from "@/features/customer/CustomerProfileScreen
 import { SupplierDashboardScreen } from "@/features/supplier/SupplierDashboardScreen";
 import { SupplierDepotsScreen } from "@/features/supplier/SupplierDepotsScreen";
 import { SupplierProfileScreen } from "@/features/supplier/SupplierProfileScreen";
-import { signOut } from "@/services/api/auth";
+import { useAuth } from "@/contexts/AuthContext";
 
 export { CustomerDashboardScreen, CustomerOrdersScreen, CustomerAddressesScreen, CustomerProfileScreen };
 export { SupplierDashboardScreen, SupplierDepotsScreen, SupplierProfileScreen };
@@ -38,6 +38,7 @@ export function DriverOrdersScreen() {
 }
 
 export function DriverProfileScreen() {
+  const { logout } = useAuth();
   return (
     <ApiCollectionScreen
       title="Driver Profile"
@@ -46,7 +47,7 @@ export function DriverProfileScreen() {
       emptyMessage="No driver profile found."
       itemTitleKeys={["full_name", "name", "email"]}
       itemSubtitleKeys={["phone", "license_number", "status"]}
-      extraAction={{ label: "Sign Out", onPress: () => void signOut() }}
+      extraAction={{ label: "Sign Out", onPress: () => void logout() }}
     />
   );
 }
@@ -91,6 +92,7 @@ export function CompanyOrdersScreen() {
 }
 
 export function CompanyProfileScreen() {
+  const { logout } = useAuth();
   return (
     <ApiCollectionScreen
       title="Company Profile"
@@ -99,7 +101,7 @@ export function CompanyProfileScreen() {
       emptyMessage="No profile information available."
       itemTitleKeys={["name", "company_name", "id"]}
       itemSubtitleKeys={["status", "email", "phone"]}
-      extraAction={{ label: "Sign Out", onPress: () => void signOut() }}
+      extraAction={{ label: "Sign Out", onPress: () => void logout() }}
     />
   );
 }

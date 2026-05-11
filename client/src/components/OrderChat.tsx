@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { cn } from "@/lib/utils";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Send, MessageCircle, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -40,8 +40,14 @@ interface OrderChatProps {
 
 export function OrderChat({ orderId, currentUserType, variant = "default" }: OrderChatProps) {
   const [messageText, setMessageText] = useState("");
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
+
+  const scrollMessagesToBottom = useCallback(() => {
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, []);
 
   // Get or create chat thread
   const {
@@ -77,15 +83,23 @@ export function OrderChat({ orderId, currentUserType, variant = "default" }: Ord
     }
   }, [thread?.id, messages.length]);
 
-  // Auto-scroll to bottom when new messages arrive
-  useEffect(() => {
-    if (scrollAreaRef.current) {
-      const scrollElement = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]');
-      if (scrollElement) {
-        scrollElement.scrollTop = scrollElement.scrollHeight;
-      }
-    }
-  }, [messages]);
+  // Keep view pinned to latest messages (native scroll container; runs after layout)
+  useLayoutEffect(() => {
+    if (messagesLoading) return;
+    let cancelled = false;
+    const run = () => {
+      if (cancelled) return;
+      scrollMessagesToBottom();
+    };
+    run();
+    requestAnimationFrame(() => {
+      run();
+      requestAnimationFrame(run);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [messages, messagesLoading, scrollMessagesToBottom]);
 
   // Send message mutation
   const sendMessageMutation = useMutation({
@@ -146,16 +160,31 @@ export function OrderChat({ orderId, currentUserType, variant = "default" }: Ord
     );
   }
 
+  const embedded = variant === "embedded";
+
   return (
-    <div className={`flex flex-col h-full ${variant === "embedded" ? "min-h-[420px]" : "min-h-[500px]"}`}>
+    <div
+      className={
+        embedded
+          ? "flex min-h-0 flex-1 flex-col"
+          : "flex h-full min-h-[500px] flex-col"
+      }
+    >
       {variant === "default" && (
         <div className="flex items-center gap-2 mb-4 pb-3 border-b">
           <MessageCircle className="h-5 w-5 text-primary" />
           <h3 className="font-semibold text-base">Order Chat</h3>
         </div>
       )}
-      <div className="flex-1 flex flex-col min-h-0">
-        <ScrollArea ref={scrollAreaRef} className="flex-1 px-1 min-h-[350px]">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div
+          ref={messagesScrollRef}
+          className={cn(
+            "min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1 overscroll-y-contain",
+            !embedded && "min-h-[280px]",
+          )}
+          aria-label="Message list"
+        >
           {messagesLoading ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -210,9 +239,9 @@ export function OrderChat({ orderId, currentUserType, variant = "default" }: Ord
               })}
             </div>
           )}
-        </ScrollArea>
+        </div>
 
-        <div className="pt-4 mt-auto border-t">
+        <div className="mt-auto shrink-0 border-t pt-4">
           <div className="flex gap-2">
             <Input
               data-testid="input-chat-message"

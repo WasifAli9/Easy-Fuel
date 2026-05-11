@@ -10,68 +10,39 @@ import pushRoutes from "./push-routes";
 import locationRoutes from "./location-routes";
 import chatRoutes from "./chat-routes";
 import notificationRoutes from "./notification-routes";
-import { db, pool } from "./db";
-import { companies, customers, drivers, fuelTypes, profiles, suppliers } from "@shared/schema";
-import { and, asc, eq, ilike } from "drizzle-orm";
+import { handleOzowSubscriptionWebhook, handleOzowSupplierSubscriptionWebhook } from "./webhooks";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { ObjectPermission } from "./objectAcl";
 import { websocketService } from "./websocket";
-import { createS3SignedGetUrl, getDefaultBucket, uploadBufferToS3 } from "./s3-storage";
-import passport from "passport";
 import {
-  getRequestUser,
-  registerSessionUser,
-  requireSessionAuth,
-  SESSION_SIGNING_SECRET,
-  updateSessionUserRole,
-} from "./auth";
-import signature from "cookie-signature";
+  bootstrapLocalAuth,
+  changeLocalPassword,
+  getLocalUserFromRequest,
+  loginLocalUser,
+  refreshLocalTokens,
+  registerLocalUser,
+} from "./auth-local";
+import { db } from "./db";
+import { companies, fuelTypes, profiles } from "@shared/schema";
+import { and, asc, eq, ilike } from "drizzle-orm";
+import fs from "fs/promises";
+import { objectPathToAbsolute, writeLocalObject } from "./local-object-storage";
 import {
-  createLocalUploadRelativePath,
-  objectPathToAbsolute,
-  uploadUrlToObjectPath,
-  writeLocalObject,
-} from "./local-object-storage";
-import { signWebSocketHandshakeToken } from "./auth-local";
+  normalizeToObjectPath,
+  readObjectViewToken,
+  signObjectViewToken,
+  streamLocalObjectToResponse,
+} from "./object-view-token";
+import { getRequestUser } from "./auth";
 
-const OBJECT_STORAGE_PROVIDER = (process.env.OBJECT_STORAGE_PROVIDER || "local").toLowerCase();
-
-function sanitizeDownloadName(name: string) {
-  return (name || "document")
-    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function extensionFromMime(mimeType?: string | null) {
-  const type = (mimeType || "").toLowerCase();
-  if (type === "application/pdf") return "pdf";
-  if (type === "image/jpeg") return "jpg";
-  if (type === "image/png") return "png";
-  if (type === "image/webp") return "webp";
-  if (type === "image/gif") return "gif";
-  return "";
-}
-
-// Helper function to parse cookies
-function parseCookies(cookieHeader: string | undefined): Record<string, string> {
-  const cookies: Record<string, string> = {};
-  if (!cookieHeader) return cookies;
-  
-  cookieHeader.split(';').forEach(cookie => {
-    const [name, ...rest] = cookie.trim().split('=');
-    if (name && rest.length > 0) {
-      cookies[name] = decodeURIComponent(rest.join('='));
-    }
-  });
-  
-  return cookies;
-}
-
-// Middleware to extract user from active auth (session-first).
-export async function getRequestSessionUser(req: Request) {
+/** API user: Bearer JWT (`auth-local`) or Passport session (`setupAuth`). */
+export async function resolveAuthedUser(req: Request) {
+  const local = await getLocalUserFromRequest(req);
+  if (local) {
+    return { id: local.id, email: local.email };
+  }
   const sessionUser = getRequestUser(req);
-  if (sessionUser) {
+  if (sessionUser?.id) {
     return { id: sessionUser.id, email: sessionUser.email };
   }
   return null;
@@ -79,25 +50,15 @@ export async function getRequestSessionUser(req: Request) {
 
 // Auth middleware for protected routes
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
-  if (req.isAuthenticated?.() && req.user) {
-    (req as any).user = req.user;
-    return next();
-  }
-  const user = await getRequestSessionUser(req);
-    if (!user) {
+  const user = await resolveAuthedUser(req);
+  if (!user) {
     // Log why authentication failed for debugging
     const hasAuthHeader = !!req.headers.authorization;
-    const raw = req.headers.cookie;
-    const cookieNames = raw
-      ? raw.split(";").map((c) => c.trim().split("=")[0]).filter(Boolean)
-      : [];
-    const hasEasyfuelSid = cookieNames.includes("easyfuel.sid");
+    const hasCookie = !!req.headers.cookie;
     console.error(`❌ Auth failed for ${req.method} ${req.path}:`, {
       hasAuthHeader,
-      hasCookie: !!raw,
-      cookieNames,
-      hasEasyfuelSid,
-      userAgent: req.headers["user-agent"]?.substring(0, 50),
+      hasCookie: hasCookie ? 'yes (checking for token...)' : 'no',
+      userAgent: req.headers['user-agent']?.substring(0, 50)
     });
     return res.status(401).json({ error: "Unauthorized" });
   }
@@ -114,14 +75,13 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  // Check if user has admin role in the profiles table
-  const adminProfile = await db
+  const profRows = await db
     .select({ role: profiles.role })
     .from(profiles)
     .where(eq(profiles.id, user.id))
     .limit(1);
-
-  if (!adminProfile[0] || adminProfile[0].role !== "admin") {
+  const profile = profRows[0];
+  if (!profile || profile.role !== "admin") {
     return res.status(403).json({ error: "Forbidden - Admin access required" });
   }
 
@@ -131,185 +91,142 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
 export async function registerRoutes(app: Express): Promise<Server> {
   const objectStorageService = new ObjectStorageService();
 
-  app.post("/api/auth/register", async (req, res) => {
+  await bootstrapLocalAuth();
+
+  const handlePasswordLogin = async (req: Request, res: Response) => {
     try {
-      const { email, password, fullName, role } = req.body ?? {};
-      if (!email || !password || !fullName || !role) {
-        return res.status(400).json({ error: "email, password, fullName and role are required." });
+      const email = typeof req.body?.email === "string" ? req.body.email : "";
+      const password = typeof req.body?.password === "string" ? req.body.password : "";
+      if (!email.trim() || !password) {
+        return res.status(400).json({ message: "Email and password are required." });
       }
-      const user = await registerSessionUser({ email, password, fullName, role });
-      req.login(user, (error) => {
-        if (error) {
-          return res.status(500).json({ error: "Session login failed." });
-        }
-        res.clearCookie("inspect360.sid", { path: "/" });
-        req.session.save((saveErr) => {
-          if (saveErr) {
-            console.error("[auth/register] session.save failed:", saveErr);
-            return res.status(500).json({ error: "Session persist failed." });
-          }
-          return res.status(201).json({ user, profile: { id: user.id, role: user.role, full_name: fullName } });
-        });
-      });
-    } catch (error: any) {
-      const normalizedMessage =
-        (typeof error?.message === "string" && error.message.trim().length > 0)
-          ? error.message
-          : (typeof error?.toString === "function" ? error.toString() : "Registration failed.");
-      console.error("[auth/register] Registration failed:", {
-        message: normalizedMessage,
-        code: error?.code,
-        detail: error?.detail,
-        hint: error?.hint,
-      });
-      if (process.env.NODE_ENV === "development") {
-        return res.status(400).json({
-          error: normalizedMessage,
-          code: error?.code ?? null,
-          detail: error?.detail ?? null,
-          hint: error?.hint ?? null,
-        });
+      const result = await loginLocalUser(email, password);
+      return res.json(result);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Login failed.";
+      return res.status(401).json({ message });
+    }
+  };
+
+  // Same contract as Inspect360 mobile: POST JSON { email, password } → JWT + user (no cookies required).
+  app.post("/api/login", handlePasswordLogin);
+  app.post("/api/auth/login", handlePasswordLogin);
+
+  app.post("/api/register", async (req: Request, res: Response) => {
+    try {
+      const email = typeof req.body?.email === "string" ? req.body.email : "";
+      const password = typeof req.body?.password === "string" ? req.body.password : "";
+      const fullName = typeof req.body?.fullName === "string" ? req.body.fullName : "";
+      const roleRaw = typeof req.body?.role === "string" ? req.body.role : "";
+      const allowed = new Set(["customer", "driver", "supplier", "admin", "company"]);
+      if (!email.trim() || !password || !fullName.trim()) {
+        return res.status(400).json({ message: "email, password, and fullName are required." });
       }
-      return res.status(400).json({ error: "Registration failed." });
+      if (!allowed.has(roleRaw)) {
+        return res.status(400).json({ message: "Invalid role." });
+      }
+      if (roleRaw === "admin") {
+        return res.status(403).json({ message: "Admin accounts cannot be registered here." });
+      }
+      const result = await registerLocalUser({
+        email,
+        password,
+        fullName: fullName.trim(),
+        role: roleRaw as "customer" | "driver" | "supplier" | "admin" | "company",
+      });
+      return res.json(result);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Registration failed.";
+      return res.status(400).json({ message });
     }
   });
 
-  app.post("/api/auth/login", async (req, res) => {
-    passport.authenticate("local", (error: Error | null, user: any, info: { message?: string } | undefined) => {
-      if (error) return res.status(500).json({ error: "Login failed." });
-      if (!user) return res.status(401).json({ error: info?.message || "Invalid credentials." });
-      req.login(user, (loginError) => {
-        if (loginError) return res.status(500).json({ error: "Session login failed." });
-        res.clearCookie("inspect360.sid", { path: "/" });
-        req.session.save((saveErr) => {
-          if (saveErr) {
-            console.error("[auth/login] session.save failed:", saveErr);
-            return res.status(500).json({ error: "Session persist failed." });
-          }
-          const payload: { user: typeof user; sessionCookie?: string } = { user };
-          const mobileSession =
-            String(req.headers["x-easy-fuel-mobile"] ?? req.headers["x-easyfuel-mobile"] ?? "").trim() === "1";
-          if (mobileSession && req.sessionID) {
-            const signed = `s:${signature.sign(req.sessionID, SESSION_SIGNING_SECRET)}`;
-            payload.sessionCookie = `easyfuel.sid=${signed}`;
-          }
-          return res.json(payload);
-        });
-      });
-    })(req, res);
+  app.post("/api/auth/refresh", async (req: Request, res: Response) => {
+    try {
+      const refreshToken = typeof req.body?.refreshToken === "string" ? req.body.refreshToken : "";
+      if (!refreshToken) {
+        return res.status(400).json({ message: "refreshToken is required." });
+      }
+      const out = await refreshLocalTokens(refreshToken);
+      return res.json(out);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Refresh failed.";
+      return res.status(401).json({ message });
+    }
   });
 
-  app.post("/api/auth/logout", (req, res) => {
-    const finish = () => {
-      res.clearCookie("easyfuel.sid", { path: "/" });
-      res.clearCookie("inspect360.sid", { path: "/" });
+  /** Inspect360-style current user for mobile AuthContext (`authService.getCurrentUser`). */
+  app.get("/api/auth/user", requireAuth, async (req: Request, res: Response) => {
+    const u = (req as { user?: { id: string; email?: string } }).user;
+    if (!u?.id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      const profRows = await db
+        .select({
+          role: profiles.role,
+          fullName: profiles.fullName,
+          phone: profiles.phone,
+          profilePhotoUrl: profiles.profilePhotoUrl,
+        })
+        .from(profiles)
+        .where(eq(profiles.id, u.id))
+        .limit(1);
+      const profile = profRows[0];
+      return res.json({
+        id: u.id,
+        email: u.email ?? "",
+        role: profile?.role ?? null,
+        fullName: profile?.fullName ?? "",
+        phone: profile?.phone ?? null,
+        profilePhotoUrl: profile?.profilePhotoUrl ?? null,
+      });
+    } catch (e: unknown) {
+      console.error("[api/auth/user]", e);
+      return res.status(500).json({ message: "Failed to load user." });
+    }
+  });
+
+  app.get("/api/auth/me", requireAuth, async (req: Request, res: Response) => {
+    const user = (req as { user?: { id: string } }).user;
+    if (!user?.id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      const profRows = await db
+        .select({ profilePhotoUrl: profiles.profilePhotoUrl })
+        .from(profiles)
+        .where(eq(profiles.id, user.id))
+        .limit(1);
+      const data = profRows[0];
+      return res.json({
+        profile: {
+          profile_photo_url: data?.profilePhotoUrl ?? null,
+        },
+      });
+    } catch (e: unknown) {
+      console.error("[api/auth/me]", e);
+      return res.status(500).json({ message: "Failed to load profile." });
+    }
+  });
+
+  app.post("/api/logout", (_req: Request, res: Response) => {
+    res.json({ message: "Logged out successfully" });
+  });
+
+  app.post("/api/auth/change-password", requireAuth, async (req: Request, res: Response) => {
+    const user = (req as { user?: { id: string } }).user;
+    const currentPassword = typeof req.body?.currentPassword === "string" ? req.body.currentPassword : "";
+    const newPassword = typeof req.body?.newPassword === "string" ? req.body.newPassword : "";
+    if (!user?.id || !currentPassword || !newPassword) {
+      return res.status(400).json({ message: "currentPassword and newPassword are required." });
+    }
+    try {
+      await changeLocalPassword(user.id, currentPassword, newPassword);
       return res.json({ ok: true });
-    };
-
-    try {
-      // Passport 0.7 logout is async (save → regenerate). Calling req.session.destroy() immediately
-      // races that and can leave req.session undefined → "Cannot read properties of undefined (reading 'regenerate')".
-      if (typeof req.logout === "function") {
-        req.logout((logoutErr: unknown) => {
-          if (logoutErr) console.error("[auth/logout] passport:", logoutErr);
-          if (req.session) {
-            return req.session.destroy((destroyErr: unknown) => {
-              if (destroyErr) console.error("[auth/logout] destroy:", destroyErr);
-              finish();
-            });
-          }
-          finish();
-        });
-        return;
-      }
-      if (req.session) {
-        req.session.destroy(() => finish());
-        return;
-      }
-      finish();
-    } catch (e) {
-      console.error("[auth/logout]", e);
-      finish();
-    }
-  });
-
-  app.get("/api/auth/me", requireAuth, async (req, res) => {
-    const user = (req as any).user;
-    const rows = await db.select().from(profiles).where(eq(profiles.id, user.id)).limit(1);
-    const row = rows[0];
-    // JSON must use snake_case keys — the SPA expects full_name / profile_photo_url (Drizzle uses camelCase in memory).
-    const profileJson = row
-      ? {
-          id: row.id,
-          role: row.role,
-          full_name: row.fullName,
-          phone: row.phone,
-          phone_country_code: row.phoneCountryCode,
-          profile_photo_url: row.profilePhotoUrl,
-          is_active: row.isActive,
-        }
-      : null;
-    return res.json({
-      user: {
-        id: user.id,
-        email: user.email,
-        full_name: profileJson?.full_name ?? null,
-      },
-      profile: profileJson,
-    });
-  });
-
-  app.get("/api/auth/ws-token", requireAuth, (req, res) => {
-    const user = (req as any).user;
-    if (!user?.id) return res.status(401).json({ error: "Unauthorized" });
-    return res.json({ wsToken: signWebSocketHandshakeToken(user.id) });
-  });
-
-  app.post("/api/auth/change-password", requireAuth, async (_req, res) => res.json({ ok: true }));
-
-  app.post("/api/auth/forgot-password", async (_req, res) => {
-    // Placeholder successful response while SMTP/email service is finalized.
-    return res.json({ ok: true });
-  });
-
-  app.post("/api/auth/set-role", requireAuth, async (req, res) => {
-    try {
-      const user = (req as any).user;
-      const { role, fullName, phone } = req.body ?? {};
-      if (!role || !fullName) return res.status(400).json({ error: "role and fullName are required." });
-
-      await updateSessionUserRole(user.id, role, fullName, phone);
-
-      if (role === "customer") {
-        const existing = await db.select({ id: customers.id }).from(customers).where(eq(customers.userId, user.id)).limit(1);
-        if (!existing[0]) {
-          await db.insert(customers).values({ userId: user.id });
-        }
-      } else if (role === "driver") {
-        const existing = await db.select({ id: drivers.id }).from(drivers).where(eq(drivers.userId, user.id)).limit(1);
-        if (!existing[0]) {
-          await db.insert(drivers).values({ userId: user.id });
-        }
-      } else if (role === "supplier") {
-        const existing = await db.select({ id: suppliers.id }).from(suppliers).where(eq(suppliers.ownerId, user.id)).limit(1);
-        if (!existing[0]) {
-          await db.insert(suppliers).values({ ownerId: user.id, name: fullName, registeredName: fullName });
-        }
-      } else if (role === "company") {
-        const existing = await db
-          .select({ id: companies.id })
-          .from(companies)
-          .where(eq(companies.ownerUserId, user.id))
-          .limit(1);
-        if (!existing[0]) {
-          await db.insert(companies).values({ ownerUserId: user.id, name: fullName, status: "active" });
-        }
-      }
-
-      const profile = await db.select().from(profiles).where(eq(profiles.id, user.id)).limit(1);
-      return res.json({ profile: profile[0] ?? null });
-    } catch (error: any) {
-      return res.status(400).json({ error: error.message || "Failed to set role." });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Password update failed.";
+      return res.status(400).json({ message });
     }
   });
 
@@ -328,60 +245,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Private objects endpoint (with ACL check)
-  app.get("/objects/:objectPath(*)", async (req, res) => {
-    const user = await getRequestSessionUser(req);
-    const userId = user?.id;
-    
+  /** Time-limited link for opening stored files without a Bearer header (e.g. mobile `Linking.openURL`). */
+  app.get("/api/objects/view", async (req, res) => {
     try {
-      // Validate objectPath is not empty
-      let objectPath = req.params.objectPath;
-      if (!objectPath || objectPath.trim() === '') {
-        return res.status(400).json({ error: "Invalid file path: path cannot be empty" });
+      const token = typeof req.query.token === "string" ? req.query.token : "";
+      const objectPath = readObjectViewToken(token);
+      if (!objectPath) {
+        return res.status(401).json({ error: "Invalid or expired link" });
       }
-      
-      // If using S3/MinIO storage, redirect to short-lived signed URL
-      if (OBJECT_STORAGE_PROVIDER === "s3" || OBJECT_STORAGE_PROVIDER === "minio") {
-        let bucketName = getDefaultBucket();
-        const pathParts = objectPath.split("/");
-        if (pathParts.length > 1) {
-          bucketName = pathParts[0];
-          objectPath = pathParts.slice(1).join("/");
-        }
-        const signedUrl = await createS3SignedGetUrl({ bucket: bucketName, key: objectPath, expiresInSec: 3600 });
-        return res.redirect(302, signedUrl);
-      }
+      await streamLocalObjectToResponse(res, objectPath);
+    } catch (e) {
+      console.error("[api/objects/view]", e);
+      return res.status(404).json({ error: "File not found" });
+    }
+  });
 
-      // Local filesystem storage: serve file directly.
-      if (OBJECT_STORAGE_PROVIDER === "local") {
-        const localObjectPath = `/objects/${objectPath}`;
-        const absolutePath = objectPathToAbsolute(localObjectPath);
-        try {
-          const docResult = await pool.query(
-            `SELECT title, mime_type, doc_type
-             FROM documents
-             WHERE file_path = $1
-             ORDER BY created_at DESC
-             LIMIT 1`,
-            [localObjectPath]
-          );
-          const doc = docResult.rows[0];
-          if (doc) {
-            const ext = extensionFromMime(doc.mime_type);
-            const fallbackBase = sanitizeDownloadName(doc.title || doc.doc_type || "document");
-            const filename = ext && !fallbackBase.toLowerCase().endsWith(`.${ext}`)
-              ? `${fallbackBase}.${ext}`
-              : fallbackBase;
-            if (doc.mime_type) {
-              res.setHeader("Content-Type", doc.mime_type);
-            }
-            // Ensure browser downloads with a human-readable extension (e.g. .pdf)
-            res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
-          }
-        } catch (lookupError) {
-          console.warn("[objects] document metadata lookup failed:", lookupError);
-        }
-        return res.sendFile(absolutePath);
+  // Private objects: local disk (LOCAL_STORAGE_DIR) first, then Replit/GCS object storage if configured.
+  app.get("/objects/:objectPath(*)", async (req, res) => {
+    const user = await resolveAuthedUser(req);
+    const userId = user?.id;
+    const objectPathParam = req.params.objectPath;
+    if (!objectPathParam?.trim()) {
+      return res.status(400).json({ error: "Invalid file path: path cannot be empty" });
+    }
+    const canonicalPath = req.path.startsWith("/objects/") ? req.path : `/objects/${objectPathParam}`;
+
+    try {
+      if (!userId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+      try {
+        const abs = objectPathToAbsolute(canonicalPath);
+        await fs.access(abs);
+        await streamLocalObjectToResponse(res, canonicalPath);
+        return;
+      } catch {
+        // fall through to Replit / GCS-backed object storage
       }
 
       const objectFile = await objectStorageService.getObjectEntityFile(req.path);
@@ -390,290 +289,105 @@ export async function registerRoutes(app: Express): Promise<Server> {
         userId,
         requestedPermission: ObjectPermission.READ,
       });
-      
       if (!canAccess) {
         return res.status(401).json({ error: "Unauthorized" });
       }
-      
       objectStorageService.downloadObject(objectFile, res);
     } catch (error: any) {
       console.error("Error checking object access:", error);
-      
       if (error instanceof ObjectNotFoundError) {
         return res.status(404).json({ error: "Object not found" });
+      }
+      if (error?.message?.includes("PRIVATE_OBJECT_DIR not set")) {
+        return res.status(503).json({
+          error: "Object storage is not configured",
+          hint: "Set LOCAL_STORAGE_DIR (e.g. ./storage) for local files, or PRIVATE_OBJECT_DIR for hosted object storage.",
+        });
       }
       return res.status(500).json({ error: "Internal server error" });
     }
   });
 
-  // Get presigned view URL for payment proofs (protected)
   app.post("/api/objects/presigned-url", requireAuth, async (req, res) => {
     try {
-      const { objectPath } = req.body;
-      if (!objectPath) {
+      const raw = req.body?.objectPath;
+      if (!raw) {
         return res.status(400).json({ error: "objectPath is required" });
       }
-
-      // Parse bucket and path
-      let path = objectPath;
-      let bucketName =
-        OBJECT_STORAGE_PROVIDER === "s3" || OBJECT_STORAGE_PROVIDER === "minio"
-          ? getDefaultBucket()
-          : "local";
-      
-      const pathParts = path.split('/');
-      const knownBuckets = ['private-objects', 'public-objects', 'documents', 'uploads', 'profile-pictures'];
-      
-      if (pathParts.length > 1 && knownBuckets.includes(pathParts[0])) {
-        bucketName = pathParts[0];
-        path = pathParts.slice(1).join('/');
+      const objectPath = normalizeToObjectPath(String(raw));
+      try {
+        await fs.access(objectPathToAbsolute(objectPath));
+      } catch {
+        return res.status(404).json({ error: "File not found" });
       }
-
-      if (OBJECT_STORAGE_PROVIDER === "s3" || OBJECT_STORAGE_PROVIDER === "minio") {
-        const signedUrl = await createS3SignedGetUrl({ bucket: bucketName, key: path, expiresInSec: 3600 });
-        return res.json({ signedUrl });
-      }
-
-      if (OBJECT_STORAGE_PROVIDER === "local") {
-        const normalized = path.startsWith("/objects/") ? path : `/objects/${path.replace(/^\/+/, "")}`;
-        return res.json({ signedUrl: normalized });
-      }
-
-      return res.status(400).json({ error: `Unsupported object storage provider: ${OBJECT_STORAGE_PROVIDER}` });
+      const host = req.get("host") || "localhost";
+      const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol || "http";
+      const base = `${proto}://${host}`;
+      const token = signObjectViewToken(objectPath);
+      const signedUrl = `${base}/api/objects/view?token=${encodeURIComponent(token)}`;
+      res.json({ signedUrl });
     } catch (error: any) {
       console.error("Error generating presigned URL:", error);
       res.status(500).json({ error: error.message || "Failed to generate presigned URL" });
     }
   });
 
-  /**
-   * Stream depot-order signature PNG for authorized users (driver on order, depot supplier, admin).
-   * Use this in <img src> so receipts work even when raw DB paths vary; img requests include session cookies.
-   */
-  app.get("/api/driver-depot-orders/:orderId/signature-image", requireAuth, async (req, res) => {
-    try {
-      const sessionUser = (req as any).user;
-      if (!sessionUser?.id) {
-        return res.status(401).json({ error: "Unauthorized" });
-      }
-
-      const { orderId } = req.params;
-      const kindRaw = String((req.query as any).kind || "delivery").toLowerCase();
-      const columnByKind: Record<string, string> = {
-        delivery: "delivery_signature_url",
-        driver: "driver_signature_url",
-        supplier: "supplier_signature_url",
-      };
-      const column = columnByKind[kindRaw];
-      if (!column) {
-        return res.status(400).json({ error: "Invalid kind" });
-      }
-
-      const orderResult = await pool.query(
-        `SELECT o.id,
-                o.${column} AS sig_url,
-                dr.user_id AS driver_user_id,
-                s.owner_id AS supplier_owner_id
-         FROM driver_depot_orders o
-         INNER JOIN depots d ON d.id = o.depot_id
-         INNER JOIN drivers dr ON dr.id = o.driver_id
-         INNER JOIN suppliers s ON s.id = d.supplier_id
-         WHERE o.id = $1`,
-        [orderId]
-      );
-      const row = orderResult.rows[0];
-      if (!row) {
-        return res.status(404).json({ error: "Order not found" });
-      }
-
-      const prof = await pool.query(`SELECT role FROM profiles WHERE id = $1`, [sessionUser.id]);
-      const role = prof.rows[0]?.role as string | undefined;
-      const allowed =
-        role === "admin" ||
-        row.driver_user_id === sessionUser.id ||
-        row.supplier_owner_id === sessionUser.id;
-
-      if (!allowed) {
-        return res.status(403).json({ error: "Forbidden" });
-      }
-
-      const raw = row.sig_url as string | null;
-      if (!raw || !String(raw).trim()) {
-        return res.status(404).json({ error: "No signature on file" });
-      }
-
-      if (raw.startsWith("data:image")) {
-        const comma = raw.indexOf(",");
-        const b64 = raw.slice(comma + 1);
-        const buf = Buffer.from(b64, "base64");
-        res.setHeader("Content-Type", "image/png");
-        res.setHeader("Cache-Control", "private, max-age=300");
-        return res.send(buf);
-      }
-
-      if (OBJECT_STORAGE_PROVIDER !== "local") {
-        return res.status(501).json({ error: "Signature image proxy supports local storage only" });
-      }
-
-      let normalized: string;
-      try {
-        normalized = uploadUrlToObjectPath(raw);
-      } catch {
-        return res.status(400).json({ error: "Invalid signature path" });
-      }
-
-      const absolutePath = objectPathToAbsolute(normalized);
-      res.setHeader("Content-Type", "image/png");
-      res.setHeader("Cache-Control", "private, max-age=300");
-      return res.sendFile(absolutePath, (err) => {
-        if (err) {
-          console.error("[signature-image] sendFile failed:", normalized, err);
-          if (!res.headersSent) {
-            res.status(404).json({ error: "Signature file not found" });
-          }
-        }
-      });
-    } catch (error: any) {
-      console.error("[signature-image]", error);
-      return res.status(500).json({ error: error.message || "Failed to load signature" });
-    }
-  });
-
-  // Get presigned upload URL (protected)
   app.post("/api/objects/upload", requireAuth, async (req, res) => {
     try {
       const uploadURL = await objectStorageService.getObjectEntityUploadURL();
-      console.log("Generated upload URL from service:", uploadURL);
-
-      if (OBJECT_STORAGE_PROVIDER === "local") {
-        const relativePath = createLocalUploadRelativePath();
+      if (uploadURL.startsWith("local://")) {
+        const rest = uploadURL.replace("local://", "").replace(/^\/+/, "");
         return res.json({
-          uploadURL: `/api/object-storage/upload/${relativePath}`,
+          uploadURL: `/api/storage/upload/local/${rest}`,
           storageType: "local",
-          bucketName: "local",
-          objectPath: relativePath,
+          objectPath: rest,
         });
       }
-      
-      if (uploadURL.startsWith("s3://")) {
-        const urlWithoutPrefix = uploadURL.replace("s3://", "");
-        const parts = urlWithoutPrefix.split("/");
-        const bucketName = parts[0];
-        const objectPath = parts.slice(1).join("/");
-        const finalUploadURL = `/api/storage/upload/${bucketName}/${objectPath}`;
-        res.json({
-          uploadURL: finalUploadURL,
-          storageType: "s3",
-          bucketName,
-          objectPath,
-        });
-      } else {
-        res.json({ uploadURL });
-      }
+      res.json({ uploadURL });
     } catch (error: any) {
       console.error("Error generating upload URL:", error);
-      console.error("Error stack:", error?.stack);
-      const errorMessage = error?.message || "Failed to generate upload URL";
-      res.status(500).json({ 
+      res.status(500).json({
         error: "Failed to generate upload URL",
-        message: errorMessage,
-        details: error?.toString() || String(error)
+        message: error?.message || "Failed to generate upload URL",
       });
     }
   });
 
-  // Unified storage upload endpoint (protected)
   app.put("/api/storage/upload/:bucket/:path(*)", requireAuth, async (req, res) => {
-    const { bucket, path } = req.params;
-    
-    console.log(`[Upload] Received upload request - bucket: "${bucket}", path: "${path}"`);
-    console.log(`[Upload] Full URL: ${req.url}`);
-    console.log(`[Upload] Content-Type: ${req.headers["content-type"]}`);
-    console.log(`[Upload] Content-Length: ${req.headers["content-length"]}`);
-    
+    const { bucket, path: pathParam } = req.params;
     try {
-      // Get the file from the request body
-      // Uppy sends the file as raw binary data
       const chunks: Buffer[] = [];
-      
       req.on("data", (chunk: Buffer) => {
         chunks.push(chunk);
       });
-      
       await new Promise<void>((resolve, reject) => {
         req.on("end", () => resolve());
         req.on("error", reject);
       });
-      
       const fileBuffer = Buffer.concat(chunks);
-      
-      if (!fileBuffer || fileBuffer.length === 0) {
+      if (!fileBuffer.length) {
         return res.status(400).json({ error: "No file data received" });
       }
 
-      if (OBJECT_STORAGE_PROVIDER === "local") {
-        const relativePath = `${bucket}/${path}`.replace(/^local\//, "");
-        const objectPath = await writeLocalObject(relativePath, fileBuffer);
-        return res.status(200).json({
-          objectPath,
-          path: relativePath,
-          fullPath: objectPath,
-          uploadURL: objectPath,
-          bucket: "local",
-        });
-      }
+      const relative = `${bucket}/${pathParam}`.replace(/\/+/g, "/").replace(/^\/+/, "");
+      const storedPath = await writeLocalObject(relative, fileBuffer);
+      const pathOnly = storedPath.replace(/^\/objects\//, "");
 
-      if (OBJECT_STORAGE_PROVIDER === "s3" || OBJECT_STORAGE_PROVIDER === "minio") {
-        await uploadBufferToS3({
-          bucket,
-          key: path,
-          body: fileBuffer,
-          contentType: (req.headers["content-type"] as string) || "application/octet-stream",
-        });
-        const objectPath = `${bucket}/${path}`;
-        return res.status(200).json({
-          objectPath,
-          path,
-          fullPath: objectPath,
-          uploadURL: objectPath,
-          bucket,
-        });
-      }
-
-      return res.status(400).json({ error: `Unsupported object storage provider: ${OBJECT_STORAGE_PROVIDER}` });
+      return res.status(200).json({
+        objectPath: pathOnly,
+        path: pathParam,
+        fullPath: pathOnly,
+        uploadURL: pathOnly,
+        location: storedPath,
+        url: storedPath,
+        bucket,
+      });
     } catch (error: any) {
       console.error("Error in storage upload endpoint:", error);
-      res.status(500).json({ 
+      return res.status(500).json({
         error: "Failed to upload file",
-        message: error.message || "Unknown error"
+        message: error?.message || "Unknown error",
       });
-    }
-  });
-
-  // Local filesystem upload endpoint (protected)
-  app.put("/api/object-storage/upload/:path(*)", requireAuth, async (req, res) => {
-    try {
-      const chunks: Buffer[] = [];
-      req.on("data", (chunk: Buffer) => chunks.push(chunk));
-      await new Promise<void>((resolve, reject) => {
-        req.on("end", () => resolve());
-        req.on("error", reject);
-      });
-      const fileBuffer = Buffer.concat(chunks);
-      if (!fileBuffer || fileBuffer.length === 0) {
-        return res.status(400).json({ error: "No file data received" });
-      }
-      const relativePath = req.params.path;
-      const objectPath = await writeLocalObject(relativePath, fileBuffer);
-      return res.status(200).json({
-        objectPath,
-        path: relativePath,
-        fullPath: objectPath,
-        uploadURL: objectPath,
-        bucket: "local",
-      });
-    } catch (error: any) {
-      return res.status(500).json({ error: error.message || "Failed to upload file" });
     }
   });
 
@@ -687,17 +401,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      if (OBJECT_STORAGE_PROVIDER === "local") {
-        const objectPath = uploadUrlToObjectPath(profilePictureURL);
-        return res.json({ objectPath });
-      }
-
       if (profilePictureURL.includes("/") && !profilePictureURL.startsWith("/") && !profilePictureURL.startsWith("http")) {
         res.json({ objectPath: profilePictureURL });
         return;
       }
 
-      // For Replit storage, use the ACL policy system
+      // Hosted object storage (Replit/GCS): apply ACL metadata
       const objectPath = await objectStorageService.trySetObjectEntityAclPolicy(
         profilePictureURL,
         {
@@ -727,11 +436,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      if (OBJECT_STORAGE_PROVIDER === "local") {
-        const objectPath = uploadUrlToObjectPath(documentURL);
-        return res.json({ objectPath });
-      }
-
       const objectPath = await objectStorageService.trySetObjectEntityAclPolicy(
         documentURL,
         {
@@ -747,57 +451,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Public webhook: OZOW subscription payment callback (no auth)
+  app.get("/api/webhooks/ozow-subscription", handleOzowSubscriptionWebhook);
+  app.post("/api/webhooks/ozow-subscription", handleOzowSubscriptionWebhook);
+  app.get("/api/webhooks/ozow-supplier-subscription", handleOzowSupplierSubscriptionWebhook);
+  app.post("/api/webhooks/ozow-supplier-subscription", handleOzowSupplierSubscriptionWebhook);
+
   // Public route: Get all fuel types (no auth required)
   app.get("/api/fuel-types", async (req, res) => {
     try {
-      let activeFuelTypes = await db
+      const rows = await db
         .select()
         .from(fuelTypes)
         .where(eq(fuelTypes.active, true))
         .orderBy(asc(fuelTypes.label));
-
-      // Ensure canonical fuel types exist (idempotent). Match the full set used in dev/local DBs;
-      // older production only had the first five from an earlier bootstrap.
-      const expectedCodes = new Set([
-        "adblue",
-        "diesel",
-        "diesel_50ppm",
-        "diesel_500ppm",
-        "lpg",
-        "paraffin",
-        "petrol_93",
-        "petrol_95",
-        "petrol_97",
-        "petrol_premium",
-      ]);
-      const haveCodes = new Set(activeFuelTypes.map((r) => r.code));
-      const missingDefaults = [...expectedCodes].some((c) => !haveCodes.has(c));
-
-      if (activeFuelTypes.length === 0 || missingDefaults) {
-        await pool.query(
-          `INSERT INTO fuel_types (code, label, active)
-           VALUES
-             ('adblue', 'AdBlue (Diesel Exhaust Fluid)', true),
-             ('diesel', 'Diesel', true),
-             ('diesel_50ppm', 'Diesel 50ppm (Ultra Low Sulphur Diesel)', true),
-             ('diesel_500ppm', 'Diesel 500ppm', true),
-             ('lpg', 'LPG (Liquefied Petroleum Gas)', true),
-             ('paraffin', 'Illuminating Paraffin', true),
-             ('petrol_93', 'Petrol 93 (Unleaded)', true),
-             ('petrol_95', 'Petrol 95 (Unleaded)', true),
-             ('petrol_97', 'Petrol 97 (Premium Unleaded)', true),
-             ('petrol_premium', 'Premium Petrol', true)
-           ON CONFLICT (code) DO NOTHING`
-        );
-
-        activeFuelTypes = await db
-          .select()
-          .from(fuelTypes)
-          .where(eq(fuelTypes.active, true))
-          .orderBy(asc(fuelTypes.label));
-      }
-
-      res.json(activeFuelTypes);
+      res.json(rows);
     } catch (error: any) {
       console.error("Error fetching fuel types:", error);
       res.status(500).json({ error: error.message });
@@ -809,14 +477,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const raw = typeof req.query.q === "string" ? req.query.q.trim() : "";
       const q = raw.replace(/%/g, "").slice(0, 80);
-      const filters = [eq(companies.status, "active")];
+      const conditions = [eq(companies.status, "active")];
       if (q.length > 0) {
-        filters.push(ilike(companies.name, `%${q}%`));
+        conditions.push(ilike(companies.name, `%${q}%`));
       }
       const rows = await db
         .select({ id: companies.id, name: companies.name, status: companies.status })
         .from(companies)
-        .where(and(...filters))
+        .where(and(...conditions))
         .orderBy(asc(companies.name))
         .limit(100);
       res.json(rows);
@@ -827,31 +495,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Register company routes (protected)
-  app.use("/api/company", requireSessionAuth, companyRoutes);
+  app.use("/api/company", requireAuth, companyRoutes);
 
   // Register customer routes (protected with auth middleware)
-  app.use("/api", requireSessionAuth, customerRoutes);
+  app.use("/api", requireAuth, customerRoutes);
 
   // Register driver routes (protected with auth middleware)
-  app.use("/api/driver", requireSessionAuth, driverRoutes);
+  app.use("/api/driver", requireAuth, driverRoutes);
 
   // Register supplier routes (protected with auth middleware)
-  app.use("/api/supplier", requireSessionAuth, supplierRoutes);
+  app.use("/api/supplier", requireAuth, supplierRoutes);
 
   // Register admin routes (protected with auth and admin middleware)
-  app.use("/api/admin", requireSessionAuth, requireAdmin, adminRoutes);
+  app.use("/api/admin", requireAuth, requireAdmin, adminRoutes);
 
   // Register push notification routes (protected with auth middleware)
-  app.use("/api/push", requireSessionAuth, pushRoutes);
+  app.use("/api/push", requireAuth, pushRoutes);
 
   // Register location tracking routes (protected with auth middleware)
-  app.use("/api/location", requireSessionAuth, locationRoutes);
+  app.use("/api/location", requireAuth, locationRoutes);
 
   // Register chat routes (protected with auth middleware)
   app.use("/api/chat", chatRoutes);
 
   // Register notification routes (protected with auth middleware)
-  app.use("/api/notifications", requireSessionAuth, notificationRoutes);
+  app.use("/api/notifications", requireAuth, notificationRoutes);
 
   const httpServer = createServer(app);
 

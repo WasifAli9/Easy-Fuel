@@ -17,7 +17,7 @@ export default function Signup() {
 	const [showPassword, setShowPassword] = useState(false);
 	const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 	const [loading, setLoading] = useState(false);
-	const [role, setRole] = useState<"customer" | "driver" | "supplier" | "admin" | "company">("driver");
+	const [role, setRole] = useState<"customer" | "driver" | "supplier" | "company">("driver");
 	const { user, profile, loading: authLoading, signUpWithPassword } = useAuth();
 	const { toast } = useToast();
 	const [, setLocation] = useLocation();
@@ -133,7 +133,6 @@ export default function Signup() {
 											<SelectItem value="driver">Driver</SelectItem>
 											<SelectItem value="supplier">Supplier</SelectItem>
 											<SelectItem value="company">Fleet company</SelectItem>
-											<SelectItem value="admin">Admin</SelectItem>
 										</SelectContent>
 									</Select>
 								</div>

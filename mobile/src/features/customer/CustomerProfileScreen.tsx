@@ -7,7 +7,7 @@ import { apiClient } from "@/services/api/client";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
-import { signOut } from "@/services/api/auth";
+import { useAuth } from "@/contexts/AuthContext";
 
 const PROVINCES = [
   "Eastern Cape",
@@ -36,6 +36,7 @@ type Profile = {
 };
 
 export function CustomerProfileScreen() {
+  const { logout } = useAuth();
   const mode = useUiThemeStore((s) => s.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
   const styles = getStyles(theme);
@@ -163,7 +164,7 @@ export function CustomerProfileScreen() {
       </Button>
       {saveMutation.isError ? <Text style={styles.error}>{(saveMutation.error as Error).message}</Text> : null}
 
-      <Button mode="contained-tonal" onPress={() => void signOut()} style={styles.signOut}>
+      <Button mode="contained-tonal" onPress={() => void logout()} style={styles.signOut}>
         Sign out
       </Button>
     </ScrollView>

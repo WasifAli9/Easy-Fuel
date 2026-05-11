@@ -7,7 +7,7 @@ import { getFuelPortalTokens } from "@/design/fuel-portal-tokens";
 import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { FuelPortalHeader } from "@/navigation/FuelPortalHeader";
 import { useUiThemeStore } from "@/store/ui-theme-store";
-import { signOut } from "@/services/api/auth";
+import { useAuth } from "@/contexts/AuthContext";
 
 export type PortalMenuItem = {
   key: string;
@@ -52,6 +52,7 @@ export function PortalShell({
   onSelectMenu,
   children,
 }: PortalShellProps) {
+  const { logout } = useAuth();
   const mode = useUiThemeStore((state) => state.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
   const brand = brandStylesByVariant[brandVariant];
@@ -64,7 +65,7 @@ export function PortalShell({
     if (isSigningOut) return;
     try {
       setIsSigningOut(true);
-      await signOut();
+      await logout();
     } finally {
       setIsSigningOut(false);
     }

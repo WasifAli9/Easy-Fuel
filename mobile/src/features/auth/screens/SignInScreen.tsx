@@ -1,39 +1,57 @@
 import { useState } from "react";
-import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from "react-native";
-import { Text, TextInput } from "react-native-paper";
-import { Button } from "@/design/paper-button";
-import { AxiosError } from "axios";
-import { signInWithPassword } from "@/services/api/auth";
-import { getFuelPortalTokens } from "@/design/fuel-portal-tokens";
-import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
-import { darkTheme, lightTheme } from "@/design/theme";
-import { EasyFuelLogo } from "@/design/EasyFuelLogo";
-import { useUiThemeStore } from "@/store/ui-theme-store";
+import { Alert, Image, KeyboardAvoidingView, Platform, StyleSheet, View } from "react-native";
+import { Button, Text, TextInput } from "react-native-paper";
+import { useAuth } from "@/contexts/AuthContext";
+import { appTheme } from "@/design/theme";
+import { appConfig, getResolvedApiBaseUrl } from "@/services/config";
+
+function isLikelyNetworkFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name === "AbortError") return true;
+  const m = error.message.toLowerCase();
+  return /network request failed|failed to fetch|fetch failed|network error|timed out|offline|abort/i.test(m);
+}
+
+function isLikelyInvalidCredentials(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const m = error.message.toLowerCase();
+  return (
+    /invalid email or password|wrong password|incorrect password|unauthorized|401/.test(m) ||
+    m.includes("invalid credentials")
+  );
+}
 
 export function SignInScreen() {
-  const mode = useUiThemeStore((state) => state.mode);
-  const theme = mode === "dark" ? darkTheme : lightTheme;
-  const styles = getStyles(theme);
+  const { login, isLoading: authBusy } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const logoUri = `${appConfig.apiBaseUrl.replace(/\/api\/?$/, "")}/icon-512.png`;
 
   async function onSubmit() {
     try {
       setLoading(true);
-      await signInWithPassword(email.trim(), password);
+      await login(email.trim(), password);
     } catch (error) {
-      const axiosError = error as AxiosError<{ message?: string }>;
-      if (!axiosError.response) {
+      const portalOrigin = getResolvedApiBaseUrl().replace(/\/api\/?$/i, "");
+      const envHint =
+        "If the URL is wrong, set EXPO_PUBLIC_API_URL or EXPO_PUBLIC_API_BASE_URL in mobile/.env and restart Expo with cache clear: npx expo start -c";
+
+      if (isLikelyInvalidCredentials(error)) {
+        Alert.alert(
+          "Sign in failed",
+          error instanceof Error ? error.message : "Please check your credentials and try again.",
+        );
+      } else if (isLikelyNetworkFailure(error)) {
         Alert.alert(
           "Cannot reach server",
-          "Please make sure your phone and backend are on the same network, then try again.",
+          `Check that ${portalOrigin} opens in your phone's browser. Try Wi‑Fi or disable VPN. ${envHint}`,
         );
       } else {
         Alert.alert(
           "Sign in failed",
-          axiosError.response.data?.message ?? "Please check your credentials and try again.",
+          error instanceof Error ? error.message : "Something went wrong. Please try again.",
         );
       }
     } finally {
@@ -42,140 +60,116 @@ export function SignInScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-    >
-      <ScrollView
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
-        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
-      >
-        <View style={styles.card}>
+    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.container}>
+      <View style={styles.card}>
         <View style={styles.logoWrap}>
-          <EasyFuelLogo size={68} borderRadius={12} />
+          <Image source={{ uri: logoUri }} style={styles.logoImage} />
         </View>
-          <Text variant="headlineMedium" style={styles.title}>
-            Easy Fuel
-          </Text>
-          <Text variant="titleMedium" style={styles.subtitle}>
-            Welcome back
-          </Text>
-          <Text variant="bodyMedium" style={styles.description}>
-            Sign in to manage orders, deliveries, and account activity.
-          </Text>
+        <Text variant="headlineMedium" style={styles.title}>
+          Easy Fuel
+        </Text>
+        <Text variant="titleMedium" style={styles.subtitle}>
+          Welcome back
+        </Text>
+        <Text variant="bodyMedium" style={styles.description}>
+          Sign in to manage orders, deliveries, and account activity.
+        </Text>
 
-          <TextInput
-            mode="outlined"
-            label="Email"
-            autoCapitalize="none"
-            keyboardType="email-address"
-            value={email}
-            onChangeText={setEmail}
-            style={styles.input}
-            left={<TextInput.Icon icon="email-outline" />}
-            textColor={theme.colors.onSurface}
-            outlineColor={theme.colors.outline}
-            activeOutlineColor={theme.colors.primary}
-            theme={{ colors: { onSurfaceVariant: theme.colors.onSurfaceVariant } }}
-          />
-          <TextInput
-            mode="outlined"
-            label="Password"
-            secureTextEntry={!showPassword}
-            value={password}
-            onChangeText={setPassword}
-            style={styles.input}
-            left={<TextInput.Icon icon="lock-outline" />}
-            right={
-              <TextInput.Icon
-                icon={showPassword ? "eye-off-outline" : "eye-outline"}
-                onPress={() => setShowPassword((prev) => !prev)}
-              />
-            }
-            textColor={theme.colors.onSurface}
-            outlineColor={theme.colors.outline}
-            activeOutlineColor={theme.colors.primary}
-            theme={{ colors: { onSurfaceVariant: theme.colors.onSurfaceVariant } }}
-          />
-          <Button
-            mode="contained"
-            loading={loading}
-            onPress={onSubmit}
-            disabled={loading || !email.trim() || !password}
-            style={styles.button}
-            contentStyle={styles.buttonContent}
-            buttonColor={theme.colors.primary}
-            textColor={theme.colors.onPrimary}
-          >
-            Sign In
-          </Button>
-        </View>
-      </ScrollView>
+        <TextInput
+          mode="outlined"
+          label="Email"
+          autoCapitalize="none"
+          keyboardType="email-address"
+          value={email}
+          onChangeText={setEmail}
+          style={styles.input}
+          left={<TextInput.Icon icon="email-outline" />}
+        />
+        <TextInput
+          mode="outlined"
+          label="Password"
+          secureTextEntry={!showPassword}
+          value={password}
+          onChangeText={setPassword}
+          style={styles.input}
+          left={<TextInput.Icon icon="lock-outline" />}
+          right={
+            <TextInput.Icon
+              icon={showPassword ? "eye-off-outline" : "eye-outline"}
+              onPress={() => setShowPassword((prev) => !prev)}
+            />
+          }
+        />
+        <Button
+          mode="contained"
+          loading={loading || authBusy}
+          onPress={onSubmit}
+          disabled={loading || authBusy || !email.trim() || !password}
+          style={styles.button}
+          contentStyle={styles.buttonContent}
+        >
+          Sign In
+        </Button>
+      </View>
     </KeyboardAvoidingView>
   );
 }
 
-const getStyles = (theme: typeof lightTheme) => {
-  const p = getPortalUiStyleDefs(theme);
-  const isDark = "dark" in theme && (theme as { dark?: boolean }).dark === true;
-  const fp = getFuelPortalTokens(theme, isDark);
-  return StyleSheet.create({
+const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: fp.canvas,
-  },
-  scrollContent: {
-    flexGrow: 1,
     justifyContent: "center",
-    paddingHorizontal: 20,
-    paddingTop: 24,
-    paddingBottom: 32,
+    padding: 20,
+    backgroundColor: appTheme.colors.background,
   },
   card: {
-    borderRadius: fp.cardRadius,
-    padding: 22,
-    backgroundColor: theme.colors.surface,
-    ...fp.shadowCard,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    padding: 20,
+    shadowColor: "#000000",
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
   },
   logoWrap: {
     width: 68,
     height: 68,
-    borderRadius: 12,
+    borderRadius: 14,
     backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
     alignSelf: "center",
     marginBottom: 12,
   },
+  logoImage: {
+    width: 68,
+    height: 68,
+    borderRadius: 14,
+  },
   title: {
     textAlign: "center",
-    color: theme.colors.onSurface,
   },
   subtitle: {
     textAlign: "center",
     marginTop: 2,
     fontWeight: "600",
-    color: theme.colors.onSurface,
   },
   description: {
     textAlign: "center",
-    color: theme.colors.onSurfaceVariant,
+    color: "#6B7280",
     marginTop: 6,
     marginBottom: 16,
   },
   input: {
     marginBottom: 10,
-    backgroundColor: theme.colors.surface,
+    backgroundColor: "#FFFFFF",
   },
   button: {
     marginTop: 6,
-    borderRadius: 12,
+    borderRadius: 14,
   },
   buttonContent: {
     height: 48,
   },
-  });
-};
+});

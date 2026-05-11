@@ -9,10 +9,26 @@ import {
   getObjectAclPolicy,
   setObjectAclPolicy,
 } from "./objectAcl";
-import { buildS3ObjectPath, getDefaultBucket } from "./s3-storage";
 
 const REPLIT_SIDECAR_ENDPOINT = "http://127.0.0.1:1106";
 const OBJECT_STORAGE_PROVIDER = (process.env.OBJECT_STORAGE_PROVIDER || "local").toLowerCase();
+
+/** S3/MinIO URL helpers only (no AWS SDK). Real S3 uploads use `server/s3-storage.ts` when you add that import + deps. */
+function envFirst(...keys: string[]) {
+  for (const key of keys) {
+    const value = process.env[key];
+    if (value && value.trim().length > 0) return value;
+  }
+  return undefined;
+}
+
+function getS3StyleDefaultBucket() {
+  return envFirst("MINIO_BUCKET", "S3_BUCKET") || "easyfuel-private";
+}
+
+function buildS3StyleObjectPath() {
+  return `uploads/${randomUUID()}`;
+}
 
 export const objectStorageClient = new Storage({
   credentials: {
@@ -118,7 +134,7 @@ export class ObjectStorageService {
   async getObjectEntityUploadURL(): Promise<string> {
     try {
       if (OBJECT_STORAGE_PROVIDER === "s3" || OBJECT_STORAGE_PROVIDER === "minio") {
-        return `s3://${getDefaultBucket()}/${buildS3ObjectPath()}`;
+        return `s3://${getS3StyleDefaultBucket()}/${buildS3StyleObjectPath()}`;
       }
       if (OBJECT_STORAGE_PROVIDER === "local") {
         const objectId = randomUUID();

@@ -366,10 +366,7 @@ export default function DriverProfile() {
 
   const updatePasswordMutation = useMutation({
     mutationFn: async (data: { currentPassword: string; newPassword: string }) => {
-      // Note: Supabase doesn't provide a way to verify current password without signing in
-      // In a production app, you might want to add server-side verification
-      // For now, we'll update the password directly
-      await updatePassword(data.newPassword);
+      await updatePassword(data.newPassword, data.currentPassword);
     },
     onSuccess: () => {
       passwordForm.reset({

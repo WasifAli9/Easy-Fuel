@@ -6,11 +6,13 @@ Production-ready mobile workspace for Android and iOS, built to reuse existing E
 
 - Expo + React Native + TypeScript
 - React Navigation
-- React Query + Axios
+- React Query + Axios (same API session model as Inspect360 mobile: `POST /api/login`, bearer access token, `POST /api/auth/refresh`)
 - Zustand
 - React Native Paper
 - react-hook-form + zod
 - expo-secure-store, expo-notifications, expo-location, expo-local-authentication
+
+Auth is **only** against your Easy Fuel API (local JWT from the server). There is **no** Supabase client in this app.
 
 ## App Structure
 

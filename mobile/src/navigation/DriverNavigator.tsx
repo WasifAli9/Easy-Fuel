@@ -10,7 +10,7 @@ import { FuelPortalHeader } from "@/navigation/FuelPortalHeader";
 import { DriverOrdersScreen } from "@/features/driver/DriverOrdersScreen";
 import { DriverVehiclesScreen } from "@/features/driver/DriverVehiclesScreen";
 import { DriverDepotScreen } from "@/features/driver/DriverDepotScreen";
-import { signOut } from "@/services/api/auth";
+import { useAuth } from "@/contexts/AuthContext";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { useUiOverlayStore } from "@/store/ui-overlay-store";
 import {
@@ -81,6 +81,7 @@ function DriverPortalTabs() {
 }
 
 export function DriverNavigator() {
+  const { logout } = useAuth();
   const mode = useUiThemeStore((state) => state.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
   const styles = getStyles(theme);
@@ -93,7 +94,7 @@ export function DriverNavigator() {
     if (isSigningOut) return;
     try {
       setIsSigningOut(true);
-      await signOut();
+      await logout();
     } finally {
       setIsSigningOut(false);
     }

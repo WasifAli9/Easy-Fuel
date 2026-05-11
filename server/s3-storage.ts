@@ -1,3 +1,7 @@
+/**
+ * Optional S3 / MinIO helpers. Not imported by default object storage (`OBJECT_STORAGE_PROVIDER=local`).
+ * Install when you use this module: `npm i @aws-sdk/client-s3 @aws-sdk/s3-request-presigner`
+ */
 import { randomUUID } from "crypto";
 import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";

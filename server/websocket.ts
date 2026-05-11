@@ -1,13 +1,14 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
+import {
+  getLocalUserFromAccessToken,
+  getUserIdFromWebSocketHandshakeToken,
+} from "./auth-local";
 import type { IncomingMessage } from "http";
 import { parse } from "url";
-import type { ParsedUrlQuery } from "querystring";
-import { getLocalUserFromAccessToken, getUserIdFromWebSocketHandshakeToken } from "./auth-local";
+import { eq } from "drizzle-orm";
 import { db } from "./db";
 import { profiles } from "@shared/schema";
-import { eq } from "drizzle-orm";
-import { pool } from "./db";
 
 interface AuthenticatedWebSocket extends WebSocket {
   userId?: string;
@@ -20,60 +21,6 @@ interface WebSocketMessage {
   payload: any;
 }
 
-function parseCookies(cookieHeader?: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (!cookieHeader) return out;
-  for (const raw of cookieHeader.split(";")) {
-    const [key, ...rest] = raw.trim().split("=");
-    if (!key || rest.length === 0) continue;
-    out[key] = decodeURIComponent(rest.join("="));
-  }
-  return out;
-}
-
-/** Merge Cookie header with optional `easyfuel_cookie` query (React Native WS cannot send Cookie headers). */
-function mergeCookieHeader(req: IncomingMessage, query: ParsedUrlQuery): string | undefined {
-  const fromHeader = req.headers.cookie;
-  const raw = query.easyfuel_cookie;
-  const fromQuery = Array.isArray(raw) ? raw[0] : raw;
-  if (typeof fromQuery === "string" && fromQuery.length > 0) {
-    try {
-      const decoded = decodeURIComponent(fromQuery);
-      return [fromHeader, decoded].filter(Boolean).join("; ");
-    } catch {
-      return [fromHeader, fromQuery].filter(Boolean).join("; ");
-    }
-  }
-  return fromHeader;
-}
-
-async function getLocalUserFromSessionCookie(cookieHeader?: string): Promise<{ id: string } | null> {
-  const cookies = parseCookies(cookieHeader);
-  const rawSessionCookie = cookies["easyfuel.sid"];
-  if (!rawSessionCookie) return null;
-
-  // express-session signed cookie format: s:<sid>.<sig>
-  const unsigned = rawSessionCookie.startsWith("s:") ? rawSessionCookie.slice(2) : rawSessionCookie;
-  const sid = unsigned.split(".")[0];
-  if (!sid) return null;
-
-  const sessionRows = await pool.query(
-    `SELECT sess FROM user_sessions WHERE sid = $1 AND expire >= now() LIMIT 1`,
-    [sid],
-  );
-  const sessionRow = sessionRows.rows[0];
-  if (!sessionRow?.sess) return null;
-
-  const sess =
-    typeof sessionRow.sess === "string"
-      ? JSON.parse(sessionRow.sess)
-      : sessionRow.sess;
-
-  const userId = sess?.passport?.user;
-  if (!userId || typeof userId !== "string") return null;
-  return { id: userId };
-}
-
 class WebSocketService {
   private wss: WebSocketServer | null = null;
   private clients: Map<string, Set<AuthenticatedWebSocket>> = new Map();
@@ -82,135 +29,96 @@ class WebSocketService {
     try {
       this.wss = new WebSocketServer({ server, path: "/ws" });
 
-      // Log WebSocket server initialization
       console.log("[WebSocket] Server initialized on path /ws");
 
       this.wss.on("connection", async (ws: AuthenticatedWebSocket, req: IncomingMessage) => {
-      try {
-        // Extract token from query params
-        const { query } = parse(req.url || "", true);
-        const token = query.token as string;
+        try {
+          const { query } = parse(req.url || "", true);
+          const token = query.token as string;
 
-        let user: { id: string } | null = null;
-        let error: { message?: string } | null = null;
-        if (token && token !== "cookie-session") {
-          const wsHandshakeUserId = getUserIdFromWebSocketHandshakeToken(token);
-          if (wsHandshakeUserId) {
-            user = { id: wsHandshakeUserId };
-          } else {
-            const localUser = await getLocalUserFromAccessToken(token);
-            if (localUser) {
-              user = { id: localUser.id };
-            } else {
-              // Graceful fallback: browser/mobile may carry a stale token query while cookie session is valid.
-              const cookieHeader = mergeCookieHeader(req, query);
-              const cookieUser = await getLocalUserFromSessionCookie(cookieHeader);
-              if (cookieUser) {
-                user = { id: cookieUser.id };
-              } else {
-                error = { message: "Invalid local token" };
-              }
+          if (!token) {
+            ws.close(1008, "Authentication required");
+            return;
+          }
+
+          let authedUserId: string | null = (await getLocalUserFromAccessToken(token))?.id ?? null;
+          if (!authedUserId) {
+            authedUserId = getUserIdFromWebSocketHandshakeToken(token);
+          }
+
+          if (!authedUserId) {
+            if (process.env.NODE_ENV === "development") {
+              console.error("[WebSocket] Invalid or expired token");
             }
+            ws.close(1008, "Invalid authentication token");
+            return;
           }
-        } else {
-          const cookieHeader = mergeCookieHeader(req, query);
-          const cookieUser = await getLocalUserFromSessionCookie(cookieHeader);
-          if (!cookieUser) {
-            error = { message: "Authentication required" };
-          } else {
-            user = { id: cookieUser.id };
-          }
-        }
 
-        if (error || !user) {
-          // Log auth errors for debugging (but not for expired tokens in production)
-          const isExpiredToken = error?.message?.includes("expired") || error?.message?.includes("JWT");
-          if (process.env.NODE_ENV === "development" || !isExpiredToken) {
-            console.error("[WebSocket] Auth error:", error?.message || "User not found");
-          }
-          ws.close(1008, "Invalid authentication token");
-          return;
-        }
-
-        // Attach user ID to WebSocket
-        ws.userId = user.id;
-        ws.isAlive = true;
-
-        // Fetch user role from database
-        const profileRows = await db
-          .select({ role: profiles.role })
-          .from(profiles)
-          .where(eq(profiles.id, user.id))
-          .limit(1);
-
-        if (profileRows[0]?.role) {
-          ws.userRole = profileRows[0].role;
-        }
-
-        // Add client to the map
-        if (!this.clients.has(user.id)) {
-          this.clients.set(user.id, new Set());
-        }
-        this.clients.get(user.id)!.add(ws);
-
-        // Handle ping/pong for connection health
-        ws.on("pong", () => {
+          ws.userId = authedUserId;
           ws.isAlive = true;
-        });
 
-        // Handle incoming messages
-        ws.on("message", (data: string) => {
-          try {
-            const message: WebSocketMessage = JSON.parse(data.toString());
-            this.handleMessage(ws, message);
-          } catch (error) {
-            // Invalid message format, ignore
+          const profRows = await db
+            .select({ role: profiles.role })
+            .from(profiles)
+            .where(eq(profiles.id, authedUserId))
+            .limit(1);
+          if (profRows[0]?.role) {
+            ws.userRole = profRows[0].role;
           }
-        });
 
-        // Handle disconnection
-        ws.on("close", () => {
-          if (ws.userId) {
-            const userClients = this.clients.get(ws.userId);
-            if (userClients) {
-              userClients.delete(ws);
-              if (userClients.size === 0) {
-                this.clients.delete(ws.userId);
+          if (!this.clients.has(authedUserId)) {
+            this.clients.set(authedUserId, new Set());
+          }
+          this.clients.get(authedUserId)!.add(ws);
+
+          ws.on("pong", () => {
+            ws.isAlive = true;
+          });
+
+          ws.on("message", (data: string) => {
+            try {
+              const message: WebSocketMessage = JSON.parse(data.toString());
+              this.handleMessage(ws, message);
+            } catch {
+              // Invalid message format, ignore
+            }
+          });
+
+          ws.on("close", () => {
+            if (ws.userId) {
+              const userClients = this.clients.get(ws.userId);
+              if (userClients) {
+                userClients.delete(ws);
+                if (userClients.size === 0) {
+                  this.clients.delete(ws.userId);
+                }
               }
             }
+          });
+
+          this.sendToSocket(ws, {
+            type: "connected",
+            payload: { userId: authedUserId, timestamp: new Date().toISOString() },
+          });
+
+          if (process.env.NODE_ENV === "development") {
+            console.log(`[WebSocket] User ${authedUserId} connected`);
           }
-        });
-
-        const authedUserId = ws.userId as string;
-        // Send welcome message
-        this.sendToSocket(ws, {
-          type: "connected",
-          payload: { userId: authedUserId, timestamp: new Date().toISOString() },
-        });
-
-        // Log successful connection (only in development)
-        if (process.env.NODE_ENV === "development") {
-          console.log(`[WebSocket] User ${authedUserId} connected`);
+        } catch (error) {
+          console.error("[WebSocket] Error in connection handler:", error);
+          if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+            ws.close(1011, "Internal server error");
+          }
         }
-      } catch (error) {
-        console.error("[WebSocket] Error in connection handler:", error);
-        // Only close if not already closed
-        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-          ws.close(1011, "Internal server error");
-        }
-      }
-    });
+      });
 
-    this.wss.on("error", (error) => {
-      console.error("[WebSocket] Server error:", error);
-    });
-
+      this.wss.on("error", (error) => {
+        console.error("[WebSocket] Server error:", error);
+      });
     } catch (error) {
       console.error("[WebSocket] Failed to initialize WebSocket server:", error);
-      // Don't throw - allow server to continue without WebSocket
     }
 
-    // Heartbeat to detect broken connections
     const heartbeatInterval = setInterval(() => {
       this.wss?.clients.forEach((ws: WebSocket) => {
         const authWs = ws as AuthenticatedWebSocket;
@@ -220,27 +128,23 @@ class WebSocketService {
         authWs.isAlive = false;
         authWs.ping();
       });
-    }, 30000); // 30 seconds
+    }, 30000);
 
     this.wss?.on("close", () => {
       clearInterval(heartbeatInterval);
     });
-
   }
 
   private handleMessage(ws: AuthenticatedWebSocket, message: WebSocketMessage) {
-
     switch (message.type) {
       case "ping":
         this.sendToSocket(ws, { type: "pong", payload: { timestamp: new Date().toISOString() } });
         break;
-      
+
       case "chat_message":
-        // Chat messages will be handled by the chat API
-        // This is just for acknowledgment
-        this.sendToSocket(ws, { 
-          type: "chat_message_received", 
-          payload: { messageId: message.payload.messageId } 
+        this.sendToSocket(ws, {
+          type: "chat_message_received",
+          payload: { messageId: message.payload.messageId },
         });
         break;
 
@@ -261,9 +165,8 @@ class WebSocketService {
         this.sendToSocket(ws, message);
       });
       return true;
-    } else {
-      return false;
     }
+    return false;
   }
 
   sendDispatchOffer(driverId: string, offer: any) {
@@ -274,22 +177,13 @@ class WebSocketService {
   }
 
   sendOrderUpdate(userId: string, message: any) {
-    const hasExplicitType = message && typeof message === "object" && "type" in message;
-    const sentPrimary = hasExplicitType
-      ? this.sendToUser(userId, message)
-      : this.sendToUser(userId, {
-          type: "order_update",
-          payload: message,
-        });
-
-    // Also emit a canonical order_update event for cache invalidators across web/mobile.
-    if (hasExplicitType && message.type !== "order_update") {
-      this.sendToUser(userId, {
-        type: "order_update",
-        payload: message.payload ?? message,
-      });
+    if (message && typeof message === "object" && "type" in message) {
+      return this.sendToUser(userId, message);
     }
-    return sentPrimary;
+    return this.sendToUser(userId, {
+      type: "order_update",
+      payload: message,
+    });
   }
 
   sendChatMessage(userId: string, message: any) {
@@ -306,10 +200,10 @@ class WebSocketService {
     });
   }
 
-  sendNotification(userId: string, notification: any) {
+  sendNotification(userId: string, message: any) {
     return this.sendToUser(userId, {
       type: "notification",
-      payload: notification,
+      payload: message,
     });
   }
 
@@ -330,23 +224,18 @@ class WebSocketService {
     return count;
   }
 
-  /**
-   * Broadcast message to all users with a specific role
-   */
   async broadcastToRole(role: string, message: WebSocketMessage): Promise<void> {
     if (!this.wss) return;
 
-    // Get all user IDs with this role
-    const roleProfiles = await db
+    const profs = await db
       .select({ id: profiles.id })
       .from(profiles)
-      .where(eq(profiles.role, role as any));
+      .where(eq(profiles.role, role as (typeof profiles.$inferSelect)["role"]));
 
-    if (roleProfiles.length === 0) return;
+    if (!profs.length) return;
 
-    const userIds = new Set(roleProfiles.map((p) => p.id));
+    const userIds = new Set(profs.map((p) => p.id));
 
-    // Send to all connected users with this role
     this.wss.clients.forEach((ws: WebSocket) => {
       const authWs = ws as AuthenticatedWebSocket;
       if (authWs.userId && userIds.has(authWs.userId)) {
@@ -355,9 +244,6 @@ class WebSocketService {
     });
   }
 
-  /**
-   * Broadcast message to all connected users
-   */
   broadcastToAll(message: WebSocketMessage): void {
     if (!this.wss) return;
 
