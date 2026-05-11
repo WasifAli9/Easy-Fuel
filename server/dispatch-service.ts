@@ -10,12 +10,11 @@ import {
   dispatchOffers,
   driverCompanyMemberships,
   driverPricing,
-  driverSubscriptions,
   drivers,
   fuelTypes,
   orders,
 } from "@shared/schema";
-import { and, eq, gte, inArray, isNotNull, lt } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, lt } from "drizzle-orm";
 
 interface CreateDispatchOffersParams {
   orderId: string;
@@ -91,26 +90,8 @@ export async function createDispatchOffers({
       return;
     }
 
-    // Only drivers with active subscription can receive offers (§4.0)
-    const today = new Date().toISOString().split("T")[0];
-    const activeSubs = await db
-      .select({ driver_id: driverSubscriptions.driverId, plan_code: driverSubscriptions.planCode })
-      .from(driverSubscriptions)
-      .where(
-        and(
-          eq(driverSubscriptions.status, "active"),
-          gte(driverSubscriptions.currentPeriodEnd, new Date(`${today}T00:00:00.000Z`)),
-          inArray(
-            driverSubscriptions.driverId,
-            driversRows.map((d: any) => d.id),
-          ),
-        ),
-      );
-    const subscribedDriverIds = new Set((activeSubs || []).map((s: any) => s.driver_id));
-    const driverTierMap = new Map((activeSubs || []).map((s: any) => [s.driver_id, s.plan_code]));
-    let driversWithSub = (driversRows as any[]).filter((d) => subscribedDriverIds.has(d.id));
+    let driversWithSub = driversRows as any[];
     if (driversWithSub.length === 0) {
-      console.log(`[createDispatchOffers] Order ${orderId}: No drivers with active subscription`);
       return;
     }
 
@@ -164,12 +145,10 @@ export async function createDispatchOffers({
       (driverPricingRows || []).map((p: any) => [p.driver_id, p.fuel_price_per_liter_cents])
     );
 
-    console.log(`[createDispatchOffers] Order ${orderId}: Found ${driversWithSub.length} drivers with subscription, ${driverPricingRows?.length || 0} with pricing for fuel type ${fuelTypeId}`);
+    console.log(`[createDispatchOffers] Order ${orderId}: Found ${driversWithSub.length} eligible drivers, ${driverPricingRows?.length || 0} with pricing for fuel type ${fuelTypeId}`);
 
-    // Radius limits from app_settings (admin-editable)
     const radiusLimits = await getSubscriptionRadiusMiles();
-    const tierToMiles = (planCode: string) =>
-      planCode === "premium" ? radiusLimits.unlimited : planCode === "professional" ? radiusLimits.extended : radiusLimits.standard;
+    const maxRadiusMiles = radiusLimits.unlimited;
 
     // Filter drivers by:
     // 1. Has pricing set for this fuel type
@@ -188,7 +167,6 @@ export async function createDispatchOffers({
         return false;
       }
 
-      // Check radius if location is set; cap by subscription tier (standard / extended / unlimited)
       if (driver.current_lat && driver.current_lng) {
         const distanceMiles = calculateDistance(
           driver.current_lat,
@@ -196,12 +174,9 @@ export async function createDispatchOffers({
           dropLat,
           dropLng
         );
-        const planCode = driverTierMap.get(driver.id) || "starter";
-        const tierMaxMiles = tierToMiles(planCode);
-        // Radius is set by subscription plan only (no driver-editable preference)
-        const radiusPreference = tierMaxMiles;
+        const radiusPreference = maxRadiusMiles;
         const distanceKm = milesToKm(distanceMiles);
-        console.log(`[createDispatchOffers] Driver ${driver.id}: Distance ${distanceKm.toFixed(2)}km (${distanceMiles.toFixed(2)} miles), Radius cap: ${radiusPreference} miles (tier ${planCode})`);
+        console.log(`[createDispatchOffers] Driver ${driver.id}: Distance ${distanceKm.toFixed(2)}km (${distanceMiles.toFixed(2)} miles), Radius cap: ${radiusPreference} miles`);
         if (distanceMiles > radiusPreference) {
           console.log(`[createDispatchOffers] Driver ${driver.id} filtered out: Distance ${distanceMiles.toFixed(2)} miles > radius ${radiusPreference} miles`);
           return false;
@@ -222,7 +197,13 @@ export async function createDispatchOffers({
 
     // Sort: Premium first (ratings boost), then Professional, then Starter
     const tierOrder = (code: string) => (code === "premium" ? 0 : code === "professional" ? 1 : 2);
-    eligibleDrivers.sort((a, b) => tierOrder(driverTierMap.get(a.id) || "starter") - tierOrder(driverTierMap.get(b.id) || "starter"));
+    const driverTierMap = new Map<string, string>(
+      eligibleDrivers.map((d) => [d.id, String(d.premium_status || "starter").toLowerCase()]),
+    );
+    eligibleDrivers.sort(
+      (a, b) =>
+        tierOrder(driverTierMap.get(a.id) || "starter") - tierOrder(driverTierMap.get(b.id) || "starter"),
+    );
 
     console.log(`[createDispatchOffers] Found ${eligibleDrivers.length} eligible drivers for order ${orderId}`);
 

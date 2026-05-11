@@ -1,9 +1,13 @@
-import { Modal, ScrollView, StyleSheet, View } from "react-native";
+import { useEffect, useMemo } from "react";
+import { Modal, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ActivityIndicator, Button, Card, Chip, Divider, Text } from "react-native-paper";
+import { ActivityIndicator, Card, Chip, Divider, Text } from "react-native-paper";
+import { Button } from "@/design/paper-button";
 import { apiClient } from "@/services/api/client";
+import { appConfig } from "@/services/config";
+import { readSessionCookie } from "@/services/storage";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
-import { darkTheme, lightTheme } from "@/design/theme";
+import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { OrderChatPanel } from "@/features/chat/OrderChatPanel";
 import { formatCustomerOrderAddress } from "@/features/customer/customerOrderUtils";
@@ -16,6 +20,42 @@ type Offer = {
   } | null;
   estimatedPricing?: { total?: number; fuelCost?: number; deliveryFee?: number; distanceKm?: number };
 };
+
+function normalizeOffersResponse(raw: unknown): Offer[] {
+  let v: unknown = raw;
+  if (typeof v === "string") {
+    try {
+      v = JSON.parse(v);
+    } catch {
+      return [];
+    }
+  }
+  if (Array.isArray(v)) {
+    return v as Offer[];
+  }
+  if (v && typeof v === "object" && Array.isArray((v as { offers?: unknown }).offers)) {
+    return (v as { offers: Offer[] }).offers;
+  }
+  return [];
+}
+
+async function fetchOrderOffers(orderId: string): Promise<Offer[]> {
+  const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+  const cookie = await readSessionCookie();
+  const res = await fetch(`${base}/api/orders/${encodeURIComponent(orderId)}/offers`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      ...(cookie ? { Cookie: cookie } : {}),
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Offers request failed (${res.status})`);
+  }
+  const json: unknown = await res.json();
+  return normalizeOffersResponse(json);
+}
 
 export function CustomerOrderDetailModal({
   orderId,
@@ -38,12 +78,31 @@ export function CustomerOrderDetailModal({
     refetchInterval: 15_000,
   });
 
+  const orderState = (orderQuery.data as { state?: string } | undefined)?.state;
+  const awaitingQuotes = orderState === "created" || orderState === "awaiting_payment";
+  const offersPollMs = useMemo(() => (awaitingQuotes ? 4_000 : 15_000), [awaitingQuotes]);
+
   const offersQuery = useQuery({
     queryKey: ["/api/orders", orderId, "offers"],
     enabled: visible && !!orderId,
-    queryFn: async () => (await apiClient.get<Offer[]>(`/api/orders/${orderId}/offers`)).data ?? [],
-    refetchInterval: 15_000,
+    queryFn: async () => fetchOrderOffers(orderId!),
+    staleTime: 0,
+    retry: 2,
+    refetchInterval: offersPollMs,
   });
+
+  useEffect(() => {
+    if (!visible || !orderId) return;
+    void queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId, "offers"] });
+  }, [visible, orderId, queryClient]);
+
+  useEffect(() => {
+    if (!visible || !orderId || !orderQuery.data) return;
+    const st = String((orderQuery.data as { state?: string }).state ?? "");
+    if (st === "created" || st === "awaiting_payment") {
+      void queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId, "offers"] });
+    }
+  }, [visible, orderId, orderQuery.data, orderQuery.dataUpdatedAt, queryClient]);
 
   const acceptMutation = useMutation({
     mutationFn: async (offerId: string) => {
@@ -65,6 +124,7 @@ export function CustomerOrderDetailModal({
         fuel_types?: { label?: string };
       }
     | undefined;
+
   const sortedOffers = [...(offersQuery.data ?? [])].sort((a, b) => {
     const aDistance = a.estimatedPricing?.distanceKm;
     const bDistance = b.estimatedPricing?.distanceKm;
@@ -90,76 +150,100 @@ export function CustomerOrderDetailModal({
         ) : orderQuery.isError || !order ? (
           <Text style={styles.center}>Could not load this order.</Text>
         ) : (
-          <View style={styles.bodySplit}>
-            <ScrollView
-              style={styles.bodyScroll}
-              contentContainerStyle={styles.scroll}
-              keyboardShouldPersistTaps="handled"
-            >
-              <Card mode="outlined" style={styles.card}>
-                <Card.Content>
-                  <View style={styles.rowBetween}>
-                    <Text variant="titleMedium">{order.fuel_types?.label ?? "Fuel"}</Text>
-                    <Chip>{order.state ?? ""}</Chip>
-                  </View>
-                  <Text style={styles.meta}>
-                    {order.litres != null ? `${order.litres} L` : ""} · R {((order.total_cents ?? 0) / 100).toFixed(2)}
-                  </Text>
-                  <Text style={styles.meta}>{formatCustomerOrderAddress(order as any)}</Text>
-                  <Text style={styles.meta}>
-                    {order.created_at ? new Date(order.created_at).toLocaleString("en-ZA") : ""}
-                  </Text>
-                </Card.Content>
-              </Card>
+          <ScrollView
+            style={styles.bodyScroll}
+            contentContainerStyle={styles.scroll}
+            keyboardShouldPersistTaps="handled"
+            refreshControl={
+              <RefreshControl
+                refreshing={orderQuery.isFetching || offersQuery.isFetching}
+                onRefresh={() => {
+                  void queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId] });
+                  void queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId, "offers"] });
+                }}
+              />
+            }
+          >
+            <Card mode="outlined" style={styles.card}>
+              <Card.Content>
+                <View style={styles.rowBetween}>
+                  <Text variant="titleMedium">{order.fuel_types?.label ?? "Fuel"}</Text>
+                  <Chip>{order.state ?? ""}</Chip>
+                </View>
+                <Text style={styles.meta}>
+                  {order.litres != null ? `${order.litres} L` : ""} · R {((order.total_cents ?? 0) / 100).toFixed(2)}
+                </Text>
+                <Text style={styles.meta}>{formatCustomerOrderAddress(order as any)}</Text>
+                <Text style={styles.meta}>
+                  {order.created_at ? new Date(order.created_at).toLocaleString("en-ZA") : ""}
+                </Text>
+              </Card.Content>
+            </Card>
 
+            <View style={styles.offersHeaderRow}>
               <Text variant="titleSmall" style={styles.sectionTitle}>
-                Driver offers
+                Driver offers ({sortedOffers.length})
               </Text>
-              {sortedOffers.length === 0 ? (
-                <Text style={styles.meta}>No offers yet. Drivers will appear here when available.</Text>
-              ) : (
-                sortedOffers.map((offer) => (
-                  <Card key={offer.id} mode="outlined" style={styles.card}>
-                    <Card.Content>
-                      <Text variant="titleSmall">{offer.driver?.profile?.fullName ?? "Driver"}</Text>
-                      <Text style={styles.meta}>
-                        {offer.estimatedPricing?.total != null
-                          ? `Est. total R ${offer.estimatedPricing.total.toFixed(2)}`
-                          : "Quote pending"}
-                      </Text>
-                      <Text style={styles.meta}>
-                        Distance:{" "}
-                        {offer.estimatedPricing?.distanceKm != null && Number.isFinite(offer.estimatedPricing.distanceKm)
-                          ? `${offer.estimatedPricing.distanceKm.toFixed(1)} km away`
-                          : "Not available"}
-                      </Text>
-                      <Text style={styles.meta}>Status: {offer.state ?? ""}</Text>
-                      {offer.state === "pending_customer" || offer.state === "offered" ? (
-                        <Button
-                          mode="contained"
-                          buttonColor={theme.colors.primary}
-                          textColor={theme.colors.onPrimary}
-                          style={styles.mt}
-                          onPress={() => acceptMutation.mutate(offer.id)}
-                          loading={acceptMutation.isPending}
-                        >
-                          Accept offer
-                        </Button>
-                      ) : null}
-                    </Card.Content>
-                  </Card>
-                ))
-              )}
-              {acceptMutation.isError ? (
-                <Text style={styles.error}>{(acceptMutation.error as Error).message}</Text>
-              ) : null}
-
-              <Divider style={styles.divider} />
-            </ScrollView>
-            <View style={styles.chatPane}>
-              <OrderChatPanel orderId={orderId!} viewerRole="customer" />
+              <Button mode="outlined" compact onPress={() => void offersQuery.refetch()}>
+                Refresh
+              </Button>
             </View>
-          </View>
+            {offersQuery.isError ? (
+              <Text style={styles.error}>
+                {(offersQuery.error as Error)?.message || "Could not load offers."}
+              </Text>
+            ) : offersQuery.isFetching && sortedOffers.length === 0 ? (
+              <ActivityIndicator style={styles.offersLoading} />
+            ) : sortedOffers.length === 0 ? (
+              <Text style={styles.meta}>
+                No quotes yet. Eligible drivers need active pricing for this fuel type. Pull down to refresh.
+              </Text>
+            ) : (
+              sortedOffers.map((offer) => (
+                <Card key={offer.id} mode="outlined" style={styles.card}>
+                  <Card.Content>
+                    <Text variant="titleSmall">{offer.driver?.profile?.fullName ?? "Driver"}</Text>
+                    <Text style={styles.meta}>
+                      {offer.estimatedPricing?.total != null
+                        ? `Est. total R ${offer.estimatedPricing.total.toFixed(2)}`
+                        : "Quote pending"}
+                    </Text>
+                    <Text style={styles.meta}>
+                      Distance:{" "}
+                      {offer.estimatedPricing?.distanceKm != null && Number.isFinite(offer.estimatedPricing.distanceKm)
+                        ? `${offer.estimatedPricing.distanceKm.toFixed(1)} km away`
+                        : "Not available"}
+                    </Text>
+                    <Text style={styles.meta}>Status: {offer.state ?? ""}</Text>
+                    {offer.state === "pending_customer" || offer.state === "offered" ? (
+                      <Button
+                        mode="contained"
+                        buttonColor={theme.colors.primary}
+                        textColor={theme.colors.onPrimary}
+                        style={styles.mt}
+                        onPress={() => acceptMutation.mutate(offer.id)}
+                        loading={acceptMutation.isPending}
+                      >
+                        Accept offer
+                      </Button>
+                    ) : null}
+                  </Card.Content>
+                </Card>
+              ))
+            )}
+            {acceptMutation.isError ? (
+              <Text style={styles.error}>{(acceptMutation.error as Error).message}</Text>
+            ) : null}
+
+            <Divider style={styles.divider} />
+
+            <Text variant="titleSmall" style={styles.sectionTitle}>
+              Messages
+            </Text>
+            <View style={styles.chatInset}>
+              <OrderChatPanel orderId={orderId!} viewerRole="customer" orderDetailLayout />
+            </View>
+          </ScrollView>
         )}
       </View>
     </Modal>
@@ -181,17 +265,23 @@ const getStyles = (theme: typeof lightTheme) => {
       borderLeftWidth: 3,
       borderLeftColor: theme.colors.primary,
     },
-    bodySplit: { flex: 1, flexDirection: "column" as const },
     bodyScroll: { flex: 1 },
-    chatPane: { flex: 1, minHeight: 200, paddingHorizontal: 14, paddingBottom: 14 },
-    scroll: { padding: 14, paddingBottom: 24, gap: 10 },
+    scroll: { padding: 14, paddingBottom: 32, gap: 10 },
+    offersHeaderRow: {
+      flexDirection: "row" as const,
+      alignItems: "center" as const,
+      justifyContent: "space-between" as const,
+      marginTop: 4,
+    },
+    chatInset: { minHeight: 120, marginBottom: 16 },
     center: { ...p.center, padding: 24 },
     card: p.listCard,
     rowBetween: p.rowBetween,
     meta: { marginTop: 6, color: theme.colors.onSurfaceVariant },
     sectionTitle: { marginTop: 8, fontWeight: "600" },
-    mt: { marginTop: 10, borderRadius: 10 },
+    mt: { marginTop: 10, borderRadius: buttonBorderRadius },
     divider: { marginVertical: 12 },
     error: p.errorText,
+    offersLoading: { marginVertical: 12 },
   });
 };

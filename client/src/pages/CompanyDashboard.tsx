@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AppHeader } from "@/components/AppHeader";
 import { StatsCard } from "@/components/StatsCard";
@@ -26,7 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   DashboardSidebarAside,
@@ -45,17 +45,23 @@ import {
   LayoutDashboard,
   Menu,
   Truck,
+  TrendingUp,
+  CalendarDays,
+  PieChart,
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import {
-  BarChart,
+  Area,
+  AreaChart,
   Bar,
+  BarChart,
+  CartesianGrid,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
   XAxis,
   YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
 } from "recharts";
 
 type CompanyTab = "overview" | "drivers" | "vehicles" | "analytics";
@@ -100,13 +106,6 @@ export default function CompanyDashboard() {
   const [assignVehicleId, setAssignVehicleId] = useState<string | null>(null);
   const [assignDriverId, setAssignDriverId] = useState<string>("");
   const [addVehicleOpen, setAddVehicleOpen] = useState(false);
-  const [newVehicle, setNewVehicle] = useState({
-    registration_number: "",
-    make: "",
-    model: "",
-    year: "" as string,
-    capacity_litres: "" as string,
-  });
 
   const { data: overview, isLoading: overviewLoading } = useQuery<{
     totalDrivers: number;
@@ -124,34 +123,109 @@ export default function CompanyDashboard() {
     enabled: companyQueryEnabled,
   });
 
-  const { data: daily = [], isLoading: dailyLoading } = useQuery<{ date: string; count: number }[]>({
+  const { data: dailyData, isLoading: dailyLoading } = useQuery<{ date: string; count: number }[]>({
     queryKey: ["/api/company/analytics/daily-deliveries"],
     enabled: companyQueryEnabled && tab === "analytics",
   });
+  const daily = dailyData ?? [];
+
+  const deliveryChartSeries = useMemo(() => {
+    const map = new Map(daily.map((d) => [d.date, d.count]));
+    const out: { date: string; label: string; count: number }[] = [];
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - i);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      const key = `${y}-${m}-${day}`;
+      out.push({
+        date: key,
+        label: d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }),
+        count: map.get(key) ?? 0,
+      });
+    }
+    return out;
+  }, [daily]);
+
+  const deliveriesLast30 = useMemo(
+    () => deliveryChartSeries.reduce((s, row) => s + row.count, 0),
+    [deliveryChartSeries],
+  );
+  const avgDeliveriesPerDay = deliveriesLast30 / 30;
+  const busiestDay = useMemo(() => {
+    let best = deliveryChartSeries[0];
+    for (const row of deliveryChartSeries) {
+      if (row.count > (best?.count ?? 0)) best = row;
+    }
+    return best;
+  }, [deliveryChartSeries]);
 
   const { data: fleetVehicles = [], isLoading: vehiclesLoading } = useQuery<CompanyVehicleRow[]>({
     queryKey: ["/api/company/vehicles"],
     enabled: companyQueryEnabled,
   });
+  const fleetAssignedCount = useMemo(
+    () => fleetVehicles.filter((v) => v.driverId).length,
+    [fleetVehicles],
+  );
+  const { data: fuelTypes = [] } = useQuery<any[]>({
+    queryKey: ["/api/fuel-types"],
+  });
 
   const createVehicleMutation = useMutation({
-    mutationFn: async () => {
-      await apiRequest("POST", "/api/company/vehicles", {
-        registration_number: newVehicle.registration_number.trim(),
-        make: newVehicle.make.trim() || undefined,
-        model: newVehicle.model.trim() || undefined,
-        year: newVehicle.year ? parseInt(newVehicle.year, 10) : undefined,
-        capacity_litres: newVehicle.capacity_litres ? parseInt(newVehicle.capacity_litres, 10) : undefined,
-      });
+    mutationFn: async (payload: Record<string, unknown>) => {
+      await apiRequest("POST", "/api/company/vehicles", payload);
     },
     onSuccess: () => {
       toast({ title: "Vehicle added" });
       setAddVehicleOpen(false);
-      setNewVehicle({ registration_number: "", make: "", model: "", year: "", capacity_litres: "" });
       qc.invalidateQueries({ queryKey: ["/api/company/vehicles"] });
     },
     onError: (e: any) => toast({ title: "Error", description: e?.message, variant: "destructive" }),
   });
+
+  const handleCreateVehicleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    const registration = String(formData.get("registration_number") ?? "").trim();
+    if (!registration) {
+      toast({ title: "Registration is required", variant: "destructive" });
+      return;
+    }
+
+    const fuelTypesSelected = formData.getAll("fuel_types").filter(Boolean);
+    const payload = {
+      registration_number: registration,
+      make: String(formData.get("make") ?? "").trim() || null,
+      model: String(formData.get("model") ?? "").trim() || null,
+      year: formData.get("year") ? Number(formData.get("year")) : null,
+      capacity_litres: formData.get("capacity_litres") ? Number(formData.get("capacity_litres")) : null,
+      fuel_types: fuelTypesSelected.length > 0 ? fuelTypesSelected : null,
+      license_disk_expiry: formData.get("license_disk_expiry") || null,
+      roadworthy_expiry: formData.get("roadworthy_expiry") || null,
+      insurance_expiry: formData.get("insurance_expiry") || null,
+      tracker_installed: formData.get("tracker_installed") === "yes",
+      tracker_provider: String(formData.get("tracker_provider") ?? "").trim() || null,
+      vehicle_reg_certificate_number: String(formData.get("vehicle_reg_certificate_number") ?? "").trim() || null,
+      roadworthy_certificate_number: String(formData.get("roadworthy_certificate_number") ?? "").trim() || null,
+      roadworthy_issue_date: formData.get("roadworthy_issue_date") || null,
+      dg_vehicle_permit_required: formData.get("dg_vehicle_permit_required") === "yes",
+      dg_vehicle_permit_number: String(formData.get("dg_vehicle_permit_number") ?? "").trim() || null,
+      dg_vehicle_permit_issue_date: formData.get("dg_vehicle_permit_issue_date") || null,
+      dg_vehicle_permit_expiry_date: formData.get("dg_vehicle_permit_expiry_date") || null,
+      vehicle_insured: formData.get("vehicle_insured") === "yes",
+      insurance_provider: String(formData.get("insurance_provider") ?? "").trim() || null,
+      policy_number: String(formData.get("policy_number") ?? "").trim() || null,
+      policy_expiry_date: formData.get("policy_expiry_date") || null,
+      loa_required: formData.get("loa_required") === "yes",
+      loa_issue_date: formData.get("loa_issue_date") || null,
+      loa_expiry_date: formData.get("loa_expiry_date") || null,
+    };
+
+    createVehicleMutation.mutate(payload);
+  };
 
   const assignVehicleMutation = useMutation({
     mutationFn: async ({ vehicleId, driverId }: { vehicleId: string; driverId: string }) => {
@@ -583,29 +657,244 @@ export default function CompanyDashboard() {
           </TabsContent>
 
           <TabsContent value="analytics" className="space-y-6">
-            <Card>
+            {overviewLoading ? (
+              <div className="flex justify-center py-16">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
+            ) : overview && overview.totalDrivers === 0 ? (
+              <Card className="border-dashed border-primary/25 bg-muted/20">
               <CardHeader>
-                <CardTitle>Deliveries per day</CardTitle>
-                <CardDescription>Last 30 days — completed deliveries by drivers linked to your company</CardDescription>
+                  <CardTitle>No fleet drivers yet</CardTitle>
+                  <CardDescription>
+                    When drivers are linked to your company, this page shows delivery volume, trends, and fleet usage in
+                    one place.
+                  </CardDescription>
               </CardHeader>
-              <CardContent className="h-[320px]">
+              </Card>
+            ) : (
+              <>
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  <StatsCard
+                    title="Deliveries (30 days)"
+                    value={dailyLoading ? "…" : deliveriesLast30}
+                    description="Completed orders by linked drivers"
+                    icon={PackageCheck}
+                  />
+                  <StatsCard
+                    title="Daily average"
+                    value={dailyLoading ? "…" : avgDeliveriesPerDay.toFixed(1)}
+                    description="Mean completed deliveries per day"
+                    icon={TrendingUp}
+                  />
+                  <StatsCard
+                    title="Busiest day"
+                    value={dailyLoading ? "…" : busiestDay?.count ?? 0}
+                    description={
+                      dailyLoading
+                        ? "Loading…"
+                        : busiestDay && busiestDay.count > 0
+                          ? busiestDay.label
+                          : "No deliveries in this window"
+                    }
+                    icon={CalendarDays}
+                  />
+                  <StatsCard
+                    title="Active in fleet"
+                    value={overview?.activeFleetCount ?? 0}
+                    description={`${overview?.disabledDrivers ?? 0} disabled by company`}
+                    icon={UserCheck}
+                  />
+                </div>
+
+                <div className="grid gap-4 lg:grid-cols-3">
+                  <StatsCard
+                    title="Fleet vehicles in use"
+                    value={
+                      vehiclesLoading ? "…" : fleetVehicles.length ? `${fleetAssignedCount} / ${fleetVehicles.length}` : "—"
+                    }
+                    description={
+                      fleetVehicles.length
+                        ? `${Math.round((fleetAssignedCount / fleetVehicles.length) * 100)}% of pool assigned to drivers`
+                        : "Add vehicles under the Vehicles tab"
+                    }
+                    icon={Truck}
+                  />
+                  <StatsCard
+                    title="All-time deliveries"
+                    value={overview?.completedDeliveries ?? 0}
+                    description="Completed orders (entire history)"
+                    icon={BarChart3}
+                  />
+                  <StatsCard
+                    title="All-time revenue"
+                    value={formatCurrency((overview?.revenueCents ?? 0) / 100)}
+                    description="From completed orders"
+                    icon={DollarSign}
+                  />
+                </div>
+
+                <div className="grid gap-6 lg:grid-cols-3">
+                  <Card className="lg:col-span-2 overflow-hidden border-border/80 shadow-md">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-lg">Delivery trend</CardTitle>
+                      <CardDescription>
+                        Last 30 days — each point is completed deliveries for that calendar day (local time).
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="h-[340px] pt-0">
                 {dailyLoading ? (
-                  <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
-                ) : daily.length === 0 ? (
-                  <p className="text-muted-foreground text-center py-12">No delivery data in this period.</p>
+                        <div className="flex h-full items-center justify-center">
+                          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                        </div>
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={daily}>
-                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                      <XAxis dataKey="date" tick={{ fontSize: 11 }} angle={-35} textAnchor="end" height={60} />
-                      <YAxis allowDecimals={false} />
-                      <Tooltip />
-                      <Bar dataKey="count" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name="Deliveries" />
+                          <AreaChart data={deliveryChartSeries} margin={{ top: 12, right: 8, left: 0, bottom: 0 }}>
+                            <defs>
+                              <linearGradient id="companyDeliveryGradient" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.35} />
+                                <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-muted/50" />
+                            <XAxis
+                              dataKey="label"
+                              tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                              tickLine={false}
+                              axisLine={false}
+                              interval={4}
+                              height={40}
+                            />
+                            <YAxis
+                              allowDecimals={false}
+                              width={36}
+                              tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                              tickLine={false}
+                              axisLine={false}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                borderRadius: 10,
+                                border: "1px solid hsl(var(--border))",
+                                background: "hsl(var(--card))",
+                                boxShadow: "0 8px 24px hsl(var(--foreground) / 0.08)",
+                              }}
+                              labelFormatter={(_, payload) =>
+                                (payload?.[0]?.payload as { date?: string } | undefined)?.date ?? ""
+                              }
+                              formatter={(value: number) => [`${value}`, "Deliveries"]}
+                            />
+                            {avgDeliveriesPerDay > 0 && deliveriesLast30 > 0 && (
+                              <ReferenceLine
+                                y={Number(avgDeliveriesPerDay.toFixed(2))}
+                                stroke="hsl(var(--muted-foreground))"
+                                strokeDasharray="5 5"
+                                strokeOpacity={0.7}
+                              />
+                            )}
+                            <Area
+                              type="monotone"
+                              dataKey="count"
+                              name="Deliveries"
+                              stroke="hsl(var(--primary))"
+                              strokeWidth={2}
+                              fill="url(#companyDeliveryGradient)"
+                              activeDot={{ r: 5, strokeWidth: 0 }}
+                            />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border-border/80 shadow-md">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-lg">Volume by day</CardTitle>
+                      <CardDescription>Bar view for quick comparison</CardDescription>
+                    </CardHeader>
+                    <CardContent className="h-[340px] pt-0">
+                      {dailyLoading ? (
+                        <div className="flex h-full items-center justify-center">
+                          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                        </div>
+                      ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={deliveryChartSeries} margin={{ top: 12, right: 8, left: 0, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-muted/50" />
+                            <XAxis
+                              dataKey="label"
+                              tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                              tickLine={false}
+                              axisLine={false}
+                              interval={6}
+                              height={40}
+                            />
+                            <YAxis
+                              allowDecimals={false}
+                              width={32}
+                              tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                              tickLine={false}
+                              axisLine={false}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                borderRadius: 10,
+                                border: "1px solid hsl(var(--border))",
+                                background: "hsl(var(--card))",
+                              }}
+                              labelFormatter={(_, payload) =>
+                                (payload?.[0]?.payload as { date?: string } | undefined)?.date ?? ""
+                              }
+                            />
+                            <Bar
+                              dataKey="count"
+                              name="Deliveries"
+                              fill="hsl(var(--primary))"
+                              fillOpacity={0.85}
+                              radius={[4, 4, 0, 0]}
+                              maxBarSize={14}
+                            />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
               </CardContent>
             </Card>
+                </div>
+
+                <Card className="border-border/80 shadow-md">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <PieChart className="h-5 w-5 text-primary" />
+                      Recent daily breakdown
+                    </CardTitle>
+                    <CardDescription>Last seven calendar days — use this for quick spot checks</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {dailyLoading ? (
+                      <div className="flex justify-center py-8">
+                        <Loader2 className="h-7 w-7 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Date</TableHead>
+                            <TableHead className="text-right">Deliveries</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {deliveryChartSeries.slice(-7).map((row) => (
+                            <TableRow key={row.date}>
+                              <TableCell className="font-medium">{row.label}</TableCell>
+                              <TableCell className="text-right tabular-nums">{row.count}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </CardContent>
+                </Card>
+              </>
+            )}
           </TabsContent>
         </Tabs>
           </div>
@@ -613,51 +902,212 @@ export default function CompanyDashboard() {
       </div>
 
       <Dialog open={addVehicleOpen} onOpenChange={setAddVehicleOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Add fleet vehicle</DialogTitle>
-            <DialogDescription>Registration is required. Other fields help with dispatch capacity and compliance.</DialogDescription>
+            <DialogDescription>
+              Same vehicle details as driver portal. Registration is required.
+            </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-3 py-2">
+          <form onSubmit={handleCreateVehicleSubmit} className="space-y-4">
+            <div className="grid gap-4 py-2">
             <div className="space-y-2">
-              <Label htmlFor="fv-reg">Registration</Label>
-              <Input
-                id="fv-reg"
-                value={newVehicle.registration_number}
-                onChange={(e) => setNewVehicle((s) => ({ ...s, registration_number: e.target.value }))}
-                placeholder="e.g. CA 123-456"
-              />
+                <Label htmlFor="fv-reg">Registration Number *</Label>
+                <Input id="fv-reg" name="registration_number" placeholder="e.g. CA 123-456" required />
             </div>
-            <div className="grid grid-cols-2 gap-2">
+
+              <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label htmlFor="fv-make">Make</Label>
-                <Input id="fv-make" value={newVehicle.make} onChange={(e) => setNewVehicle((s) => ({ ...s, make: e.target.value }))} />
+                  <Input id="fv-make" name="make" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="fv-model">Model</Label>
-                <Input id="fv-model" value={newVehicle.model} onChange={(e) => setNewVehicle((s) => ({ ...s, model: e.target.value }))} />
+                  <Input id="fv-model" name="model" />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+
+              <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label htmlFor="fv-year">Year</Label>
-                <Input id="fv-year" value={newVehicle.year} onChange={(e) => setNewVehicle((s) => ({ ...s, year: e.target.value }))} />
+                  <Input id="fv-year" name="year" type="number" min={1900} max={new Date().getFullYear() + 1} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="fv-cap">Capacity (L)</Label>
-                <Input id="fv-cap" value={newVehicle.capacity_litres} onChange={(e) => setNewVehicle((s) => ({ ...s, capacity_litres: e.target.value }))} />
+                  <Input id="fv-cap" name="capacity_litres" type="number" min={0} />
               </div>
             </div>
+
+              <div className="space-y-2">
+                <Label>Fuel Types</Label>
+                <p className="text-sm text-muted-foreground">
+                  {fuelTypes.length > 0
+                    ? `All fuel types on the platform: ${fuelTypes.map((ft: { label: string }) => ft.label).join(", ")}.`
+                    : "Loading fuel types..."}
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {fuelTypes.map((fuelType: any) => (
+                    <label key={fuelType.id} className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" name="fuel_types" value={fuelType.code} className="rounded" />
+                      <span>{fuelType.label}</span>
+                    </label>
+                  ))}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAddVehicleOpen(false)}>Cancel</Button>
-            <Button
-              disabled={!newVehicle.registration_number.trim() || createVehicleMutation.isPending}
-              onClick={() => createVehicleMutation.mutate()}
-            >
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="license_disk_expiry">License Disk Expiry</Label>
+                  <Input id="license_disk_expiry" name="license_disk_expiry" type="date" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="roadworthy_expiry">Roadworthy Expiry</Label>
+                  <Input id="roadworthy_expiry" name="roadworthy_expiry" type="date" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="insurance_expiry">Insurance Expiry</Label>
+                  <Input id="insurance_expiry" name="insurance_expiry" type="date" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="tracker_installed">Tracker Installed</Label>
+                  <select
+                    id="tracker_installed"
+                    name="tracker_installed"
+                    defaultValue="no"
+                    className={cn(
+                      "flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                    )}
+                  >
+                    <option value="no">No</option>
+                    <option value="yes">Yes</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="tracker_provider">Tracker Provider</Label>
+                <Input id="tracker_provider" name="tracker_provider" placeholder="e.g. Tracker, Cartrack" />
+              </div>
+
+              <div className="border-t pt-4 space-y-3">
+                <h4 className="font-medium">Vehicle Compliance</h4>
+                <div className="space-y-2">
+                  <Label htmlFor="vehicle_reg_certificate_number">Vehicle Registration Certificate Number</Label>
+                  <Input id="vehicle_reg_certificate_number" name="vehicle_reg_certificate_number" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="roadworthy_certificate_number">Roadworthy Certificate Number</Label>
+                  <Input id="roadworthy_certificate_number" name="roadworthy_certificate_number" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="roadworthy_issue_date">Roadworthy Issue Date</Label>
+                  <Input id="roadworthy_issue_date" name="roadworthy_issue_date" type="date" />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="dg_vehicle_permit_required">DG Vehicle Permit Required</Label>
+                    <select
+                      id="dg_vehicle_permit_required"
+                      name="dg_vehicle_permit_required"
+                      defaultValue="no"
+                      className={cn(
+                        "flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                      )}
+                    >
+                      <option value="no">No</option>
+                      <option value="yes">Yes</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="dg_vehicle_permit_number">DG Vehicle Permit Number</Label>
+                    <Input id="dg_vehicle_permit_number" name="dg_vehicle_permit_number" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="dg_vehicle_permit_issue_date">DG Permit Issue Date</Label>
+                    <Input id="dg_vehicle_permit_issue_date" name="dg_vehicle_permit_issue_date" type="date" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="dg_vehicle_permit_expiry_date">DG Permit Expiry Date</Label>
+                    <Input id="dg_vehicle_permit_expiry_date" name="dg_vehicle_permit_expiry_date" type="date" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="vehicle_insured">Vehicle Insured</Label>
+                    <select
+                      id="vehicle_insured"
+                      name="vehicle_insured"
+                      defaultValue="no"
+                      className={cn(
+                        "flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                      )}
+                    >
+                      <option value="no">No</option>
+                      <option value="yes">Yes</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="insurance_provider">Insurance Provider</Label>
+                    <Input id="insurance_provider" name="insurance_provider" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="policy_number">Policy Number</Label>
+                    <Input id="policy_number" name="policy_number" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="policy_expiry_date">Policy Expiry Date</Label>
+                    <Input id="policy_expiry_date" name="policy_expiry_date" type="date" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="loa_required">LOA Required</Label>
+                    <select
+                      id="loa_required"
+                      name="loa_required"
+                      defaultValue="no"
+                      className={cn(
+                        "flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                      )}
+                    >
+                      <option value="no">No</option>
+                      <option value="yes">Yes</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="loa_issue_date">LOA Issue Date</Label>
+                    <Input id="loa_issue_date" name="loa_issue_date" type="date" />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="loa_expiry_date">LOA Expiry Date</Label>
+                  <Input id="loa_expiry_date" name="loa_expiry_date" type="date" />
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setAddVehicleOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={createVehicleMutation.isPending}>
               {createVehicleMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
             </Button>
           </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 

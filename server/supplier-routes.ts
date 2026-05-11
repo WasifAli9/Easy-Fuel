@@ -4,8 +4,6 @@ import { db, pool } from "./db";
 import * as sharedSchema from "../shared/schema";
 import { insertDepotSchema } from "../shared/schema";
 import { getSupplierComplianceStatus, canSupplierAccessPlatform } from "./compliance-service";
-import { buildPaymentRedirectUrl, isOzowConfigured } from "./ozow-service";
-import { getSupplierPlan, SUPPLIER_PLAN_CODES, SUPPLIER_SUBSCRIPTION_PLANS } from "../shared/supplier-subscription-plans";
 import { z } from "zod";
 import { normalizeSignatureForStorage } from "./local-object-storage";
 import PDFDocument from "pdfkit";
@@ -282,49 +280,18 @@ async function checkSupplierCompliance(req: any, res: any, next: any) {
   }
 }
 
-/** Require active supplier subscription (Standard or Enterprise). Use on depots write, driver-depot-orders, analytics, invoices. */
-async function requireSupplierSubscription(req: any, res: any, next: any) {
+/** Resolve supplier for the authenticated user (no subscription gate). */
+async function requireSupplier(req: any, res: any, next: any) {
   try {
     const user = req.user;
     if (!user?.id) return res.status(401).json({ error: "User not authenticated" });
-    const supplierResult = await pool.query(
-      `SELECT id, subscription_tier
-       FROM suppliers
-       WHERE owner_id = $1
-       LIMIT 1`,
-      [user.id]
-    );
+    const supplierResult = await pool.query(`SELECT id FROM suppliers WHERE owner_id = $1 LIMIT 1`, [user.id]);
     const supplier = supplierResult.rows[0] ?? null;
     if (!supplier) return res.status(404).json({ error: "Supplier not found" });
-
-    const subResult = await pool.query(
-      `SELECT id, status, current_period_end
-       FROM supplier_subscriptions
-       WHERE supplier_id = $1
-       ORDER BY updated_at DESC
-       LIMIT 1`,
-      [supplier.id]
-    );
-    const sub = subResult.rows[0] ?? null;
-    const now = new Date();
-    const hasActiveSubscription = Boolean(
-      sub &&
-      sub.status === "active" &&
-      (!sub.current_period_end || new Date(sub.current_period_end) >= now)
-    );
-    const hasActiveTier = supplier.subscription_tier === "standard" || supplier.subscription_tier === "enterprise";
-
-    if (!hasActiveSubscription && !hasActiveTier) {
-      return res.status(403).json({
-        error: "Active subscription required",
-        code: "SUBSCRIPTION_REQUIRED",
-        message: "Subscribe to list on the platform and receive orders.",
-      });
-    }
     req.supplierId = supplier.id;
     next();
   } catch (error: any) {
-    console.error("requireSupplierSubscription error:", error);
+    console.error("requireSupplier error:", error);
     res.status(500).json({ error: error.message });
   }
 }
@@ -514,7 +481,7 @@ router.get("/depots", async (req, res) => {
 });
 
 // Get pricing for a specific depot
-router.get("/depots/:depotId/pricing", requireSupplierSubscription, checkSupplierCompliance, async (req, res) => {
+router.get("/depots/:depotId/pricing", requireSupplier, checkSupplierCompliance, async (req, res) => {
   const user = (req as any).user;
   const depotId = req.params.depotId;
 
@@ -595,7 +562,7 @@ router.get("/depots/:depotId/pricing", requireSupplierSubscription, checkSupplie
 });
 
 // Create a new pricing tier for a fuel type
-router.post("/depots/:depotId/pricing/:fuelTypeId/tiers", requireSupplierSubscription, checkSupplierCompliance, async (req, res) => {
+router.post("/depots/:depotId/pricing/:fuelTypeId/tiers", requireSupplier, checkSupplierCompliance, async (req, res) => {
   const user = (req as any).user;
   const depotId = req.params.depotId;
   const fuelTypeId = req.params.fuelTypeId;
@@ -686,7 +653,7 @@ router.post("/depots/:depotId/pricing/:fuelTypeId/tiers", requireSupplierSubscri
 
 // Update stock for a fuel type (creates default tier if none exists)
 // This route must come BEFORE the tier update route to avoid route conflicts
-router.put("/depots/:depotId/pricing/:fuelTypeId/stock", requireSupplierSubscription, async (req, res) => {
+router.put("/depots/:depotId/pricing/:fuelTypeId/stock", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   const depotId = req.params.depotId;
   const fuelTypeId = req.params.fuelTypeId;
@@ -780,7 +747,7 @@ router.put("/depots/:depotId/pricing/:fuelTypeId/stock", requireSupplierSubscrip
 });
 
 // Update a pricing tier
-router.put("/depots/:depotId/pricing/tiers/:tierId", requireSupplierSubscription, async (req, res) => {
+router.put("/depots/:depotId/pricing/tiers/:tierId", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   const depotId = req.params.depotId;
   const tierId = req.params.tierId;
@@ -908,7 +875,7 @@ router.put("/depots/:depotId/pricing/tiers/:tierId", requireSupplierSubscription
 });
 
 // Delete a pricing tier
-router.delete("/depots/:depotId/pricing/tiers/:tierId", requireSupplierSubscription, async (req, res) => {
+router.delete("/depots/:depotId/pricing/tiers/:tierId", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   const depotId = req.params.depotId;
   const tierId = req.params.tierId;
@@ -966,7 +933,7 @@ router.delete("/depots/:depotId/pricing/tiers/:tierId", requireSupplierSubscript
 });
 
 // Get pricing history for a depot
-router.get("/depots/:depotId/pricing/history", requireSupplierSubscription, async (req, res) => {
+router.get("/depots/:depotId/pricing/history", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   const depotId = req.params.depotId;
 
@@ -1031,7 +998,7 @@ router.get("/depots/:depotId/pricing/history", requireSupplierSubscription, asyn
 });
 
 // Create new depot
-router.post("/depots", requireSupplierSubscription, checkSupplierCompliance, async (req, res) => {
+router.post("/depots", requireSupplier, checkSupplierCompliance, async (req, res) => {
   const user = (req as any).user;
 
   try {
@@ -1190,7 +1157,7 @@ router.post("/depots", requireSupplierSubscription, checkSupplierCompliance, asy
 });
 
 // Update depot
-router.patch("/depots/:depotId", requireSupplierSubscription, async (req, res) => {
+router.patch("/depots/:depotId", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   const depotId = req.params.depotId;
 
@@ -1303,7 +1270,7 @@ router.patch("/depots/:depotId", requireSupplierSubscription, async (req, res) =
 });
 
 // Delete depot
-router.delete("/depots/:depotId", requireSupplierSubscription, async (req, res) => {
+router.delete("/depots/:depotId", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   const depotId = req.params.depotId;
 
@@ -1746,247 +1713,10 @@ router.put("/profile", async (req, res) => {
   }
 });
 
-// ============== SUPPLIER SUBSCRIPTION ==============
-
-// GET /api/supplier/subscription – current subscription for authenticated supplier
-router.get("/subscription", async (req, res) => {
-  const user = (req as any).user;
-  try {
-    if (!user?.id) return res.status(401).json({ error: "User not authenticated" });
-    const { data: supplier, error: supplierError } = await drizzleClient
-      .from("suppliers")
-      .select("id, subscription_tier")
-      .eq("owner_id", user.id)
-      .maybeSingle();
-    if (supplierError || !supplier) return res.status(404).json({ error: "Supplier not found" });
-
-    const { data: sub, error: subError } = await drizzleClient
-      .from("supplier_subscriptions")
-      .select("id, plan_code, status, amount_cents, currency, current_period_start, current_period_end, next_billing_at")
-      .eq("supplier_id", supplier.id)
-      .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (subError) return res.status(500).json({ error: subError.message });
-    const now = new Date();
-    const isActive = sub?.status === "active" && sub?.current_period_end && new Date(sub.current_period_end) >= now;
-    return res.json({
-      subscription: sub ? { ...sub, isActive } : null,
-      subscriptionTier: supplier.subscription_tier,
-    });
-  } catch (e: any) {
-    console.error("GET /subscription error:", e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// GET /api/supplier/subscription/plans – list plans (Standard R500, Enterprise custom)
-router.get("/subscription/plans", async (_req, res) => {
-  try {
-    const plans = SUPPLIER_PLAN_CODES.map((code) => SUPPLIER_SUBSCRIPTION_PLANS[code]);
-    const testMode = process.env.SUBSCRIPTION_TEST_MODE === "true";
-    return res.json({ plans, ozowConfigured: isOzowConfigured(), testMode });
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-const createSupplierPaymentSchema = z.object({ planCode: z.enum(["standard"]) });
-
-// POST /api/supplier/subscription/create-payment – Standard only; create pending payment, return OZOW redirect URL
-router.post("/subscription/create-payment", async (req, res) => {
-  const user = (req as any).user;
-  try {
-    const parsed = createSupplierPaymentSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: "Invalid planCode", details: parsed.error.flatten() });
-    const { planCode } = parsed.data as { planCode: "standard" };
-    const plan = getSupplierPlan(planCode);
-    if (!plan || plan.isCustomPricing) return res.status(400).json({ error: "Only Standard plan can be paid via OZOW" });
-
-    const { data: supplier, error: supplierErr } = await drizzleClient
-      .from("suppliers")
-      .select("id")
-      .eq("owner_id", user.id)
-      .maybeSingle();
-    if (supplierErr || !supplier) return res.status(404).json({ error: "Supplier not found" });
-
-    // Test mode: activate subscription immediately without checkout redirect
-    if (process.env.SUBSCRIPTION_TEST_MODE === "true") {
-      const now = new Date();
-      const periodStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const periodEnd = new Date(periodStart);
-      periodEnd.setMonth(periodEnd.getMonth() + 1);
-      const nextBilling = new Date(periodEnd);
-
-      const { data: existingSub } = await drizzleClient
-        .from("supplier_subscriptions")
-        .select("id")
-        .eq("supplier_id", supplier.id)
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      let subscriptionId: string;
-      if (existingSub) {
-        await drizzleClient
-          .from("supplier_subscriptions")
-          .update({
-            plan_code: planCode,
-            status: "active",
-            amount_cents: plan.priceCents!,
-            currency: "ZAR",
-            current_period_start: periodStart,
-            current_period_end: periodEnd,
-            next_billing_at: nextBilling,
-            updated_at: now,
-          })
-          .eq("id", existingSub.id);
-        subscriptionId = existingSub.id;
-      } else {
-        const { data: newSub, error: insertErr } = await drizzleClient
-          .from("supplier_subscriptions")
-          .insert({
-            supplier_id: supplier.id,
-            plan_code: planCode,
-            status: "active",
-            amount_cents: plan.priceCents!,
-            currency: "ZAR",
-            current_period_start: periodStart,
-            current_period_end: periodEnd,
-            next_billing_at: nextBilling,
-          })
-          .select("id")
-          .single();
-        if (insertErr || !newSub) return res.status(500).json({ error: "Failed to create subscription", details: insertErr?.message });
-        subscriptionId = newSub.id;
-      }
-
-      await drizzleClient
-        .from("supplier_subscription_payments")
-        .insert({
-          supplier_subscription_id: subscriptionId,
-          amount_cents: plan.priceCents!,
-          currency: "ZAR",
-          status: "completed",
-          paid_at: now,
-        });
-
-      await drizzleClient
-        .from("suppliers")
-        .update({ subscription_tier: planCode, updated_at: now })
-        .eq("id", supplier.id);
-
-      return res.json({ success: true });
-    }
-
-    if (!isOzowConfigured()) return res.status(503).json({ error: "Payment gateway not configured", code: "OZOW_NOT_CONFIGURED" });
-
-    const baseUrl = process.env.PUBLIC_APP_URL || (req.protocol + "://" + req.get("host") || "http://localhost:5000");
-    const successUrl = `${baseUrl}/supplier/subscription?success=true`;
-    const cancelUrl = `${baseUrl}/supplier/subscription?cancelled=true`;
-    const notificationUrl = `${baseUrl}/api/webhooks/ozow-supplier-subscription`;
-
-    const { data: existingSub } = await drizzleClient
-      .from("supplier_subscriptions")
-      .select("id")
-      .eq("supplier_id", supplier.id)
-      .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    let subscriptionId: string;
-    if (existingSub) {
-      await drizzleClient
-        .from("supplier_subscriptions")
-        .update({
-          plan_code: planCode,
-          status: "pending",
-          amount_cents: plan.priceCents!,
-          currency: "ZAR",
-          updated_at: new Date(),
-        })
-        .eq("id", existingSub.id);
-      subscriptionId = existingSub.id;
-    } else {
-      const { data: newSub, error: insertErr } = await drizzleClient
-        .from("supplier_subscriptions")
-        .insert({
-          supplier_id: supplier.id,
-          plan_code: planCode,
-          status: "pending",
-          amount_cents: plan.priceCents!,
-          currency: "ZAR",
-        })
-        .select("id")
-        .single();
-      if (insertErr || !newSub) return res.status(500).json({ error: "Failed to create subscription", details: insertErr?.message });
-      subscriptionId = newSub.id;
-    }
-
-    const { data: paymentRow, error: payErr } = await drizzleClient
-      .from("supplier_subscription_payments")
-      .insert({
-        supplier_subscription_id: subscriptionId,
-        amount_cents: plan.priceCents!,
-        currency: "ZAR",
-        status: "pending",
-      })
-      .select("id")
-      .single();
-    if (payErr || !paymentRow) return res.status(500).json({ error: "Failed to create payment record", details: payErr?.message });
-
-    const transactionReference = `supplier_sub_${paymentRow.id}`;
-    const redirectUrl = buildPaymentRedirectUrl({
-      amountRands: plan.priceZAR!,
-      transactionReference,
-      successUrl,
-      cancelUrl,
-      notificationUrl,
-      customerEmail: user.email ?? undefined,
-      customerName: (user.user_metadata?.full_name as string) || (req.body?.customerName as string) || undefined,
-    });
-
-    return res.json({ redirectUrl, paymentId: paymentRow.id, subscriptionId });
-  } catch (e: any) {
-    console.error("Error creating supplier subscription payment:", e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// POST /api/supplier/subscription/cancel – cancel at period end
-router.post("/subscription/cancel", async (req, res) => {
-  const user = (req as any).user;
-  try {
-    if (!user?.id) return res.status(401).json({ error: "User not authenticated" });
-    const { data: supplier, error: supplierErr } = await drizzleClient
-      .from("suppliers")
-      .select("id")
-      .eq("owner_id", user.id)
-      .maybeSingle();
-    if (supplierErr || !supplier) return res.status(404).json({ error: "Supplier not found" });
-
-    const { error } = await drizzleClient
-      .from("supplier_subscriptions")
-      .update({ status: "cancelled", updated_at: new Date() })
-      .eq("supplier_id", supplier.id)
-      .eq("status", "active");
-    if (error) return res.status(500).json({ error: error.message });
-    await drizzleClient
-      .from("suppliers")
-      .update({ subscription_tier: null, updated_at: new Date() })
-      .eq("id", supplier.id);
-    return res.json({ ok: true, message: "Subscription cancelled at period end." });
-  } catch (e: any) {
-    console.error("POST /subscription/cancel error:", e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
 // ============== ANALYTICS ==============
 
-// GET /api/supplier/analytics – basic (Standard) or advanced (Enterprise via ?detail=advanced)
-router.get("/analytics", requireSupplierSubscription, async (req, res) => {
+// GET /api/supplier/analytics – ?detail=advanced for breakdowns
+router.get("/analytics", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   const detail = (req.query.detail as string) || "";
   const isAdvanced = detail === "advanced";
@@ -1998,11 +1728,6 @@ router.get("/analytics", requireSupplierSubscription, async (req, res) => {
       .eq("owner_id", user.id)
       .maybeSingle();
     if (supplierErr || !supplier) return res.status(404).json({ error: "Supplier not found" });
-
-    const tier = (supplier as any).subscription_tier;
-    if (isAdvanced && tier !== "enterprise") {
-      return res.status(403).json({ error: "Advanced analytics and API access are available on Enterprise plan.", code: "SUBSCRIPTION_TIER_REQUIRED" });
-    }
 
     const { data: depots } = await drizzleClient
       .from("depots")
@@ -2094,21 +1819,18 @@ router.get("/analytics", requireSupplierSubscription, async (req, res) => {
   }
 });
 
-// GET /api/supplier/analytics/export – Enterprise only (JSON or CSV via ?format=csv)
-router.get("/analytics/export", requireSupplierSubscription, async (req, res) => {
+// GET /api/supplier/analytics/export – JSON or CSV via ?format=csv
+router.get("/analytics/export", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   const format = (req.query.format as string) || "json";
 
   try {
     const { data: supplier, error: supplierErr } = await drizzleClient
       .from("suppliers")
-      .select("id, subscription_tier")
+      .select("id")
       .eq("owner_id", user.id)
       .maybeSingle();
     if (supplierErr || !supplier) return res.status(404).json({ error: "Supplier not found" });
-    if ((supplier as any).subscription_tier !== "enterprise") {
-      return res.status(403).json({ error: "Export and API access are available on Enterprise plan.", code: "SUBSCRIPTION_TIER_REQUIRED" });
-    }
 
     const { data: depots } = await drizzleClient.from("depots").select("id, name").eq("supplier_id", supplier.id);
     const depotIds = (depots || []).map((d: any) => d.id);
@@ -2161,7 +1883,7 @@ router.get("/analytics/export", requireSupplierSubscription, async (req, res) =>
 // ============== INVOICES ==============
 
 // GET /api/supplier/invoices – list invoices (completed driver_depot_orders)
-router.get("/invoices", requireSupplierSubscription, async (req, res) => {
+router.get("/invoices", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   try {
     const { data: supplier, error: supplierErr } = await drizzleClient
@@ -2216,7 +1938,7 @@ router.get("/invoices", requireSupplierSubscription, async (req, res) => {
 });
 
 // GET /api/supplier/invoices/:id – single invoice data (for PDF or view)
-router.get("/invoices/:id", requireSupplierSubscription, async (req, res) => {
+router.get("/invoices/:id", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   const { id } = req.params;
   try {
@@ -2287,7 +2009,7 @@ router.get("/invoices/:id", requireSupplierSubscription, async (req, res) => {
 });
 
 // GET /api/supplier/invoices/:id/pdf – HTML invoice (print/save as PDF)
-router.get("/invoices/:id/pdf", requireSupplierSubscription, async (req, res) => {
+router.get("/invoices/:id/pdf", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   const { id } = req.params;
   const shouldDownload = String(req.query.download || "").toLowerCase() === "1" || String(req.query.download || "").toLowerCase() === "true";
@@ -2444,19 +2166,16 @@ router.get("/invoices/:id/pdf", requireSupplierSubscription, async (req, res) =>
   }
 });
 
-// GET /api/supplier/invoice-templates – Enterprise only: list custom templates
-router.get("/invoice-templates", requireSupplierSubscription, async (req, res) => {
+// GET /api/supplier/invoice-templates – list custom templates
+router.get("/invoice-templates", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   try {
     const { data: supplier, error: supplierErr } = await drizzleClient
       .from("suppliers")
-      .select("id, subscription_tier")
+      .select("id")
       .eq("owner_id", user.id)
       .maybeSingle();
     if (supplierErr || !supplier) return res.status(404).json({ error: "Supplier not found" });
-    if ((supplier as any).subscription_tier !== "enterprise") {
-      return res.status(403).json({ error: "Custom invoice templates are available on Enterprise plan.", code: "SUBSCRIPTION_TIER_REQUIRED" });
-    }
     const { data: list, error } = await drizzleClient
       .from("supplier_invoice_templates")
       .select("id, name, template_type, content, updated_at")
@@ -2470,20 +2189,17 @@ router.get("/invoice-templates", requireSupplierSubscription, async (req, res) =
   }
 });
 
-// PUT /api/supplier/invoice-templates – Enterprise only: create or update custom template
-router.put("/invoice-templates", requireSupplierSubscription, async (req, res) => {
+// PUT /api/supplier/invoice-templates – create or update custom template
+router.put("/invoice-templates", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   const { id, name, templateType, content } = req.body || {};
   try {
     const { data: supplier, error: supplierErr } = await drizzleClient
       .from("suppliers")
-      .select("id, subscription_tier")
+      .select("id")
       .eq("owner_id", user.id)
       .maybeSingle();
     if (supplierErr || !supplier) return res.status(404).json({ error: "Supplier not found" });
-    if ((supplier as any).subscription_tier !== "enterprise") {
-      return res.status(403).json({ error: "Custom invoice templates are available on Enterprise plan.", code: "SUBSCRIPTION_TIER_REQUIRED" });
-    }
     if (!name || !templateType || content === undefined) {
       return res.status(400).json({ error: "name, templateType, and content are required" });
     }
@@ -2514,7 +2230,7 @@ router.put("/invoice-templates", requireSupplierSubscription, async (req, res) =
 // ============== SETTLEMENTS ==============
 
 // GET /api/supplier/settlements – list settlements (period, amount, status)
-router.get("/settlements", requireSupplierSubscription, async (req, res) => {
+router.get("/settlements", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   try {
     const { data: supplier, error: supplierErr } = await drizzleClient
@@ -2542,7 +2258,7 @@ router.get("/settlements", requireSupplierSubscription, async (req, res) => {
 // ============== DRIVER DEPOT ORDERS ==============
 
 // Get all driver depot orders for supplier's depots (optional ?depot_id= for multi-branch/Enterprise)
-router.get("/driver-depot-orders", requireSupplierSubscription, async (req, res) => {
+router.get("/driver-depot-orders", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   const depotId = (req.query.depot_id as string) || undefined;
 
@@ -2699,7 +2415,7 @@ async function verifyOrderOwnership(orderId: string, supplierId: string) {
 }
 
 // Accept driver depot order (moves from pending to pending_payment)
-router.post("/driver-depot-orders/:orderId/accept", requireSupplierSubscription, async (req, res) => {
+router.post("/driver-depot-orders/:orderId/accept", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
 
@@ -2781,7 +2497,7 @@ router.post("/driver-depot-orders/:orderId/accept", requireSupplierSubscription,
 });
 
 // Reject driver depot order
-router.post("/driver-depot-orders/:orderId/reject", requireSupplierSubscription, async (req, res) => {
+router.post("/driver-depot-orders/:orderId/reject", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
   const { reason } = req.body;
@@ -2849,7 +2565,7 @@ router.post("/driver-depot-orders/:orderId/reject", requireSupplierSubscription,
 });
 
 // Verify payment (for bank transfer - supplier confirms payment received)
-router.post("/driver-depot-orders/:orderId/verify-payment", requireSupplierSubscription, async (req, res) => {
+router.post("/driver-depot-orders/:orderId/verify-payment", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
 
@@ -2942,7 +2658,7 @@ router.post("/driver-depot-orders/:orderId/verify-payment", requireSupplierSubsc
 });
 
 // Reject payment (supplier marks payment as not received)
-router.post("/driver-depot-orders/:orderId/reject-payment", requireSupplierSubscription, async (req, res) => {
+router.post("/driver-depot-orders/:orderId/reject-payment", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
   const { reason } = req.body;
@@ -3030,7 +2746,7 @@ router.post("/driver-depot-orders/:orderId/reject-payment", requireSupplierSubsc
 });
 
 // Add supplier signature (before fuel release)
-router.post("/driver-depot-orders/:orderId/supplier-signature", requireSupplierSubscription, async (req, res) => {
+router.post("/driver-depot-orders/:orderId/supplier-signature", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
   const signatureUrlRaw = (req.body as any)?.signatureUrl ?? (req.body as any)?.signature_url;
@@ -3123,7 +2839,7 @@ router.post("/driver-depot-orders/:orderId/supplier-signature", requireSupplierS
 });
 
 // Release fuel (moves from ready_for_pickup to released)
-router.post("/driver-depot-orders/:orderId/release", requireSupplierSubscription, async (req, res) => {
+router.post("/driver-depot-orders/:orderId/release", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
 
@@ -3230,7 +2946,7 @@ router.post("/driver-depot-orders/:orderId/release", requireSupplierSubscription
 });
 
 // Confirm delivery (supplier enters actual litres and driver signs)
-router.post("/driver-depot-orders/:orderId/confirm-delivery", requireSupplierSubscription, async (req, res) => {
+router.post("/driver-depot-orders/:orderId/confirm-delivery", requireSupplier, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
   const { actualLitres } = req.body;

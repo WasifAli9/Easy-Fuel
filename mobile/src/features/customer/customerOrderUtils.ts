@@ -4,12 +4,17 @@ export function formatCustomerOrderAddress(order: {
   delivery_addresses?: {
     address_street?: string | null;
     address_city?: string | null;
+    address_province?: string | null;
   } | null;
   drop_lat?: number | null;
   drop_lng?: number | null;
 }): string {
   if (order.delivery_addresses) {
-    const parts = [order.delivery_addresses.address_street, order.delivery_addresses.address_city].filter(Boolean);
+    const parts = [
+      order.delivery_addresses.address_street,
+      order.delivery_addresses.address_city,
+      order.delivery_addresses.address_province,
+    ].filter(Boolean);
     if (parts.length > 0) return parts.join(", ");
   }
   if (order.drop_lat != null && order.drop_lng != null) {

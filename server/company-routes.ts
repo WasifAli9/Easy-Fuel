@@ -4,7 +4,7 @@ import { vehicleToCamelCase, syncDriverVehicleCapacityLitres } from "./vehicle-u
 import { websocketService } from "./websocket";
 import { db } from "./db";
 import { companies, driverCompanyMemberships, drivers, orders, profiles, vehicles } from "@shared/schema";
-import { and, desc, eq, gte, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull } from "drizzle-orm";
 
 const router = Router();
 
@@ -22,6 +22,20 @@ function toVehicleRecord(row: any) {
     license_disk_expiry: row.licenseDiskExpiry,
     roadworthy_expiry: row.roadworthyExpiry,
     insurance_expiry: row.insuranceExpiry,
+    vehicle_reg_certificate_number: row.vehicleRegCertificateNumber,
+    roadworthy_certificate_number: row.roadworthyCertificateNumber,
+    roadworthy_issue_date: row.roadworthyIssueDate,
+    dg_vehicle_permit_required: row.dgVehiclePermitRequired,
+    dg_vehicle_permit_number: row.dgVehiclePermitNumber,
+    dg_vehicle_permit_issue_date: row.dgVehiclePermitIssueDate,
+    dg_vehicle_permit_expiry_date: row.dgVehiclePermitExpiryDate,
+    vehicle_insured: row.vehicleInsured,
+    insurance_provider: row.insuranceProvider,
+    policy_number: row.policyNumber,
+    policy_expiry_date: row.policyExpiryDate,
+    loa_required: row.loaRequired,
+    loa_issue_date: row.loaIssueDate,
+    loa_expiry_date: row.loaExpiryDate,
     tracker_installed: row.trackerInstalled,
     tracker_provider: row.trackerProvider,
     vehicle_registration_cert_doc_id: row.vehicleRegistrationCertDocId,
@@ -68,18 +82,57 @@ async function driverLinkedToCompany(driverId: string, companyId: string): Promi
   return !!data;
 }
 
+/** Same driver universe as GET /drivers: memberships, legacy drivers.company_id, and assignees on company vehicles. */
+async function getCompanyLinkedDriverIds(companyId: string): Promise<string[]> {
+  const memberships = await db
+    .select({ driver_id: driverCompanyMemberships.driverId })
+    .from(driverCompanyMemberships)
+    .where(eq(driverCompanyMemberships.companyId, companyId));
+  const membershipIds = (memberships || []).map((r: any) => r.driver_id).filter(Boolean);
+
+  const legacyLinked = await db.select({ id: drivers.id }).from(drivers).where(eq(drivers.companyId, companyId));
+
+  const assignedOnCompanyVehicles = await db
+    .select({ driver_id: vehicles.driverId })
+    .from(vehicles)
+    .where(and(eq(vehicles.companyId, companyId), isNotNull(vehicles.driverId)));
+
+  const set = new Set<string>();
+  for (const id of membershipIds) set.add(String(id));
+  for (const r of legacyLinked || []) set.add(String((r as any).id));
+  for (const r of assignedOnCompanyVehicles || []) {
+    const id = (r as any).driver_id;
+    if (id) set.add(String(id));
+  }
+  return Array.from(set);
+}
+
 const fleetVehicleCreateBody = z.object({
   registration_number: z.string().min(1),
-  make: z.string().optional(),
-  model: z.string().optional(),
+  make: z.string().nullable().optional(),
+  model: z.string().nullable().optional(),
   year: z.coerce.number().optional().nullable(),
   capacity_litres: z.coerce.number().optional().nullable(),
-  fuel_types: z.array(z.string()).optional(),
+  fuel_types: z.array(z.string()).nullable().optional(),
   license_disk_expiry: z.string().nullable().optional(),
   roadworthy_expiry: z.string().nullable().optional(),
   insurance_expiry: z.string().nullable().optional(),
+  vehicle_reg_certificate_number: z.string().nullable().optional(),
+  roadworthy_certificate_number: z.string().nullable().optional(),
+  roadworthy_issue_date: z.string().nullable().optional(),
+  dg_vehicle_permit_required: z.boolean().optional(),
+  dg_vehicle_permit_number: z.string().nullable().optional(),
+  dg_vehicle_permit_issue_date: z.string().nullable().optional(),
+  dg_vehicle_permit_expiry_date: z.string().nullable().optional(),
+  vehicle_insured: z.boolean().optional(),
+  insurance_provider: z.string().nullable().optional(),
+  policy_number: z.string().nullable().optional(),
+  policy_expiry_date: z.string().nullable().optional(),
+  loa_required: z.boolean().optional(),
+  loa_issue_date: z.string().nullable().optional(),
+  loa_expiry_date: z.string().nullable().optional(),
   tracker_installed: z.boolean().optional(),
-  tracker_provider: z.string().optional(),
+  tracker_provider: z.string().nullable().optional(),
 });
 
 const assignBody = z.object({
@@ -137,6 +190,20 @@ router.post("/vehicles", async (req, res) => {
       licenseDiskExpiry: b.license_disk_expiry ? new Date(b.license_disk_expiry) : null,
       roadworthyExpiry: b.roadworthy_expiry ? new Date(b.roadworthy_expiry) : null,
       insuranceExpiry: b.insurance_expiry ? new Date(b.insurance_expiry) : null,
+      vehicleRegCertificateNumber: b.vehicle_reg_certificate_number ?? null,
+      roadworthyCertificateNumber: b.roadworthy_certificate_number ?? null,
+      roadworthyIssueDate: b.roadworthy_issue_date ? new Date(b.roadworthy_issue_date) : null,
+      dgVehiclePermitRequired: b.dg_vehicle_permit_required ?? false,
+      dgVehiclePermitNumber: b.dg_vehicle_permit_number ?? null,
+      dgVehiclePermitIssueDate: b.dg_vehicle_permit_issue_date ? new Date(b.dg_vehicle_permit_issue_date) : null,
+      dgVehiclePermitExpiryDate: b.dg_vehicle_permit_expiry_date ? new Date(b.dg_vehicle_permit_expiry_date) : null,
+      vehicleInsured: b.vehicle_insured ?? false,
+      insuranceProvider: b.insurance_provider ?? null,
+      policyNumber: b.policy_number ?? null,
+      policyExpiryDate: b.policy_expiry_date ? new Date(b.policy_expiry_date) : null,
+      loaRequired: b.loa_required ?? false,
+      loaIssueDate: b.loa_issue_date ? new Date(b.loa_issue_date) : null,
+      loaExpiryDate: b.loa_expiry_date ? new Date(b.loa_expiry_date) : null,
       trackerInstalled: b.tracker_installed ?? false,
       trackerProvider: b.tracker_provider ?? null,
     };
@@ -313,6 +380,7 @@ router.post("/vehicles/:vehicleId/unassign", async (req, res) => {
 router.get("/overview", async (req, res) => {
   const companyId = (req as any).companyId as string;
   try {
+    const driverIds = await getCompanyLinkedDriverIds(companyId);
     const memberships = await db
       .select({
         driver_id: driverCompanyMemberships.driverId,
@@ -321,10 +389,15 @@ router.get("/overview", async (req, res) => {
       .from(driverCompanyMemberships)
       .where(eq(driverCompanyMemberships.companyId, companyId));
 
-    const rows = (memberships || []).filter((r: any) => r.driver_id);
-    const driverIds = rows.map((r: any) => r.driver_id);
-    const totalDrivers = rows.length;
-    const disabledCount = rows.filter((r: any) => r.is_disabled_by_company).length;
+    const disabledByDriver = new Map<string, boolean>();
+    for (const r of memberships || []) {
+      if (r.driver_id) disabledByDriver.set(String(r.driver_id), !!r.is_disabled_by_company);
+    }
+    const totalDrivers = driverIds.length;
+    let disabledCount = 0;
+    for (const id of driverIds) {
+      if (disabledByDriver.get(id)) disabledCount++;
+    }
     const activeFleetCount = totalDrivers - disabledCount;
 
     let completedDeliveries = 0;
@@ -365,12 +438,55 @@ router.get("/drivers", async (req, res) => {
       })
       .from(driverCompanyMemberships)
       .where(eq(driverCompanyMemberships.companyId, companyId));
-    const rows = (memberships || []).filter((r: any) => r.driver_id);
+    const membershipRows = (memberships || []).filter((r: any) => r.driver_id);
+
+    // Backward compatibility: some environments still link drivers via drivers.company_id.
+    // Merge those into the company driver list when no membership row exists yet.
+    const legacyLinked = await db
+      .select({ driver_id: drivers.id })
+      .from(drivers)
+      .where(eq(drivers.companyId, companyId));
+
+    // Additional source of truth: drivers currently assigned to company-owned vehicles.
+    const assignedOnCompanyVehicles = await db
+      .select({ driver_id: vehicles.driverId })
+      .from(vehicles)
+      .where(and(eq(vehicles.companyId, companyId), isNotNull(vehicles.driverId)));
+
+    const byDriverId = new Map<string, any>();
+    for (const r of membershipRows) {
+      byDriverId.set(String(r.driver_id), r);
+    }
+    for (const r of legacyLinked || []) {
+      const id = String((r as any).driver_id);
+      if (!byDriverId.has(id)) {
+        byDriverId.set(id, {
+          driver_id: id,
+          is_disabled_by_company: false,
+          disabled_reason: null,
+          updated_at: null,
+        });
+      }
+    }
+    for (const r of assignedOnCompanyVehicles || []) {
+      const id = String((r as any).driver_id);
+      if (!id || id === "null") continue;
+      if (!byDriverId.has(id)) {
+        byDriverId.set(id, {
+          driver_id: id,
+          is_disabled_by_company: false,
+          disabled_reason: null,
+          updated_at: null,
+        });
+      }
+    }
+
+    const rows = Array.from(byDriverId.values());
     if (rows.length === 0) return res.json([]);
 
     const driverIds = Array.from(new Set(rows.map((r: any) => r.driver_id as string)));
 
-    let drivers: any[] = [];
+    let driverRows: any[] = [];
     if (driverIds.length > 0) {
       const dRows = await db
         .select({
@@ -384,21 +500,21 @@ router.get("/drivers", async (req, res) => {
         })
         .from(drivers)
         .where(inArray(drivers.id, driverIds));
-      drivers = dRows || [];
+      driverRows = dRows || [];
     }
 
-    const userIds = Array.from(new Set(drivers.map((d: any) => d.user_id).filter(Boolean)));
-    let profiles: any[] = [];
+    const userIds = Array.from(new Set(driverRows.map((d: any) => d.user_id).filter(Boolean)));
+    let profileRows: any[] = [];
     if (userIds.length > 0) {
       const pRows = await db
         .select({ id: profiles.id, full_name: profiles.fullName, phone: profiles.phone })
         .from(profiles)
         .where(inArray(profiles.id, userIds as string[]));
-      profiles = pRows || [];
+      profileRows = pRows || [];
     }
 
-    const profileByUserId = new Map(profiles.map((p: any) => [p.id, p]));
-    const driverById = new Map(drivers.map((d: any) => [d.id, d]));
+    const profileByUserId = new Map(profileRows.map((p: any) => [p.id, p]));
+    const driverById = new Map(driverRows.map((d: any) => [d.id, d]));
 
     const list = rows.map((r: any) => {
       const d = driverById.get(r.driver_id);
@@ -511,11 +627,7 @@ router.get("/drivers/:driverId/orders", async (req, res) => {
 router.get("/analytics/daily-deliveries", async (req, res) => {
   const companyId = (req as any).companyId as string;
   try {
-    const memberships = await db
-      .select({ driver_id: driverCompanyMemberships.driverId })
-      .from(driverCompanyMemberships)
-      .where(eq(driverCompanyMemberships.companyId, companyId));
-    const driverIds = (memberships || []).map((r: any) => r.driver_id);
+    const driverIds = await getCompanyLinkedDriverIds(companyId);
     if (driverIds.length === 0) return res.json([]);
 
     const since = new Date();

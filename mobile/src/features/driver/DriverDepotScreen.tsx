@@ -5,7 +5,6 @@ import * as DocumentPicker from "expo-document-picker";
 import DateTimePicker, { DateTimePickerAndroid, DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import {
   ActivityIndicator,
-  Button,
   Card,
   Chip,
   Dialog,
@@ -15,10 +14,11 @@ import {
   TextInput,
   RadioButton,
 } from "react-native-paper";
+import { Button } from "@/design/paper-button";
 import { apiClient } from "@/services/api/client";
 import { putFileToUploadUrl } from "@/lib/files";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
-import { darkTheme, lightTheme } from "@/design/theme";
+import { buttonBorderRadius, darkTheme, lightTheme, paperMd3ControlRoundness } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import Signature from "react-native-signature-canvas";
 import { appConfig } from "@/services/config";
@@ -357,6 +357,7 @@ export function DriverDepotScreen() {
           <Text variant="headlineSmall">Depot</Text>
           <Text style={styles.subtitle}>My depot orders and available depots.</Text>
           <SegmentedButtons
+            theme={{ roundness: paperMd3ControlRoundness }}
             style={styles.segment}
             value={segment}
             onValueChange={(value) => setSegment(value as "orders" | "depots")}
@@ -827,7 +828,7 @@ const getStyles = (theme: typeof lightTheme) => {
   },
   fuelOptionBtn: {
     marginTop: 6,
-    borderRadius: 10,
+    borderRadius: buttonBorderRadius,
     justifyContent: "flex-start",
     borderColor: theme.colors.outline,
   },

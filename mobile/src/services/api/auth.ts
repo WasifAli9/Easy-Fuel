@@ -3,7 +3,7 @@ import {
   saveSecureSession,
   clearSecureSession,
   readSecureSession,
-  saveSessionCookieFromSetCookie,
+  persistLoginSessionCookie,
 } from "@/services/storage";
 import { useSessionStore } from "@/store/session-store";
 import { UserRole } from "@/navigation/types";
@@ -21,13 +21,14 @@ export async function hydrateSessionFromStorage() {
 export async function signInWithPassword(email: string, password: string) {
   const { data, headers } = await apiClient.post<{
     user: { role: UserRole | "admin" | null };
-  }>("/api/auth/login", { email, password });
+    sessionCookie?: string;
+  }>("/api/auth/login", { email, password }, { headers: { "X-Easy-Fuel-Mobile": "1" } });
   const h = headers as any;
   let setCookie: string | string[] | undefined = h["set-cookie"] ?? h["Set-Cookie"];
   if (setCookie == null && typeof h.getSetCookie === "function") {
     setCookie = h.getSetCookie();
   }
-  await saveSessionCookieFromSetCookie(setCookie);
+  await persistLoginSessionCookie({ setCookie, sessionCookie: data.sessionCookie });
   const role = data.user?.role as UserRole | "admin" | null;
   if (!role) throw new Error("Unable to resolve account role for this user.");
   if (role === "admin") throw new Error("Admin accounts are not supported in the mobile app.");

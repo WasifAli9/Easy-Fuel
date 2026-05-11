@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { Alert, FlatList, Modal, ScrollView, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Card, SegmentedButtons, Switch, Text, TextInput } from "react-native-paper";
+import { Card, SegmentedButtons, Switch, Text, TextInput } from "react-native-paper";
+import { Button } from "@/design/paper-button";
 import { apiClient } from "@/services/api/client";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
-import { darkTheme, lightTheme } from "@/design/theme";
+import { darkTheme, lightTheme, paperMd3ControlRoundness } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 
 type MethodType = "bank_account" | "credit_card" | "debit_card";
@@ -198,6 +199,7 @@ export function CustomerPaymentMethodsScreen() {
               Add payment method
             </Text>
             <SegmentedButtons
+              theme={{ roundness: paperMd3ControlRoundness }}
               value={methodType}
               onValueChange={(v) => setMethodType(v as MethodType)}
               buttons={[
@@ -220,6 +222,7 @@ export function CustomerPaymentMethodsScreen() {
                   <TextInput mode="outlined" label="Account number" value={accountNumber} onChangeText={setAccountNumber} keyboardType="number-pad" />
                   <TextInput mode="outlined" label="Branch code" value={branchCode} onChangeText={setBranchCode} />
                   <SegmentedButtons
+                    theme={{ roundness: paperMd3ControlRoundness }}
                     value={accountType}
                     onValueChange={(v) => setAccountType(v as typeof accountType)}
                     buttons={[

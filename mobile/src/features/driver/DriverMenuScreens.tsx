@@ -18,7 +18,6 @@ import * as DocumentPicker from "expo-document-picker";
 import * as ExpoLocation from "expo-location";
 import {
   ActivityIndicator,
-  Button,
   Card,
   Chip,
   Divider,
@@ -28,10 +27,11 @@ import {
   Text,
   TextInput,
 } from "react-native-paper";
+import { Button } from "@/design/paper-button";
 import { apiClient } from "@/services/api/client";
 import { openStoredDocument, putFileToUploadUrl } from "@/lib/files";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
-import { darkTheme, lightTheme } from "@/design/theme";
+import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { changePasswordWithCurrent, signOut } from "@/services/api/auth";
 import { saveThemeMode } from "@/services/storage";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -141,11 +141,6 @@ const KYC_REQUIRED_DOC_TYPES = [
   { docType: "medical_fitness", aliases: [], title: "Medical Fitness Certificate", required: false },
 ];
 
-type DriverSubscription = {
-  subscription?: { id: string; status: string; planCode?: string; nextBillingAt?: string; plan?: { name?: string } };
-  hasActiveSubscription?: boolean;
-};
-
 type DriverNotification = {
   id: string;
   title?: string;
@@ -187,40 +182,6 @@ type DriverPreferences = {
   maxRadiusMiles?: number;
   currentLat?: number;
   currentLng?: number;
-  subscriptionPlanName?: string | null;
-};
-
-const driverPlanDetails: Record<
-  string,
-  {
-    bestFor: string;
-    features: string[];
-  }
-> = {
-  starter: {
-    bestFor: "Best for new drivers with lower monthly order volume.",
-    features: [
-      "Basic access to driver orders and delivery status updates.",
-      "Vehicle and compliance management tools.",
-      "Standard in-app support response time.",
-    ],
-  },
-  professional: {
-    bestFor: "Best for active drivers handling regular weekly deliveries.",
-    features: [
-      "Everything in Starter, with higher usage allowance.",
-      "Priority processing for subscription/account support.",
-      "Improved operational visibility for active delivery workflow.",
-    ],
-  },
-  premium: {
-    bestFor: "Best for high-volume professional drivers and fleet-heavy operations.",
-    features: [
-      "Everything in Professional, with highest usage allowance.",
-      "Priority support and faster issue escalation.",
-      "Built for intensive, full-time delivery operations.",
-    ],
-  },
 };
 
 function cardContainer(children: React.ReactNode, styles: ReturnType<typeof getStyles>) {
@@ -728,7 +689,7 @@ export function DriverKycDocumentsScreen() {
       ) : null}
       <View style={styles.kycHero}>
         <View style={styles.kycHeroTopRow}>
-          <View style={[styles.kycHeroIconWrap, { backgroundColor: isDark ? "rgba(38, 237, 217, 0.15)" : "rgba(38, 237, 217, 0.2)" }]}>
+          <View style={[styles.kycHeroIconWrap, { backgroundColor: isDark ? "rgba(13, 148, 136, 0.18)" : "rgba(13, 148, 136, 0.22)" }]}>
             <MaterialCommunityIcons name="shield-check-outline" size={26} color={theme.colors.primary} />
           </View>
           <View style={styles.kycHeroTextCol}>
@@ -1025,7 +986,7 @@ export function DriverKycDocumentsScreen() {
           <Card key={def.docType} style={[styles.card, styles.kycDocCard]} mode="outlined">
             <Card.Content style={styles.kycDocCardContent}>
               <View style={styles.kycDocTopRow}>
-                <View style={[styles.kycDocIconBox, { backgroundColor: isDark ? "rgba(38, 237, 217, 0.12)" : "rgba(38, 237, 217, 0.15)" }]}>
+                <View style={[styles.kycDocIconBox, { backgroundColor: isDark ? "rgba(13, 148, 136, 0.14)" : "rgba(13, 148, 136, 0.18)" }]}>
                   <MaterialCommunityIcons name={iconName as never} size={22} color={theme.colors.primary} />
                 </View>
                 <View style={styles.kycDocTitleCol}>
@@ -1081,70 +1042,6 @@ export function DriverKycDocumentsScreen() {
           onChange={onIosKycDateChange}
         />
       ) : null}
-    </ScrollView>
-  );
-}
-
-export function DriverSubscriptionMenuScreen() {
-  const mode = useUiThemeStore((state) => state.mode);
-  const theme = mode === "dark" ? darkTheme : lightTheme;
-  const styles = getStyles(theme);
-  const queryClient = useQueryClient();
-  const subQuery = useQuery({
-    queryKey: ["/api/driver/subscription"],
-    queryFn: async () => (await apiClient.get<DriverSubscription>("/api/driver/subscription")).data,
-  });
-  const plansQuery = useQuery({
-    queryKey: ["/api/driver/subscription/plans"],
-    queryFn: async () => (await apiClient.get<{ plans: Array<{ code: string; name: string; priceCents: number }> }>("/api/driver/subscription/plans")).data,
-  });
-  const createMutation = useMutation({
-    mutationFn: async (planCode: string) => apiClient.post("/api/driver/subscription/create-payment", { planCode }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/driver/subscription"] }),
-  });
-  const cancelMutation = useMutation({
-    mutationFn: async () => apiClient.post("/api/driver/subscription/cancel"),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/driver/subscription"] }),
-  });
-
-  return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {cardContainer(
-        <>
-          <Text variant="headlineSmall">Subscription</Text>
-          <Text style={styles.subtitle}>Manage driver subscription and plans.</Text>
-          <Text>Status: {subQuery.data?.subscription?.status || "none"}</Text>
-          <Text>Plan: {subQuery.data?.subscription?.plan?.name || subQuery.data?.subscription?.planCode || "-"}</Text>
-          <Text>Next billing: {subQuery.data?.subscription?.nextBillingAt ? new Date(subQuery.data.subscription.nextBillingAt).toLocaleDateString("en-ZA") : "-"}</Text>
-          <Button mode="contained" buttonColor={theme.colors.primary} textColor={theme.colors.onPrimary} onPress={() => cancelMutation.mutate()} loading={cancelMutation.isPending} style={styles.mt8}>
-            Cancel Subscription
-          </Button>
-        </>
-      , styles)}
-      {(plansQuery.data?.plans || []).map((plan) => (
-        <Card key={plan.code} style={styles.card}>
-          <Card.Content>
-            <Text variant="titleMedium">{plan.name}</Text>
-            <Text style={styles.meta}>R {(plan.priceCents / 100).toFixed(2)} / month</Text>
-            <View style={styles.planDetailBox}>
-              <Text style={styles.metaStrong}>
-                {driverPlanDetails[plan.code.toLowerCase()]?.bestFor || "Plan details for this subscription tier."}
-              </Text>
-              {(driverPlanDetails[plan.code.toLowerCase()]?.features || [
-                "Access to driver portal workflows.",
-                "Monthly billing with subscription management in-app.",
-              ]).map((feature) => (
-                <Text key={`${plan.code}-${feature}`} style={styles.meta}>
-                  - {feature}
-                </Text>
-              ))}
-            </View>
-            <Button mode="contained" buttonColor={theme.colors.primary} textColor={theme.colors.onPrimary} style={styles.mt8} onPress={() => createMutation.mutate(plan.code)} loading={createMutation.isPending}>
-              Choose {plan.name}
-            </Button>
-          </Card.Content>
-        </Card>
-      ))}
     </ScrollView>
   );
 }
@@ -1517,9 +1414,8 @@ export function DriverSettingsMenuScreen() {
         <>
           <Text variant="headlineSmall">Settings</Text>
           <Text style={styles.subtitle}>Job preferences and location.</Text>
-          <Text style={styles.meta}>Plan: {preferencesQuery.data?.subscriptionPlanName || "No active plan"}</Text>
-          <Text style={styles.meta}>Max radius: {preferencesQuery.data?.maxRadiusMiles ?? 0} miles</Text>
-          <Text style={styles.meta}>Pickup radius is managed automatically by your subscription tier.</Text>
+          <Text style={styles.meta}>Max pickup radius: {preferencesQuery.data?.maxRadiusMiles ?? 0} miles</Text>
+          <Text style={styles.meta}>Radius limits are set by the platform.</Text>
           <TextInput mode="outlined" label="Latitude" value={lat} onChangeText={setLat} style={styles.input} />
           <TextInput mode="outlined" label="Longitude" value={lng} onChangeText={setLng} style={styles.input} />
           <View style={styles.row}>
@@ -1549,7 +1445,6 @@ const getStyles = (theme: typeof lightTheme) => {
     twoCol: p.twoCol,
     empty: p.empty,
     mt8: p.mt8,
-    planDetailBox: p.planDetailBox,
     errorText: p.errorText,
     pricingHeaderTextWrap: { flex: 1, minWidth: 0, paddingRight: 4 },
     pricingHistoryButton: { alignSelf: "flex-start" },
@@ -1660,7 +1555,7 @@ const getStyles = (theme: typeof lightTheme) => {
   kycDateLabel: { marginBottom: 6, color: theme.colors.onSurfaceVariant },
   kycDateButtonContent: { justifyContent: "flex-start" },
   kycSwitchRow: { marginBottom: 8, paddingVertical: 4 },
-  kycPrimaryButton: { marginTop: 12, alignSelf: "flex-start", borderRadius: 8 },
+  kycPrimaryButton: { marginTop: 12, alignSelf: "flex-start", borderRadius: buttonBorderRadius },
   kycPrimaryButtonContent: {
     paddingVertical: 2,
     paddingHorizontal: 14,
@@ -1693,7 +1588,7 @@ const getStyles = (theme: typeof lightTheme) => {
   kycDocMeta: { marginTop: 4, fontSize: 12, color: theme.colors.onSurfaceVariant },
   kycDocMetaMuted: { marginTop: 4, fontSize: 12, color: theme.colors.outline, fontStyle: "italic" },
   kycDocActions: { flexDirection: "row", gap: 10, marginTop: 16 },
-  kycDocButton: { borderRadius: 8 },
+  kycDocButton: { borderRadius: buttonBorderRadius },
   kycDocButtonHalf: { flex: 1 },
   });
 };

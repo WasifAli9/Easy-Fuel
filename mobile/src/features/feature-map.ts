@@ -39,11 +39,6 @@ export const roleFeatureMap: Record<UserRole, MobileFeature[]> = {
   supplier: [
     { id: "auth", status: "parity", description: "Sign-in and role onboarding." },
     { id: "orders", status: "parity", description: "Driver depot orders accept/reject/payment confirm (core web flows)." },
-    {
-      id: "subscriptions",
-      status: "parity",
-      description: "Plans, Ozow redirect, cancel — /api/supplier/subscription/*.",
-    },
     { id: "depots", status: "parity", description: "List/create/delete depots; tier pricing snapshot on dashboard." },
     { id: "analytics_invoices_settlements", status: "parity", description: "Read-only API parity with web tabs." },
     { id: "profile_compliance", status: "parity", description: "Profile PUT; documents & compliance status listed." },

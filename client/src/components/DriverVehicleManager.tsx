@@ -6,11 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Truck, Plus, Edit, Trash2, Calendar, Gauge, Shield, Upload, FileText, CheckCircle2, XCircle, AlertTriangle, Eye, Loader2, Building2 } from "lucide-react";
-import { normalizeFilePath } from "@/lib/utils";
+import { Truck, Plus, Edit, Trash2, Calendar, Gauge, Shield, Upload, FileText, CheckCircle2, XCircle, AlertTriangle, Eye, Loader2, Building2, Unplug } from "lucide-react";
+import { normalizeFilePath, cn } from "@/lib/utils";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
 import { Separator } from "@/components/ui/separator";
@@ -69,6 +68,27 @@ export function DriverVehicleManager() {
     onError: (error: any) => {
       toast({
         title: "Could not select vehicle",
+        description: error.message || "Try again or contact your fleet manager.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const releaseCompanyVehicleMutation = useMutation({
+    mutationFn: async (vehicleId: string) => {
+      await apiRequest("POST", `/api/driver/vehicles/${vehicleId}/release-company-vehicle`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/company-fleet/available-vehicles"] });
+      toast({
+        title: "Vehicle released",
+        description: "Company vehicle was released back to the fleet pool.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Could not release vehicle",
         description: error.message || "Try again or contact your fleet manager.",
         variant: "destructive",
       });
@@ -437,7 +457,7 @@ export function DriverVehicleManager() {
                         <div className="flex flex-wrap items-center gap-2">
                           <CardTitle className="text-lg">{vehicle.registrationNumber}</CardTitle>
                           {vehicle.companyId ? (
-                            <Badge variant="secondary">Company fleet</Badge>
+                            <Badge className="bg-sky-100 text-sky-800 border-sky-200 hover:bg-sky-100">Company fleet</Badge>
                           ) : null}
                         </div>
                         <CardDescription>
@@ -461,6 +481,18 @@ export function DriverVehicleManager() {
                             data-testid={`button-delete-${vehicle.id}`}
                           >
                             <Trash2 className="h-4 w-4" />
+                          </Button>
+                        ) : null}
+                        {vehicle.companyId ? (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => releaseCompanyVehicleMutation.mutate(vehicle.id)}
+                            disabled={releaseCompanyVehicleMutation.isPending}
+                            title="Release to fleet pool"
+                            data-testid={`button-release-${vehicle.id}`}
+                          >
+                            <Unplug className="h-4 w-4" />
                           </Button>
                         ) : null}
                       </div>
@@ -701,18 +733,19 @@ export function DriverVehicleManager() {
 
               <div>
                 <Label htmlFor="tracker_installed">Tracker Installed</Label>
-                <Select 
-                  name="tracker_installed" 
+                <select
+                  id="tracker_installed"
+                  name="tracker_installed"
                   defaultValue={editingVehicle?.trackerInstalled ? "yes" : "no"}
+                  className={cn(
+                    "flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                  )}
+                  data-testid="select-tracker"
                 >
-                  <SelectTrigger data-testid="select-tracker">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="no">No</SelectItem>
-                    <SelectItem value="yes">Yes</SelectItem>
-                  </SelectContent>
-                </Select>
+                  <option value="no">No</option>
+                  <option value="yes">Yes</option>
+                </select>
               </div>
 
               <div className="col-span-2">

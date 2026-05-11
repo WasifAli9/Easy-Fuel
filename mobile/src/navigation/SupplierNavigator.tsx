@@ -1,14 +1,14 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import {
   SupplierDashboardScreen,
   SupplierDepotsScreen,
   SupplierProfileScreen,
-  SupplierSubscriptionScreen,
 } from "@/features/roles/RoleScreens";
 import { PortalShell, type PortalMenuItem } from "@/navigation/PortalShell";
 import { PortalSettingsScreen } from "@/features/common/PortalSettingsScreen";
+import { fuelPortalTabBarOptions } from "@/design/fuel-portal-tokens";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { SupplierDepotOrdersPanel } from "@/features/supplier/SupplierDepotOrdersPanel";
@@ -23,7 +23,6 @@ const supplierMenuItems: PortalMenuItem[] = [
   { key: "depots", label: "Depots", icon: "map-marker-outline" },
   { key: "pricing", label: "Pricing", icon: "cash-multiple" },
   { key: "receipt", label: "Receipt", icon: "file-document-outline" },
-  { key: "subscription", label: "Subscription", icon: "credit-card-outline" },
   { key: "profile", label: "Profile", icon: "account-circle-outline" },
   { key: "settings", label: "Settings", icon: "cog-outline" },
 ];
@@ -34,37 +33,22 @@ type SupplierSection =
   | "depots"
   | "pricing"
   | "receipt"
-  | "subscription"
   | "profile"
   | "settings";
 
 function SupplierTabNavigator() {
   const mode = useUiThemeStore((s) => s.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
+  const tabOpts = useMemo(() => fuelPortalTabBarOptions(theme, mode === "dark"), [theme, mode]);
 
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
-        headerShown: false,
-        tabBarActiveTintColor: "#1D4ED8",
-        tabBarInactiveTintColor: theme.colors.onSurfaceVariant,
-        tabBarStyle: {
-          backgroundColor: theme.colors.surface,
-          borderTopColor: "#DBEAFE",
-          borderTopWidth: 1,
-          height: 62,
-          paddingBottom: 8,
-          paddingTop: 6,
-        },
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: "600",
-        },
+        ...tabOpts,
         tabBarIcon: ({ color, size }) => {
           const iconByRoute: Record<string, string> = {
             SupplierDashboard: "view-dashboard-outline",
             SupplierDepots: "map-marker-outline",
-            SupplierSubscription: "credit-card-outline",
             SupplierProfile: "account-circle-outline",
           };
           return (
@@ -75,7 +59,6 @@ function SupplierTabNavigator() {
     >
       <Tab.Screen name="SupplierDashboard" component={SupplierDashboardScreen} options={{ tabBarLabel: "Portal" }} />
       <Tab.Screen name="SupplierDepots" component={SupplierDepotsScreen} options={{ tabBarLabel: "Depots" }} />
-      <Tab.Screen name="SupplierSubscription" component={SupplierSubscriptionScreen} options={{ tabBarLabel: "Billing" }} />
       <Tab.Screen name="SupplierProfile" component={SupplierProfileScreen} options={{ tabBarLabel: "Profile" }} />
     </Tab.Navigator>
   );
@@ -95,11 +78,9 @@ export function SupplierNavigator() {
             ? "Pricing"
             : section === "receipt"
               ? "Receipt"
-              : section === "subscription"
-                ? "Subscription"
-                : section === "profile"
-                  ? "Profile"
-                  : "Supplier Portal";
+              : section === "profile"
+                ? "Profile"
+                : "Supplier Portal";
 
   return (
     <PortalShell
@@ -113,15 +94,13 @@ export function SupplierNavigator() {
       {section === "portal" ? (
         <SupplierTabNavigator />
       ) : section === "depot-orders" ? (
-        <SupplierDepotOrdersPanel />
+        <SupplierDepotOrdersPanel listChrome="minimal" />
       ) : section === "depots" ? (
         <SupplierDepotsScreen />
       ) : section === "pricing" ? (
         <SupplierPricingScreen />
       ) : section === "receipt" ? (
         <SupplierReceiptScreen />
-      ) : section === "subscription" ? (
-        <SupplierSubscriptionScreen />
       ) : section === "profile" ? (
         <SupplierProfileScreen />
       ) : (

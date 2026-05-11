@@ -16,7 +16,10 @@ import {
   profiles,
 } from "@shared/schema";
 import { createDispatchOffers } from "./dispatch-service";
-import { sendDriverAcceptanceEmail } from "./email-service";
+import {
+  sendDriverAcceptanceEmail,
+  sendDriverOrderConfirmedByCustomerEmail,
+} from "./email-service";
 import { websocketService } from "./websocket";
 import { pushNotificationService } from "./push-service";
 import { ensureChatThreadForAssignment } from "./chat-service";
@@ -276,7 +279,6 @@ router.get("/orders/:id/offers", async (req, res) => {
             "customer_declined",
             "offered",
           ]),
-          isNotNull(dispatchOffers.proposedPricePerKmCents),
         ),
       )
       .orderBy(desc(dispatchOffers.createdAt));
@@ -691,10 +693,16 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
     let driverProfileName = "Driver";
 
     let driverProfilePhone: string | null = null;
+    let driverCurrency = "ZAR";
+    let driverEmail: string | null = null;
     if (driverUserId) {
       const driverProfile = (
         await db
-          .select({ full_name: profiles.fullName, phone: profiles.phone })
+          .select({
+            full_name: profiles.fullName,
+            phone: profiles.phone,
+            currency: profiles.currency,
+          })
           .from(profiles)
           .where(eq(profiles.id, driverUserId))
           .limit(1)
@@ -705,6 +713,17 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
       if (driverProfile?.phone) {
         driverProfilePhone = driverProfile.phone;
       }
+      if (driverProfile?.currency) {
+        driverCurrency = driverProfile.currency;
+      }
+      const driverAuthRow = (
+        await db
+          .select({ email: localAuthUsers.email })
+          .from(localAuthUsers)
+          .where(eq(localAuthUsers.id, driverUserId))
+          .limit(1)
+      )[0];
+      driverEmail = driverAuthRow?.email ?? null;
     }
 
     const customerUserId = updatedOrderPayload.customers?.user_id || user.id;
@@ -712,11 +731,12 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
     let customerName =
       updatedOrderPayload.customers?.company_name ||
       "Customer";
+    let customerPhone: string | null = null;
 
     if (customerUserId) {
       const customerProfile = (
         await db
-          .select({ full_name: profiles.fullName })
+          .select({ full_name: profiles.fullName, phone: profiles.phone })
           .from(profiles)
           .where(eq(profiles.id, customerUserId))
           .limit(1)
@@ -734,7 +754,22 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
       if (customerProfile?.full_name) {
         customerName = customerProfile.full_name;
       }
+      if (customerProfile?.phone) {
+        customerPhone = customerProfile.phone;
+      }
     }
+
+    const deliveryAddressStr = updatedOrderPayload.delivery_addresses
+      ? `${updatedOrderPayload.delivery_addresses.address_street}, ${updatedOrderPayload.delivery_addresses.address_city}, ${updatedOrderPayload.delivery_addresses.address_province}`
+      : `${updatedOrderPayload.drop_lat}, ${updatedOrderPayload.drop_lng}`;
+
+    const confirmedTimeStr = offer.proposedDeliveryTime
+      ? new Date(offer.proposedDeliveryTime).toLocaleString("en-ZA", {
+          dateStyle: "medium",
+          timeStyle: "short",
+          timeZone: "Africa/Johannesburg",
+        })
+      : "Not specified";
 
     const chatThread = await ensureChatThreadForAssignment({
       orderId,
@@ -757,28 +792,40 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
 
     // Send confirmation email to customer
     if (customerEmail) {
-      const deliveryAddress = updatedOrder.delivery_addresses
-        ? `${updatedOrderPayload.delivery_addresses.address_street}, ${updatedOrderPayload.delivery_addresses.address_city}, ${updatedOrderPayload.delivery_addresses.address_province}`
-        : `${updatedOrderPayload.drop_lat}, ${updatedOrderPayload.drop_lng}`;
-
-      const confirmedTime = offer.proposedDeliveryTime
-        ? new Date(offer.proposedDeliveryTime).toLocaleString("en-ZA", {
-            dateStyle: "medium",
-            timeStyle: "short",
-            timeZone: "Africa/Johannesburg",
-          })
-        : "Not specified";
-
       sendDriverAcceptanceEmail({
         customerEmail,
         customerName,
         orderNumber: updatedOrderPayload.id.substring(0, 8).toUpperCase(),
         driverName: driverProfileName,
         driverPhone: driverProfilePhone || "Not available",
-        confirmedDeliveryTime: confirmedTime,
+        confirmedDeliveryTime: confirmedTimeStr,
         fuelType: updatedOrderPayload.fuel_types?.label || "Fuel",
         litres: String(updatedOrderPayload.litres),
-        deliveryAddress,
+        deliveryAddress: deliveryAddressStr,
+      }).catch(() => {
+        // Email send failed
+      });
+    }
+
+    // Notify assigned driver by email (quote accepted)
+    if (driverEmail) {
+      sendDriverOrderConfirmedByCustomerEmail({
+        driverEmail,
+        driverName: driverProfileName,
+        orderNumber: updatedOrderPayload.id.substring(0, 8).toUpperCase(),
+        fuelType: updatedOrderPayload.fuel_types?.label || "Fuel",
+        litres: Number(updatedOrderPayload.litres) || 0,
+        confirmedDeliveryTime: confirmedTimeStr,
+        deliveryAddress: deliveryAddressStr,
+        customerName,
+        customerPhone: customerPhone || "Not provided",
+        distanceKm,
+        fuelPricePerLiterCents: fuelPricePerLiterCents,
+        fuelCostCents,
+        deliveryFeeCents,
+        serviceFeeCents: serviceFee,
+        totalCents,
+        currency: driverCurrency,
       }).catch(() => {
         // Email send failed
       });

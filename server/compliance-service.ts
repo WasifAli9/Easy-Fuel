@@ -1,6 +1,7 @@
 import { db } from "./db";
-import { documents, drivers, suppliers, vehicles } from "@shared/schema";
+import { customers, documents, drivers, suppliers, vehicles } from "@shared/schema";
 import { and, eq, gt, inArray, isNotNull, lte } from "drizzle-orm";
+import { notificationService } from "./notification-service";
 
 export interface ComplianceChecklist {
   required: string[];
@@ -458,9 +459,62 @@ export async function checkExpiringDocuments(): Promise<void> {
         ),
       );
 
-    // TODO: Send notifications for expiring documents
-    // This would integrate with the notification service
-    console.log(`Found ${expiringDocs?.length || 0} documents expiring within 30 days`);
+    if (!expiringDocs?.length) return;
+
+    const byOwnerType = {
+      customer: expiringDocs.filter((d) => d.owner_type === "customer").map((d) => d.owner_id),
+      driver: expiringDocs.filter((d) => d.owner_type === "driver").map((d) => d.owner_id),
+      supplier: expiringDocs.filter((d) => d.owner_type === "supplier").map((d) => d.owner_id),
+    };
+
+    const [customerUsers, driverUsers, supplierUsers] = await Promise.all([
+      byOwnerType.customer.length
+        ? db
+            .select({ ownerId: customers.id, userId: customers.userId })
+            .from(customers)
+            .where(inArray(customers.id, byOwnerType.customer))
+        : Promise.resolve([]),
+      byOwnerType.driver.length
+        ? db
+            .select({ ownerId: drivers.id, userId: drivers.userId })
+            .from(drivers)
+            .where(inArray(drivers.id, byOwnerType.driver))
+        : Promise.resolve([]),
+      byOwnerType.supplier.length
+        ? db
+            .select({ ownerId: suppliers.id, userId: suppliers.ownerId })
+            .from(suppliers)
+            .where(inArray(suppliers.id, byOwnerType.supplier))
+        : Promise.resolve([]),
+    ]);
+
+    const ownerToUser = new Map<string, string>();
+    for (const row of customerUsers) ownerToUser.set(row.ownerId, row.userId);
+    for (const row of driverUsers) ownerToUser.set(row.ownerId, row.userId);
+    for (const row of supplierUsers) ownerToUser.set(row.ownerId, row.userId);
+
+    const notifyJobs = expiringDocs
+      .map((doc) => ({
+        docId: doc.id,
+        userId: ownerToUser.get(doc.owner_id),
+      }))
+      .filter((j): j is { docId: string; userId: string } => Boolean(j.userId))
+      .map((j) =>
+        notificationService.createNotification({
+          userId: j.userId,
+          type: "document_expiring",
+          title: "Document Expiring Soon",
+          message: "One of your verified documents expires within 30 days. Please renew it to avoid service interruption.",
+          data: { documentId: j.docId },
+          entityType: "profile",
+          entityId: j.docId,
+          dedupeKey: `document_expiring:${j.docId}`,
+          priority: "high",
+        }),
+      );
+
+    await Promise.allSettled(notifyJobs);
+    console.log(`Sent ${notifyJobs.length} document-expiry notifications`);
   } catch (error) {
     console.error("Error in checkExpiringDocuments:", error);
   }

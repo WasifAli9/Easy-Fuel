@@ -3,20 +3,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, FileText, Download } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
-export function SupplierInvoicesTab({ hasSubscription }: { hasSubscription: boolean }) {
+export function SupplierInvoicesTab() {
   const { data, isLoading, error } = useQuery<{ invoices: any[] }>({
     queryKey: ["/api/supplier/invoices"],
-    enabled: hasSubscription,
   });
 
-  if (!hasSubscription) {
-    return (
-      <div className="text-center py-12 text-muted-foreground">
-        <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
-        <p>Subscribe to view and download invoices.</p>
-      </div>
-    );
-  }
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">

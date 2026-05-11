@@ -1,21 +1,33 @@
 import { MD3DarkTheme, MD3LightTheme } from "react-native-paper";
 
+/** Supplier portal action buttons (e.g. Download PDF) and shared mobile button shape. */
+export const buttonBorderRadius = 12 as const;
+
+/** For Paper MD3 `Button` / `SegmentedButtons`: corner radius is `5 * theme.roundness`. Use this in their `theme` prop, or import `Button` from `paper-button`. */
+export const paperMd3ControlRoundness = buttonBorderRadius / 5;
+
 export const lightTheme = {
   ...MD3LightTheme,
-  roundness: 12,
+  roundness: buttonBorderRadius,
   colors: {
     ...MD3LightTheme.colors,
-    primary: "#26EDD9",
-    onPrimary: "#F6FEFD",
+    primary: "#0D9488",
+    onPrimary: "#FFFFFF",
+    primaryContainer: "#CCFBF1",
+    onPrimaryContainer: "#115E59",
     secondary: "#E3E5E8",
     onSecondary: "#14161A",
-    background: "#FFFFFF",
+    secondaryContainer: "#E8F5F1",
+    onSecondaryContainer: "#0F766E",
+    tertiary: "#14B8A6",
+    onTertiary: "#042F2E",
+    background: "#EDFAF8",
     onBackground: "#14161A",
-    surface: "#FAFAFA",
+    surface: "#FFFFFF",
     onSurface: "#14161A",
     surfaceVariant: "#EEF2F1",
     onSurfaceVariant: "#6B7280",
-    outline: "#E8EAEE",
+    outline: "rgba(13, 148, 136, 0.22)",
     error: "#EF4343",
     onError: "#FEF6F6",
   },
@@ -23,13 +35,17 @@ export const lightTheme = {
 
 export const darkTheme = {
   ...MD3DarkTheme,
-  roundness: 12,
+  roundness: buttonBorderRadius,
   colors: {
     ...MD3DarkTheme.colors,
-    primary: "#26EDD9",
-    onPrimary: "#14161A",
+    primary: "#0D9488",
+    onPrimary: "#FFFFFF",
+    primaryContainer: "#134E4A",
+    onPrimaryContainer: "#CCFBF1",
     secondary: "#282C34",
     onSecondary: "#F2F2F2",
+    tertiary: "#5EEAD4",
+    onTertiary: "#042F2E",
     background: "#14161A",
     onBackground: "#F2F2F2",
     surface: "#1D2025",
@@ -42,5 +58,4 @@ export const darkTheme = {
   },
 };
 
-// Backward-compatible alias for existing imports.
 export const appTheme = lightTheme;

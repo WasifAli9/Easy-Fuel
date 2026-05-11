@@ -1,25 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
-import { ScrollView, StyleSheet, View } from "react-native";
+import { Alert, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as DocumentPicker from "expo-document-picker";
 import {
   ActivityIndicator,
   Banner,
-  Button,
   Card,
   Chip,
-  Dialog,
+  Menu,
   Portal,
   ProgressBar,
   RadioButton,
   Text,
   TextInput,
 } from "react-native-paper";
+import { Button } from "@/design/paper-button";
 import { apiClient } from "@/services/api/client";
 import { openStoredDocument, putFileToUploadUrl } from "@/lib/files";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type Vehicle = {
   id: string;
@@ -33,6 +34,7 @@ type Vehicle = {
   roadworthyExpiry?: string;
   insuranceExpiry?: string;
   complianceStatus?: string;
+  companyId?: string | null;
 };
 
 type VehicleDocument = {
@@ -109,6 +111,7 @@ const emptyForm: VehicleForm = {
 export function DriverVehiclesScreen() {
   const mode = useUiThemeStore((state) => state.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
+  const insets = useSafeAreaInsets();
   const styles = getStyles(theme);
   const [showAdd, setShowAdd] = useState(false);
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
@@ -116,8 +119,8 @@ export function DriverVehiclesScreen() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [form, setForm] = useState<VehicleForm>(emptyForm);
   const [workMode, setWorkMode] = useState<"independent" | "company">("independent");
-  const [companySearch, setCompanySearch] = useState("");
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
+  const [companyMenuVisible, setCompanyMenuVisible] = useState(false);
   const queryClient = useQueryClient();
 
   const membershipQuery = useQuery({
@@ -127,14 +130,52 @@ export function DriverVehiclesScreen() {
   });
 
   const companiesQuery = useQuery({
-    queryKey: ["/api/companies/public-list", companySearch],
+    queryKey: ["/api/companies/public-list"],
     enabled: workMode === "company",
-    queryFn: async () =>
-      (
-        await apiClient.get<PublicCompany[]>("/api/companies/public-list", {
-          params: companySearch.trim() ? { q: companySearch.trim() } : {},
-        })
-      ).data ?? [],
+    queryFn: async () => (await apiClient.get<PublicCompany[]>("/api/companies/public-list")).data ?? [],
+  });
+
+  const linkedToCompany = useMemo(() => {
+    const m = membershipQuery.data;
+    return m?.mode === "company" && !!m?.companyId && !m?.isDisabledByCompany;
+  }, [membershipQuery.data]);
+
+  const availablePoolQuery = useQuery({
+    queryKey: ["/api/driver/company-fleet/available-vehicles"],
+    enabled: linkedToCompany,
+    queryFn: async () => (await apiClient.get<Vehicle[]>("/api/driver/company-fleet/available-vehicles")).data ?? [],
+  });
+
+  const claimCompanyVehicleMutation = useMutation({
+    mutationFn: async (vehicleId: string) => {
+      await apiClient.post(`/api/driver/vehicles/${vehicleId}/claim-company-vehicle`, {});
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/driver/company-fleet/available-vehicles"] }),
+      ]);
+    },
+    onError: (e: unknown) => {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error || (e as Error).message;
+      Alert.alert("Could not select vehicle", msg || "Try again or contact your fleet manager.");
+    },
+  });
+
+  const releaseCompanyVehicleMutation = useMutation({
+    mutationFn: async (vehicleId: string) => {
+      await apiClient.post(`/api/driver/vehicles/${vehicleId}/release-company-vehicle`, {});
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/driver/company-fleet/available-vehicles"] }),
+      ]);
+    },
+    onError: (e: unknown) => {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error || (e as Error).message;
+      Alert.alert("Could not release vehicle", msg || "Try again or contact your fleet manager.");
+    },
   });
 
   useEffect(() => {
@@ -157,9 +198,27 @@ export function DriverVehiclesScreen() {
       await apiClient.put("/api/driver/company-membership", { companyId });
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["/api/driver/company-membership"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/driver/company-membership"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/driver/company-fleet/available-vehicles"] }),
+      ]);
+    },
+    onError: (e: unknown) => {
+      const msg = (e as Error).message || "Could not save fleet settings.";
+      Alert.alert("Error", msg);
     },
   });
+
+  const selectedCompanyLabel = useMemo(() => {
+    if (!selectedCompanyId) return "Select a company";
+    const fromList = (companiesQuery.data ?? []).find((c) => c.id === selectedCompanyId);
+    if (fromList?.name) return fromList.name;
+    if (membershipQuery.data?.companyId === selectedCompanyId && membershipQuery.data?.companyName) {
+      return membershipQuery.data.companyName;
+    }
+    return "Select a company";
+  }, [selectedCompanyId, companiesQuery.data, membershipQuery.data]);
 
   const vehiclesQuery = useQuery({
     queryKey: ["/api/driver/vehicles"],
@@ -293,6 +352,15 @@ export function DriverVehiclesScreen() {
   }, [selectedVehicle?.id, queryClient]);
 
   const vehicles = useMemo(() => vehiclesQuery.data ?? [], [vehiclesQuery.data]);
+
+  const addVehicleInputCommon = {
+    mode: "outlined" as const,
+    style: styles.addVehicleField,
+    outlineColor: theme.colors.outline,
+    activeOutlineColor: theme.colors.primary,
+    textColor: theme.colors.onSurface,
+    theme: { colors: { onSurfaceVariant: theme.colors.onSurfaceVariant } },
+  };
 
   if (selectedVehicle) {
     return (
@@ -432,33 +500,41 @@ export function DriverVehiclesScreen() {
 
             {workMode === "company" ? (
               <View style={styles.companyPickerWrap}>
-                <TextInput
-                  mode="outlined"
-                  label="Search companies"
-                  value={companySearch}
-                  onChangeText={setCompanySearch}
-                  style={styles.input}
-                />
-                <View style={styles.companyList}>
-                  {(companiesQuery.data ?? []).slice(0, 8).map((company) => {
-                    const selected = selectedCompanyId === company.id;
-                    return (
+                <Text variant="labelLarge" style={styles.fieldLabel}>
+                  Company
+                </Text>
+                {companiesQuery.isLoading ? (
+                  <ActivityIndicator style={styles.companyLoading} />
+                ) : (
+                  <Menu
+                    visible={companyMenuVisible}
+                    onDismiss={() => setCompanyMenuVisible(false)}
+                    anchor={
                       <Button
-                        key={company.id}
-                        mode={selected ? "contained" : "outlined"}
-                        buttonColor={selected ? theme.colors.primary : undefined}
-                        textColor={selected ? theme.colors.onPrimary : theme.colors.primary}
-                        onPress={() => setSelectedCompanyId(company.id)}
-                        style={styles.companyBtn}
+                        mode="outlined"
+                        onPress={() => setCompanyMenuVisible(true)}
+                        style={styles.companyDropdownBtn}
+                        contentStyle={styles.companyDropdownContent}
                       >
-                        {company.name}
+                        {selectedCompanyLabel}
                       </Button>
-                    );
-                  })}
-                  {!companiesQuery.isLoading && (companiesQuery.data ?? []).length === 0 ? (
-                    <Text style={styles.meta}>No companies found.</Text>
-                  ) : null}
-                </View>
+                    }
+                  >
+                    {(companiesQuery.data ?? []).map((company) => (
+                      <Menu.Item
+                        key={company.id}
+                        title={company.name}
+                        onPress={() => {
+                          setSelectedCompanyId(company.id);
+                          setCompanyMenuVisible(false);
+                        }}
+                      />
+                    ))}
+                  </Menu>
+                )}
+                {!companiesQuery.isLoading && (companiesQuery.data ?? []).length === 0 ? (
+                  <Text style={styles.meta}>No companies available.</Text>
+                ) : null}
               </View>
             ) : null}
 
@@ -475,10 +551,63 @@ export function DriverVehiclesScreen() {
           </Card.Content>
         </Card>
 
+        {linkedToCompany ? (
+          <Card mode="contained" style={[styles.headerCard, styles.poolCard]}>
+            <Card.Content>
+              <Text variant="headlineSmall">Available company vehicles</Text>
+              <Text style={styles.subtitle}>
+                {membershipQuery.data?.companyName
+                  ? `Unassigned vehicles from ${membershipQuery.data.companyName}. Choosing one assigns it to you and releases any other company vehicle you had selected.`
+                  : "Unassigned vehicles from your fleet company. Select one to use for deliveries."}
+              </Text>
+              {availablePoolQuery.isLoading ? (
+                <View style={styles.center}>
+                  <ActivityIndicator />
+                </View>
+              ) : (availablePoolQuery.data ?? []).length === 0 ? (
+                <Text style={styles.meta}>
+                  No unassigned vehicles in the pool right now. Ask your company to add vehicles or unassign one from
+                  another driver.
+                </Text>
+              ) : (
+                <View style={styles.poolList}>
+                  {(availablePoolQuery.data ?? []).map((v) => (
+                    <Card key={v.id} mode="outlined" style={styles.poolVehicleCard}>
+                      <Card.Content>
+                        <Text variant="titleMedium">{v.registrationNumber || "Fleet vehicle"}</Text>
+                        <Text style={styles.meta}>
+                          {[v.make, v.model, v.year].filter(Boolean).join(" ") || "Fleet vehicle"}
+                          {v.capacityLitres != null ? ` · ${Number(v.capacityLitres).toLocaleString()} L` : ""}
+                        </Text>
+                        <Button
+                          mode="contained"
+                          buttonColor={theme.colors.primary}
+                          textColor={theme.colors.onPrimary}
+                          style={styles.poolClaimBtn}
+                          onPress={() => claimCompanyVehicleMutation.mutate(v.id)}
+                          loading={claimCompanyVehicleMutation.isPending}
+                          disabled={claimCompanyVehicleMutation.isPending}
+                        >
+                          Use this vehicle
+                        </Button>
+                      </Card.Content>
+                    </Card>
+                  ))}
+                </View>
+              )}
+            </Card.Content>
+          </Card>
+        ) : null}
+
         <Card mode="contained" style={styles.headerCard}>
           <Card.Content>
             <Text variant="headlineSmall">My Vehicles</Text>
-            <Text style={styles.subtitle}>View and manage your delivery vehicles.</Text>
+            <Text style={styles.subtitle}>
+              View and manage your delivery vehicles.
+              {linkedToCompany
+                ? " Company pool vehicles appear above until you select one — then they show here."
+                : ""}
+            </Text>
             <Button mode="contained" style={styles.addBtn} onPress={() => setShowAdd(true)}>
               Add Vehicle
             </Button>
@@ -499,7 +628,14 @@ export function DriverVehiclesScreen() {
           vehicles.map((item) => (
             <Card key={item.id} mode="outlined" style={styles.vehicleCard}>
               <Card.Content>
-                <Text variant="titleMedium">{item.registrationNumber || "Unnamed vehicle"}</Text>
+                <View style={styles.vehicleTitleRow}>
+                  <Text variant="titleMedium">{item.registrationNumber || "Unnamed vehicle"}</Text>
+                  {item.companyId ? (
+                    <Chip compact style={styles.companyFleetChip} textStyle={styles.companyFleetChipText}>
+                      Company fleet
+                    </Chip>
+                  ) : null}
+                </View>
                 <Text style={styles.meta}>
                   {[item.make, item.model, item.year].filter(Boolean).join(" ") || "Vehicle details not set"}
                 </Text>
@@ -514,15 +650,27 @@ export function DriverVehiclesScreen() {
                   </View>
                 ) : null}
                 <Text style={styles.meta}>Compliance: {item.complianceStatus || "pending"}</Text>
-                <Button
-                  mode="contained"
-                  style={styles.complianceBtn}
-                  buttonColor={theme.colors.primary}
-                  textColor={theme.colors.onPrimary}
-                  onPress={() => openCompliance(item)}
-                >
-                  Manage Compliance
-                </Button>
+                <View style={styles.vehicleActions}>
+                  {item.companyId ? (
+                    <Button
+                      mode="outlined"
+                      onPress={() => releaseCompanyVehicleMutation.mutate(item.id)}
+                      loading={releaseCompanyVehicleMutation.isPending}
+                      disabled={releaseCompanyVehicleMutation.isPending}
+                    >
+                      Release to pool
+                    </Button>
+                  ) : null}
+                  <Button
+                    mode="contained"
+                    style={styles.complianceBtn}
+                    buttonColor={theme.colors.primary}
+                    textColor={theme.colors.onPrimary}
+                    onPress={() => openCompliance(item)}
+                  >
+                    Manage Compliance
+                  </Button>
+                </View>
               </Card.Content>
             </Card>
           ))
@@ -530,67 +678,122 @@ export function DriverVehiclesScreen() {
       </ScrollView>
 
       <Portal>
-        <Dialog visible={showAdd} onDismiss={() => setShowAdd(false)} style={styles.dialog}>
-          <Dialog.Title>Add Vehicle</Dialog.Title>
-          <Dialog.ScrollArea>
-            <View style={styles.form}>
-              <TextInput
-                mode="outlined"
-                label="Registration Number*"
-                value={form.registration_number}
-                onChangeText={(v) => setForm((prev) => ({ ...prev, registration_number: v }))}
-              />
-              <TextInput mode="outlined" label="Make" value={form.make} onChangeText={(v) => setForm((prev) => ({ ...prev, make: v }))} />
-              <TextInput mode="outlined" label="Model" value={form.model} onChangeText={(v) => setForm((prev) => ({ ...prev, model: v }))} />
-              <TextInput mode="outlined" label="Year" keyboardType="numeric" value={form.year} onChangeText={(v) => setForm((prev) => ({ ...prev, year: v }))} />
-              <TextInput
-                mode="outlined"
-                label="Capacity (Litres)"
-                keyboardType="numeric"
-                value={form.capacity_litres}
-                onChangeText={(v) => setForm((prev) => ({ ...prev, capacity_litres: v }))}
-              />
-              <TextInput
-                mode="outlined"
-                label="Fuel Types (comma separated)"
-                value={form.fuel_types}
-                onChangeText={(v) => setForm((prev) => ({ ...prev, fuel_types: v }))}
-              />
-              <TextInput
-                mode="outlined"
-                label="License Disk Expiry (YYYY-MM-DD)"
-                value={form.license_disk_expiry}
-                onChangeText={(v) => setForm((prev) => ({ ...prev, license_disk_expiry: v }))}
-              />
-              <TextInput
-                mode="outlined"
-                label="Roadworthy Expiry (YYYY-MM-DD)"
-                value={form.roadworthy_expiry}
-                onChangeText={(v) => setForm((prev) => ({ ...prev, roadworthy_expiry: v }))}
-              />
-              <TextInput
-                mode="outlined"
-                label="Insurance Expiry (YYYY-MM-DD)"
-                value={form.insurance_expiry}
-                onChangeText={(v) => setForm((prev) => ({ ...prev, insurance_expiry: v }))}
-              />
+        <Modal
+          visible={showAdd}
+          animationType="slide"
+          presentationStyle="fullScreen"
+          onRequestClose={() => setShowAdd(false)}
+        >
+          <KeyboardAvoidingView
+            style={styles.addVehicleModalRoot}
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+          >
+            <View style={styles.addVehicleModalContainer}>
+              <View style={styles.addVehicleModalHeader}>
+                <Text variant="titleLarge" style={styles.addVehicleModalTitle}>
+                  Add Vehicle
+                </Text>
+                <Button mode="text" onPress={() => setShowAdd(false)} textColor={theme.colors.primary}>
+                  Close
+                </Button>
+              </View>
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+                contentContainerStyle={styles.addVehicleModalScroll}
+                showsVerticalScrollIndicator={false}
+              >
+                <Card mode="outlined" style={styles.addVehicleFormCard}>
+                  <Card.Content>
+                    <Text style={styles.addVehicleFormHint}>
+                      Registration is required. Other fields help with compliance and dispatch matching.
+                    </Text>
+                    <TextInput
+                      {...addVehicleInputCommon}
+                      label="Registration number *"
+                      value={form.registration_number}
+                      onChangeText={(v) => setForm((prev) => ({ ...prev, registration_number: v }))}
+                    />
+                    <TextInput
+                      {...addVehicleInputCommon}
+                      label="Make"
+                      value={form.make}
+                      onChangeText={(v) => setForm((prev) => ({ ...prev, make: v }))}
+                    />
+                    <TextInput
+                      {...addVehicleInputCommon}
+                      label="Model"
+                      value={form.model}
+                      onChangeText={(v) => setForm((prev) => ({ ...prev, model: v }))}
+                    />
+                    <TextInput
+                      {...addVehicleInputCommon}
+                      label="Year"
+                      keyboardType="numeric"
+                      value={form.year}
+                      onChangeText={(v) => setForm((prev) => ({ ...prev, year: v }))}
+                    />
+                    <TextInput
+                      {...addVehicleInputCommon}
+                      label="Capacity (litres)"
+                      keyboardType="numeric"
+                      value={form.capacity_litres}
+                      onChangeText={(v) => setForm((prev) => ({ ...prev, capacity_litres: v }))}
+                    />
+                    <TextInput
+                      {...addVehicleInputCommon}
+                      label="Fuel types (comma separated)"
+                      value={form.fuel_types}
+                      onChangeText={(v) => setForm((prev) => ({ ...prev, fuel_types: v }))}
+                    />
+                    <TextInput
+                      {...addVehicleInputCommon}
+                      label="License disk expiry"
+                      placeholder="YYYY-MM-DD"
+                      value={form.license_disk_expiry}
+                      onChangeText={(v) => setForm((prev) => ({ ...prev, license_disk_expiry: v }))}
+                    />
+                    <TextInput
+                      {...addVehicleInputCommon}
+                      label="Roadworthy expiry"
+                      placeholder="YYYY-MM-DD"
+                      value={form.roadworthy_expiry}
+                      onChangeText={(v) => setForm((prev) => ({ ...prev, roadworthy_expiry: v }))}
+                    />
+                    <TextInput
+                      {...addVehicleInputCommon}
+                      label="Insurance expiry"
+                      placeholder="YYYY-MM-DD"
+                      value={form.insurance_expiry}
+                      onChangeText={(v) => setForm((prev) => ({ ...prev, insurance_expiry: v }))}
+                    />
+                  </Card.Content>
+                </Card>
+              </ScrollView>
+              <View
+                style={[
+                  styles.addVehicleModalFooter,
+                  { paddingBottom: Math.max(insets.bottom, 14) },
+                ]}
+              >
+                <Button mode="outlined" onPress={() => setShowAdd(false)} style={styles.addVehicleFooterBtn}>
+                  Cancel
+                </Button>
+                <Button
+                  mode="contained"
+                  buttonColor={theme.colors.primary}
+                  textColor={theme.colors.onPrimary}
+                  style={styles.addVehicleFooterBtn}
+                  onPress={() => addVehicleMutation.mutate()}
+                  loading={addVehicleMutation.isPending}
+                  disabled={!form.registration_number.trim() || addVehicleMutation.isPending}
+                >
+                  Save vehicle
+                </Button>
+              </View>
             </View>
-          </Dialog.ScrollArea>
-          <Dialog.Actions>
-            <Button onPress={() => setShowAdd(false)}>Cancel</Button>
-            <Button
-              mode="contained"
-              buttonColor={theme.colors.primary}
-              textColor={theme.colors.onPrimary}
-              onPress={() => addVehicleMutation.mutate()}
-              loading={addVehicleMutation.isPending}
-              disabled={!form.registration_number.trim() || addVehicleMutation.isPending}
-            >
-              Save
-            </Button>
-          </Dialog.Actions>
-        </Dialog>
-
+          </KeyboardAvoidingView>
+        </Modal>
       </Portal>
     </View>
   );
@@ -644,8 +847,26 @@ const getStyles = (theme: typeof lightTheme) => {
     gap: 6,
   },
   complianceBtn: {
-    marginTop: 10,
     alignSelf: "flex-start",
+  },
+  vehicleActions: {
+    marginTop: 10,
+    flexDirection: "column",
+    alignItems: "flex-start",
+    gap: 8,
+  },
+  vehicleTitleRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 8,
+  },
+  companyFleetChip: {
+    backgroundColor: theme.colors.primaryContainer,
+  },
+  companyFleetChipText: {
+    fontSize: 11,
+    color: theme.colors.onPrimaryContainer,
   },
   modeCard: {
     marginTop: 10,
@@ -663,12 +884,33 @@ const getStyles = (theme: typeof lightTheme) => {
   companyPickerWrap: {
     marginTop: 6,
   },
-  companyList: {
-    marginTop: 8,
-    gap: 8,
+  fieldLabel: {
+    marginBottom: 6,
+    color: theme.colors.onSurface,
   },
-  companyBtn: {
+  companyLoading: {
+    marginVertical: 8,
+  },
+  companyDropdownBtn: {
+    alignSelf: "stretch",
+  },
+  companyDropdownContent: {
     justifyContent: "flex-start",
+  },
+  poolCard: {
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+  },
+  poolList: {
+    marginTop: 8,
+    gap: 10,
+  },
+  poolVehicleCard: {
+    backgroundColor: theme.colors.surface,
+  },
+  poolClaimBtn: {
+    marginTop: 10,
+    alignSelf: "stretch",
   },
   input: p.input,
   complianceSummary: p.sectionCard,
@@ -697,12 +939,63 @@ const getStyles = (theme: typeof lightTheme) => {
     flexDirection: "row",
     gap: 8,
   },
-  dialog: {
-    maxHeight: "90%",
+  addVehicleModalRoot: {
+    flex: 1,
   },
-  form: {
-    gap: 8,
-    paddingBottom: 8,
+  addVehicleModalContainer: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+  },
+  addVehicleModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: theme.colors.surface,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.outline,
+    borderLeftWidth: 4,
+    borderLeftColor: theme.colors.primary,
+  },
+  addVehicleModalTitle: {
+    flex: 1,
+    color: theme.colors.onSurface,
+    fontWeight: "700",
+    paddingRight: 8,
+  },
+  addVehicleModalScroll: {
+    padding: 16,
+    paddingBottom: 32,
+    flexGrow: 1,
+  },
+  addVehicleFormCard: {
+    backgroundColor: theme.colors.surface,
+    borderColor: theme.colors.outline,
+  },
+  addVehicleFormHint: {
+    color: theme.colors.onSurfaceVariant,
+    marginBottom: 12,
+    lineHeight: 20,
+  },
+  addVehicleField: {
+    marginBottom: 12,
+    backgroundColor: theme.colors.surface,
+  },
+  addVehicleModalFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    flexWrap: "wrap",
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    backgroundColor: theme.colors.surface,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.outline,
+  },
+  addVehicleFooterBtn: {
+    minWidth: 128,
   },
   });
 };

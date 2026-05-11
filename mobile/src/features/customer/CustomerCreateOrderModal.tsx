@@ -2,17 +2,11 @@ import { useState } from "react";
 import { Modal, Platform, ScrollView, StyleSheet, View } from "react-native";
 import DateTimePicker, { DateTimePickerAndroid, DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  ActivityIndicator,
-  Button,
-  Card,
-  Switch,
-  Text,
-  TextInput,
-} from "react-native-paper";
+import { ActivityIndicator, Card, Switch, Text, TextInput } from "react-native-paper";
+import { Button } from "@/design/paper-button";
 import { apiClient } from "@/services/api/client";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
-import { darkTheme, lightTheme } from "@/design/theme";
+import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 
 type FuelType = { id: string; label: string; code?: string };
@@ -384,14 +378,14 @@ const getStyles = (theme: typeof lightTheme) => {
       marginTop: 8,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.outlineVariant || theme.colors.outline,
-      borderRadius: 10,
+      borderRadius: buttonBorderRadius,
       backgroundColor: theme.colors.surface,
       padding: 6,
       gap: 2,
     },
     dropdownItem: {
       justifyContent: "flex-start",
-      borderRadius: 8,
+      borderRadius: buttonBorderRadius,
       marginVertical: 1,
     },
     chips: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
@@ -402,7 +396,7 @@ const getStyles = (theme: typeof lightTheme) => {
     mt: { marginTop: 12 },
     hint: { color: theme.colors.onSurfaceVariant, marginTop: 4 },
     termsRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 12 },
-    submit: { marginTop: 16, borderRadius: 10 },
+    submit: { marginTop: 16, borderRadius: buttonBorderRadius },
     error: p.errorText,
   });
 };

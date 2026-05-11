@@ -92,6 +92,12 @@ class Builder {
   constructor(private database: DB, private tableName: string) {}
 
   select(columns?: string, options?: any) {
+    // Supabase client allows `.update().select()` / `.insert().select()` to mean "return the affected row(s)".
+    // Those must keep `op` as update/insert so we actually run the write; otherwise we would only SELECT.
+    if (this.op === "update" || this.op === "insert") {
+      this.selected = columns ?? "*";
+      return this;
+    }
     this.op = "select";
     this.selected = columns ?? "*";
     this.countExact = options?.count === "exact";

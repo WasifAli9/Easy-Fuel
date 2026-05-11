@@ -10,7 +10,6 @@ import pushRoutes from "./push-routes";
 import locationRoutes from "./location-routes";
 import chatRoutes from "./chat-routes";
 import notificationRoutes from "./notification-routes";
-import { handleOzowSubscriptionWebhook, handleOzowSupplierSubscriptionWebhook } from "./webhooks";
 import { db, pool } from "./db";
 import { companies, customers, drivers, fuelTypes, profiles, suppliers } from "@shared/schema";
 import { and, asc, eq, ilike } from "drizzle-orm";
@@ -19,7 +18,14 @@ import { ObjectPermission } from "./objectAcl";
 import { websocketService } from "./websocket";
 import { createS3SignedGetUrl, getDefaultBucket, uploadBufferToS3 } from "./s3-storage";
 import passport from "passport";
-import { getRequestUser, registerSessionUser, requireSessionAuth, updateSessionUserRole } from "./auth";
+import {
+  getRequestUser,
+  registerSessionUser,
+  requireSessionAuth,
+  SESSION_SIGNING_SECRET,
+  updateSessionUserRole,
+} from "./auth";
+import signature from "cookie-signature";
 import {
   createLocalUploadRelativePath,
   objectPathToAbsolute,
@@ -179,7 +185,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.error("[auth/login] session.save failed:", saveErr);
             return res.status(500).json({ error: "Session persist failed." });
           }
-          return res.json({ user });
+          const payload: { user: typeof user; sessionCookie?: string } = { user };
+          const mobileSession =
+            String(req.headers["x-easy-fuel-mobile"] ?? req.headers["x-easyfuel-mobile"] ?? "").trim() === "1";
+          if (mobileSession && req.sessionID) {
+            const signed = `s:${signature.sign(req.sessionID, SESSION_SIGNING_SECRET)}`;
+            payload.sessionCookie = `easyfuel.sid=${signed}`;
+          }
+          return res.json(payload);
         });
       });
     })(req, res);
@@ -726,12 +739,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Internal server error" });
     }
   });
-
-  // Public webhook: OZOW subscription payment callback (no auth)
-  app.get("/api/webhooks/ozow-subscription", handleOzowSubscriptionWebhook);
-  app.post("/api/webhooks/ozow-subscription", handleOzowSubscriptionWebhook);
-  app.get("/api/webhooks/ozow-supplier-subscription", handleOzowSupplierSubscriptionWebhook);
-  app.post("/api/webhooks/ozow-supplier-subscription", handleOzowSupplierSubscriptionWebhook);
 
   // Public route: Get all fuel types (no auth required)
   app.get("/api/fuel-types", async (req, res) => {

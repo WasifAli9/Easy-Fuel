@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -25,7 +24,6 @@ export function DriverFleetCompanySettings() {
   });
 
   const [workMode, setWorkMode] = useState<"independent" | "company">("independent");
-  const [companySearch, setCompanySearch] = useState("");
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>("");
 
   useEffect(() => {
@@ -40,11 +38,10 @@ export function DriverFleetCompanySettings() {
   }, [membership]);
 
   const { data: companiesList = [] } = useQuery<Array<{ id: string; name: string; status: string }>>({
-    queryKey: ["/api/companies/public-list", companySearch],
+    queryKey: ["/api/companies/public-list"],
     enabled: workMode === "company",
     queryFn: async () => {
-      const qs = companySearch.trim() ? `?q=${encodeURIComponent(companySearch.trim())}` : "";
-      const r = await fetch(`/api/companies/public-list${qs}`, { credentials: "include", cache: "no-store" });
+      const r = await fetch(`/api/companies/public-list`, { credentials: "include", cache: "no-store" });
       if (!r.ok) throw new Error(await r.text());
       return r.json();
     },
@@ -59,7 +56,15 @@ export function DriverFleetCompanySettings() {
       await apiRequest("PUT", "/api/driver/company-membership", { companyId });
     },
     onSuccess: () => {
-      toast({ title: "Saved", description: "Fleet company settings updated." });
+      const releasedFromCompany = workMode === "independent" && membership?.mode === "company";
+      if (releasedFromCompany) {
+        toast({
+          title: "Switched to independent mode",
+          description: "Company vehicle(s) released.",
+        });
+      } else {
+        toast({ title: "Saved", description: "Fleet company settings updated." });
+      }
       refetchMembership();
       queryClient.invalidateQueries({ queryKey: ["/api/driver/company-membership"] });
       queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles"] });
@@ -124,13 +129,6 @@ export function DriverFleetCompanySettings() {
                   </p>
                   {workMode === "company" && (
                     <div className="space-y-2 max-w-md">
-                      <Label htmlFor="company-search">Search companies</Label>
-                      <Input
-                        id="company-search"
-                        placeholder="Type to filter…"
-                        value={companySearch}
-                        onChange={(e) => setCompanySearch(e.target.value)}
-                      />
                       <Label htmlFor="company-select">Company</Label>
                       <Select value={selectedCompanyId} onValueChange={setSelectedCompanyId}>
                         <SelectTrigger id="company-select">

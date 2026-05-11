@@ -60,6 +60,26 @@ export async function saveSessionCookieFromSetCookie(setCookie: string | string[
   }
 }
 
+/** When `Set-Cookie` is not exposed to the client (some React Native stacks), server may return `sessionCookie` on login. */
+export async function saveSessionCookieFromLoginBody(sessionCookie: string | undefined | null) {
+  if (typeof sessionCookie !== "string") return;
+  const t = sessionCookie.trim();
+  if (t.startsWith("easyfuel.sid=")) {
+    await SecureStore.setItemAsync(SESSION_COOKIE_KEY, t);
+  }
+}
+
+export async function persistLoginSessionCookie(opts: {
+  setCookie?: string | string[] | undefined;
+  sessionCookie?: string | undefined | null;
+}) {
+  await saveSessionCookieFromSetCookie(opts.setCookie);
+  const existing = await readSessionCookie();
+  if (!existing) {
+    await saveSessionCookieFromLoginBody(opts.sessionCookie);
+  }
+}
+
 export async function readSessionCookie(): Promise<string | null> {
   try {
     return await SecureStore.getItemAsync(SESSION_COOKIE_KEY);

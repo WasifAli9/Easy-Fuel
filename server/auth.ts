@@ -78,9 +78,11 @@ export async function registerSessionUser(input: {
   return { id: userId, email, role } satisfies SessionUser;
 }
 
+/** Same default as previously inlined in setupAuth — used to sign `easyfuel.sid` for mobile login body. */
+export const SESSION_SIGNING_SECRET = process.env.SESSION_SECRET || "change_me_session_secret";
+
 export function setupAuth(app: Express) {
   const PgStore = connectPg(session);
-  const sessionSecret = process.env.SESSION_SECRET || "change_me_session_secret";
   const isProd = process.env.NODE_ENV === "production";
   // Same-origin SPA + API (typical): "lax" works and avoids stricter "none" requirements.
   // Cross-subdomain auth: set SESSION_COOKIE_SAME_SITE=none (still requires secure: true).
@@ -118,7 +120,7 @@ export function setupAuth(app: Express) {
         createTableIfMissing: true,
       }),
       name: "easyfuel.sid",
-      secret: sessionSecret,
+      secret: SESSION_SIGNING_SECRET,
       resave: false,
       // Passport calls session.regenerate() on login; false can prevent Set-Cookie in some cases.
       saveUninitialized: true,

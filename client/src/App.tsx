@@ -20,10 +20,8 @@ import PaymentMethods from "@/pages/PaymentMethods";
 import CustomerProfile from "@/pages/CustomerProfile";
 import DriverDashboard from "@/pages/DriverDashboard";
 import DriverProfile from "@/pages/DriverProfile";
-import DriverSubscription from "@/pages/DriverSubscription";
 import SupplierDashboard from "@/pages/SupplierDashboard";
 import SupplierProfile from "@/pages/SupplierProfile";
-import SupplierSubscription from "@/pages/SupplierSubscription";
 import AdminDashboard from "@/pages/AdminDashboard";
 import CompanyDashboard from "@/pages/CompanyDashboard";
 import NotFound from "@/pages/not-found";
@@ -111,17 +109,11 @@ function Router() {
       <Route path="/driver/profile">
         {() => <ProtectedRoute component={DriverProfile} role="driver" />}
       </Route>
-      <Route path="/driver/subscription">
-        {() => <ProtectedRoute component={DriverSubscription} role="driver" />}
-      </Route>
       <Route path="/supplier">
         {() => <ProtectedRoute component={SupplierDashboard} role="supplier" />}
       </Route>
       <Route path="/supplier/profile">
         {() => <ProtectedRoute component={SupplierProfile} role="supplier" />}
-      </Route>
-      <Route path="/supplier/subscription">
-        {() => <ProtectedRoute component={SupplierSubscription} role="supplier" />}
       </Route>
       <Route path="/admin">
         {() => <ProtectedRoute component={AdminDashboard} role="admin" />}
@@ -138,7 +130,7 @@ function Router() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <ThemeProvider defaultTheme="light">
+      <ThemeProvider defaultTheme="dark">
         <AuthProvider>
           <AutoLogoutHandler />
           <TooltipProvider>

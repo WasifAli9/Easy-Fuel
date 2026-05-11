@@ -3,20 +3,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, Wallet } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
-export function SupplierSettlementsTab({ hasSubscription }: { hasSubscription: boolean }) {
+export function SupplierSettlementsTab() {
   const { data, isLoading, error } = useQuery<{ settlements: any[] }>({
     queryKey: ["/api/supplier/settlements"],
-    enabled: hasSubscription,
   });
 
-  if (!hasSubscription) {
-    return (
-      <div className="text-center py-12 text-muted-foreground">
-        <Wallet className="h-12 w-12 mx-auto mb-4 opacity-50" />
-        <p>Subscribe to view settlements and payouts.</p>
-      </div>
-    );
-  }
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">

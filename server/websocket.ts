@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import type { IncomingMessage } from "http";
 import { parse } from "url";
+import type { ParsedUrlQuery } from "querystring";
 import { getLocalUserFromAccessToken } from "./auth-local";
 import { db } from "./db";
 import { profiles } from "@shared/schema";
@@ -30,8 +31,24 @@ function parseCookies(cookieHeader?: string): Record<string, string> {
   return out;
 }
 
-async function getLocalUserFromSessionCookie(req: IncomingMessage): Promise<{ id: string } | null> {
-  const cookies = parseCookies(req.headers.cookie);
+/** Merge Cookie header with optional `easyfuel_cookie` query (React Native WS cannot send Cookie headers). */
+function mergeCookieHeader(req: IncomingMessage, query: ParsedUrlQuery): string | undefined {
+  const fromHeader = req.headers.cookie;
+  const raw = query.easyfuel_cookie;
+  const fromQuery = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof fromQuery === "string" && fromQuery.length > 0) {
+    try {
+      const decoded = decodeURIComponent(fromQuery);
+      return [fromHeader, decoded].filter(Boolean).join("; ");
+    } catch {
+      return [fromHeader, fromQuery].filter(Boolean).join("; ");
+    }
+  }
+  return fromHeader;
+}
+
+async function getLocalUserFromSessionCookie(cookieHeader?: string): Promise<{ id: string } | null> {
+  const cookies = parseCookies(cookieHeader);
   const rawSessionCookie = cookies["easyfuel.sid"];
   if (!rawSessionCookie) return null;
 
@@ -78,13 +95,21 @@ class WebSocketService {
         let error: { message?: string } | null = null;
         if (token && token !== "cookie-session") {
           const localUser = await getLocalUserFromAccessToken(token);
-          if (!localUser) {
-            error = { message: "Invalid local token" };
-          } else {
+          if (localUser) {
             user = { id: localUser.id };
+          } else {
+            // Graceful fallback: browser/mobile may carry a stale token query while cookie session is valid.
+            const cookieHeader = mergeCookieHeader(req, query);
+            const cookieUser = await getLocalUserFromSessionCookie(cookieHeader);
+            if (cookieUser) {
+              user = { id: cookieUser.id };
+            } else {
+              error = { message: "Invalid local token" };
+            }
           }
         } else {
-          const cookieUser = await getLocalUserFromSessionCookie(req);
+          const cookieHeader = mergeCookieHeader(req, query);
+          const cookieUser = await getLocalUserFromSessionCookie(cookieHeader);
           if (!cookieUser) {
             error = { message: "Authentication required" };
           } else {
@@ -244,15 +269,22 @@ class WebSocketService {
   }
 
   sendOrderUpdate(userId: string, message: any) {
-    // If message already has a type field, send it directly
-    // Otherwise, wrap it as an order_update message
-    if (message && typeof message === 'object' && 'type' in message) {
-      return this.sendToUser(userId, message);
+    const hasExplicitType = message && typeof message === "object" && "type" in message;
+    const sentPrimary = hasExplicitType
+      ? this.sendToUser(userId, message)
+      : this.sendToUser(userId, {
+          type: "order_update",
+          payload: message,
+        });
+
+    // Also emit a canonical order_update event for cache invalidators across web/mobile.
+    if (hasExplicitType && message.type !== "order_update") {
+      this.sendToUser(userId, {
+        type: "order_update",
+        payload: message.payload ?? message,
+      });
     }
-    return this.sendToUser(userId, {
-      type: "order_update",
-      payload: message,
-    });
+    return sentPrimary;
   }
 
   sendChatMessage(userId: string, message: any) {

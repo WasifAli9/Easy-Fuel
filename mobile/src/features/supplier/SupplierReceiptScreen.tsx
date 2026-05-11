@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { Alert, ScrollView, StyleSheet, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
-import { ActivityIndicator, Button, Card, Text } from "react-native-paper";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { ActivityIndicator, Card, Text } from "react-native-paper";
+import { Button } from "@/design/paper-button";
 import { apiClient } from "@/services/api/client";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
@@ -35,45 +35,10 @@ export function SupplierReceiptScreen() {
   const styles = getStyles(theme);
   const [pdfLoadingId, setPdfLoadingId] = useState<string | null>(null);
 
-  const subscriptionQuery = useQuery({
-    queryKey: ["/api/supplier/subscription"],
-    queryFn: async () => (await apiClient.get("/api/supplier/subscription")).data,
-  });
-
-  const hasActiveSub = useMemo(() => {
-    const sub = subscriptionQuery.data as
-      | { subscription?: { isActive?: boolean; status?: string }; subscriptionTier?: string | null }
-      | undefined;
-    if (!sub) return false;
-    return !!sub.subscriptionTier && (sub.subscription?.isActive ?? sub.subscription?.status === "active");
-  }, [subscriptionQuery.data]);
-
   const invoicesQuery = useQuery({
     queryKey: ["/api/supplier/invoices"],
     queryFn: async () => (await apiClient.get<{ invoices: InvoiceRow[] }>("/api/supplier/invoices")).data,
-    enabled: hasActiveSub,
   });
-
-  if (subscriptionQuery.isLoading) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.center}>
-          <ActivityIndicator color={theme.colors.primary} />
-        </View>
-      </View>
-    );
-  }
-
-  if (!hasActiveSub) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.locked}>
-          <MaterialCommunityIcons name="file-document-outline" size={48} color={theme.colors.outline} />
-          <Text style={styles.lockedText}>Subscribe to view and download invoices.</Text>
-        </View>
-      </View>
-    );
-  }
 
   if (invoicesQuery.isLoading) {
     return (
@@ -189,8 +154,6 @@ const getStyles = (theme: typeof lightTheme) => {
     amount: { fontSize: 15, fontWeight: "600", color: theme.colors.onSurface },
     pdfBtn: { marginRight: -8 },
     center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
-    locked: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32, gap: 16 },
-    lockedText: { textAlign: "center", color: theme.colors.onSurfaceVariant, fontSize: 15, lineHeight: 22 },
     error: { ...p.errorText, textAlign: "center", marginTop: 24 },
   });
 };

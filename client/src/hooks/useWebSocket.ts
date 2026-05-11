@@ -56,23 +56,22 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
       }
 
       try {
-        // Get WebSocket URL (convert http to ws)
-        const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-
-        // Build host safely and guard against malformed runtime values like "localhost:undefined".
-        const parsed = new URL(window.location.href);
-        const hostname = parsed.hostname || "localhost";
-        const rawPort = (parsed.port || "").trim();
-        const validPort = /^\d+$/.test(rawPort) ? rawPort : "";
-        const fallbackPort = wsProtocol === "wss:" ? "443" : "5002";
-        const wsPort = validPort || fallbackPort;
-        const wsHost = `${hostname}:${wsPort}`;
-        
         const tokenQuery =
           session.access_token && session.access_token !== "cookie-session"
-            ? `?token=${encodeURIComponent(session.access_token)}`
+            ? `token=${encodeURIComponent(session.access_token)}`
             : "";
-        const wsUrl = `${wsProtocol}//${wsHost}/ws${tokenQuery}`;
+        const explicitWsUrl = (import.meta as any)?.env?.VITE_WS_URL as string | undefined;
+        let wsUrl = "";
+
+        if (explicitWsUrl && explicitWsUrl.trim()) {
+          const sep = explicitWsUrl.includes("?") ? "&" : "?";
+          wsUrl = `${explicitWsUrl}${tokenQuery ? `${sep}${tokenQuery}` : ""}`;
+        } else {
+          // Default to same-origin /ws endpoint so dev/prod reverse proxies both work.
+          const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+          const wsHost = window.location.host;
+          wsUrl = `${wsProtocol}//${wsHost}/ws${tokenQuery ? `?${tokenQuery}` : ""}`;
+        }
         
         // Validate URL before creating WebSocket
         if (wsUrl.includes("undefined")) {

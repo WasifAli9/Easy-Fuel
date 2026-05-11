@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import {
@@ -6,6 +7,7 @@ import {
   CompanyOverviewScreen,
   CompanyProfileScreen,
 } from "@/features/roles/RoleScreens";
+import { fuelPortalTabBarOptions } from "@/design/fuel-portal-tokens";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 
@@ -17,14 +19,12 @@ const Tab = createBottomTabNavigator();
 export function RoleTabs() {
   const mode = useUiThemeStore((s) => s.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
+  const tabOpts = useMemo(() => fuelPortalTabBarOptions(theme, mode === "dark"), [theme, mode]);
 
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
-        headerShown: false,
-        tabBarActiveTintColor: theme.colors.primary,
-        tabBarInactiveTintColor: theme.colors.onSurfaceVariant,
-        tabBarStyle: { backgroundColor: theme.colors.surface, borderTopColor: theme.colors.outline },
+        ...tabOpts,
         tabBarIcon: ({ color, size }) => {
           const iconByRoute: Record<string, string> = {
             CompanyOverview: "chart-line",

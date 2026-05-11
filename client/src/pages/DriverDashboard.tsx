@@ -8,7 +8,7 @@ import { DriverPreferencesManager } from "@/components/DriverPreferencesManager"
 import { DriverLocationTracker } from "@/components/DriverLocationTracker";
 import { OrderChat } from "@/components/OrderChat";
 import { DriverDepotsView } from "@/components/DriverDepotsView";
-import { Wallet, TrendingUp, CheckCircle, User, MapPin, Phone, DollarSign, Package, Truck, CheckCircle2, XCircle, AlertCircle, ArrowRight, CreditCard, Download, LayoutDashboard, Car, Settings, History, Warehouse, Store, Menu, Home, ClipboardList, MessageCircle } from "lucide-react";
+import { Wallet, TrendingUp, CheckCircle, User, MapPin, Phone, DollarSign, Package, Truck, CheckCircle2, XCircle, AlertCircle, ArrowRight, Download, LayoutDashboard, Car, Settings, History, Warehouse, Store, Menu, Home, ClipboardList, MessageCircle } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useCurrency } from "@/hooks/use-currency";
@@ -204,22 +204,12 @@ export default function DriverDashboard() {
     retry: false,
   });
 
-  const { data: subscriptionData } = useQuery<{
-    subscription: { planCode: string; plan?: { name: string }; nextBillingAt: string | null } | null;
-    hasActiveSubscription: boolean;
-  }>({
-    queryKey: ["/api/driver/subscription"],
-    enabled: !loading && !!session?.access_token && !!profile && profile.role === "driver",
-  });
-
-  const hasActiveSubscription = subscriptionData?.hasActiveSubscription ?? false;
-  const subscription = subscriptionData?.subscription;
-  const canExport = hasActiveSubscription && subscription?.planCode === "premium";
-  const canAdvancedStats = hasActiveSubscription && (subscription?.planCode === "professional" || subscription?.planCode === "premium");
+  const canExport = true;
+  const canAdvancedStats = true;
 
   const { data: statsAdvanced } = useQuery<typeof statsData>({
     queryKey: ["/api/driver/stats?detail=advanced"],
-    enabled: !loading && !!session?.access_token && !!profile && profile.role === "driver" && !!canAdvancedStats,
+    enabled: !loading && !!session?.access_token && !!profile && profile.role === "driver",
     staleTime: 60 * 1000,
   });
 
@@ -255,8 +245,7 @@ export default function DriverDashboard() {
 
   const { currency } = useCurrency();
 
-  // Tier: Starter = simpler dashboard; Professional and Premium = same advanced dashboard; Export = Premium only
-  const isStarterDashboard = !hasActiveSubscription || subscription?.planCode === "starter";
+  const isStarterDashboard = false;
 
   // Expiry helpers (7 and 30 days)
   const now = new Date();
@@ -302,7 +291,6 @@ export default function DriverDashboard() {
 
   // Critical alerts (all tiers). Use `tab` for same-page sections — plain `/driver` links do not change the active tab in wouter.
   const criticalAlerts: { label: string; href?: string; tab?: DriverTab }[] = [];
-  if (!hasActiveSubscription) criticalAlerts.push({ label: "Subscribe to start working", href: "/driver/subscription" });
   const isKYCApproved = driverProfile?.status === "active" && driverProfile?.compliance_status === "approved";
   if (!isKYCApproved && driverProfile) criticalAlerts.push({ label: "Complete compliance", href: "/driver/profile" });
   const hasPricing = pricingData.length > 0 && pricingData.some((p: any) => p.pricing && p.pricing.active);
@@ -507,9 +495,6 @@ export default function DriverDashboard() {
               >
                 Pricing
               </DashboardNavButton>
-              <DashboardNavLink href="/driver/subscription" icon={CreditCard}>
-                Billing
-              </DashboardNavLink>
               <DashboardNavButton
                 active={activeTab === "settings"}
                 icon={Settings}
@@ -642,18 +627,6 @@ export default function DriverDashboard() {
               </ul>
             </AlertDescription>
           </Alert>
-        )}
-
-        {hasActiveSubscription && subscription && (
-          <div className="mb-4 flex items-center gap-2 text-sm text-muted-foreground">
-            <Badge variant="secondary">{subscription.plan?.name ?? subscription.planCode}</Badge>
-            {subscription.nextBillingAt && (
-              <span>Next billing: {new Date(subscription.nextBillingAt).toLocaleDateString()}</span>
-            )}
-            <Link href="/driver/subscription">
-              <Button variant="ghost" size="sm">Manage subscription</Button>
-            </Link>
-          </div>
         )}
 
         {/* KPI cards: 3 cards for all tiers */}
@@ -953,15 +926,6 @@ export default function DriverDashboard() {
                       {vehicleExpiringIn30}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between rounded-lg bg-muted/60 px-3 py-2.5 gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Calendar className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <span className="text-sm font-medium truncate">Next billing</span>
-                    </div>
-                    <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-sm font-medium tabular-nums">
-                      {subscription?.nextBillingAt ? new Date(subscription.nextBillingAt).toLocaleDateString(undefined, { dateStyle: "short" }) : "—"}
-                    </span>
-                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -978,18 +942,6 @@ export default function DriverDashboard() {
               </div>
             </Card>
           </>
-        )}
-
-        {/* Starter: optional upgrade CTA for earnings trends */}
-        {isStarterDashboard && hasActiveSubscription && (
-          <Card className="mb-6 rounded-xl border-dashed border-2 border-primary/20 bg-primary/5">
-            <CardContent className="py-6 text-center text-sm text-muted-foreground">
-              Upgrade to Professional for earnings trends, action summaries, and more.
-              <Link href="/driver/subscription" className="block mt-2">
-                <Button variant="outline" size="sm">View plans</Button>
-              </Link>
-            </CardContent>
-          </Card>
         )}
 
         {/* Charts row: Activity Trends + Earnings by fuel type */}
@@ -1233,13 +1185,6 @@ export default function DriverDashboard() {
                     >
                       Pricing
                     </DashboardNavButton>
-                    <DashboardNavLink
-                      href="/driver/subscription"
-                      icon={CreditCard}
-                      onNavigate={() => setSidebarOpen(false)}
-                    >
-                      Billing
-                    </DashboardNavLink>
                     <DashboardNavButton
                       active={activeTab === "settings"}
                       icon={Settings}

@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { FlatList, Modal, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ActivityIndicator, Button, Card, Switch, Text, TextInput } from "react-native-paper";
+import { ActivityIndicator, Card, Switch, Text, TextInput } from "react-native-paper";
+import { Button } from "@/design/paper-button";
 import { apiClient } from "@/services/api/client";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
-import { darkTheme, lightTheme } from "@/design/theme";
+import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 
 type Depot = {
@@ -179,7 +180,7 @@ const getStyles = (theme: typeof lightTheme) => {
     deleteBtn: {
       marginTop: 12,
       alignSelf: "flex-start",
-      borderRadius: 10,
+      borderRadius: buttonBorderRadius,
       borderWidth: 1,
       borderColor: theme.colors.error,
     },

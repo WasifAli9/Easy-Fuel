@@ -2,11 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ActivityIndicator, Button, Card, Text, TextInput } from "react-native-paper";
+import { ActivityIndicator, Card, Text, TextInput } from "react-native-paper";
+import { Button } from "@/design/paper-button";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { apiClient } from "@/services/api/client";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
-import { darkTheme, lightTheme } from "@/design/theme";
+import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 
 type Depot = {
@@ -538,7 +539,7 @@ const getStyles = (theme: typeof lightTheme) => {
       width: 52,
       height: 52,
       borderRadius: 16,
-      backgroundColor: isDark ? "rgba(38, 237, 217, 0.12)" : "#ECFEFF",
+      backgroundColor: isDark ? "rgba(13, 148, 136, 0.14)" : "#ECFEFF",
       alignItems: "center",
       justifyContent: "center",
       marginRight: 14,
@@ -665,7 +666,7 @@ const getStyles = (theme: typeof lightTheme) => {
       width: 36,
       height: 36,
       borderRadius: 10,
-      backgroundColor: isDark ? "rgba(38, 237, 217, 0.12)" : "#ECFEFF",
+      backgroundColor: isDark ? "rgba(13, 148, 136, 0.14)" : "#ECFEFF",
       alignItems: "center",
       justifyContent: "center",
       marginRight: 10,
@@ -679,7 +680,7 @@ const getStyles = (theme: typeof lightTheme) => {
       backgroundColor: theme.colors.surfaceVariant,
     },
     codePillText: { fontSize: 11, fontWeight: "700", color: theme.colors.onSurfaceVariant, letterSpacing: 0.5 },
-    addTierBtn: { borderRadius: 10 },
+    addTierBtn: { borderRadius: buttonBorderRadius },
     emptyTiers: {
       paddingVertical: 14,
       paddingHorizontal: 12,
@@ -731,7 +732,7 @@ const getStyles = (theme: typeof lightTheme) => {
       flexWrap: "wrap",
     },
     tierOutlineBtn: {
-      borderRadius: 10,
+      borderRadius: buttonBorderRadius,
       borderWidth: 1,
     },
     center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },

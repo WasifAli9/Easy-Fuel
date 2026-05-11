@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import {
@@ -9,6 +9,7 @@ import {
 import { CustomerPaymentMethodsScreen } from "@/features/customer/CustomerPaymentMethodsScreen";
 import { PortalShell, type PortalMenuItem } from "@/navigation/PortalShell";
 import { PortalSettingsScreen } from "@/features/common/PortalSettingsScreen";
+import { fuelPortalTabBarOptions } from "@/design/fuel-portal-tokens";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 
@@ -27,25 +28,12 @@ type CustomerSection = "portal" | "addresses" | "payment-methods" | "profile" | 
 function CustomerTabNavigator() {
   const mode = useUiThemeStore((s) => s.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
+  const tabOpts = useMemo(() => fuelPortalTabBarOptions(theme, mode === "dark"), [theme, mode]);
 
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
-        headerShown: false,
-        tabBarActiveTintColor: "#0F766E",
-        tabBarInactiveTintColor: theme.colors.onSurfaceVariant,
-        tabBarStyle: {
-          backgroundColor: theme.colors.surface,
-          borderTopColor: "#CFFAFE",
-          borderTopWidth: 1,
-          height: 62,
-          paddingBottom: 8,
-          paddingTop: 6,
-        },
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: "600",
-        },
+        ...tabOpts,
         tabBarIcon: ({ color, size }) => {
           const iconByRoute: Record<string, string> = {
             CustomerHome: "home-outline",

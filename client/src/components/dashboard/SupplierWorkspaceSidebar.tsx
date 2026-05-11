@@ -5,7 +5,6 @@ import {
   BarChart3,
   Wallet,
   FileText,
-  CreditCard,
 } from "lucide-react";
 import {
   DashboardSidebarInner,
@@ -31,10 +30,10 @@ const navItems: { value: SupplierDashboardTab; label: string; icon: typeof MapPi
   { value: "invoices", label: "Invoices", icon: FileText },
 ];
 
-export type SupplierWorkspaceActive = "billing";
+export type SupplierWorkspaceActive = null;
 
 export function SupplierWorkspaceSidebar({
-  active,
+  active: _active,
   dashboardActiveTab,
   onDashboardTabChange,
   onNavigate,
@@ -75,14 +74,6 @@ export function SupplierWorkspaceSidebar({
             </DashboardNavRouteLink>
           )
         )}
-        <DashboardNavRouteLink
-          href="/supplier/subscription"
-          active={active === "billing"}
-          icon={CreditCard}
-          onNavigate={onNavigate}
-        >
-          Billing
-        </DashboardNavRouteLink>
       </DashboardNavSection>
     </DashboardSidebarInner>
   );

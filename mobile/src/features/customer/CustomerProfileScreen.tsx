@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { ScrollView, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Card, Menu, Text, TextInput } from "react-native-paper";
+import { Card, Menu, Text, TextInput } from "react-native-paper";
+import { Button } from "@/design/paper-button";
 import { apiClient } from "@/services/api/client";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
-import { darkTheme, lightTheme } from "@/design/theme";
+import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { signOut } from "@/services/api/auth";
 
@@ -180,6 +181,6 @@ const getStyles = (theme: typeof lightTheme) => {
     meta: { marginTop: 8, color: theme.colors.onSurfaceVariant },
     center: p.center,
     error: p.errorText,
-    signOut: { marginTop: 8, borderRadius: 10 },
+    signOut: { marginTop: 8, borderRadius: buttonBorderRadius },
   });
 };

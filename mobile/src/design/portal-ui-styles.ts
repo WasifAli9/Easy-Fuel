@@ -1,5 +1,6 @@
 import { StyleSheet } from "react-native";
-import type { lightTheme } from "@/design/theme";
+import { getFuelPortalTokens } from "@/design/fuel-portal-tokens";
+import { buttonBorderRadius, type lightTheme } from "@/design/theme";
 
 export type PortalTheme = typeof lightTheme;
 
@@ -9,8 +10,9 @@ export type PortalTheme = typeof lightTheme;
  */
 export function getPortalUiStyleDefs(theme: PortalTheme) {
   const isDark = "dark" in theme && (theme as { dark?: boolean }).dark === true;
-  const statTintPrimary = isDark ? "rgba(38, 237, 217, 0.14)" : "#ECFEFF";
-  const statBorderPrimary = isDark ? "rgba(38, 237, 217, 0.35)" : "#99F6E4";
+  const fp = getFuelPortalTokens(theme, isDark);
+  const statTintPrimary = isDark ? "rgba(13, 148, 136, 0.16)" : "#ECFEFF";
+  const statBorderPrimary = isDark ? "rgba(13, 148, 136, 0.38)" : "#99F6E4";
   const statTintSecondary = isDark ? "rgba(129, 140, 248, 0.18)" : "#EEF2FF";
   const statBorderSecondary = isDark ? "rgba(129, 140, 248, 0.35)" : "#C7D2FE";
 
@@ -25,18 +27,14 @@ export function getPortalUiStyleDefs(theme: PortalTheme) {
     screenScrollContentCompact: { padding: 14, gap: 12, paddingBottom: 28 },
 
     hero: {
-      borderRadius: 16,
+      borderRadius: fp.heroRadius,
       padding: 18,
       backgroundColor: theme.colors.surface,
       borderLeftWidth: 4,
       borderLeftColor: theme.colors.primary,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.outline,
-      shadowColor: "#000",
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: isDark ? 0.25 : 0.07,
-      shadowRadius: 10,
-      elevation: 3,
+      ...fp.shadowCard,
     },
     heroTopRow: { flexDirection: "row" as const, alignItems: "flex-start" as const },
     heroIconWrap: {
@@ -65,7 +63,7 @@ export function getPortalUiStyleDefs(theme: PortalTheme) {
     brandPillText: {
       fontSize: 12,
       fontWeight: "700" as const,
-      color: isDark ? theme.colors.primary : "#0E7490",
+      color: theme.colors.primary,
     },
 
     sectionKicker: {
@@ -80,17 +78,18 @@ export function getPortalUiStyleDefs(theme: PortalTheme) {
     blockHint: { color: theme.colors.onSurfaceVariant, lineHeight: 20, marginBottom: 4 },
 
     sectionCard: {
-      borderRadius: 16,
+      borderRadius: fp.cardRadius,
       backgroundColor: theme.colors.surface,
       borderColor: theme.colors.outline,
     },
     sectionCardContent: { paddingVertical: 10 },
 
     listCard: {
-      borderRadius: 14,
+      borderRadius: fp.cardRadius,
       marginBottom: 2,
       backgroundColor: theme.colors.surface,
-      borderColor: theme.colors.outline,
+      borderWidth: 0,
+      ...fp.shadowCard,
     },
 
     subtitle: { marginTop: 4, color: theme.colors.onSurfaceVariant },
@@ -127,7 +126,7 @@ export function getPortalUiStyleDefs(theme: PortalTheme) {
       borderWidth: 1,
       borderColor: statBorderSecondary,
     },
-    statLabelActive: { color: isDark ? theme.colors.primary : "#0E7490", fontWeight: "700" as const },
+    statLabelActive: { color: theme.colors.primary, fontWeight: "700" as const },
     statLabelRecent: { color: isDark ? "#A5B4FC" : "#4338CA", fontWeight: "700" as const },
 
     empty: {
@@ -138,8 +137,8 @@ export function getPortalUiStyleDefs(theme: PortalTheme) {
     },
     center: { flex: 1, alignItems: "center" as const, justifyContent: "center" as const },
 
-    primaryButton: { marginTop: 12, alignSelf: "flex-start" as const, borderRadius: 10 },
-    primaryButtonCompact: { borderRadius: 8 },
+    primaryButton: { marginTop: 12, alignSelf: "flex-start" as const, borderRadius: buttonBorderRadius },
+    primaryButtonCompact: { borderRadius: buttonBorderRadius },
     primaryButtonContent: {
       paddingVertical: 4,
       paddingHorizontal: 14,
@@ -155,23 +154,23 @@ export function getPortalUiStyleDefs(theme: PortalTheme) {
       borderRadius: 12,
       borderWidth: 1,
       borderColor: theme.colors.outline,
-      backgroundColor: theme.colors.background,
+      backgroundColor: fp.canvas,
     },
 
     headerCard: {
-      borderRadius: 16,
+      borderRadius: fp.cardRadius,
       backgroundColor: theme.colors.surface,
       borderColor: theme.colors.outline,
     },
     itemCard: {
-      borderRadius: 14,
+      borderRadius: fp.cardRadius,
       backgroundColor: theme.colors.surface,
       borderColor: theme.colors.outline,
     },
     itemSubtitle: { marginTop: 4, color: theme.colors.onSurfaceVariant },
     centerWrap: { alignItems: "center" as const, justifyContent: "center" as const, paddingVertical: 32 },
     errorCard: {
-      borderRadius: 14,
+      borderRadius: fp.cardRadius,
       borderColor: theme.colors.error,
       borderWidth: 1,
       backgroundColor: theme.colors.surface,

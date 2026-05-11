@@ -7,8 +7,6 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { MapPin, Save, Loader2 } from "lucide-react";
-import { Link } from "wouter";
-
 interface DriverPreferences {
   jobRadiusPreferenceMiles: number;
   effectiveRadiusMiles?: number;
@@ -25,7 +23,7 @@ export function DriverPreferencesManager() {
   const [longitude, setLongitude] = useState<string>("");
   const [isGettingLocation, setIsGettingLocation] = useState(false);
 
-  // Fetch current preferences (radius is set by subscription plan, not editable)
+  // Fetch current preferences (pickup radius cap comes from platform settings)
   const { data: preferences, isLoading } = useQuery<DriverPreferences>({
     queryKey: ["/api/driver/preferences"],
   });
@@ -126,29 +124,21 @@ export function DriverPreferencesManager() {
       <CardHeader>
         <CardTitle>Job Preferences</CardTitle>
         <CardDescription>
-          Set your home location. Your job pickup radius is set automatically by your subscription plan.
+          Set your home location. Your maximum job pickup radius is set by the platform.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        {/* Read-only: radius is determined by subscription plan */}
         <div className="rounded-lg border bg-muted/30 p-4">
           <p className="text-sm font-medium">Job pickup radius</p>
           {(preferences?.maxRadiusMiles ?? 0) > 0 ? (
             <p className="text-sm text-muted-foreground mt-1">
               <span className="font-semibold text-foreground">{preferences?.effectiveRadiusMiles ?? preferences?.maxRadiusMiles ?? 0} miles</span>
-              {" "}(based on your {preferences?.subscriptionPlanName ?? "subscription"} plan). Only jobs within this distance will be shown.
+              . Only jobs within this distance will be shown.
             </p>
           ) : (
             <p className="text-sm text-muted-foreground mt-1">
-              Subscribe to get a job pickup radius and accept orders.
+              Your pickup radius will appear here once preferences load. Contact support if this stays at zero.
             </p>
-          )}
-          {(preferences?.maxRadiusMiles ?? 0) === 0 && (
-            <Link href="/driver/subscription">
-              <Button type="button" variant="outline" size="sm" className="mt-3">
-                View plans & subscribe
-              </Button>
-            </Link>
           )}
         </div>
 

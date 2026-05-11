@@ -1,20 +1,13 @@
 import { useMemo, useState } from "react";
 import { FlatList, RefreshControl, StyleSheet, View } from "react-native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  ActivityIndicator,
-  Button,
-  Card,
-  Chip,
-  Menu,
-  SegmentedButtons,
-  Text,
-} from "react-native-paper";
+import { ActivityIndicator, Card, Chip, Menu, SegmentedButtons, Text } from "react-native-paper";
+import { Button } from "@/design/paper-button";
 import { useFocusEffect } from "@react-navigation/native";
 import { useCallback } from "react";
 import { apiClient } from "@/services/api/client";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
-import { darkTheme, lightTheme } from "@/design/theme";
+import { buttonBorderRadius, darkTheme, lightTheme, paperMd3ControlRoundness } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import {
   CustomerOrderTab,
@@ -116,6 +109,7 @@ export function CustomerOrdersScreen() {
             </Button>
           </View>
           <SegmentedButtons
+            theme={{ roundness: paperMd3ControlRoundness }}
             style={styles.segment}
             value={tab}
             onValueChange={(v) => setTab(v as CustomerOrderTab)}
@@ -210,7 +204,7 @@ const getStyles = (theme: typeof lightTheme) => {
     headerCard: { ...p.hero, margin: 12 },
     headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
     headerInfo: { flex: 1, paddingRight: 6 },
-    newOrderBtn: { alignSelf: "flex-start", borderRadius: 10 },
+    newOrderBtn: { alignSelf: "flex-start", borderRadius: buttonBorderRadius },
     subtitle: p.subtitle,
     rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 8 },
     segment: { marginTop: 12 },

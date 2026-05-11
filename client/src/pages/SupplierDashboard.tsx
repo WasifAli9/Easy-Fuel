@@ -7,7 +7,7 @@ import { StatsCard } from "@/components/StatsCard";
 import { SupplierPricingManager } from "@/components/SupplierPricingManagerTiered";
 import { DepotManagementDialog } from "@/components/DepotManagementDialog";
 import { Button } from "@/components/ui/button";
-import { Plus, MapPin, TrendingUp, Loader2, ShoppingCart, BarChart3, Wallet, FileText, User, ExternalLink, DollarSign, Menu } from "lucide-react";
+import { Plus, MapPin, TrendingUp, Loader2, ShoppingCart, BarChart3, Wallet, FileText, User, Menu } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/utils";
 import { useWebSocket } from "@/hooks/useWebSocket";
@@ -27,7 +27,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useLocation, useSearch, Link } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { DashboardSidebarAside } from "@/components/dashboard/DashboardSidebar";
@@ -117,18 +117,9 @@ export default function SupplierDashboard() {
     retry: false,
   });
 
-  // Fetch subscription for banner and plan display
-  const { data: subscriptionData } = useQuery<{ subscription: any; subscriptionTier: string | null }>({
-    queryKey: ["/api/supplier/subscription"],
-    enabled: !loading && !!session?.access_token && !!profile && profile.role === "supplier",
-    retry: false,
-  });
-
   // Ensure arrays; API may return { orders, depots, summaryByDepot }
   const depots = depotsData || [];
   const orders = Array.isArray(ordersData) ? ordersData : (ordersData?.orders ?? []);
-  const hasActiveSubscription = !!subscriptionData?.subscriptionTier && (subscriptionData?.subscription?.isActive ?? subscriptionData?.subscription?.status === "active");
-
 
   // Listen for real-time updates via WebSocket
   useWebSocket((message) => {
@@ -251,27 +242,6 @@ export default function SupplierDashboard() {
 
         <main className="flex-1 min-w-0 overflow-auto dashboard-main-area">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {!hasActiveSubscription && (
-          <div className="mb-6 p-4 rounded-lg border border-amber-500/50 bg-amber-500/10 flex items-center justify-between flex-wrap gap-4">
-            <p className="text-amber-800 dark:text-amber-200 font-medium">
-              Subscribe to list on the platform and receive driver depot orders.
-            </p>
-            <Button asChild variant="default" size="sm">
-              <Link href="/supplier/subscription">
-                <ExternalLink className="h-4 w-4 mr-2" />
-                View plans
-              </Link>
-            </Button>
-          </div>
-        )}
-
-        {hasActiveSubscription && subscriptionData?.subscriptionTier && (
-          <div className="mb-4 text-sm text-muted-foreground flex items-center gap-2">
-            <Badge variant="secondary">{subscriptionData.subscriptionTier === "enterprise" ? "Enterprise" : "Standard"}</Badge>
-            <Link href="/supplier/subscription" className="text-primary hover:underline">Manage subscription</Link>
-          </div>
-        )}
-
         <div className="mb-8 rounded-2xl border border-border/60 bg-gradient-to-br from-card/95 via-card/80 to-primary/[0.05] p-6 sm:p-7 shadow-lg shadow-primary/[0.06] backdrop-blur-sm">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
             <div className="space-y-2">
@@ -473,19 +443,19 @@ export default function SupplierDashboard() {
 
           {activeTab === "analytics" && (
             <div className="space-y-4">
-              <SupplierAnalyticsTab hasSubscription={hasActiveSubscription} />
+              <SupplierAnalyticsTab />
             </div>
           )}
 
           {activeTab === "settlements" && (
             <div className="space-y-4">
-              <SupplierSettlementsTab hasSubscription={hasActiveSubscription} />
+              <SupplierSettlementsTab />
             </div>
           )}
 
           {activeTab === "invoices" && (
             <div className="space-y-4">
-              <SupplierInvoicesTab hasSubscription={hasActiveSubscription} />
+              <SupplierInvoicesTab />
             </div>
           )}
         </div>

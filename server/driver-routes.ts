@@ -1,17 +1,16 @@
 import { Router } from "express";
+import { inArray } from "drizzle-orm";
 import { db, pool } from "./db";
 import { createDrizzleCompat } from "./drizzle-compat";
 import { sendDriverAcceptanceEmail, sendDeliveryCompletionEmail } from "./email-service";
-import { insertDriverPricingSchema, insertPricingHistorySchema } from "@shared/schema";
+import { deliveryAddresses, insertDriverPricingSchema, insertPricingHistorySchema } from "@shared/schema";
 import { websocketService } from "./websocket";
 import { pushNotificationService } from "./push-service";
 import { cleanupChatForOrder, ensureChatThreadForAssignment } from "./chat-service";
 import { offerNotifications, orderNotifications } from "./notification-helpers";
 import { getDriverComplianceStatus, getVehicleComplianceStatus, canDriverAccessPlatform } from "./compliance-service";
-import { getDriverSubscription, getDriverActiveSubscription, driverHasActiveSubscription, getDriverMaxRadiusMiles } from "./subscription-service";
-import { buildPaymentRedirectUrl, isOzowConfigured } from "./ozow-service";
+import { getDriverMaxRadiusMiles } from "./subscription-service";
 import { vehicleToCamelCase, syncDriverVehicleCapacityLitres } from "./vehicle-utils";
-import { SUBSCRIPTION_PLANS, PLAN_CODES, getPlan, type PlanCode } from "@shared/subscription-plans";
 import { z } from "zod";
 import dotenv from "dotenv";
 import { normalizeSignatureForStorage, uploadUrlToObjectPath } from "./local-object-storage";
@@ -19,6 +18,50 @@ dotenv.config();
 
 const router = Router();
 const drizzleAdmin = createDrizzleCompat(db);
+
+/**
+ * `createDrizzleCompat` only runs flat `select().from(table)` and ignores nested embeds in `.select(\`...\`)`.
+ * Hydrate `delivery_addresses` so driver apps and emails show the customer's saved address, not only drop coords.
+ */
+async function attachDeliveryAddressesToOrders(orders: any[] | null | undefined) {
+  if (!orders?.length) return;
+  const ids = [
+    ...new Set(
+      orders
+        .map((o) => o.delivery_address_id ?? o.deliveryAddressId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  if (ids.length === 0) return;
+
+  const rows = await db
+    .select({
+      id: deliveryAddresses.id,
+      label: deliveryAddresses.label,
+      addressStreet: deliveryAddresses.addressStreet,
+      addressCity: deliveryAddresses.addressCity,
+      addressProvince: deliveryAddresses.addressProvince,
+      addressPostalCode: deliveryAddresses.addressPostalCode,
+    })
+    .from(deliveryAddresses)
+    .where(inArray(deliveryAddresses.id, ids));
+
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  for (const o of orders) {
+    const id = o.delivery_address_id ?? o.deliveryAddressId;
+    if (!id) continue;
+    const addr = byId.get(id);
+    if (!addr) continue;
+    o.delivery_addresses = {
+      id: addr.id,
+      label: addr.label,
+      address_street: addr.addressStreet,
+      address_city: addr.addressCity,
+      address_province: addr.addressProvince,
+      address_postal_code: addr.addressPostalCode,
+    };
+  }
+}
 
 async function fetchHydratedDriverDepotOrder(orderId: string, driverId: string) {
   const r = await pool.query(
@@ -440,6 +483,8 @@ async function sendCustomerNotification(
       throw new Error("Order not found");
     }
 
+    await attachDeliveryAddressesToOrders([order]);
+
     // Get customer email - try to get from order data or use fallback
     let customerEmail: string | null = null;
     try {
@@ -537,6 +582,7 @@ async function fetchOrderForDriver(orderId: string, driverId: string) {
     return null;
   }
 
+  await attachDeliveryAddressesToOrders([order]);
   return order;
 }
 
@@ -572,6 +618,7 @@ async function fetchFullOrderData(orderId: string) {
     return null;
   }
 
+  await attachDeliveryAddressesToOrders([order]);
   return order;
 }
 
@@ -745,8 +792,6 @@ router.get("/stats", async (req, res) => {
     const totalDeliveries = deliveredOrders?.length || 0;
 
     const detail = (req as any).query?.detail;
-    const activeSub = await getDriverActiveSubscription(driver.id);
-    const canAdvanced = activeSub && (activeSub.planCode === "professional" || activeSub.planCode === "premium");
     const payload: any = {
       activeJobs: activeJobsCount || 0,
       todayEarningsCents,
@@ -754,7 +799,7 @@ router.get("/stats", async (req, res) => {
       totalEarningsCents,
       totalDeliveries,
     };
-    if (detail === "advanced" && canAdvanced) {
+    if (detail === "advanced") {
       const { data: ordersWithFuel } = await drizzleAdmin
         .from("orders")
         .select("id, delivery_fee_cents, total_cents, fuel_price_cents, litres, delivered_at, fuel_types(label)")
@@ -800,17 +845,13 @@ router.get("/stats", async (req, res) => {
   }
 });
 
-// GET /api/driver/stats/export?format=csv – Premium only
+// GET /api/driver/stats/export?format=csv
 router.get("/stats/export", async (req, res) => {
   const user = (req as any).user;
   const format = (req as any).query?.format || "csv";
   try {
     const { data: driver } = await drizzleAdmin.from("drivers").select("id").eq("user_id", user.id).maybeSingle();
     if (!driver) return res.status(404).json({ error: "Driver not found" });
-    const activeSub = await getDriverActiveSubscription(driver.id);
-    if (!activeSub || activeSub.planCode !== "premium") {
-      return res.status(403).json({ error: "Export is available on Premium only", code: "SUBSCRIPTION_REQUIRED" });
-    }
     const { data: orders } = await drizzleAdmin
       .from("orders")
       .select("id, total_cents, delivery_fee_cents, litres, delivered_at, fuel_types(label)")
@@ -917,6 +958,7 @@ router.get("/assigned-orders", async (req, res) => {
       }
     }
 
+    await attachDeliveryAddressesToOrders(orders || []);
     res.json(orders || []);
   } catch (error: any) {
     // Handle PGRST116 error (no rows found) gracefully
@@ -1015,6 +1057,7 @@ router.get("/completed-orders", async (req, res) => {
       }
     }
 
+    await attachDeliveryAddressesToOrders(orders || []);
     res.json(orders || []);
   } catch (error: any) {
     // Handle PGRST116 error (no rows found) gracefully
@@ -1026,7 +1069,7 @@ router.get("/completed-orders", async (req, res) => {
 });
 
 // Mark order as en route (driver started delivery)
-router.post("/orders/:orderId/start", checkDriverCompliance, requireActiveSubscription, async (req, res) => {
+router.post("/orders/:orderId/start", checkDriverCompliance, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
 
@@ -1135,7 +1178,7 @@ router.post("/orders/:orderId/start", checkDriverCompliance, requireActiveSubscr
 });
 
 // Mark order as picked up (fuel collected)
-router.post("/orders/:orderId/pickup", checkDriverCompliance, requireActiveSubscription, async (req, res) => {
+router.post("/orders/:orderId/pickup", checkDriverCompliance, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
 
@@ -1244,7 +1287,7 @@ router.post("/orders/:orderId/pickup", checkDriverCompliance, requireActiveSubsc
 });
 
 // Complete delivery with customer signature
-router.post("/orders/:orderId/complete", checkDriverCompliance, requireActiveSubscription, async (req, res) => {
+router.post("/orders/:orderId/complete", checkDriverCompliance, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
 
@@ -1463,7 +1506,7 @@ const driverOfferAcceptanceSchema = z.object({
     .nullable(),
 });
 
-router.post("/offers/:id/accept", checkDriverCompliance, requireActiveSubscription, async (req, res) => {
+router.post("/offers/:id/accept", checkDriverCompliance, async (req, res) => {
   const user = (req as any).user;
   const offerId = req.params.id;
 
@@ -1870,16 +1913,17 @@ router.post("/vehicles/:vehicleId/claim-company-vehicle", async (req, res) => {
       return res.status(400).json({ error: "This vehicle is already assigned" });
     }
 
-    const { data: otherFleet, error: oErr } = await drizzleAdmin
-      .from("vehicles")
-      .select("id")
-      .eq("driver_id", driver.id)
-      .eq("company_id", mem.company_id);
-    if (oErr) throw oErr;
     const now = new Date();
-    for (const row of otherFleet || []) {
-      await drizzleAdmin.from("vehicles").update({ driver_id: null, updated_at: now }).eq("id", (row as any).id);
-    }
+
+    // Keep personal vehicles untouched. Only release company-owned vehicles currently assigned to this driver.
+    await pool.query(
+      `UPDATE vehicles
+       SET driver_id = NULL, updated_at = $3
+       WHERE driver_id = $1
+         AND company_id IS NOT NULL
+         AND id <> $2`,
+      [driver.id, vehicleId, now]
+    );
     await syncDriverVehicleCapacityLitres(driver.id);
 
     const { data: updated, error: uErr } = await drizzleAdmin
@@ -1901,6 +1945,63 @@ router.post("/vehicles/:vehicleId/claim-company-vehicle", async (req, res) => {
   } catch (error: any) {
     console.error("POST /driver/vehicles/claim-company-vehicle:", error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Driver releases their currently assigned company fleet vehicle back to pool.
+ */
+router.post("/vehicles/:vehicleId/release-company-vehicle", async (req, res) => {
+  const user = (req as any).user;
+  const { vehicleId } = req.params;
+
+  try {
+    const { data: driver, error: dErr } = await drizzleAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (dErr) throw dErr;
+    if (!driver) return res.status(404).json({ error: "Driver profile not found" });
+
+    const { data: mem, error: mErr } = await drizzleAdmin
+      .from("driver_company_memberships")
+      .select("company_id")
+      .eq("driver_id", driver.id)
+      .maybeSingle();
+    if (mErr) throw mErr;
+    if (!mem?.company_id) {
+      return res.status(403).json({ error: "You are not linked to a fleet company" });
+    }
+
+    const { data: vehicle, error: vErr } = await drizzleAdmin
+      .from("vehicles")
+      .select("id, company_id, driver_id")
+      .eq("id", vehicleId)
+      .maybeSingle();
+    if (vErr) throw vErr;
+    if (!vehicle?.company_id) return res.status(400).json({ error: "Not a company fleet vehicle" });
+    if (vehicle.company_id !== mem.company_id) return res.status(403).json({ error: "Vehicle belongs to another company" });
+    if (vehicle.driver_id !== driver.id) return res.status(400).json({ error: "Vehicle is not assigned to you" });
+
+    const now = new Date();
+    const { error: rErr } = await drizzleAdmin
+      .from("vehicles")
+      .update({ driver_id: null, updated_at: now })
+      .eq("id", vehicleId);
+    if (rErr) throw rErr;
+
+    await syncDriverVehicleCapacityLitres(driver.id);
+
+    websocketService.sendToUser(user.id, {
+      type: "vehicle_updated",
+      payload: { vehicleId },
+    });
+
+    return res.json({ ok: true });
+  } catch (error: any) {
+    console.error("POST /driver/vehicles/release-company-vehicle:", error);
+    return res.status(500).json({ error: error.message });
   }
 });
 
@@ -2035,19 +2136,88 @@ router.patch("/vehicles/:vehicleId", async (req, res) => {
       return res.status(404).json({ error: "Vehicle not found or access denied" });
     }
 
+    const body = req.body ?? {};
+    const pick = (snake: string, camel: string) =>
+      body[snake] !== undefined ? body[snake] : body[camel] !== undefined ? body[camel] : undefined;
+
+    const parseBodyDate = (v: unknown): Date | null | undefined => {
+      if (v === undefined) return undefined;
+      if (v === null || v === "") return null;
+      const s = String(v).trim();
+      if (!s) return null;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return new Date(`${s}T00:00:00.000Z`);
+      const d = new Date(s);
+      return isNaN(d.getTime()) ? null : d;
+    };
+
     // Sanitize update data - only allow specific fields, never allow driver_id override
     const updateData: any = {};
-    if (req.body.registration_number !== undefined) updateData.registration_number = req.body.registration_number;
-    if (req.body.make !== undefined) updateData.make = req.body.make;
-    if (req.body.model !== undefined) updateData.model = req.body.model;
-    if (req.body.year !== undefined) updateData.year = req.body.year;
-    if (req.body.capacity_litres !== undefined) updateData.capacity_litres = req.body.capacity_litres;
-    if (req.body.fuel_types !== undefined) updateData.fuel_types = req.body.fuel_types;
-    if (req.body.license_disk_expiry !== undefined) updateData.license_disk_expiry = req.body.license_disk_expiry;
-    if (req.body.roadworthy_expiry !== undefined) updateData.roadworthy_expiry = req.body.roadworthy_expiry;
-    if (req.body.insurance_expiry !== undefined) updateData.insurance_expiry = req.body.insurance_expiry;
-    if (req.body.tracker_installed !== undefined) updateData.tracker_installed = req.body.tracker_installed;
-    if (req.body.tracker_provider !== undefined) updateData.tracker_provider = req.body.tracker_provider;
+    const reg = pick("registration_number", "registrationNumber");
+    if (reg !== undefined) updateData.registration_number = String(reg).trim();
+
+    const make = pick("make", "make");
+    if (make !== undefined) updateData.make = make;
+    const model = pick("model", "model");
+    if (model !== undefined) updateData.model = model;
+
+    const year = pick("year", "year");
+    if (year !== undefined) updateData.year = year === null || year === "" ? null : Number(year);
+
+    const cap = pick("capacity_litres", "capacityLitres");
+    if (cap !== undefined) updateData.capacity_litres = cap === null || cap === "" ? null : Number(cap);
+
+    const fuelTypes = pick("fuel_types", "fuelTypes");
+    if (fuelTypes !== undefined) updateData.fuel_types = fuelTypes;
+
+    const licenseDisk = pick("license_disk_expiry", "licenseDiskExpiry");
+    if (licenseDisk !== undefined) updateData.license_disk_expiry = parseBodyDate(licenseDisk);
+    const roadworthyEx = pick("roadworthy_expiry", "roadworthyExpiry");
+    if (roadworthyEx !== undefined) updateData.roadworthy_expiry = parseBodyDate(roadworthyEx);
+    const insuranceEx = pick("insurance_expiry", "insuranceExpiry");
+    if (insuranceEx !== undefined) updateData.insurance_expiry = parseBodyDate(insuranceEx);
+
+    const trackerIn = pick("tracker_installed", "trackerInstalled");
+    if (trackerIn !== undefined) updateData.tracker_installed = Boolean(trackerIn);
+    const trackerProv = pick("tracker_provider", "trackerProvider");
+    if (trackerProv !== undefined) updateData.tracker_provider = trackerProv === "" ? null : trackerProv;
+
+    const vrcn = pick("vehicle_reg_certificate_number", "vehicleRegCertificateNumber");
+    if (vrcn !== undefined) updateData.vehicle_reg_certificate_number = vrcn === "" ? null : vrcn;
+    const rwCert = pick("roadworthy_certificate_number", "roadworthyCertificateNumber");
+    if (rwCert !== undefined) updateData.roadworthy_certificate_number = rwCert === "" ? null : rwCert;
+    const rwIss = pick("roadworthy_issue_date", "roadworthyIssueDate");
+    if (rwIss !== undefined) updateData.roadworthy_issue_date = parseBodyDate(rwIss);
+
+    const dgReq = pick("dg_vehicle_permit_required", "dgVehiclePermitRequired");
+    if (dgReq !== undefined) updateData.dg_vehicle_permit_required = Boolean(dgReq);
+    const dgNum = pick("dg_vehicle_permit_number", "dgVehiclePermitNumber");
+    if (dgNum !== undefined) updateData.dg_vehicle_permit_number = dgNum === "" ? null : dgNum;
+    const dgIss = pick("dg_vehicle_permit_issue_date", "dgVehiclePermitIssueDate");
+    if (dgIss !== undefined) updateData.dg_vehicle_permit_issue_date = parseBodyDate(dgIss);
+    const dgEx = pick("dg_vehicle_permit_expiry_date", "dgVehiclePermitExpiryDate");
+    if (dgEx !== undefined) updateData.dg_vehicle_permit_expiry_date = parseBodyDate(dgEx);
+
+    const vehIns = pick("vehicle_insured", "vehicleInsured");
+    if (vehIns !== undefined) updateData.vehicle_insured = Boolean(vehIns);
+    const insProv = pick("insurance_provider", "insuranceProvider");
+    if (insProv !== undefined) updateData.insurance_provider = insProv === "" ? null : insProv;
+    const polNum = pick("policy_number", "policyNumber");
+    if (polNum !== undefined) updateData.policy_number = polNum === "" ? null : polNum;
+    const polEx = pick("policy_expiry_date", "policyExpiryDate");
+    if (polEx !== undefined) updateData.policy_expiry_date = parseBodyDate(polEx);
+
+    const loaR = pick("loa_required", "loaRequired");
+    if (loaR !== undefined) updateData.loa_required = Boolean(loaR);
+    const loaIss = pick("loa_issue_date", "loaIssueDate");
+    if (loaIss !== undefined) updateData.loa_issue_date = parseBodyDate(loaIss);
+    const loaEx = pick("loa_expiry_date", "loaExpiryDate");
+    if (loaEx !== undefined) updateData.loa_expiry_date = parseBodyDate(loaEx);
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ error: "No valid fields to update" });
+    }
+
+    updateData.updated_at = new Date();
 
     // Update vehicle
     const { data: vehicle, error: updateError } = await drizzleAdmin
@@ -2158,7 +2328,7 @@ router.delete("/vehicles/:vehicleId", async (req, res) => {
   }
 });
 
-// Get driver preferences (radius and location); radius is capped by subscription tier
+// Get driver preferences (radius and location)
 router.get("/preferences", async (req, res) => {
   const user = (req as any).user;
 
@@ -2174,17 +2344,15 @@ router.get("/preferences", async (req, res) => {
       return res.status(404).json({ error: "Driver profile not found" });
     }
 
-    const activeSub = await getDriverActiveSubscription(driver.id);
-    const maxRadiusMiles = activeSub ? await getDriverMaxRadiusMiles(driver.id) : 0;
-    // Radius is set by subscription plan only (no driver-editable preference)
+    const maxRadiusMiles = await getDriverMaxRadiusMiles(driver.id);
     const effectiveRadiusMiles = maxRadiusMiles;
 
     res.json({
       jobRadiusPreferenceMiles: maxRadiusMiles,
       effectiveRadiusMiles,
       maxRadiusMiles,
-      subscriptionTier: activeSub?.plan.deliveryRadius ?? null,
-      subscriptionPlanName: activeSub?.plan.name ?? null,
+      subscriptionTier: null,
+      subscriptionPlanName: null,
       currentLat: driver.current_lat,
       currentLng: driver.current_lng,
     });
@@ -2215,18 +2383,11 @@ router.patch("/preferences", async (req, res) => {
     const updateData: any = {};
     
     if (jobRadiusPreferenceMiles !== undefined) {
-      const activeSub = await getDriverActiveSubscription(driver.id);
-      if (!activeSub) {
-        return res.status(403).json({
-          error: "An active subscription is required to set job pickup radius.",
-          code: "SUBSCRIPTION_REQUIRED",
-        });
-      }
       const maxMiles = await getDriverMaxRadiusMiles(driver.id);
       const radius = parseFloat(jobRadiusPreferenceMiles);
       if (isNaN(radius) || radius < 1 || radius > maxMiles) {
         return res.status(400).json({
-          error: `Radius must be between 1 and ${maxMiles} miles for your plan (${activeSub.plan.deliveryRadius})`,
+          error: `Radius must be between 1 and ${maxMiles} miles`,
         });
       }
       const cappedRadius = Math.min(radius, maxMiles);
@@ -3122,34 +3283,7 @@ router.get("/depots", async (req, res) => {
       return depot.is_active !== false;
     });
 
-    // Platform listing: only depots whose supplier has active subscription/tier.
-    // Use direct SQL for reliability across mixed camel/snake adapter paths.
-    const supplierIds = [...new Set((activeDepots as any[]).map((d: any) => d.supplier_id).filter(Boolean))];
-    let subscribedSupplierIds: Set<string> = new Set();
-    if (supplierIds.length > 0) {
-      const subResult = await pool.query(
-        `SELECT DISTINCT s.id AS supplier_id
-         FROM suppliers s
-         LEFT JOIN LATERAL (
-           SELECT ss.status, ss.current_period_end
-           FROM supplier_subscriptions ss
-           WHERE ss.supplier_id = s.id
-           ORDER BY ss.updated_at DESC
-           LIMIT 1
-         ) latest_sub ON true
-         WHERE s.id = ANY($1::uuid[])
-           AND (
-             s.subscription_tier IN ('standard', 'enterprise')
-             OR (
-               latest_sub.status = 'active'
-               AND (latest_sub.current_period_end IS NULL OR latest_sub.current_period_end >= now())
-             )
-           )`,
-        [supplierIds]
-      );
-      subscribedSupplierIds = new Set((subResult.rows || []).map((r: any) => r.supplier_id));
-    }
-    const listedDepots = (activeDepots as any[]).filter((d: any) => d.supplier_id && subscribedSupplierIds.has(d.supplier_id));
+    const listedDepots = (activeDepots as any[]).filter((d: any) => Boolean(d.supplier_id));
 
     // Sort: Enterprise suppliers first (priority), then Standard, then by name
     const tierOrder = (tier: string | null | undefined) => (tier === "enterprise" ? 0 : tier === "standard" ? 1 : 2);
@@ -3423,7 +3557,7 @@ router.get("/depot-orders", async (req, res) => {
 });
 
 // Create order from depot
-router.post("/depot-orders", checkDriverCompliance, requireActiveSubscription, async (req, res) => {
+router.post("/depot-orders", checkDriverCompliance, async (req, res) => {
   const user = (req as any).user;
   const { depotId, fuelTypeId, litres, pickupDate, notes } = req.body;
 
@@ -3744,7 +3878,7 @@ router.post("/depot-orders/:orderId/cancel", async (req, res) => {
 // ============== DRIVER DEPOT ORDER PAYMENT & SIGNATURES ==============
 
 // Submit payment for depot order
-router.post("/depot-orders/:orderId/payment", checkDriverCompliance, requireActiveSubscription, async (req, res) => {
+router.post("/depot-orders/:orderId/payment", checkDriverCompliance, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
   const { paymentMethod, paymentProofUrl } = req.body;
@@ -3901,7 +4035,7 @@ router.post("/depot-orders/:orderId/payment", checkDriverCompliance, requireActi
 });
 
 // Add driver signature (before fuel release)
-router.post("/depot-orders/:orderId/driver-signature", checkDriverCompliance, requireActiveSubscription, async (req, res) => {
+router.post("/depot-orders/:orderId/driver-signature", checkDriverCompliance, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
   const signatureUrlRaw = (req.body as any)?.signatureUrl ?? (req.body as any)?.signature_url;
@@ -4061,7 +4195,7 @@ router.post("/depot-orders/:orderId/driver-signature", checkDriverCompliance, re
 });
 
 // Confirm receipt (driver signs after receiving fuel)
-router.post("/depot-orders/:orderId/confirm-receipt", checkDriverCompliance, requireActiveSubscription, async (req, res) => {
+router.post("/depot-orders/:orderId/confirm-receipt", checkDriverCompliance, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
   const { signatureUrl } = req.body;
@@ -4205,7 +4339,7 @@ router.put("/compliance", async (req, res) => {
     // Get driver ID and current id_type for proper mapping
     const { data: driver, error: driverError } = await drizzleAdmin
       .from("drivers")
-      .select("id, id_type")
+      .select("*")
       .eq("user_id", user.id)
       .maybeSingle();
 
@@ -4296,26 +4430,30 @@ router.put("/compliance", async (req, res) => {
     // IMPORTANT: Only update if id_type is explicitly set to avoid updating wrong column
     if (bodyFields.id_number !== undefined && shouldInclude(bodyFields.id_number)) {
       // Get id_type from request body first, then fall back to existing driver data
-      const idType = bodyFields.id_type || driver?.id_type;
-      
-      // Only proceed if we have a valid id_type
-      if (idType) {
-        const idValue = typeof bodyFields.id_number === 'string' ? bodyFields.id_number.trim() : bodyFields.id_number;
-        if (idValue && idValue !== '') {
-          // Normalize id_type to match enum values
-          const normalizedIdType = String(idType).toUpperCase();
-          if (normalizedIdType === 'SA_ID' || normalizedIdType === 'SOUTH_AFRICA') {
-            updateData.za_id_number = idValue;
-            // Clear passport_number if switching to SA_ID
-            if (driver?.passport_number) {
-              updateData.passport_number = null;
-            }
-          } else if (normalizedIdType === 'PASSPORT') {
-            updateData.passport_number = idValue;
-            // Clear za_id_number if switching to Passport
-            if (driver?.za_id_number) {
-              updateData.za_id_number = null;
-            }
+      let idType = bodyFields.id_type || driver?.id_type;
+      const idValue = typeof bodyFields.id_number === "string" ? bodyFields.id_number.trim() : bodyFields.id_number;
+      if (idValue && idValue !== "") {
+        // If the user entered a number but never chose ID type, infer SA ID vs passport from format
+        if (!idType || String(idType).trim() === "") {
+          const digitsOnly = String(idValue).replace(/\D/g, "");
+          if (digitsOnly.length === 13 && /^\d{13}$/.test(digitsOnly)) {
+            idType = "SA_ID";
+            updateData.id_type = "SA_ID";
+          } else {
+            idType = "Passport";
+            updateData.id_type = "Passport";
+          }
+        }
+        const normalizedIdType = String(idType).toUpperCase();
+        if (normalizedIdType === "SA_ID" || normalizedIdType === "SOUTH_AFRICA") {
+          updateData.za_id_number = idValue;
+          if (driver?.passport_number) {
+            updateData.passport_number = null;
+          }
+        } else if (normalizedIdType === "PASSPORT") {
+          updateData.passport_number = idValue;
+          if (driver?.za_id_number) {
+            updateData.za_id_number = null;
           }
         }
       }
@@ -4331,6 +4469,13 @@ router.put("/compliance", async (req, res) => {
     
     // Process each mapped field
     for (const [fieldName, mapping] of Object.entries(fieldMapping)) {
+      if (fieldName === "id_type") {
+        const raw = bodyFields.id_type;
+        const empty = raw === undefined || raw === null || (typeof raw === "string" && raw.trim() === "");
+        if (empty && updateData.id_type) {
+          continue;
+        }
+      }
       const value = bodyFields[fieldName];
       
       // Debug logging for company_id before processing
@@ -5045,279 +5190,6 @@ router.get("/vehicles/:vehicleId/compliance/status", async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
-// ---- Driver subscription (OZOW) ----
-
-/** Middleware: require active subscription; return 403 SUBSCRIPTION_REQUIRED if none */
-async function requireActiveSubscription(req: any, res: any, next: any) {
-  try {
-    const driverId = req.driverId;
-    if (!driverId) return res.status(401).json({ error: "Driver not found", code: "UNAUTHORIZED" });
-    const hasActive = await driverHasActiveSubscription(driverId);
-    if (!hasActive) {
-      return res.status(403).json({
-        error: "An active subscription is required to use this feature.",
-        code: "SUBSCRIPTION_REQUIRED",
-        message: "Subscribe to start accepting orders and ordering from suppliers.",
-      });
-    }
-    next();
-  } catch (e: any) {
-    console.error("Error checking subscription:", e);
-    res.status(500).json({ error: e.message });
-  }
-}
-
-// GET /api/driver/subscription – current subscription (for dashboard / subscription page)
-router.get("/subscription", async (req, res) => {
-  const user = (req as any).user;
-  try {
-    const { data: driver } = await drizzleAdmin.from("drivers").select("id").eq("user_id", user.id).maybeSingle();
-    if (!driver) return res.status(404).json({ error: "Driver not found" });
-    const result = await getDriverSubscription(driver.id);
-    if (!result) return res.json({ subscription: null, plan: null });
-    const { subscription, latestRow } = result;
-    if (subscription) {
-      return res.json({
-        subscription: {
-          id: subscription.subscriptionId,
-          driverId: subscription.driverId,
-          planCode: subscription.planCode,
-          plan: subscription.plan,
-          status: subscription.status,
-          currentPeriodStart: subscription.currentPeriodStart,
-          currentPeriodEnd: subscription.currentPeriodEnd,
-          nextBillingAt: subscription.nextBillingAt,
-        },
-        hasActiveSubscription: true,
-      });
-    }
-    const plan = latestRow ? getPlan(latestRow.plan_code) : null;
-    return res.json({
-      subscription: latestRow ? { id: latestRow.id, planCode: latestRow.plan_code, status: latestRow.status, nextBillingAt: latestRow.next_billing_at, currentPeriodStart: latestRow.current_period_start, currentPeriodEnd: latestRow.current_period_end, plan: plan ?? undefined } : null,
-      plan: plan ?? null,
-      hasActiveSubscription: false,
-    });
-  } catch (e: any) {
-    console.error("Error fetching subscription:", e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// GET /api/driver/subscription/plans – list plans for subscription page
-router.get("/subscription/plans", async (_req, res) => {
-  try {
-    const plans = PLAN_CODES.map((code) => SUBSCRIPTION_PLANS[code]);
-    const testMode = process.env.SUBSCRIPTION_TEST_MODE === "true";
-    return res.json({ plans, ozowConfigured: isOzowConfigured(), testMode });
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-const createPaymentSchema = z.object({ planCode: z.enum(["starter", "professional", "premium"]) });
-
-function describeDbError(error: any) {
-  if (!error) return null;
-  return {
-    message: error?.message || String(error),
-    code: error?.code ?? null,
-    detail: error?.detail ?? null,
-    hint: error?.hint ?? null,
-  };
-}
-
-// POST /api/driver/subscription/create-payment – create pending payment and return OZOW redirect URL (or activate immediately in test mode)
-router.post("/subscription/create-payment", async (req, res) => {
-  const user = (req as any).user;
-  try {
-    const parsed = createPaymentSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: "Invalid planCode", details: parsed.error.flatten() });
-    const { planCode } = parsed.data as { planCode: PlanCode };
-    const plan = getPlan(planCode);
-    if (!plan) return res.status(400).json({ error: "Unknown plan" });
-
-    const { data: driver } = await drizzleAdmin.from("drivers").select("id").eq("user_id", user.id).maybeSingle();
-    if (!driver) return res.status(404).json({ error: "Driver not found" });
-
-    // Test mode: activate subscription immediately without checkout redirect
-    if (process.env.SUBSCRIPTION_TEST_MODE === "true") {
-      const now = new Date();
-      const periodStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const periodEnd = new Date(periodStart);
-      periodEnd.setMonth(periodEnd.getMonth() + 1);
-      const nextBilling = new Date(periodEnd);
-
-      const { data: existingSub } = await drizzleAdmin
-        .from("driver_subscriptions")
-        .select("id")
-        .eq("driver_id", driver.id)
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      let subscriptionId: string;
-      if (existingSub) {
-        await drizzleAdmin
-          .from("driver_subscriptions")
-          .update({
-            planCode: planCode,
-            status: "active",
-            amountCents: plan.priceCents,
-            currency: "ZAR",
-            currentPeriodStart: periodStart,
-            currentPeriodEnd: periodEnd,
-            nextBillingAt: nextBilling,
-            updatedAt: now,
-          })
-          .eq("id", existingSub.id);
-        subscriptionId = existingSub.id;
-      } else {
-        const { data: newSub, error: insertErr } = await drizzleAdmin
-          .from("driver_subscriptions")
-          .insert({
-            driverId: driver.id,
-            planCode: planCode,
-            status: "active",
-            amountCents: plan.priceCents,
-            currency: "ZAR",
-            currentPeriodStart: periodStart,
-            currentPeriodEnd: periodEnd,
-            nextBillingAt: nextBilling,
-          })
-          .single();
-        if (insertErr || !newSub) {
-          const err = describeDbError(insertErr);
-          console.error("[subscription/create-payment] create subscription failed:", err);
-          return res.status(500).json({
-            error: "Failed to create subscription",
-            ...(process.env.NODE_ENV === "development" ? { db: err } : {}),
-          });
-        }
-        subscriptionId = newSub.id;
-      }
-
-      await drizzleAdmin
-        .from("subscription_payments")
-        .insert({
-          driverSubscriptionId: subscriptionId,
-          amountCents: plan.priceCents,
-          currency: "ZAR",
-          status: "completed",
-          paidAt: now,
-        });
-
-      await drizzleAdmin
-        .from("drivers")
-        .update({
-          premiumStatus: "active",
-          subscriptionTier: planCode,
-          updatedAt: now,
-        })
-        .eq("id", driver.id);
-
-      return res.json({ success: true });
-    }
-
-    if (!isOzowConfigured()) return res.status(503).json({ error: "Payment gateway not configured", code: "OZOW_NOT_CONFIGURED" });
-
-    const baseUrl = process.env.PUBLIC_APP_URL || (req.protocol + "://" + req.get("host") || "http://localhost:5000");
-    const successUrl = `${baseUrl}/driver/subscription?success=true`;
-    const cancelUrl = `${baseUrl}/driver/subscription?cancelled=true`;
-    const notificationUrl = `${baseUrl}/api/webhooks/ozow-subscription`;
-
-    // Upsert driver_subscriptions row (one per driver; status pending until webhook)
-    const { data: existingSub } = await drizzleAdmin
-      .from("driver_subscriptions")
-      .select("id")
-      .eq("driver_id", driver.id)
-      .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    let subscriptionId: string;
-    if (existingSub) {
-      await drizzleAdmin
-        .from("driver_subscriptions")
-        .update({ planCode: planCode, status: "pending", amountCents: plan.priceCents, currency: "ZAR", updatedAt: new Date() })
-        .eq("id", existingSub.id);
-      subscriptionId = existingSub.id;
-    } else {
-      const { data: newSub, error: insertErr } = await drizzleAdmin
-        .from("driver_subscriptions")
-        .insert({ driverId: driver.id, planCode: planCode, status: "pending", amountCents: plan.priceCents, currency: "ZAR" })
-        .single();
-      if (insertErr || !newSub) {
-        const err = describeDbError(insertErr);
-        console.error("[subscription/create-payment] create pending subscription failed:", err);
-        return res.status(500).json({
-          error: "Failed to create subscription",
-          ...(process.env.NODE_ENV === "development" ? { db: err } : {}),
-        });
-      }
-      subscriptionId = newSub.id;
-    }
-
-    // Create subscription_payments row (pending)
-    const { data: paymentRow, error: payErr } = await drizzleAdmin
-      .from("subscription_payments")
-      .insert({
-        driverSubscriptionId: subscriptionId,
-        amountCents: plan.priceCents,
-        currency: "ZAR",
-        status: "pending",
-      })
-      .single();
-    if (payErr || !paymentRow) {
-      const err = describeDbError(payErr);
-      console.error("[subscription/create-payment] create payment record failed:", err);
-      return res.status(500).json({
-        error: "Failed to create payment record",
-        ...(process.env.NODE_ENV === "development" ? { db: err } : {}),
-      });
-    }
-
-    const transactionReference = `sub_${paymentRow.id}`;
-    const redirectUrl = buildPaymentRedirectUrl({
-      amountRands: plan.priceZAR,
-      transactionReference,
-      successUrl,
-      cancelUrl,
-      notificationUrl,
-      customerEmail: user.email ?? undefined,
-      customerName: (user.user_metadata?.full_name as string) || (req.body?.customerName as string) || undefined,
-    });
-
-    return res.json({ redirectUrl, paymentId: paymentRow.id, subscriptionId });
-  } catch (e: any) {
-    const err = describeDbError(e);
-    console.error("[subscription/create-payment] unexpected failure:", err);
-    res.status(500).json({
-      error: err?.message || "Failed to create payment",
-      ...(process.env.NODE_ENV === "development" ? { db: err } : {}),
-    });
-  }
-});
-
-// POST /api/driver/subscription/cancel – cancel at period end (optional)
-router.post("/subscription/cancel", async (req, res) => {
-  const user = (req as any).user;
-  try {
-    const { data: driver } = await drizzleAdmin.from("drivers").select("id").eq("user_id", user.id).maybeSingle();
-    if (!driver) return res.status(404).json({ error: "Driver not found" });
-    const { error } = await drizzleAdmin
-      .from("driver_subscriptions")
-      .update({ status: "cancelled", updated_at: new Date() })
-      .eq("driver_id", driver.id)
-      .eq("status", "active");
-    if (error) return res.status(500).json({ error: error.message });
-    await drizzleAdmin.from("drivers").update({ premium_status: "inactive", subscription_tier: null }).eq("id", driver.id);
-    return res.json({ ok: true, message: "Subscription cancelled at period end." });
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
 // GET /api/driver/company-membership — current fleet company link (if any)
 router.get("/company-membership", async (req, res) => {
   const user = (req as any).user;
@@ -5393,17 +5265,27 @@ router.put("/company-membership", async (req, res) => {
     const now = new Date();
 
     if (companyId === null) {
-      const { error: upErr } = await drizzleAdmin.from("driver_company_memberships").upsert(
-        {
-          driver_id: driver.id,
-          company_id: null,
-          is_disabled_by_company: false,
-          disabled_reason: null,
-          updated_at: now,
-        },
-        { onConflict: "driver_id" }
+      // Switching to independent mode: release any company fleet vehicles currently assigned to this driver.
+      await pool.query(
+        `UPDATE vehicles
+         SET driver_id = NULL, updated_at = $2
+         WHERE driver_id = $1
+           AND company_id IS NOT NULL`,
+        [driver.id, now]
       );
-      if (upErr) return res.status(500).json({ error: upErr.message });
+
+      await pool.query(
+        `INSERT INTO driver_company_memberships
+           (driver_id, company_id, is_disabled_by_company, disabled_reason, updated_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (driver_id)
+         DO UPDATE SET
+           company_id = EXCLUDED.company_id,
+           is_disabled_by_company = EXCLUDED.is_disabled_by_company,
+           disabled_reason = EXCLUDED.disabled_reason,
+           updated_at = EXCLUDED.updated_at`,
+        [driver.id, null, false, null, now]
+      );
       return res.json({ ok: true, mode: "independent" });
     }
 
@@ -5417,17 +5299,18 @@ router.put("/company-membership", async (req, res) => {
       return res.status(400).json({ error: "Company not found or not active" });
     }
 
-    const { error: upErr } = await drizzleAdmin.from("driver_company_memberships").upsert(
-      {
-        driver_id: driver.id,
-        company_id: companyId,
-        is_disabled_by_company: false,
-        disabled_reason: null,
-        updated_at: now,
-      },
-      { onConflict: "driver_id" }
+    await pool.query(
+      `INSERT INTO driver_company_memberships
+         (driver_id, company_id, is_disabled_by_company, disabled_reason, updated_at)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (driver_id)
+       DO UPDATE SET
+         company_id = EXCLUDED.company_id,
+         is_disabled_by_company = EXCLUDED.is_disabled_by_company,
+         disabled_reason = EXCLUDED.disabled_reason,
+         updated_at = EXCLUDED.updated_at`,
+      [driver.id, companyId, false, null, now]
     );
-    if (upErr) return res.status(500).json({ error: upErr.message });
     return res.json({ ok: true, mode: "company", companyId });
   } catch (e: any) {
     console.error("PUT /driver/company-membership:", e);

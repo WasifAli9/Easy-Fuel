@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
 import { ScrollView, StyleSheet, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Card, Chip, Text } from "react-native-paper";
+import { Card, Chip, Text } from "react-native-paper";
+import { Button } from "@/design/paper-button";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { apiClient } from "@/services/api/client";
+import { getFuelPortalTokens } from "@/design/fuel-portal-tokens";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
-import { darkTheme, lightTheme } from "@/design/theme";
+import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { filterOutOldCustomerOrders, formatCustomerOrderAddress } from "@/features/customer/customerOrderUtils";
 import { CustomerCreateOrderModal } from "@/features/customer/CustomerCreateOrderModal";
@@ -30,6 +32,8 @@ type OrderRow = {
 export function CustomerDashboardScreen() {
   const mode = useUiThemeStore((s) => s.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
+  const isDark = mode === "dark";
+  const t = getFuelPortalTokens(theme, isDark);
   const styles = getStyles(theme);
   const [createOpen, setCreateOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -45,39 +49,51 @@ export function CustomerDashboardScreen() {
     const list = ordersQuery.data ?? [];
     const recent = filterOutOldCustomerOrders(list);
     const active = recent.filter((o) => !["delivered", "cancelled"].includes(o.state ?? ""));
+    const completed = recent.filter((o) => (o.state ?? "") === "delivered").length;
     return {
       total: recent.length,
       active: active.length,
+      completed,
       recent: recent.slice(0, 5),
     };
   }, [ordersQuery.data]);
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Card mode="contained" style={styles.hero}>
-        <Card.Content>
-          <View style={styles.brandRow}>
-            <View style={styles.brandPill}>
-              <MaterialCommunityIcons name="gas-station" size={16} color={theme.colors.primary} />
-              <Text style={styles.brandPillText}>EasyFuel</Text>
+      <View style={styles.heroOuter}>
+        <View style={[styles.hero, { backgroundColor: t.heroBg }]}>
+          <View style={styles.heroBlob} />
+          <Text style={styles.kicker}>Workspace dashboard</Text>
+          <Text style={styles.heroTitle}>Customer workspace</Text>
+          <View style={styles.badgeRow}>
+            <View style={[styles.badgeFill, { backgroundColor: t.badgeActiveTint }]}>
+              <Text style={[styles.badgeFillText, { color: t.badgeActiveText }]}>ACTIVE</Text>
+            </View>
+            <View style={styles.badgeOutline}>
+              <Text style={styles.badgeOutlineText}>ORDERS</Text>
             </View>
           </View>
-          <Text variant="labelLarge" style={styles.kicker}>
-            Customer
-          </Text>
-          <Text variant="headlineMedium">Dashboard</Text>
-          <Text style={styles.subtitle}>Overview of your fuel orders</Text>
+          <View style={styles.statsRowHero}>
+            <View style={styles.statCol}>
+              <Text style={styles.statLabel}>Active orders</Text>
+              <Text style={styles.statValue}>{summary.active}</Text>
+            </View>
+            <View style={styles.statCol}>
+              <Text style={styles.statLabel}>Completed</Text>
+              <Text style={styles.statValue}>{summary.completed}</Text>
+            </View>
+          </View>
           <Button
             mode="contained"
-            buttonColor={theme.colors.primary}
+            buttonColor={t.badgeActiveText}
             textColor={theme.colors.onPrimary}
-            style={styles.cta}
+            style={styles.heroCta}
             onPress={() => setCreateOpen(true)}
           >
-            Create order
+            Create Order
           </Button>
-        </Card.Content>
-      </Card>
+        </View>
+      </View>
 
       <View style={styles.statsRow}>
         <Card mode="outlined" style={[styles.statCard, styles.statCardActive]}>
@@ -150,16 +166,100 @@ function formatOrderStatus(state?: string) {
 
 const getStyles = (theme: typeof lightTheme) => {
   const p = getPortalUiStyleDefs(theme);
+  const isDark = "dark" in theme && (theme as { dark?: boolean }).dark === true;
+  const t = getFuelPortalTokens(theme, isDark);
   return StyleSheet.create({
     container: p.screenContainer,
-    content: { ...p.screenScrollContentCompact, paddingBottom: 32 },
-    hero: p.hero,
-    brandRow: p.brandRow,
-    brandPill: p.brandPill,
-    brandPillText: p.brandPillText,
-    kicker: { color: theme.colors.primary, fontWeight: "600" },
-    subtitle: p.subtitle,
-    cta: { marginTop: 12, alignSelf: "flex-start", borderRadius: 10 },
+    content: { paddingBottom: 32 },
+    heroOuter: {
+      width: "100%",
+      paddingHorizontal: 0,
+      paddingTop: 0,
+      paddingBottom: 8,
+    },
+    hero: {
+      borderTopLeftRadius: 0,
+      borderTopRightRadius: 0,
+      borderBottomLeftRadius: t.heroRadius,
+      borderBottomRightRadius: t.heroRadius,
+      paddingVertical: 20,
+      paddingHorizontal: 20,
+      overflow: "hidden",
+    },
+    heroBlob: {
+      position: "absolute",
+      top: -40,
+      right: -30,
+      width: 140,
+      height: 140,
+      borderRadius: 70,
+      backgroundColor: "rgba(255,255,255,0.08)",
+    },
+    kicker: {
+      color: t.heroKicker,
+      fontSize: 11,
+      fontWeight: "700",
+      letterSpacing: 1,
+      textTransform: "uppercase",
+    },
+    heroTitle: {
+      marginTop: 8,
+      color: t.heroOn,
+      fontSize: 26,
+      fontWeight: "800",
+      letterSpacing: -0.5,
+    },
+    badgeRow: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 10,
+      marginTop: 14,
+    },
+    badgeFill: {
+      paddingHorizontal: 14,
+      paddingVertical: 6,
+      borderRadius: 999,
+    },
+    badgeFillText: {
+      fontSize: 12,
+      fontWeight: "800",
+      letterSpacing: 0.6,
+    },
+    badgeOutline: {
+      paddingHorizontal: 14,
+      paddingVertical: 6,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: "rgba(255,255,255,0.85)",
+    },
+    badgeOutlineText: {
+      color: t.heroOn,
+      fontSize: 12,
+      fontWeight: "700",
+      letterSpacing: 0.6,
+    },
+    statsRowHero: {
+      flexDirection: "row",
+      marginTop: 22,
+      gap: 16,
+    },
+    statCol: {
+      flex: 1,
+    },
+    statLabel: {
+      color: t.heroMuted,
+      fontSize: 11,
+      fontWeight: "700",
+      letterSpacing: 0.6,
+      textTransform: "uppercase",
+    },
+    statValue: {
+      marginTop: 6,
+      color: t.heroOn,
+      fontSize: 24,
+      fontWeight: "800",
+    },
+    heroCta: { marginTop: 16, alignSelf: "flex-start", borderRadius: buttonBorderRadius },
     statsRow: p.statsRow,
     statCard: p.statCard,
     statCardActive: p.statCardActive,

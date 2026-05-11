@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { setupAuth } from "./auth";
+import { checkExpiringDocuments } from "./compliance-service";
 
 const app = express();
 
@@ -120,5 +121,20 @@ process.on('uncaughtException', (error) => {
       log(`🔧 Development mode - Vite HMR enabled`);
     }
   });
+
+  // Background reminder job: proactively notify users about documents expiring within 30 days.
+  const runExpiringDocumentCheck = async () => {
+    try {
+      await checkExpiringDocuments();
+    } catch (error) {
+      console.error("[compliance] expiring-document check failed:", error);
+    }
+  };
+  setTimeout(() => {
+    void runExpiringDocumentCheck();
+  }, 10_000);
+  setInterval(() => {
+    void runExpiringDocumentCheck();
+  }, 6 * 60 * 60 * 1000);
 })();
 

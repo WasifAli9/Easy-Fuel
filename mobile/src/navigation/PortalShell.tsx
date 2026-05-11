@@ -1,9 +1,11 @@
 import { ReactNode, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
-import { Button, Text } from "react-native-paper";
+import { Text } from "react-native-paper";
+import { Button } from "@/design/paper-button";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
-import { darkTheme, lightTheme } from "@/design/theme";
+import { getFuelPortalTokens } from "@/design/fuel-portal-tokens";
+import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
+import { FuelPortalHeader } from "@/navigation/FuelPortalHeader";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { signOut } from "@/services/api/auth";
 
@@ -28,19 +30,16 @@ type PortalShellProps = {
  */
 const brandStylesByVariant = {
   customer: {
-    iconName: "gas-station" as const,
-    menuActiveBgLight: "rgba(38, 237, 217, 0.16)",
-    menuActiveBgDark: "rgba(38, 237, 217, 0.14)",
+    menuActiveBgLight: "rgba(13, 148, 136, 0.12)",
+    menuActiveBgDark: "rgba(45, 212, 191, 0.16)",
   },
   supplier: {
-    iconName: "warehouse" as const,
-    menuActiveBgLight: "rgba(38, 237, 217, 0.16)",
-    menuActiveBgDark: "rgba(38, 237, 217, 0.14)",
+    menuActiveBgLight: "rgba(13, 148, 136, 0.12)",
+    menuActiveBgDark: "rgba(45, 212, 191, 0.16)",
   },
   company: {
-    iconName: "domain" as const,
-    menuActiveBgLight: "rgba(38, 237, 217, 0.16)",
-    menuActiveBgDark: "rgba(38, 237, 217, 0.14)",
+    menuActiveBgLight: "rgba(13, 148, 136, 0.12)",
+    menuActiveBgDark: "rgba(45, 212, 191, 0.16)",
   },
 };
 
@@ -73,20 +72,7 @@ export function PortalShell({
 
   return (
     <View style={styles.root}>
-      <View style={styles.header}>
-        <Pressable onPress={() => setMenuVisible(true)} style={styles.menuButton}>
-          <MaterialCommunityIcons name="menu" size={24} color={theme.colors.onSurface} />
-        </Pressable>
-        <View style={styles.headerTitleWrap}>
-          <Text variant="titleLarge" style={styles.headerTitle}>
-            {title}
-          </Text>
-          <View style={styles.brandPill}>
-            <MaterialCommunityIcons name={brand.iconName} size={14} color={theme.colors.primary} />
-            <Text style={styles.brandPillText}>EasyFuel</Text>
-          </View>
-        </View>
-      </View>
+      <FuelPortalHeader onOpenMenu={() => setMenuVisible(true)} />
 
       <View style={styles.content}>{children}</View>
 
@@ -95,6 +81,9 @@ export function PortalShell({
           <View style={styles.sideMenu}>
             <Text variant="titleMedium" style={styles.menuTitle}>
               {menuTitle}
+            </Text>
+            <Text variant="bodySmall" style={styles.menuContextTitle}>
+              {title}
             </Text>
             <ScrollView style={styles.menuList} contentContainerStyle={styles.menuListContent} showsVerticalScrollIndicator={false}>
               {menuItems.map((item) => {
@@ -140,43 +129,13 @@ export function PortalShell({
 }
 
 const getStyles = (theme: typeof lightTheme, menuActiveBg: string) => {
-  const p = getPortalUiStyleDefs(theme);
+  const isDark = "dark" in theme && (theme as { dark?: boolean }).dark === true;
+  const fp = getFuelPortalTokens(theme, isDark);
   return StyleSheet.create({
     root: {
       flex: 1,
-      backgroundColor: theme.colors.background,
+      backgroundColor: fp.canvas,
     },
-    header: {
-      minHeight: 60,
-      paddingHorizontal: 14,
-      flexDirection: "row",
-      alignItems: "center",
-      backgroundColor: theme.colors.surface,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: theme.colors.outline,
-      borderLeftWidth: 3,
-      borderLeftColor: theme.colors.primary,
-    },
-    menuButton: {
-      width: 36,
-      height: 36,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    headerTitleWrap: {
-      flex: 1,
-      marginLeft: 10,
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      gap: 10,
-    },
-    headerTitle: {
-      color: theme.colors.onSurface,
-      fontWeight: "600",
-    },
-    brandPill: p.brandPill,
-    brandPillText: p.brandPillText,
     content: {
       flex: 1,
     },
@@ -195,9 +154,14 @@ const getStyles = (theme: typeof lightTheme, menuActiveBg: string) => {
     menuTitle: {
       marginHorizontal: 14,
       paddingTop: 14,
-      paddingBottom: 10,
+      paddingBottom: 4,
       color: theme.colors.onSurface,
       fontWeight: "700",
+    },
+    menuContextTitle: {
+      marginHorizontal: 14,
+      paddingBottom: 10,
+      color: theme.colors.onSurfaceVariant,
     },
     menuList: {
       flex: 1,
@@ -213,7 +177,7 @@ const getStyles = (theme: typeof lightTheme, menuActiveBg: string) => {
       gap: 10,
       paddingHorizontal: 10,
       paddingVertical: 11,
-      borderRadius: 10,
+      borderRadius: buttonBorderRadius,
     },
     menuItemActive: {
       backgroundColor: menuActiveBg,

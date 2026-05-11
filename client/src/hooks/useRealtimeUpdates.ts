@@ -24,6 +24,8 @@ export function useRealtimeUpdates() {
       case "order_updated":
       case "order_cancelled":
       case "order_status_changed":
+      case "order_state_changed":
+      case "order_update":
         queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
         if (payload?.orderId) {
           queryClient.invalidateQueries({ queryKey: ["/api/orders", payload.orderId] });

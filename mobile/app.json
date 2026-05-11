@@ -3,6 +3,7 @@
     "name": "Easy Fuel",
     "slug": "easy-fuel-mobile",
     "version": "1.0.0",
+    "icon": "./assets/images/icon-512.png",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "assetBundlePatterns": [
@@ -14,6 +15,11 @@
     },
     "android": {
       "package": "com.easyfuel.mobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/icon-512.png",
+        "backgroundColor": "#45c2c4"
+      },
+      "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
@@ -32,7 +38,7 @@
       "expo-font"
     ],
     "extra": {
-      "apiBaseUrl": "http://localhost:5002",
+      "apiBaseUrl": "https://portal.easyfuel.ai",
       "eas": {
         "projectId": "84b0d361-c107-4a26-8a03-5f01d4ae72f5"
       }

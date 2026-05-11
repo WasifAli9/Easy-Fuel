@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CanvasHTMLAttributes } from "react";
+import { useEffect, useRef, type CanvasHTMLAttributes } from "react";
 import { Button } from "@/components/ui/button";
 import clsx from "clsx";
 
@@ -22,11 +22,16 @@ export function SignaturePad({
   canvasProps,
 }: SignaturePadProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  /** Synchronous flag so move handlers see "drawing" before React re-renders (fixes missing strokes). */
+  const drawingRef = useRef(false);
   const [isDrawing, setIsDrawing] = useState(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    // Repainting from `value` while the user is still drawing races with async Image.onload and clears live strokes.
+    if (drawingRef.current) return;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
@@ -49,6 +54,7 @@ export function SignaturePad({
     if (value) {
       const image = new Image();
       image.onload = () => {
+        if (drawingRef.current) return;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(image, 0, 0, canvas.clientWidth, height);
       };
@@ -98,13 +104,13 @@ export function SignaturePad({
 
     ctx.beginPath();
     ctx.moveTo(coordinates.x, coordinates.y);
-    setIsDrawing(true);
+    drawingRef.current = true;
   };
 
   const handleMove = (
     event: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>
   ) => {
-    if (!isDrawing || disabled) return;
+    if (!drawingRef.current || disabled) return;
     event.preventDefault();
 
     const canvas = canvasRef.current;
@@ -125,8 +131,8 @@ export function SignaturePad({
   };
 
   const handleEnd = () => {
-    if (!isDrawing) return;
-    setIsDrawing(false);
+    if (!drawingRef.current) return;
+    drawingRef.current = false;
 
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -135,6 +141,7 @@ export function SignaturePad({
   };
 
   const handleClear = () => {
+    drawingRef.current = false;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");

@@ -3,7 +3,6 @@ import {
   Package,
   Car,
   DollarSign,
-  CreditCard,
   Settings,
   History,
   Warehouse,
@@ -16,10 +15,10 @@ import {
   DashboardSidebarDivider,
 } from "./DashboardSidebar";
 
-export type DriverWorkspaceActive = "billing";
+export type DriverWorkspaceActive = null;
 
 export function DriverWorkspaceSidebar({
-  active,
+  active: _active,
   onNavigate,
 }: {
   active: DriverWorkspaceActive | null;
@@ -39,14 +38,6 @@ export function DriverWorkspaceSidebar({
         </DashboardNavRouteLink>
         <DashboardNavRouteLink href="/driver" active={false} icon={DollarSign} onNavigate={onNavigate}>
           Pricing
-        </DashboardNavRouteLink>
-        <DashboardNavRouteLink
-          href="/driver/subscription"
-          active={active === "billing"}
-          icon={CreditCard}
-          onNavigate={onNavigate}
-        >
-          Billing
         </DashboardNavRouteLink>
         <DashboardNavRouteLink href="/driver" active={false} icon={Settings} onNavigate={onNavigate}>
           Settings

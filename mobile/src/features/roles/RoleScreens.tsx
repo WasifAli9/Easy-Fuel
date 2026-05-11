@@ -6,11 +6,10 @@ import { CustomerProfileScreen } from "@/features/customer/CustomerProfileScreen
 import { SupplierDashboardScreen } from "@/features/supplier/SupplierDashboardScreen";
 import { SupplierDepotsScreen } from "@/features/supplier/SupplierDepotsScreen";
 import { SupplierProfileScreen } from "@/features/supplier/SupplierProfileScreen";
-import { SupplierSubscriptionScreen } from "@/features/supplier/SupplierSubscriptionScreen";
 import { signOut } from "@/services/api/auth";
 
 export { CustomerDashboardScreen, CustomerOrdersScreen, CustomerAddressesScreen, CustomerProfileScreen };
-export { SupplierDashboardScreen, SupplierDepotsScreen, SupplierSubscriptionScreen, SupplierProfileScreen };
+export { SupplierDashboardScreen, SupplierDepotsScreen, SupplierProfileScreen };
 
 export function DriverDashboardScreen() {
   return (
@@ -34,19 +33,6 @@ export function DriverOrdersScreen() {
       emptyMessage="No completed orders yet."
       itemTitleKeys={["order_number", "id", "delivery_address"]}
       itemSubtitleKeys={["status", "completed_at", "scheduled_date"]}
-    />
-  );
-}
-
-export function DriverSubscriptionScreen() {
-  return (
-    <ApiCollectionScreen
-      title="Driver Subscription"
-      subtitle="Plan status and billing options."
-      endpoint="/api/driver/subscription"
-      emptyMessage="No subscription details found."
-      itemTitleKeys={["plan_name", "planCode", "status", "id"]}
-      itemSubtitleKeys={["status", "next_billing_date", "amount"]}
     />
   );
 }

@@ -17,17 +17,18 @@ function resolveExpoHost(): string | null {
 }
 
 function normalizeApiBaseUrl(rawBaseUrl: string): string {
+  const trimmed = rawBaseUrl.trim().replace(/\/+$/, "");
   const expoHost = resolveExpoHost();
   if (!expoHost) {
-    return rawBaseUrl;
+    return trimmed;
   }
 
   // In Expo Go on a real device, localhost points to the device itself.
-  if (/localhost|127\.0\.0\.1/i.test(rawBaseUrl)) {
-    return rawBaseUrl.replace(/localhost|127\.0\.0\.1/i, expoHost);
+  if (/localhost|127\.0\.0\.1/i.test(trimmed)) {
+    return trimmed.replace(/localhost|127\.0\.0\.1/i, expoHost);
   }
 
-  return rawBaseUrl;
+  return trimmed;
 }
 
 export const appConfig = {

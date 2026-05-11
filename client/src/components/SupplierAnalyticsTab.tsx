@@ -18,14 +18,12 @@ import {
   Area,
 } from "recharts";
 
-export function SupplierAnalyticsTab({ hasSubscription }: { hasSubscription: boolean }) {
+export function SupplierAnalyticsTab() {
   const { data, isLoading, error } = useQuery<any>({
     queryKey: ["/api/supplier/analytics"],
-    enabled: hasSubscription,
   });
   const advanced = useQuery<any>({
     queryKey: ["/api/supplier/analytics", "advanced"],
-    enabled: hasSubscription,
     queryFn: async () => {
       const res = await fetch("/api/supplier/analytics?detail=advanced", { credentials: "include" });
       if (res.status === 403) return null;
@@ -34,14 +32,6 @@ export function SupplierAnalyticsTab({ hasSubscription }: { hasSubscription: boo
     },
   });
 
-  if (!hasSubscription) {
-    return (
-      <div className="text-center py-12 text-muted-foreground">
-        <BarChart3 className="h-12 w-12 mx-auto mb-4 opacity-50" />
-        <p>Subscribe to access analytics and reporting.</p>
-      </div>
-    );
-  }
   if (isLoading || !data) {
     return (
       <div className="flex items-center justify-center py-12">
