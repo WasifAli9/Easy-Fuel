@@ -3,7 +3,7 @@ import type { Server } from "http";
 import type { IncomingMessage } from "http";
 import { parse } from "url";
 import type { ParsedUrlQuery } from "querystring";
-import { getLocalUserFromAccessToken } from "./auth-local";
+import { getLocalUserFromAccessToken, getUserIdFromWebSocketHandshakeToken } from "./auth-local";
 import { db } from "./db";
 import { profiles } from "@shared/schema";
 import { eq } from "drizzle-orm";
@@ -94,17 +94,22 @@ class WebSocketService {
         let user: { id: string } | null = null;
         let error: { message?: string } | null = null;
         if (token && token !== "cookie-session") {
-          const localUser = await getLocalUserFromAccessToken(token);
-          if (localUser) {
-            user = { id: localUser.id };
+          const wsHandshakeUserId = getUserIdFromWebSocketHandshakeToken(token);
+          if (wsHandshakeUserId) {
+            user = { id: wsHandshakeUserId };
           } else {
-            // Graceful fallback: browser/mobile may carry a stale token query while cookie session is valid.
-            const cookieHeader = mergeCookieHeader(req, query);
-            const cookieUser = await getLocalUserFromSessionCookie(cookieHeader);
-            if (cookieUser) {
-              user = { id: cookieUser.id };
+            const localUser = await getLocalUserFromAccessToken(token);
+            if (localUser) {
+              user = { id: localUser.id };
             } else {
-              error = { message: "Invalid local token" };
+              // Graceful fallback: browser/mobile may carry a stale token query while cookie session is valid.
+              const cookieHeader = mergeCookieHeader(req, query);
+              const cookieUser = await getLocalUserFromSessionCookie(cookieHeader);
+              if (cookieUser) {
+                user = { id: cookieUser.id };
+              } else {
+                error = { message: "Invalid local token" };
+              }
             }
           }
         } else {

@@ -6,6 +6,47 @@ interface WebSocketMessage {
   payload: any;
 }
 
+/** Cached short-lived WS token from GET /api/auth/ws-token (cookie sessions). Shared across hook instances. */
+let wsHandshakeTokenCache: { token: string; exp: number; userId: string } | null = null;
+
+function invalidateWsHandshakeTokenCacheForUser(userId: string) {
+  if (wsHandshakeTokenCache?.userId === userId) {
+    wsHandshakeTokenCache = null;
+  }
+}
+
+async function buildWebSocketTokenQuery(session: NonNullable<ReturnType<typeof useAuth>["session"]>): Promise<string | null> {
+  if (session.access_token !== "cookie-session") {
+    return `token=${encodeURIComponent(session.access_token)}`;
+  }
+
+  const userId = session.user?.id;
+  if (!userId) {
+    return null;
+  }
+
+  const now = Date.now();
+  if (
+    wsHandshakeTokenCache &&
+    wsHandshakeTokenCache.userId === userId &&
+    wsHandshakeTokenCache.exp > now + 2000
+  ) {
+    return `token=${encodeURIComponent(wsHandshakeTokenCache.token)}`;
+  }
+
+  const r = await fetch("/api/auth/ws-token", { credentials: "include" });
+  if (!r.ok) {
+    return null;
+  }
+  const data = (await r.json()) as { wsToken?: string };
+  const wsToken = data.wsToken;
+  if (!wsToken) {
+    return null;
+  }
+  wsHandshakeTokenCache = { token: wsToken, userId, exp: now + 4 * 60 * 1000 };
+  return `token=${encodeURIComponent(wsToken)}`;
+}
+
 export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
   const { session } = useAuth();
   const wsRef = useRef<WebSocket | null>(null);
@@ -14,15 +55,17 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 5;
   const onMessageRef = useRef(onMessage);
+  const cancelledRef = useRef(false);
 
-  // Keep the callback ref up to date
   useEffect(() => {
     onMessageRef.current = onMessage;
   }, [onMessage]);
 
   useEffect(() => {
+    cancelledRef.current = false;
+
     if (!session?.access_token) {
-      // Close connection if no session
+      wsHandshakeTokenCache = null;
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
@@ -31,9 +74,7 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
       return;
     }
 
-    // Check if token is expired
     if (session.expires_at && session.expires_at * 1000 < Date.now()) {
-      // Token expired - don't attempt connection
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
@@ -42,38 +83,39 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
       return;
     }
 
-    // Prevent multiple connections
-    if (wsRef.current?.readyState === WebSocket.OPEN || 
-        wsRef.current?.readyState === WebSocket.CONNECTING) {
-      return; // Already connected or connecting
+    if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) {
+      return;
     }
 
-    const connect = () => {
-      // Double-check before creating new connection
-      if (wsRef.current?.readyState === WebSocket.OPEN || 
-          wsRef.current?.readyState === WebSocket.CONNECTING) {
-        return; // Already connected or connecting
+    const connect = async () => {
+      if (cancelledRef.current) {
+        return;
+      }
+      if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) {
+        return;
       }
 
       try {
-        const tokenQuery =
-          session.access_token && session.access_token !== "cookie-session"
-            ? `token=${encodeURIComponent(session.access_token)}`
-            : "";
+        const tokenQuery = await buildWebSocketTokenQuery(session);
+        if (cancelledRef.current || !tokenQuery) {
+          if (process.env.NODE_ENV === "development" && session.access_token && !tokenQuery) {
+            console.warn("[useWebSocket] Missing WebSocket token (session not ready or /api/auth/ws-token failed).");
+          }
+          return;
+        }
+
         const explicitWsUrl = (import.meta as any)?.env?.VITE_WS_URL as string | undefined;
         let wsUrl = "";
 
         if (explicitWsUrl && explicitWsUrl.trim()) {
           const sep = explicitWsUrl.includes("?") ? "&" : "?";
-          wsUrl = `${explicitWsUrl}${tokenQuery ? `${sep}${tokenQuery}` : ""}`;
+          wsUrl = `${explicitWsUrl}${sep}${tokenQuery}`;
         } else {
-          // Default to same-origin /ws endpoint so dev/prod reverse proxies both work.
           const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
           const wsHost = window.location.host;
-          wsUrl = `${wsProtocol}//${wsHost}/ws${tokenQuery ? `?${tokenQuery}` : ""}`;
+          wsUrl = `${wsProtocol}//${wsHost}/ws?${tokenQuery}`;
         }
-        
-        // Validate URL before creating WebSocket
+
         if (wsUrl.includes("undefined")) {
           console.error("[useWebSocket] Invalid WebSocket URL constructed:", wsUrl);
           throw new Error(`Invalid WebSocket URL: ${wsUrl}`);
@@ -82,7 +124,6 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
         const ws = new WebSocket(wsUrl);
 
         ws.onopen = () => {
-          // Only log in development
           if (process.env.NODE_ENV === "development") {
             console.log("[useWebSocket] Connected successfully");
           }
@@ -93,18 +134,15 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
         ws.onmessage = (event) => {
           try {
             const message: WebSocketMessage = JSON.parse(event.data);
-            
-            // Handle ping/pong
+
             if (message.type === "pong") {
               return;
             }
-            
-            // Only log in development
+
             if (process.env.NODE_ENV === "development" && message.type !== "pong") {
               console.log("[useWebSocket] Message received:", message.type);
             }
-            
-            // Call the message handler using ref to avoid stale closures
+
             if (onMessageRef.current) {
               try {
                 onMessageRef.current(message);
@@ -133,8 +171,6 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
         };
 
         ws.onerror = (error) => {
-          // Suppress WebSocket errors - they're handled by onclose
-          // Only log in development for debugging
           if (process.env.NODE_ENV === "development") {
             console.warn("[useWebSocket] Connection error (handled by onclose):", error);
           }
@@ -144,36 +180,50 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
           setIsConnected(false);
           wsRef.current = null;
 
-          // Don't reconnect if user logged out (no session)
           if (!session?.access_token) {
-            return; // User logged out - don't attempt reconnection
+            return;
           }
 
-          // Only log errors or max attempts, not normal reconnections
-          if (event.code === 1008 && event.reason === "Invalid authentication token") {
-            // Token expired or invalid - don't reconnect, wait for new session
-            // Suppress console errors for expected auth failures
-            return; // Don't attempt to reconnect with invalid token
+          const isAuthClose = event.code === 1008 && event.reason === "Invalid authentication token";
+          if (isAuthClose && session.access_token === "cookie-session" && session.user?.id) {
+            invalidateWsHandshakeTokenCacheForUser(session.user.id);
+            if (reconnectAttempts.current < maxReconnectAttempts) {
+              reconnectAttempts.current++;
+              const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
+              if (process.env.NODE_ENV === "development") {
+                console.log(
+                  `[useWebSocket] WS token rejected; refreshing and reconnecting in ${delay}ms (${reconnectAttempts.current}/${maxReconnectAttempts})`,
+                );
+              }
+              reconnectTimeoutRef.current = setTimeout(() => {
+                if (session?.access_token) {
+                  void connect();
+                }
+              }, delay);
+            }
+            return;
           }
 
-          // Attempt to reconnect only for non-auth errors and if we still have a session
+          if (isAuthClose) {
+            return;
+          }
+
           if (event.code !== 1008 && session?.access_token && reconnectAttempts.current < maxReconnectAttempts) {
             reconnectAttempts.current++;
             const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
-            
-            // Only log in development
+
             if (process.env.NODE_ENV === "development") {
-              console.log(`[useWebSocket] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current}/${maxReconnectAttempts})`);
+              console.log(
+                `[useWebSocket] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current}/${maxReconnectAttempts})`,
+              );
             }
-            
+
             reconnectTimeoutRef.current = setTimeout(() => {
-              // Check session again before reconnecting
               if (session?.access_token) {
-                connect();
+                void connect();
               }
             }, delay);
           } else if (reconnectAttempts.current >= maxReconnectAttempts && session?.access_token) {
-            // Only log if we still have a session (not logged out)
             if (process.env.NODE_ENV === "development") {
               console.warn("[useWebSocket] Max reconnection attempts reached");
             }
@@ -187,9 +237,10 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
       }
     };
 
-    connect();
+    void connect();
 
     return () => {
+      cancelledRef.current = true;
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
@@ -199,8 +250,7 @@ export function useWebSocket(onMessage?: (message: WebSocketMessage) => void) {
       }
       setIsConnected(false);
     };
-  }, [session?.access_token]);
+  }, [session?.access_token, session?.user?.id, session?.expires_at]);
 
   return { isConnected };
 }
-

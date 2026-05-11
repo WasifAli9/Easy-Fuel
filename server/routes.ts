@@ -32,6 +32,7 @@ import {
   uploadUrlToObjectPath,
   writeLocalObject,
 } from "./local-object-storage";
+import { signWebSocketHandshakeToken } from "./auth-local";
 
 const OBJECT_STORAGE_PROVIDER = (process.env.OBJECT_STORAGE_PROVIDER || "local").toLowerCase();
 
@@ -256,6 +257,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       },
       profile: profileJson,
     });
+  });
+
+  app.get("/api/auth/ws-token", requireAuth, (req, res) => {
+    const user = (req as any).user;
+    if (!user?.id) return res.status(401).json({ error: "Unauthorized" });
+    return res.json({ wsToken: signWebSocketHandshakeToken(user.id) });
   });
 
   app.post("/api/auth/change-password", requireAuth, async (_req, res) => res.json({ ok: true }));

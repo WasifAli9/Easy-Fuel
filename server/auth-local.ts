@@ -13,6 +13,11 @@ type TokenPayload = {
   type: "access" | "refresh";
 };
 
+type WsTokenPayload = {
+  sub: string;
+  type: "ws";
+};
+
 export type AuthenticatedUser = {
   id: string;
   email: string;
@@ -21,6 +26,7 @@ export type AuthenticatedUser = {
 
 const ACCESS_TTL_SECONDS = Number(process.env.ACCESS_TOKEN_TTL_SECONDS || 60 * 60);
 const REFRESH_TTL_SECONDS = Number(process.env.REFRESH_TOKEN_TTL_SECONDS || 60 * 60 * 24 * 30);
+const WS_TOKEN_TTL_SECONDS = Number(process.env.WS_TOKEN_TTL_SECONDS || 60 * 5);
 const JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || "dev_access_secret_change_me";
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "dev_refresh_secret_change_me";
 let initialized = false;
@@ -218,6 +224,24 @@ export async function getLocalUserFromAccessToken(token: string): Promise<Authen
     if (payload.type !== "access") return null;
     const role = await getRoleByUserId(payload.sub);
     return { id: payload.sub, email: payload.email, role };
+  } catch {
+    return null;
+  }
+}
+
+/** Short-lived token for WebSocket when proxies do not forward Cookie on the upgrade request. */
+export function signWebSocketHandshakeToken(userId: string): string {
+  return jwt.sign({ sub: userId, type: "ws" } satisfies WsTokenPayload, JWT_ACCESS_SECRET, {
+    expiresIn: WS_TOKEN_TTL_SECONDS,
+  });
+}
+
+export function getUserIdFromWebSocketHandshakeToken(token: string): string | null {
+  if (!token) return null;
+  try {
+    const payload = jwt.verify(token, JWT_ACCESS_SECRET) as WsTokenPayload;
+    if (payload.type !== "ws" || !payload.sub) return null;
+    return payload.sub;
   } catch {
     return null;
   }
