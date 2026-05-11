@@ -1,9 +1,15 @@
 import { Router } from "express";
-import { inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db, pool } from "./db";
 import { createDrizzleCompat } from "./drizzle-compat";
 import { sendDriverAcceptanceEmail, sendDeliveryCompletionEmail } from "./email-service";
-import { deliveryAddresses, insertDriverPricingSchema, insertPricingHistorySchema } from "@shared/schema";
+import {
+  deliveryAddresses,
+  fuelTypes,
+  insertDriverPricingSchema,
+  insertPricingHistorySchema,
+  orders as ordersTable,
+} from "@shared/schema";
 import { websocketService } from "./websocket";
 import { pushNotificationService } from "./push-service";
 import { cleanupChatForOrder, ensureChatThreadForAssignment } from "./chat-service";
@@ -800,37 +806,49 @@ router.get("/stats", async (req, res) => {
       totalDeliveries,
     };
     if (detail === "advanced") {
-      const { data: ordersWithFuel } = await drizzleAdmin
-        .from("orders")
-        .select("id, delivery_fee_cents, total_cents, fuel_price_cents, litres, delivered_at, fuel_types(label)")
-        .eq("assigned_driver_id", driver.id)
-        .eq("state", "delivered")
-        .order("delivered_at", { ascending: false });
+      // Real join: drizzle-compat ignores nested `fuel_types(...)` in `.select()` (flat select only).
+      const ordersWithFuel = await db
+        .select({
+          id: ordersTable.id,
+          deliveryFeeCents: ordersTable.deliveryFeeCents,
+          totalCents: ordersTable.totalCents,
+          fuelPriceCents: ordersTable.fuelPriceCents,
+          litres: ordersTable.litres,
+          deliveredAt: ordersTable.deliveredAt,
+          fuelTypeLabel: fuelTypes.label,
+          fuelTypeCode: fuelTypes.code,
+        })
+        .from(ordersTable)
+        .leftJoin(fuelTypes, eq(ordersTable.fuelTypeId, fuelTypes.id))
+        .where(and(eq(ordersTable.assignedDriverId, driver.id), eq(ordersTable.state, "delivered")))
+        .orderBy(desc(ordersTable.deliveredAt));
       const byWeek: Record<string, number> = {};
       const byFuelType: Record<string, number> = {};
       const fuelCostByDelivery: { id: string; deliveredAt: string; litres: number; fuelType: string; fuelCostCents: number; deliveryFeeCents: number }[] = [];
       let totalFuelCostCents = 0;
-      (ordersWithFuel || []).forEach((o: any) => {
-        const cents = Number(o.delivery_fee_cents) || Number(o.total_cents) || 0;
-        const label = o.fuel_types?.label || "Other";
+      ordersWithFuel.forEach((o) => {
+        const cents = Number(o.deliveryFeeCents) || Number(o.totalCents) || 0;
+        const labelRaw = (o.fuelTypeLabel && String(o.fuelTypeLabel).trim()) || "";
+        const codeRaw = (o.fuelTypeCode && String(o.fuelTypeCode).trim()) || "";
+        const label = labelRaw || (codeRaw ? codeRaw.toUpperCase() : "Unknown fuel");
         byFuelType[label] = (byFuelType[label] || 0) + cents;
-        if (o.delivered_at) {
-          const d = new Date(o.delivered_at);
+        if (o.deliveredAt) {
+          const d = o.deliveredAt instanceof Date ? o.deliveredAt : new Date(o.deliveredAt);
           const weekKey = `${d.getFullYear()}-W${String(Math.ceil(d.getDate() / 7)).padStart(2, "0")}`;
           byWeek[weekKey] = (byWeek[weekKey] || 0) + cents;
         }
-        const litresNum = parseFloat(o.litres) || 0;
-        const pricePerLitreCents = Number(o.fuel_price_cents) || 0;
+        const litresNum = parseFloat(String(o.litres)) || 0;
+        const pricePerLitreCents = Number(o.fuelPriceCents) || 0;
         const fuelCostCents = Math.round(pricePerLitreCents * litresNum);
         totalFuelCostCents += fuelCostCents;
         if (fuelCostByDelivery.length < 15) {
           fuelCostByDelivery.push({
             id: o.id,
-            deliveredAt: o.delivered_at,
+            deliveredAt: o.deliveredAt as string,
             litres: litresNum,
             fuelType: label,
             fuelCostCents,
-            deliveryFeeCents: Number(o.delivery_fee_cents) || 0,
+            deliveryFeeCents: Number(o.deliveryFeeCents) || 0,
           });
         }
       });
@@ -852,19 +870,31 @@ router.get("/stats/export", async (req, res) => {
   try {
     const { data: driver } = await drizzleAdmin.from("drivers").select("id").eq("user_id", user.id).maybeSingle();
     if (!driver) return res.status(404).json({ error: "Driver not found" });
-    const { data: orders } = await drizzleAdmin
-      .from("orders")
-      .select("id, total_cents, delivery_fee_cents, litres, delivered_at, fuel_types(label)")
-      .eq("assigned_driver_id", driver.id)
-      .eq("state", "delivered")
-      .order("delivered_at", { ascending: false });
+    const deliveredOrdersForExport = await db
+      .select({
+        id: ordersTable.id,
+        totalCents: ordersTable.totalCents,
+        deliveryFeeCents: ordersTable.deliveryFeeCents,
+        litres: ordersTable.litres,
+        deliveredAt: ordersTable.deliveredAt,
+        fuelTypeLabel: fuelTypes.label,
+        fuelTypeCode: fuelTypes.code,
+      })
+      .from(ordersTable)
+      .leftJoin(fuelTypes, eq(ordersTable.fuelTypeId, fuelTypes.id))
+      .where(and(eq(ordersTable.assignedDriverId, driver.id), eq(ordersTable.state, "delivered")))
+      .orderBy(desc(ordersTable.deliveredAt));
     if (format === "csv") {
       const header = "Date,Delivery fee (R),Total (R),Litres,Fuel type\n";
-      const rows = (orders || []).map((o: any) => {
-        const d = o.delivered_at ? new Date(o.delivered_at).toISOString().split("T")[0] : "";
-        const fee = ((Number(o.delivery_fee_cents) || 0) / 100).toFixed(2);
-        const total = ((Number(o.total_cents) || 0) / 100).toFixed(2);
-        const label = (o.fuel_types?.label || "").replace(/"/g, '""');
+      const rows = deliveredOrdersForExport.map((o) => {
+        const d = o.deliveredAt ? new Date(o.deliveredAt as Date).toISOString().split("T")[0] : "";
+        const fee = ((Number(o.deliveryFeeCents) || 0) / 100).toFixed(2);
+        const total = ((Number(o.totalCents) || 0) / 100).toFixed(2);
+        const labelText =
+          (o.fuelTypeLabel && String(o.fuelTypeLabel).trim()) ||
+          (o.fuelTypeCode && String(o.fuelTypeCode).trim().toUpperCase()) ||
+          "";
+        const label = labelText.replace(/"/g, '""');
         return `${d},${fee},${total},${o.litres || ""},"${label}"`;
       });
       res.setHeader("Content-Type", "text/csv");

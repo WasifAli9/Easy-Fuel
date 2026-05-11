@@ -24,7 +24,6 @@ export function SignaturePad({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   /** Synchronous flag so move handlers see "drawing" before React re-renders (fixes missing strokes). */
   const drawingRef = useRef(false);
-  const [isDrawing, setIsDrawing] = useState(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
