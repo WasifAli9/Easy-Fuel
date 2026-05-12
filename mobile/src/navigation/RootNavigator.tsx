@@ -51,7 +51,7 @@ export function RootNavigator() {
       ) : role === "company" ? (
         <Stack.Screen name="CompanyHome" component={RoleTabs} />
       ) : (
-        <Stack.Screen name="CustomerHome" component={CustomerNavigator} />
+        <Stack.Screen name="CustomerRoot" component={CustomerNavigator} />
       )}
     </Stack.Navigator>
   );

@@ -2,9 +2,16 @@ const { withAndroidManifest, withDangerousMod, withInfoPlist } = require("@expo/
 const fs = require("fs");
 const path = require("path");
 
+function firstExistingPath(candidates) {
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 /**
  * Android + iOS network posture for Easy Fuel (aligned with Inspect360 pattern).
- * Optional PEM at assets/certs/intermediate-ca-bundle.pem is bundled when present
+ * Optional intermediate cert bundle (.pem/.crt/.cer) is bundled when present
  * (custom CA chain); otherwise system + user trust anchors are used.
  */
 const withNetworkSecurity = (config) => {
@@ -44,7 +51,15 @@ const withNetworkSecurity = (config) => {
         "res",
         "raw",
       );
-      const certSourcePath = path.join(projectRoot, "assets", "certs", "intermediate-ca-bundle.pem");
+      const certSourcePath = firstExistingPath([
+        path.join(projectRoot, "assets", "certs", "intermediate-ca-bundle.pem"),
+        path.join(projectRoot, "assets", "certs", "intermediate-ca-bundle.crt"),
+        path.join(projectRoot, "assets", "certs", "intermediate-ca-bundle.cer"),
+        path.join(projectRoot, "ssl", "intermediate-ca-bundle.pem"),
+        path.join(projectRoot, "ssl", "intermediate-ca-bundle.crt"),
+        path.join(projectRoot, "ssl", "intermediate-ca-bundle.cer"),
+        path.join(projectRoot, "STAR_easyfuel_ai", "STAR_easyfuel_ai.crt"),
+      ]);
 
       if (!fs.existsSync(androidResPath)) {
         fs.mkdirSync(androidResPath, { recursive: true });
@@ -54,10 +69,10 @@ const withNetworkSecurity = (config) => {
       }
 
       let includeBundledCa = false;
-      if (fs.existsSync(certSourcePath)) {
+      if (certSourcePath) {
         fs.copyFileSync(certSourcePath, path.join(androidRawPath, "intermediate_ca_bundle.pem"));
         includeBundledCa = true;
-        console.log("✓ Bundled intermediate CA for Easy Fuel (Android)");
+        console.log(`✓ Bundled intermediate CA for Easy Fuel (Android): ${path.basename(certSourcePath)}`);
       }
 
       const bundledAnchor = includeBundledCa

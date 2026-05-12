@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FlatList, Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActivityIndicator, Card, Chip, SegmentedButtons, Text, TextInput } from "react-native-paper";
 import { Button } from "@/design/paper-button";
@@ -71,6 +71,7 @@ export function DriverOrdersScreen() {
   const [pendingCompleteOrderId, setPendingCompleteOrderId] = useState<string | null>(null);
   const [signaturePadKey, setSignaturePadKey] = useState(0);
   const signatureRef = useRef<any>(null);
+  const orderModalScrollRef = useRef<ScrollView>(null);
   const queryClient = useQueryClient();
   const setHideDriverHeader = useUiOverlayStore((state) => state.setHideDriverHeader);
   const insets = useSafeAreaInsets();
@@ -253,12 +254,20 @@ export function DriverOrdersScreen() {
                   <MaterialCommunityIcons name="close" size={26} color={theme.colors.onSurface} />
                 </Pressable>
               </View>
-              <ScrollView
-                style={styles.modalScroll}
-                contentContainerStyle={styles.modalScrollContent}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
+              <KeyboardAvoidingView
+                style={styles.modalKeyboardWrap}
+                behavior={Platform.OS === "ios" ? "padding" : undefined}
+                keyboardVerticalOffset={Platform.OS === "ios" ? Math.max(insets.top, 12) + 8 : 0}
               >
+                <ScrollView
+                  ref={orderModalScrollRef}
+                  style={styles.modalScroll}
+                  contentContainerStyle={styles.modalScrollContent}
+                  keyboardShouldPersistTaps="handled"
+                  keyboardDismissMode="on-drag"
+                  automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+                  showsVerticalScrollIndicator={false}
+                >
                 <View style={[styles.statusPill, { backgroundColor: theme.colors.primaryContainer }]}>
                   <View style={[styles.statusDot, { backgroundColor: theme.colors.primary }]} />
                   <Text style={[styles.statusPillText, { color: theme.colors.primary }]}>
@@ -426,9 +435,17 @@ export function DriverOrdersScreen() {
                 </Button>
 
                 {chatVisible ? (
-                  <OrderChatPanel orderId={selectedOrder.id} viewerRole="driver" orderDetailLayout />
+                  <OrderChatPanel
+                    orderId={selectedOrder.id}
+                    viewerRole="driver"
+                    orderDetailLayout
+                    onMessageInputFocus={() =>
+                      orderModalScrollRef.current?.scrollToEnd({ animated: true })
+                    }
+                  />
                 ) : null}
-              </ScrollView>
+                </ScrollView>
+              </KeyboardAvoidingView>
             </>
           ) : null}
         </View>
@@ -620,6 +637,9 @@ const getStyles = (theme: typeof lightTheme) => {
   modalCloseHit: {
     padding: 8,
     marginRight: -4,
+  },
+  modalKeyboardWrap: {
+    flex: 1,
   },
   modalScroll: {
     flex: 1,

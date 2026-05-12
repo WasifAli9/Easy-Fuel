@@ -14,14 +14,7 @@ import { handleOzowSubscriptionWebhook, handleOzowSupplierSubscriptionWebhook } 
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { ObjectPermission } from "./objectAcl";
 import { websocketService } from "./websocket";
-import {
-  bootstrapLocalAuth,
-  changeLocalPassword,
-  getLocalUserFromRequest,
-  loginLocalUser,
-  refreshLocalTokens,
-  registerLocalUser,
-} from "./auth-local";
+import { bootstrapLocalAuth, changeLocalPassword, signWebSocketHandshakeToken } from "./auth-local";
 import { db } from "./db";
 import { companies, fuelTypes, profiles } from "@shared/schema";
 import { and, asc, eq, ilike } from "drizzle-orm";
@@ -33,14 +26,15 @@ import {
   signObjectViewToken,
   streamLocalObjectToResponse,
 } from "./object-view-token";
-import { getRequestUser } from "./auth";
+import {
+  buildAuthUserApiPayload,
+  getRequestUser,
+  handleSessionPasswordLogin,
+  registerSessionUser,
+} from "./auth";
 
-/** API user: Bearer JWT (`auth-local`) or Passport session (`setupAuth`). */
+/** API user: Passport session cookie only (Inspect360-style). */
 export async function resolveAuthedUser(req: Request) {
-  const local = await getLocalUserFromRequest(req);
-  if (local) {
-    return { id: local.id, email: local.email };
-  }
   const sessionUser = getRequestUser(req);
   if (sessionUser?.id) {
     return { id: sessionUser.id, email: sessionUser.email };
@@ -52,14 +46,13 @@ export async function resolveAuthedUser(req: Request) {
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const user = await resolveAuthedUser(req);
   if (!user) {
-    // Log why authentication failed for debugging
-    const hasAuthHeader = !!req.headers.authorization;
-    const hasCookie = !!req.headers.cookie;
-    console.error(`❌ Auth failed for ${req.method} ${req.path}:`, {
-      hasAuthHeader,
-      hasCookie: hasCookie ? 'yes (checking for token...)' : 'no',
-      userAgent: req.headers['user-agent']?.substring(0, 50)
-    });
+    if (process.env.NODE_ENV === "development") {
+      const hasCookie = !!req.headers.cookie;
+      console.error(`❌ Auth failed for ${req.method} ${req.path}:`, {
+        hasCookie,
+        userAgent: String(req.headers["user-agent"] ?? "").slice(0, 80),
+      });
+    }
     return res.status(401).json({ error: "Unauthorized" });
   }
   (req as any).user = user;
@@ -93,66 +86,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   await bootstrapLocalAuth();
 
-  const handlePasswordLogin = async (req: Request, res: Response) => {
-    try {
-      const email = typeof req.body?.email === "string" ? req.body.email : "";
-      const password = typeof req.body?.password === "string" ? req.body.password : "";
-      if (!email.trim() || !password) {
-        return res.status(400).json({ message: "Email and password are required." });
-      }
-      const result = await loginLocalUser(email, password);
-      return res.json(result);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Login failed.";
-      return res.status(401).json({ message });
-    }
-  };
+  // Inspect360-style: POST { email, password } → Set-Cookie session + JSON user (no JWT).
+  app.post("/api/login", handleSessionPasswordLogin);
+  app.post("/api/auth/login", handleSessionPasswordLogin);
 
-  // Same contract as Inspect360 mobile: POST JSON { email, password } → JWT + user (no cookies required).
-  app.post("/api/login", handlePasswordLogin);
-  app.post("/api/auth/login", handlePasswordLogin);
+  app.post("/api/register", (req: Request, res: Response, next: NextFunction) => {
+    void (async () => {
+      try {
+        const email = typeof req.body?.email === "string" ? req.body.email : "";
+        const password = typeof req.body?.password === "string" ? req.body.password : "";
+        const fullName = typeof req.body?.fullName === "string" ? req.body.fullName : "";
+        const roleRaw = typeof req.body?.role === "string" ? req.body.role : "";
+        const allowed = new Set(["customer", "driver", "supplier", "admin", "company"]);
+        if (!email.trim() || !password || !fullName.trim()) {
+          return res.status(400).json({ message: "email, password, and fullName are required." });
+        }
+        if (!allowed.has(roleRaw)) {
+          return res.status(400).json({ message: "Invalid role." });
+        }
+        if (roleRaw === "admin") {
+          return res.status(403).json({ message: "Admin accounts cannot be registered here." });
+        }
+        const sessionUser = await registerSessionUser({
+          email,
+          password,
+          fullName: fullName.trim(),
+          role: roleRaw as "customer" | "driver" | "supplier" | "admin" | "company",
+        });
 
-  app.post("/api/register", async (req: Request, res: Response) => {
-    try {
-      const email = typeof req.body?.email === "string" ? req.body.email : "";
-      const password = typeof req.body?.password === "string" ? req.body.password : "";
-      const fullName = typeof req.body?.fullName === "string" ? req.body.fullName : "";
-      const roleRaw = typeof req.body?.role === "string" ? req.body.role : "";
-      const allowed = new Set(["customer", "driver", "supplier", "admin", "company"]);
-      if (!email.trim() || !password || !fullName.trim()) {
-        return res.status(400).json({ message: "email, password, and fullName are required." });
+        req.session.regenerate((regenErr) => {
+          if (regenErr) {
+            console.error("[register] session regenerate error:", regenErr);
+          }
+          req.login(sessionUser, (loginErr) => {
+            if (loginErr) {
+              console.error("[register] req.login error:", loginErr);
+              return res.status(500).json({ message: "Account created but sign-in failed." });
+            }
+            req.session.save(async (saveErr) => {
+              if (saveErr) {
+                console.error("[register] session save error:", saveErr);
+              }
+              try {
+                const payload = await buildAuthUserApiPayload(sessionUser.id, sessionUser.email);
+                return res.status(201).json(payload);
+              } catch {
+                return res.status(500).json({ message: "Account created but profile response failed." });
+              }
+            });
+          });
+        });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Registration failed.";
+        return res.status(400).json({ message });
       }
-      if (!allowed.has(roleRaw)) {
-        return res.status(400).json({ message: "Invalid role." });
-      }
-      if (roleRaw === "admin") {
-        return res.status(403).json({ message: "Admin accounts cannot be registered here." });
-      }
-      const result = await registerLocalUser({
-        email,
-        password,
-        fullName: fullName.trim(),
-        role: roleRaw as "customer" | "driver" | "supplier" | "admin" | "company",
-      });
-      return res.json(result);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Registration failed.";
-      return res.status(400).json({ message });
-    }
-  });
-
-  app.post("/api/auth/refresh", async (req: Request, res: Response) => {
-    try {
-      const refreshToken = typeof req.body?.refreshToken === "string" ? req.body.refreshToken : "";
-      if (!refreshToken) {
-        return res.status(400).json({ message: "refreshToken is required." });
-      }
-      const out = await refreshLocalTokens(refreshToken);
-      return res.json(out);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Refresh failed.";
-      return res.status(401).json({ message });
-    }
+    })().catch(next);
   });
 
   /** Inspect360-style current user for mobile AuthContext (`authService.getCurrentUser`). */
@@ -162,28 +150,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(401).json({ error: "Unauthorized" });
     }
     try {
-      const profRows = await db
-        .select({
-          role: profiles.role,
-          fullName: profiles.fullName,
-          phone: profiles.phone,
-          profilePhotoUrl: profiles.profilePhotoUrl,
-        })
-        .from(profiles)
-        .where(eq(profiles.id, u.id))
-        .limit(1);
-      const profile = profRows[0];
-      return res.json({
-        id: u.id,
-        email: u.email ?? "",
-        role: profile?.role ?? null,
-        fullName: profile?.fullName ?? "",
-        phone: profile?.phone ?? null,
-        profilePhotoUrl: profile?.profilePhotoUrl ?? null,
-      });
+      const payload = await buildAuthUserApiPayload(u.id, u.email ?? "");
+      return res.json(payload);
     } catch (e: unknown) {
       console.error("[api/auth/user]", e);
       return res.status(500).json({ message: "Failed to load user." });
+    }
+  });
+
+  /** Short-lived token for WebSocket when the client uses cookie sessions (same as web `useWebSocket`). */
+  app.get("/api/auth/ws-token", requireAuth, (req: Request, res: Response) => {
+    const u = (req as { user?: { id: string } }).user;
+    if (!u?.id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      const wsToken = signWebSocketHandshakeToken(u.id);
+      return res.json({ wsToken });
+    } catch (e: unknown) {
+      console.error("[api/auth/ws-token]", e);
+      return res.status(500).json({ message: "Failed to issue WebSocket token." });
     }
   });
 
@@ -210,8 +196,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/logout", (_req: Request, res: Response) => {
-    res.json({ message: "Logged out successfully" });
+  app.post("/api/logout", (req: Request, res: Response) => {
+    req.logout((logoutErr) => {
+      if (logoutErr) {
+        console.error("[logout] passport logout:", logoutErr);
+      }
+      if (req.session) {
+        req.session.destroy((destroyErr) => {
+          if (destroyErr) {
+            console.error("[logout] session destroy:", destroyErr);
+          }
+          res.clearCookie("easyfuel.sid", { path: "/" });
+          res.json({ message: "Logged out successfully" });
+        });
+      } else {
+        res.json({ message: "Logged out successfully" });
+      }
+    });
   });
 
   app.post("/api/auth/change-password", requireAuth, async (req: Request, res: Response) => {

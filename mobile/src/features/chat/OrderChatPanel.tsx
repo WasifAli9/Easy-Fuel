@@ -58,11 +58,14 @@ export function OrderChatPanel({
   orderId,
   viewerRole,
   orderDetailLayout,
+  onMessageInputFocus,
 }: {
   orderId: string;
   viewerRole: ChatViewerRole;
   /** Styling aligned with order-detail sheet (messages header, bubbles, send control). */
   orderDetailLayout?: boolean;
+  /** Parent ScrollView can scroll to end so the composer stays above the keyboard. */
+  onMessageInputFocus?: () => void;
 }) {
   const mode = useUiThemeStore((state) => state.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
@@ -189,6 +192,10 @@ export function OrderChatPanel({
           outlineColor={theme.colors.outline}
           activeOutlineColor={theme.colors.primary}
           dense={orderDetailLayout}
+          onFocus={() => {
+            onMessageInputFocus?.();
+            requestAnimationFrame(() => onMessageInputFocus?.());
+          }}
         />
         <Button
           mode="contained"

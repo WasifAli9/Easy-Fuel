@@ -1,15 +1,22 @@
 import { useState } from "react";
-import { Alert, Image, KeyboardAvoidingView, Platform, StyleSheet, View } from "react-native";
+import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
 import { Button, Text, TextInput } from "react-native-paper";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/contexts/AuthContext";
+import { EasyFuelLogo } from "@/design/EasyFuelLogo";
 import { appTheme } from "@/design/theme";
-import { appConfig, getResolvedApiBaseUrl } from "@/services/config";
+import { getResolvedApiBaseUrl } from "@/services/config";
 
 function isLikelyNetworkFailure(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   if (error.name === "AbortError") return true;
   const m = error.message.toLowerCase();
-  return /network request failed|failed to fetch|fetch failed|network error|timed out|offline|abort/i.test(m);
+  const code = String((error as { code?: string }).code ?? "").toLowerCase();
+  return (
+    /network request failed|failed to fetch|fetch failed|network error|timed out|timeout|offline|abort|econnrefused|econnreset|etimedout|econnaborted|socket hang up|certificate|ssl handshake|unable to resolve host|enotfound|err_network|load failed|could not connect|the internet connection appears to be offline|not connected to the internet|secured connection|app transport security|ats|nsurlerrordomain|cancelled|canceled|dns/i.test(
+      `${m} ${code}`,
+    )
+  );
 }
 
 function isLikelyInvalidCredentials(error: unknown): boolean {
@@ -27,7 +34,8 @@ export function SignInScreen() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const logoUri = `${appConfig.apiBaseUrl.replace(/\/api\/?$/, "")}/icon-512.png`;
+  const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
 
   async function onSubmit() {
     try {
@@ -49,68 +57,86 @@ export function SignInScreen() {
           `Check that ${portalOrigin} opens in your phone's browser. Try Wi‑Fi or disable VPN. ${envHint}`,
         );
       } else {
-        Alert.alert(
-          "Sign in failed",
-          error instanceof Error ? error.message : "Something went wrong. Please try again.",
-        );
+        const msg = error instanceof Error ? error.message : "Something went wrong. Please try again.";
+        const title =
+          /server reply was missing|could not read the server response|expected json from the server/i.test(msg)
+            ? "Wrong server or API version"
+            : /administrator sign-in|app role assigned/i.test(msg)
+              ? "Account not allowed here"
+              : "Sign in failed";
+        Alert.alert(title, msg);
       }
     } finally {
       setLoading(false);
     }
   }
 
-  return (
-    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.container}>
-      <View style={styles.card}>
-        <View style={styles.logoWrap}>
-          <Image source={{ uri: logoUri }} style={styles.logoImage} />
-        </View>
-        <Text variant="headlineMedium" style={styles.title}>
-          Easy Fuel
-        </Text>
-        <Text variant="titleMedium" style={styles.subtitle}>
-          Welcome back
-        </Text>
-        <Text variant="bodyMedium" style={styles.description}>
-          Sign in to manage orders, deliveries, and account activity.
-        </Text>
+  const scrollMinHeight = Math.max(0, windowHeight - insets.top - insets.bottom);
 
-        <TextInput
-          mode="outlined"
-          label="Email"
-          autoCapitalize="none"
-          keyboardType="email-address"
-          value={email}
-          onChangeText={setEmail}
-          style={styles.input}
-          left={<TextInput.Icon icon="email-outline" />}
-        />
-        <TextInput
-          mode="outlined"
-          label="Password"
-          secureTextEntry={!showPassword}
-          value={password}
-          onChangeText={setPassword}
-          style={styles.input}
-          left={<TextInput.Icon icon="lock-outline" />}
-          right={
-            <TextInput.Icon
-              icon={showPassword ? "eye-off-outline" : "eye-outline"}
-              onPress={() => setShowPassword((prev) => !prev)}
-            />
-          }
-        />
-        <Button
-          mode="contained"
-          loading={loading || authBusy}
-          onPress={onSubmit}
-          disabled={loading || authBusy || !email.trim() || !password}
-          style={styles.button}
-          contentStyle={styles.buttonContent}
-        >
-          Sign In
-        </Button>
-      </View>
+  return (
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      keyboardVerticalOffset={Platform.OS === "ios" ? insets.top : 0}
+    >
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[styles.scrollContent, { minHeight: scrollMinHeight }]}
+        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+      >
+        <View style={styles.card}>
+          <View style={styles.logoWrap}>
+            <EasyFuelLogo size={68} borderRadius={14} />
+          </View>
+          <Text variant="headlineMedium" style={styles.title}>
+            Easy Fuel
+          </Text>
+          <Text variant="titleMedium" style={styles.subtitle}>
+            Welcome back
+          </Text>
+          <Text variant="bodyMedium" style={styles.description}>
+            Sign in to manage orders, deliveries, and account activity.
+          </Text>
+
+          <TextInput
+            mode="outlined"
+            label="Email"
+            autoCapitalize="none"
+            keyboardType="email-address"
+            value={email}
+            onChangeText={setEmail}
+            style={styles.input}
+            left={<TextInput.Icon icon="email-outline" />}
+          />
+          <TextInput
+            mode="outlined"
+            label="Password"
+            secureTextEntry={!showPassword}
+            value={password}
+            onChangeText={setPassword}
+            style={styles.input}
+            left={<TextInput.Icon icon="lock-outline" />}
+            right={
+              <TextInput.Icon
+                icon={showPassword ? "eye-off-outline" : "eye-outline"}
+                onPress={() => setShowPassword((prev) => !prev)}
+              />
+            }
+          />
+          <Button
+            mode="contained"
+            loading={loading || authBusy}
+            onPress={onSubmit}
+            disabled={loading || authBusy || !email.trim() || !password}
+            style={styles.button}
+            contentStyle={styles.buttonContent}
+          >
+            Sign In
+          </Button>
+        </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -118,9 +144,13 @@ export function SignInScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: "center",
-    padding: 20,
     backgroundColor: appTheme.colors.background,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 24,
   },
   card: {
     backgroundColor: "#FFFFFF",
@@ -133,19 +163,10 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   logoWrap: {
-    width: 68,
-    height: 68,
-    borderRadius: 14,
-    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
     alignSelf: "center",
     marginBottom: 12,
-  },
-  logoImage: {
-    width: 68,
-    height: 68,
-    borderRadius: 14,
   },
   title: {
     textAlign: "center",

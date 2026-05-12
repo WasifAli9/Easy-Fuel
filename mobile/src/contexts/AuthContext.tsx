@@ -69,6 +69,9 @@ function assertPortalUser(u: User): User {
   return { ...u, role: u.role };
 }
 
+/** Stored in SecureStore when using Passport cookie sessions (Inspect360-style). */
+const COOKIE_SESSION = "cookie-session";
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [bootstrapped, setBootstrapped] = useState(false);
@@ -95,18 +98,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [currentUser]);
 
   const persistSession = useCallback(
-    async (u: User, accessToken: string, refreshToken: string, role: UserRole) => {
+    async (u: User, role: UserRole) => {
       const safeUser = assertPortalUser(u);
       await saveSecureSession({
-        accessToken,
-        refreshToken,
+        accessToken: COOKIE_SESSION,
+        refreshToken: "",
         role,
         userId: safeUser.id,
         email: safeUser.email,
       });
       useSessionStore.getState().setSession({
-        accessToken,
-        refreshToken,
+        accessToken: COOKIE_SESSION,
+        refreshToken: "",
         role,
         userId: safeUser.id,
         email: safeUser.email,
@@ -122,9 +125,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const stored = await getStorageItem(USER_STORAGE_KEY);
       const session = await readSecureSession();
 
-      if (
-        session.accessToken &&
-        session.refreshToken &&
+      if (session.accessToken && session.accessToken !== COOKIE_SESSION && session.refreshToken) {
+        await clearSecureSession();
+        useSessionStore.getState().clearSession();
+        await deleteStorageItem(USER_STORAGE_KEY);
+      } else if (
+        session.accessToken === COOKIE_SESSION &&
         session.role &&
         session.userId &&
         session.email &&
@@ -149,8 +155,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         setUser(fromDisk);
         useSessionStore.getState().setSession({
-          accessToken: session.accessToken,
-          refreshToken: session.refreshToken,
+          accessToken: COOKIE_SESSION,
+          refreshToken: "",
           role: session.role as UserRole,
           userId: session.userId,
           email: session.email,
@@ -182,15 +188,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loginMutation = useMutation({
     mutationFn: async ({ email, password }: { email: string; password: string }) => {
       const result = await authService.login({ email, password });
-      const u = assertPortalUser({
-        id: result.user.id,
-        email: result.user.email ?? email,
-        role: result.user.role,
-      });
-      return { user: u, accessToken: result.accessToken, refreshToken: result.refreshToken, email };
+      try {
+        const u = assertPortalUser({
+          id: result.user.id,
+          email: result.user.email ?? email,
+          role: result.user.role,
+        });
+        return { user: u, email };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes("Admin accounts")) {
+          throw new Error("Administrator sign-in is only available on the web portal, not in this app.");
+        }
+        if (msg.includes("Unable to resolve account role")) {
+          throw new Error(
+            "Your account has no app role assigned (customer, driver, supplier, or company). Ask an admin to set your role in the portal, then try again.",
+          );
+        }
+        throw e;
+      }
     },
     onSuccess: async (data) => {
-      await persistSession(data.user, data.accessToken, data.refreshToken, data.user.role as UserRole);
+      await persistSession(data.user, data.user.role as UserRole);
       await setStorageItem(LAST_LOGIN_EMAIL_KEY, data.email);
     },
   });

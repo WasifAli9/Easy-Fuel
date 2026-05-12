@@ -27,6 +27,8 @@ export default {
     android: {
       package: "com.easyfuel.mobile",
       versionCode: 1,
+      /** Resize the app window when the keyboard opens so inputs stay visible (vs pan). */
+      softwareKeyboardLayoutMode: "resize",
       permissions: [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",

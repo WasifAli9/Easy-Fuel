@@ -1,5 +1,5 @@
-import { useEffect, useMemo } from "react";
-import { Modal, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
+import { useEffect, useMemo, useRef } from "react";
+import { KeyboardAvoidingView, Modal, Platform, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActivityIndicator, Card, Chip, Divider, Text } from "react-native-paper";
 import { Button } from "@/design/paper-button";
@@ -9,6 +9,7 @@ import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { OrderChatPanel } from "@/features/chat/OrderChatPanel";
 import { formatCustomerOrderAddress } from "@/features/customer/customerOrderUtils";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type Offer = {
   id: string;
@@ -55,6 +56,8 @@ export function CustomerOrderDetailModal({
   const theme = mode === "dark" ? darkTheme : lightTheme;
   const styles = getStyles(theme);
   const queryClient = useQueryClient();
+  const insets = useSafeAreaInsets();
+  const bodyScrollRef = useRef<ScrollView>(null);
 
   const orderQuery = useQuery({
     queryKey: ["/api/orders", orderId],
@@ -123,7 +126,11 @@ export function CustomerOrderDetailModal({
 
   return (
     <Modal visible={visible && !!orderId} animationType="slide" onRequestClose={onDismiss}>
-      <View style={styles.container}>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? insets.top : 0}
+      >
         <View style={styles.header}>
           <Text variant="titleLarge">Order details</Text>
           <Button onPress={onDismiss}>Close</Button>
@@ -136,9 +143,12 @@ export function CustomerOrderDetailModal({
           <Text style={styles.center}>Could not load this order.</Text>
         ) : (
           <ScrollView
+            ref={bodyScrollRef}
             style={styles.bodyScroll}
             contentContainerStyle={styles.scroll}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
             refreshControl={
               <RefreshControl
                 refreshing={orderQuery.isFetching || offersQuery.isFetching}
@@ -226,11 +236,18 @@ export function CustomerOrderDetailModal({
               Messages
             </Text>
             <View style={styles.chatInset}>
-              <OrderChatPanel orderId={orderId!} viewerRole="customer" orderDetailLayout />
+              <OrderChatPanel
+                orderId={orderId!}
+                viewerRole="customer"
+                orderDetailLayout
+                onMessageInputFocus={() =>
+                  bodyScrollRef.current?.scrollToEnd({ animated: true })
+                }
+              />
             </View>
           </ScrollView>
         )}
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

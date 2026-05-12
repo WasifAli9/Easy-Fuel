@@ -1,66 +1,27 @@
-const ACCESS = "easyfuel_access_token";
-const REFRESH = "easyfuel_refresh_token";
-
-function readAccess(): string | null {
-  if (typeof sessionStorage === "undefined") return null;
-  return sessionStorage.getItem(ACCESS);
-}
-
-function readRefresh(): string | null {
-  if (typeof sessionStorage === "undefined") return null;
-  return sessionStorage.getItem(REFRESH);
-}
-
+/**
+ * Legacy JWT session storage — removed in favor of Passport cookie sessions.
+ * Kept as no-ops so older imports do not break; prefer `useAuth().session` for gating.
+ */
 export function getStoredAccessToken(): string | null {
-  return readAccess();
+  return null;
 }
 
 export function getStoredRefreshToken(): string | null {
-  return readRefresh();
+  return null;
 }
 
-export function setStoredTokens(accessToken: string, refreshToken: string) {
-  if (typeof sessionStorage === "undefined") return;
-  sessionStorage.setItem(ACCESS, accessToken);
-  sessionStorage.setItem(REFRESH, refreshToken);
+export function setStoredTokens(_accessToken: string, _refreshToken: string) {
+  /* cookie session */
 }
 
 export function clearStoredTokens() {
-  if (typeof sessionStorage === "undefined") return;
-  sessionStorage.removeItem(ACCESS);
-  sessionStorage.removeItem(REFRESH);
+  /* cookie session cleared via POST /api/logout */
 }
 
-/** Base64url JWT payload decode (exp only; not verified — server validates). */
-export function getJwtExpSeconds(token: string): number | null {
-  try {
-    const part = token.split(".")[1];
-    if (!part) return null;
-    const json = JSON.parse(atob(part.replace(/-/g, "+").replace(/_/g, "/")));
-    return typeof json.exp === "number" ? json.exp : null;
-  } catch {
-    return null;
-  }
+export function getJwtExpSeconds(_token: string): number | null {
+  return null;
 }
 
 export async function refreshSessionTokens(): Promise<{ accessToken: string; refreshToken: string } | null> {
-  const refreshToken = readRefresh();
-  if (!refreshToken) return null;
-  const res = await fetch("/api/auth/refresh", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ refreshToken }),
-  });
-  if (!res.ok) {
-    clearStoredTokens();
-    return null;
-  }
-  const data = (await res.json()) as { accessToken?: string; refreshToken?: string };
-  if (!data.accessToken || !data.refreshToken) {
-    clearStoredTokens();
-    return null;
-  }
-  setStoredTokens(data.accessToken, data.refreshToken);
-  return { accessToken: data.accessToken, refreshToken: data.refreshToken };
+  return null;
 }

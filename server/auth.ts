@@ -9,7 +9,7 @@ import { pool } from "./db";
 
 type Role = "customer" | "driver" | "supplier" | "admin" | "company";
 
-type SessionUser = {
+export type SessionUser = {
   id: string;
   email: string;
   role: Role | null;
@@ -78,7 +78,80 @@ export async function registerSessionUser(input: {
   return { id: userId, email, role } satisfies SessionUser;
 }
 
-/** Same default as previously inlined in setupAuth — used to sign `easyfuel.sid` for mobile login body. */
+/** Same JSON shape as `GET /api/auth/user` (flat user object for login/register responses). */
+export async function buildAuthUserApiPayload(userId: string, emailFallback: string) {
+  const prof = await pool.query(
+    `SELECT role, full_name, phone, profile_photo_url FROM profiles WHERE id = $1`,
+    [userId],
+  );
+  const row = prof.rows[0];
+  return {
+    id: userId,
+    email: emailFallback,
+    role: row?.role ?? null,
+    fullName: row?.full_name ?? "",
+    phone: row?.phone ?? null,
+    profilePhotoUrl: row?.profile_photo_url ?? null,
+  };
+}
+
+/**
+ * Passport local login + session cookie (Inspect360-style). Response is portal user JSON; no JWT.
+ */
+export function handleSessionPasswordLogin(req: Request, res: Response, next: NextFunction) {
+  const email = typeof req.body?.email === "string" ? req.body.email : "";
+  const password = typeof req.body?.password === "string" ? req.body.password : "";
+  if (!email.trim() || !password) {
+    return res.status(400).json({ message: "Email and password are required." });
+  }
+
+  passport.authenticate(
+    "local",
+    (err: unknown, user: false | SessionUser, info: { message?: string } | undefined) => {
+      if (err) {
+        console.error("[login] passport error:", err);
+        return next(err as Error);
+      }
+      if (!user) {
+        return res.status(401).json({ message: info?.message || "Invalid email or password." });
+      }
+
+      const finishLogin = () => {
+        req.login(user, (loginErr) => {
+          if (loginErr) {
+            console.error("[login] req.login error:", loginErr);
+            return res.status(500).json({ message: "Login failed." });
+          }
+          req.session.save(async (saveErr) => {
+            if (saveErr) {
+              console.error("[login] session save error:", saveErr);
+            }
+            try {
+              const payload = await buildAuthUserApiPayload(user.id, user.email);
+              return res.json(payload);
+            } catch {
+              return res.status(500).json({ message: "Failed to load profile." });
+            }
+          });
+        });
+      };
+
+      try {
+        req.session.regenerate((regenErr) => {
+          if (regenErr) {
+            console.error("[login] session regenerate error:", regenErr);
+          }
+          finishLogin();
+        });
+      } catch (e) {
+        console.error("[login] session regenerate threw:", e);
+        finishLogin();
+      }
+    },
+  )(req, res, next);
+}
+
+/** Default session signing secret — set SESSION_SECRET in production. */
 export const SESSION_SIGNING_SECRET = process.env.SESSION_SECRET || "change_me_session_secret";
 
 export function setupAuth(app: Express) {

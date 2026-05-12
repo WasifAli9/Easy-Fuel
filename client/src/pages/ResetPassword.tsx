@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { getStoredAccessToken } from "@/lib/session-tokens";
 import { KeyRound } from "lucide-react";
 
 export default function ResetPassword() {
@@ -15,26 +14,23 @@ export default function ResetPassword() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [isReady, setIsReady] = useState(false);
-  const { updatePassword } = useAuth();
+  const { updatePassword, session, loading: authLoading } = useAuth();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
 
   useEffect(() => {
-    const checkSession = async () => {
-      if (!getStoredAccessToken()) {
-        toast({
-          title: "Sign in required",
-          description: "Sign in first, then open this page to change your password.",
-          variant: "destructive",
-        });
-        setTimeout(() => setLocation("/auth"), 2500);
-        return;
-      }
-      setIsReady(true);
-    };
-
-    void checkSession();
-  }, [toast, setLocation]);
+    if (authLoading) return;
+    if (!session?.access_token) {
+      toast({
+        title: "Sign in required",
+        description: "Sign in first, then open this page to change your password.",
+        variant: "destructive",
+      });
+      setTimeout(() => setLocation("/auth"), 2500);
+      return;
+    }
+    setIsReady(true);
+  }, [authLoading, session?.access_token, toast, setLocation]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

@@ -1,14 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { queryClient } from "@/lib/queryClient";
-import {
-  clearStoredTokens,
-  getJwtExpSeconds,
-  getStoredAccessToken,
-  getStoredRefreshToken,
-  setStoredTokens,
-  refreshSessionTokens,
-} from "@/lib/session-tokens";
-import { getAuthHeaders } from "@/lib/auth-headers";
+import { clearStoredTokens } from "@/lib/session-tokens";
 
 export type AuthUser = {
   id: string;
@@ -39,12 +31,6 @@ type AuthUserResponse = {
   fullName?: string | null;
   phone?: string | null;
   profilePhotoUrl?: string | null;
-};
-
-type LoginResponse = {
-  accessToken: string;
-  refreshToken: string;
-  user: { id: string; email?: string; role?: string | null };
 };
 
 interface AuthContextType {
@@ -84,12 +70,11 @@ function mapUserPayload(data: AuthUserResponse): { user: AuthUser; profile: Prof
   return { user, profile };
 }
 
-function buildSession(access: string, refresh: string, user: AuthUser): AuthSession {
-  const exp = getJwtExpSeconds(access);
+function buildCookieSession(user: AuthUser): AuthSession {
   return {
-    access_token: access,
-    refresh_token: refresh,
-    expires_at: exp ?? Math.floor(Date.now() / 1000) + 3600,
+    access_token: "cookie-session",
+    refresh_token: "",
+    expires_at: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 365,
     user,
   };
 }
@@ -100,49 +85,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const applyAuthPayload = useCallback((access: string, refresh: string, payload: AuthUserResponse) => {
-    setStoredTokens(access, refresh);
-    const { user: u, profile: p } = mapUserPayload(payload);
+  const applyUserFromApi = useCallback((data: AuthUserResponse) => {
+    const { user: u, profile: p } = mapUserPayload(data);
     setUser(u);
     setProfile(p);
-    setSession(buildSession(access, refresh, u));
+    setSession(buildCookieSession(u));
   }, []);
 
   const fetchCurrentUser = useCallback(async (): Promise<boolean> => {
-    let access = getStoredAccessToken();
-    if (!access) {
-      return false;
-    }
-    const exp = getJwtExpSeconds(access);
-    if (exp && exp * 1000 < Date.now() + 45_000) {
-      const refreshed = await refreshSessionTokens();
-      access = refreshed?.accessToken ?? access;
-    }
-    if (!access) return false;
-
     const res = await fetch("/api/auth/user", {
-      headers: { Authorization: `Bearer ${access}`, Accept: "application/json" },
       credentials: "include",
+      headers: { Accept: "application/json" },
     });
-    if (!res.ok) {
+    if (res.status === 401) {
       clearStoredTokens();
       setUser(null);
       setProfile(null);
       setSession(null);
+      return false;
+    }
+    if (!res.ok) {
       return false;
     }
     const data = (await res.json()) as AuthUserResponse;
-    const refresh = getStoredRefreshToken();
-    if (!refresh) {
-      clearStoredTokens();
-      setUser(null);
-      setProfile(null);
-      setSession(null);
-      return false;
-    }
-    applyAuthPayload(access, refresh, data);
+    applyUserFromApi(data);
     return true;
-  }, [applyAuthPayload]);
+  }, [applyUserFromApi]);
 
   useEffect(() => {
     void (async () => {
@@ -156,10 +124,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   async function fetchProfile(userId: string) {
     try {
-      const headers = await getAuthHeaders();
       const res = await fetch("/api/auth/user", {
-        headers: { ...headers, Accept: "application/json" },
         credentials: "include",
+        headers: { Accept: "application/json" },
       });
       if (!res.ok) throw new Error("Failed to load profile");
       const data = (await res.json()) as AuthUserResponse;
@@ -191,20 +158,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         credentials: "include",
         body: JSON.stringify({ email, password }),
       });
-      const body = (await res.json().catch(() => ({}))) as { message?: string } & Partial<LoginResponse>;
+      const body = (await res.json().catch(() => ({}))) as { message?: string } & Partial<AuthUserResponse>;
       if (!res.ok) {
         throw new Error(body.message || "Invalid email or password");
       }
-      if (!body.accessToken || !body.refreshToken || !body.user?.id) {
-        throw new Error("Login response missing tokens");
+      if (!body.id) {
+        throw new Error("Login response missing user");
       }
-      const payload: AuthUserResponse = {
-        id: body.user.id,
-        email: body.user.email ?? email,
-        role: body.user.role ?? null,
-      };
-      applyAuthPayload(body.accessToken, body.refreshToken, payload);
-      await fetchProfile(body.user.id);
+      const payload = body as AuthUserResponse;
+      applyUserFromApi(payload);
+      await fetchProfile(payload.id);
     } finally {
       setLoading(false);
     }
@@ -219,21 +182,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         credentials: "include",
         body: JSON.stringify({ email, password, fullName, role }),
       });
-      const body = (await res.json().catch(() => ({}))) as { message?: string } & Partial<LoginResponse>;
+      const body = (await res.json().catch(() => ({}))) as { message?: string } & Partial<AuthUserResponse>;
       if (!res.ok) {
         throw new Error(body.message || "Registration failed");
       }
-      if (!body.accessToken || !body.refreshToken || !body.user?.id) {
-        throw new Error("Registration response missing tokens");
+      if (!body.id) {
+        throw new Error("Registration response missing user");
       }
-      const payload: AuthUserResponse = {
-        id: body.user.id,
-        email: body.user.email ?? email,
-        role: (body.user.role as string | null) ?? role,
-        fullName,
-      };
-      applyAuthPayload(body.accessToken, body.refreshToken, payload);
-      await fetchProfile(body.user.id);
+      const payload = { ...body, role: (body.role as string | null) ?? role, fullName: body.fullName ?? fullName } as AuthUserResponse;
+      applyUserFromApi(payload);
+      await fetchProfile(payload.id);
     } finally {
       setLoading(false);
     }
@@ -246,10 +204,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function updatePassword(newPassword: string, currentPassword?: string) {
-    const headers = await getAuthHeaders();
     const res = await fetch("/api/auth/change-password", {
       method: "POST",
-      headers: { ...headers, "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
       credentials: "include",
       body: JSON.stringify({
         currentPassword: currentPassword ?? "",

@@ -60,17 +60,27 @@ export function resolveApiUrl(baseUrl: string, pathOrUrl: string): string {
   return `${base}${path}`;
 }
 
-/** PUT binary to a relative upload URL from `/api/objects/upload` (Bearer session on RN). */
+/** PUT binary to a relative upload URL from `/api/objects/upload` (session: cookie or Bearer on RN). */
 export async function putFileToUploadUrl(uploadPath: string, body: Blob, contentType: string): Promise<Response> {
   const url = resolveApiUrl(appConfig.apiBaseUrl, uploadPath);
   const token = useSessionStore.getState().accessToken;
   const headers: Record<string, string> = {
     "Content-Type": contentType || "application/octet-stream",
   };
-  if (token) {
+  if (token && token !== "cookie-session") {
     headers.Authorization = `Bearer ${token}`;
   }
-  return fetch(url, { method: "PUT", headers, body });
+  let credentials: RequestCredentials = "omit";
+  try {
+    const api = new URL(appConfig.apiBaseUrl.replace(/\/$/, ""));
+    const target = new URL(url);
+    if (target.hostname === api.hostname) {
+      credentials = "include";
+    }
+  } catch {
+    /* omit */
+  }
+  return fetch(url, { method: "PUT", headers, body, credentials });
 }
 
 /**

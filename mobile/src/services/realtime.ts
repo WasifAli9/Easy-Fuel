@@ -1,23 +1,25 @@
 import { useEffect, useRef } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
-import { appConfig } from "@/services/config";
+import { getResolvedApiBaseUrl } from "@/services/config";
 import { useSessionStore } from "@/store/session-store";
 
+const COOKIE_SESSION = "cookie-session";
+
 /** Build ws:// or wss:// URL from the same host as the REST API. */
-export function getWebSocketUrl(accessToken: string): string {
+export function getWebSocketUrl(handshakeToken: string): string {
   const explicit = process.env.EXPO_PUBLIC_WS_URL?.trim();
   if (explicit) {
     const sep = explicit.includes("?") ? "&" : "?";
-    return `${explicit}${sep}token=${encodeURIComponent(accessToken)}`;
+    return `${explicit}${sep}token=${encodeURIComponent(handshakeToken)}`;
   }
   try {
-    const base = appConfig.apiBaseUrl.replace(/\/$/, "");
+    const base = getResolvedApiBaseUrl().replace(/\/$/, "");
     const u = new URL(base);
     u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
     u.pathname = "/ws";
     u.search = "";
     u.hash = "";
-    return `${u.toString()}?token=${encodeURIComponent(accessToken)}`;
+    return `${u.toString()}?token=${encodeURIComponent(handshakeToken)}`;
   } catch {
     return "";
   }
@@ -107,38 +109,69 @@ export function useAppWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    if (!accessToken) {
+    if (!accessToken || accessToken !== COOKIE_SESSION) {
       wsRef.current?.close();
       wsRef.current = null;
       return;
     }
 
-    const url = getWebSocketUrl(accessToken);
-    if (!url || url.includes("undefined")) {
-      return;
-    }
+    let cancelled = false;
 
-    let ws: WebSocket;
-    try {
-      ws = new WebSocket(url);
-    } catch {
-      return;
-    }
-    wsRef.current = ws;
+    void (async () => {
+      const base = getResolvedApiBaseUrl().replace(/\/$/, "");
+      try {
+        const r = await fetch(`${base}/api/auth/ws-token`, {
+          credentials: "include",
+          headers: {
+            Accept: "application/json",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            Pragma: "no-cache",
+          },
+        });
+        if (cancelled || !r.ok) {
+          return;
+        }
+        const data = (await r.json()) as { wsToken?: string };
+        const wsToken = data.wsToken;
+        if (!wsToken || cancelled) {
+          return;
+        }
 
-    ws.onmessage = (ev) => {
-      invalidateForMessage(queryClient, role, ev.data);
-    };
+        const url = getWebSocketUrl(wsToken);
+        if (!url || url.includes("undefined")) {
+          return;
+        }
 
-    ws.onerror = () => {
-      // Connection issues are expected on flaky networks; polling still refreshes data.
-    };
+        let ws: WebSocket;
+        try {
+          ws = new WebSocket(url);
+        } catch {
+          return;
+        }
+        wsRef.current = ws;
+
+        ws.onmessage = (ev) => {
+          invalidateForMessage(queryClient, role, ev.data);
+        };
+
+        ws.onerror = () => {
+          // Connection issues are expected on flaky networks; polling still refreshes data.
+        };
+
+        ws.onclose = () => {
+          if (wsRef.current === ws) {
+            wsRef.current = null;
+          }
+        };
+      } catch {
+        /* ignore */
+      }
+    })();
 
     return () => {
-      ws.close();
-      if (wsRef.current === ws) {
-        wsRef.current = null;
-      }
+      cancelled = true;
+      wsRef.current?.close();
+      wsRef.current = null;
     };
   }, [accessToken, role, queryClient]);
 }

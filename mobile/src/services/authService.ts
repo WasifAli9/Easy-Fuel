@@ -6,36 +6,29 @@ export interface LoginCredentials {
   password: string;
 }
 
-export type JwtLoginResult = {
-  accessToken: string;
-  refreshToken: string;
-  user: { id: string; email: string; role: User["role"] };
-};
-
 /**
- * Inspect360-shaped auth service: JSON login + cookie-less logout + current user.
- * Easy Fuel uses JWT in headers (applied in `httpApi`) instead of session cookies.
+ * Inspect360-style: POST `/api/login` returns the portal user JSON; session cookie is set by the server.
  */
 export const authService = {
-  async login(credentials: LoginCredentials): Promise<JwtLoginResult> {
+  async login(credentials: LoginCredentials): Promise<{ user: User }> {
     if (__DEV__) {
       console.log("[authService] POST /api/login");
     }
-    const result = await apiRequestJson<JwtLoginResult>("POST", "/api/login", credentials, {
+    const user = await apiRequestJson<User>("POST", "/api/login", credentials, {
       skipAuth: true,
       timeout: 45_000,
     });
-    if (!result?.accessToken || !result?.refreshToken || !result?.user?.id) {
-      throw new Error("Login failed. Invalid response from server.");
+    if (!user?.id) {
+      throw new Error("Login response missing user. Confirm EXPO_PUBLIC_API_BASE_URL matches the portal.");
     }
-    return result;
+    return { user };
   },
 
   async logout(): Promise<void> {
     try {
       await apiRequestJson<{ message?: string }>("POST", "/api/logout", undefined, { skipAuth: true });
     } catch {
-      // Same as Inspect360 AuthContext: still clear local session if network fails.
+      // Inspect360-style: still clear local session if network fails.
     }
   },
 
