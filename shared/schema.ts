@@ -422,6 +422,36 @@ export const drivers = pgTable("drivers", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+/** Driver pickup orders at supplier depots (litres, payment, signatures, settlement). */
+export const driverDepotOrders = pgTable("driver_depot_orders", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  driverId: uuid("driver_id").notNull().references(() => drivers.id),
+  depotId: uuid("depot_id").notNull().references(() => depots.id),
+  fuelTypeId: uuid("fuel_type_id").notNull().references(() => fuelTypes.id),
+  litres: numeric("litres").notNull(),
+  actualLitresDelivered: numeric("actual_litres_delivered"),
+  pricePerLitreCents: integer("price_per_litre_cents").notNull(),
+  totalPriceCents: integer("total_price_cents").notNull(),
+  status: text("status").notNull().default("pending"),
+  paymentStatus: text("payment_status"),
+  paymentMethod: text("payment_method"),
+  paymentProofUrl: text("payment_proof_url"),
+  paymentConfirmedAt: timestamp("payment_confirmed_at"),
+  paymentConfirmedBy: uuid("payment_confirmed_by").references(() => profiles.id),
+  driverSignatureUrl: text("driver_signature_url"),
+  driverSignedAt: timestamp("driver_signed_at"),
+  supplierSignatureUrl: text("supplier_signature_url"),
+  supplierSignedAt: timestamp("supplier_signed_at"),
+  deliverySignatureUrl: text("delivery_signature_url"),
+  deliverySignedAt: timestamp("delivery_signed_at"),
+  pickupDate: timestamp("pickup_date"),
+  completedAt: timestamp("completed_at"),
+  settlementId: uuid("settlement_id"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 /** One row per driver: optional link to a transport company; company can disable driver for fleet context only. */
 export const driverCompanyMemberships = pgTable("driver_company_memberships", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -1090,6 +1120,7 @@ export type DepotPrice = typeof depotPrices.$inferSelect;
 
 export type InsertDriver = z.infer<typeof insertDriverSchema>;
 export type Driver = typeof drivers.$inferSelect;
+export type DriverDepotOrder = typeof driverDepotOrders.$inferSelect;
 
 export type InsertCustomer = z.infer<typeof insertCustomerSchema>;
 export type Customer = typeof customers.$inferSelect;
