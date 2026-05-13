@@ -1,0 +1,16 @@
+diff --git a/node_modules/react-native-webview/android/build.gradle b/node_modules/react-native-webview/android/build.gradle
+index 1111111..2222222 100644
+--- a/node_modules/react-native-webview/android/build.gradle
++++ b/node_modules/react-native-webview/android/build.gradle
+@@ -7,9 +7,10 @@ buildscript {
+     repositories {
+         google()
+         gradlePluginPortal()
+     }
+     dependencies {
+         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:${safeExtGet('kotlinVersion')}")
+-        classpath("com.android.tools.build:gradle:7.0.4")
++        // RN 0.81 / Expo 54 use AGP 8.11; 7.0.4 breaks EAS (AgpVersionAttr / no matching variant).
++        classpath("com.android.tools.build:gradle:8.11.0")
+     }
+ }

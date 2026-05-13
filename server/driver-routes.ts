@@ -2120,6 +2120,31 @@ router.post("/vehicles", async (req, res) => {
       payload: { vehicleId: vehicle.id },
     });
 
+    // Notify admins: new vehicle pending compliance review
+    try {
+      const { notificationService } = await import("./notification-service");
+      const { data: adminProfiles } = await drizzleAdmin.from("profiles").select("id").eq("role", "admin");
+      if (adminProfiles?.length && vehicle?.id) {
+        const { data: driverProfile } = await drizzleAdmin
+          .from("profiles")
+          .select("full_name")
+          .eq("id", user.id)
+          .maybeSingle();
+        await notificationService.notifyAdminsVehicleReviewRequired(
+          adminProfiles.map((p: any) => p.id),
+          {
+            vehicleId: vehicle.id,
+            registrationNumber: String(vehicle.registration_number || registrationNumber),
+            submittedByUserId: user.id,
+            submitterName: driverProfile?.full_name || "Driver",
+            scope: "driver",
+          },
+        );
+      }
+    } catch (e) {
+      console.error("[driver/vehicles] admin notify:", e);
+    }
+
     // Transform to camelCase for frontend
     res.json(vehicleToCamelCase(vehicle));
   } catch (error: any) {
@@ -3111,13 +3136,13 @@ router.post("/documents", async (req, res) => {
                 
                 // Notify driver that resubmission was received
                 try {
-                  await notificationService.createNotification({
-                    user_id: user.id,
-                    type: "account_verification_required",
-                    title: "KYC Resubmission Received",
-                    message: "Your KYC resubmission has been received and is under review. You will be notified once it's been reviewed.",
-                    metadata: { driverId: finalOwnerId, type: "kyc_resubmission" }
-                  });
+                await notificationService.createNotification({
+                  userId: user.id,
+                  type: "account_verification_required",
+                  title: "KYC Resubmission Received",
+                  message: "Your KYC resubmission has been received and is under review. You will be notified once it's been reviewed.",
+                  data: { driverId: finalOwnerId, type: "kyc_resubmission" },
+                });
                 } catch (driverNotifError) {
                   console.error(`[KYC Resubmission] Error notifying driver:`, driverNotifError);
                 }
@@ -4963,11 +4988,11 @@ router.put("/compliance", async (req, res) => {
         // Notify driver that resubmission was received
         const { notificationService: notifService } = await import("./notification-service");
         await notifService.createNotification({
-          user_id: user.id,
+          userId: user.id,
           type: "account_verification_required",
           title: "KYC Resubmission Received",
           message: "Your KYC resubmission has been received and is under review. You will be notified once it's been reviewed.",
-          metadata: { driverId: driver.id, type: "kyc_resubmission" }
+          data: { driverId: driver.id, type: "kyc_resubmission" },
         });
       } catch (notifError) {
         console.error("Error sending notifications for KYC resubmission:", notifError);

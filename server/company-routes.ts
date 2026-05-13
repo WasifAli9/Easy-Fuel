@@ -209,6 +209,31 @@ router.post("/vehicles", async (req, res) => {
     };
     const inserted = await db.insert(vehicles).values(insert).returning();
     const vehicle = inserted[0];
+    try {
+      const adminRows = await db.select({ id: profiles.id }).from(profiles).where(eq(profiles.role, "admin"));
+      const authUser = (req as any).user;
+      if (adminRows.length > 0 && authUser?.id) {
+        const { notificationService } = await import("./notification-service");
+        const prof = await db
+          .select({ fullName: profiles.fullName })
+          .from(profiles)
+          .where(eq(profiles.id, authUser.id))
+          .limit(1);
+        const submitterName = prof[0]?.fullName || "Company";
+        await notificationService.notifyAdminsVehicleReviewRequired(
+          adminRows.map((r) => r.id),
+          {
+            vehicleId: String((vehicle as any).id),
+            registrationNumber: String((vehicle as any).registrationNumber ?? b.registration_number),
+            submittedByUserId: authUser.id,
+            submitterName,
+            scope: "company",
+          },
+        );
+      }
+    } catch (e) {
+      console.error("[company/vehicles] admin notify:", e);
+    }
     res.json(vehicleToCamelCase(toVehicleRecord(vehicle)));
   } catch (e: any) {
     console.error("POST /company/vehicles:", e);

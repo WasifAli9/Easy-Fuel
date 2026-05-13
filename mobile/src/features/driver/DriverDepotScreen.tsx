@@ -43,7 +43,9 @@ type Depot = {
   name?: string;
   address_city?: string;
   address_province?: string;
-  distance_km?: number;
+  distance_km?: number | null;
+  lat?: number | null;
+  lng?: number | null;
   depot_prices?: DepotPrice[];
   depotPrices?: DepotPrice[];
 };
@@ -62,6 +64,38 @@ type DepotOrder = {
   completed_at?: string;
   created_at?: string;
 };
+
+function depotDistanceCaption(depot: Depot): string {
+  const km = depot.distance_km;
+  if (km != null && Number.isFinite(Number(km))) {
+    return `${Number(km).toFixed(1)} km away`;
+  }
+  const hasDepotCoords =
+    depot.lat != null &&
+    depot.lng != null &&
+    Number.isFinite(Number(depot.lat)) &&
+    Number.isFinite(Number(depot.lng));
+  if (!hasDepotCoords) {
+    return "Distance n/a — depot has no map coordinates yet";
+  }
+  return "Distance n/a — your saved location is missing (enable location / open the app on the road)";
+}
+
+/** One row per fuel type; stock = max available_litres across pricing tiers for that fuel. */
+function depotFuelStockRows(depot: Depot): { fuelTypeId: string; label: string; stockL: number }[] {
+  const prices = depot.depot_prices ?? depot.depotPrices ?? [];
+  const byFuel = new Map<string, { label: string; stockL: number }>();
+  for (const p of prices) {
+    const fuelTypeId = p.fuel_type_id ?? p.fuelTypeId;
+    if (!fuelTypeId) continue;
+    const label = p.fuel_types?.label || p.fuelTypes?.label || "Fuel";
+    const avail = Number(p.available_litres ?? p.availableLitres ?? 0);
+    const prev = byFuel.get(fuelTypeId);
+    if (!prev) byFuel.set(fuelTypeId, { label, stockL: avail });
+    else byFuel.set(fuelTypeId, { label, stockL: Math.max(prev.stockL, avail) });
+  }
+  return Array.from(byFuel.entries()).map(([fuelTypeId, v]) => ({ fuelTypeId, ...v }));
+}
 
 export function DriverDepotScreen() {
   const mode = useUiThemeStore((state) => state.mode);
@@ -447,16 +481,30 @@ export function DriverDepotScreen() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
           ListEmptyComponent={<Text style={styles.empty}>No depots available.</Text>}
-          renderItem={({ item }) => (
+          renderItem={({ item }) => {
+            const fuelRows = depotFuelStockRows(item);
+            return (
             <Card mode="outlined" style={styles.itemCard}>
               <Card.Content>
                 <Text variant="titleMedium">{item.name || "Depot"}</Text>
                 <Text style={styles.meta}>
                   {[item.address_city, item.address_province].filter(Boolean).join(", ") || "Location unavailable"}
                 </Text>
-                <Text style={styles.meta}>
-                  {item.distance_km ? `${item.distance_km.toFixed(1)} km away` : "Distance unavailable"}
-                </Text>
+                <Text style={styles.meta}>{depotDistanceCaption(item)}</Text>
+                {fuelRows.length > 0 ? (
+                  <View style={styles.fuelStockBlock}>
+                    {fuelRows.map((row) => (
+                      <View key={row.fuelTypeId} style={styles.fuelStockRow}>
+                        <Text style={styles.fuelStockLabel} numberOfLines={1}>
+                          {row.label}
+                        </Text>
+                        <Text style={styles.fuelStockValue}>{row.stockL.toLocaleString("en-ZA")} L</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : (
+                  <Text style={styles.meta}>No fuel types listed for this depot.</Text>
+                )}
                 <Button
                   mode="contained"
                   style={styles.orderBtn}
@@ -474,7 +522,8 @@ export function DriverDepotScreen() {
                 </Button>
               </Card.Content>
             </Card>
-          )}
+            );
+          }}
         />
       )}
 
@@ -784,6 +833,28 @@ const getStyles = (theme: typeof lightTheme) => {
   amount: { marginTop: 6, fontWeight: "700", color: theme.colors.primary },
   actionRow: { flexDirection: "row", gap: 8, marginTop: 10 },
   orderBtn: { marginTop: 10, alignSelf: "flex-start" },
+  fuelStockBlock: {
+    marginTop: 8,
+    gap: 6,
+  },
+  fuelStockRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  fuelStockLabel: {
+    flex: 1,
+    color: theme.colors.onSurface,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  fuelStockValue: {
+    color: theme.colors.primary,
+    fontSize: 14,
+    fontWeight: "700",
+    flexShrink: 0,
+  },
   dialog: { maxHeight: "90%" },
   modalContainer: { flex: 1, backgroundColor: theme.colors.background },
   modalHeader: {

@@ -1,9 +1,12 @@
 import * as Network from "expo-network";
+import { Platform } from "react-native";
 import {
   getResolvedApiBaseUrl,
   rewriteRequestUrlWithExpoHost,
 } from "@/services/config";
 import { useSessionStore } from "@/store/session-store";
+
+const MOBILE_USER_AGENT = `EasyFuel-Mobile/1.0 (${Platform.OS})`;
 
 /** Same role as Inspect360 `getAPI_URL()`. */
 export function getAPI_URL(): string {
@@ -32,6 +35,39 @@ function isNetworkishFetchError(message: string): boolean {
   );
 }
 
+/** Pull every useful field from RN/OkHttp failures (often only `message` is surfaced to JS). */
+function formatTransportDiagnostics(error: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  let cur: unknown = error;
+  let depth = 0;
+  while (cur != null && depth < 6 && !seen.has(cur)) {
+    seen.add(cur);
+    if (cur instanceof Error) {
+      const any = cur as Error & { code?: string; errno?: string; cause?: unknown };
+      const bit = [`${cur.name}: ${cur.message}`];
+      if (any.code) bit.push(`code=${any.code}`);
+      if (any.errno) bit.push(`errno=${any.errno}`);
+      parts.push(bit.join(" "));
+      cur = any.cause;
+    } else if (typeof cur === "object") {
+      try {
+        const keys = Object.keys(cur as object);
+        const snap = JSON.stringify(cur);
+        parts.push(`object keys=[${keys.join(",")}] ${snap.slice(0, 500)}`);
+      } catch {
+        parts.push("object [unserializable]");
+      }
+      break;
+    } else {
+      parts.push(String(cur));
+      break;
+    }
+    depth++;
+  }
+  return parts.join(" → ");
+}
+
 /**
  * Mobile API uses Passport cookie sessions (Inspect360-style). `credentials: "include"` sends
  * `easyfuel.sid`. JWT Bearer is only added when a real access token is stored (not `cookie-session`).
@@ -55,11 +91,13 @@ export async function apiRequest(
         "Cache-Control": "no-cache, no-store, must-revalidate",
         Pragma: "no-cache",
         Accept: "application/json",
+        "User-Agent": MOBILE_USER_AGENT,
       }
     : {
         "Cache-Control": "no-cache, no-store, must-revalidate",
         Pragma: "no-cache",
         Accept: "application/json",
+        "User-Agent": MOBILE_USER_AGENT,
       };
 
   if (!options?.skipAuth) {
@@ -97,7 +135,7 @@ export async function apiRequest(
       const cookie = res.headers.get("set-cookie");
       console.log(
         "[API] Login HTTP OK — optional Set-Cookie:",
-        cookie ?? "(none; JWT-in-body is fine)",
+        cookie ?? "(none; session cookie may still be set — check Application tab / Metro)",
         "| Content-Type:",
         res.headers.get("content-type") ?? "",
       );
@@ -118,8 +156,12 @@ export async function apiRequest(
 
     const msg = String(err?.message ?? error ?? "");
 
+    const transportDiag = formatTransportDiagnostics(error);
     if (shouldLogApiVerbose()) {
       console.error(`[API] Request failed for ${method} ${fullUrl}:`, msg);
+      if (transportDiag && transportDiag !== msg) {
+        console.error("[API] Transport diagnostic (cause chain / extra fields):", transportDiag);
+      }
     }
 
     if (isNetworkishFetchError(msg) || msg.includes("No network connection")) {
@@ -164,12 +206,16 @@ export async function apiRequest(
           : "";
 
       const technical = msg ? ` Details: ${msg.slice(0, 200)}` : "";
+      const diagAppend =
+        shouldLogApiVerbose() && transportDiag.length > 0
+          ? ` | Diag: ${transportDiag.slice(0, 400)}`
+          : "";
       if (path.includes("/api/login") && shouldLogApiVerbose()) {
         console.error("[API] Login transport failure — URL:", fullUrl, "| message:", msg);
       }
 
       throw new Error(
-        `Server problem. Cannot connect to server. Please check your internet connection and try again.${lanHint}${technical}`,
+        `Server problem. Cannot connect to server. Please check your internet connection and try again.${lanHint}${technical}${diagAppend}`,
       );
     }
 

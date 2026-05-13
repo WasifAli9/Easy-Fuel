@@ -2555,6 +2555,19 @@ router.post("/driver-depot-orders/:orderId/reject", requireSupplier, async (req,
         status: updatedOrder.status,
         reason,
       });
+
+      const { notificationService } = await import("./notification-service");
+      const depotName = updatedOrder.depots?.name || "Depot";
+      const fuelType = updatedOrder.fuel_types?.label || updatedOrder.fuel_types?.code || "fuel";
+      const litres = parseFloat(updatedOrder.litres || "0");
+      await notificationService.notifyDriverDepotOrderRejected(
+        order.drivers.user_id,
+        updatedOrder.id,
+        depotName,
+        fuelType,
+        litres,
+        reason,
+      );
     }
 
     res.json(updatedOrder);
@@ -2829,6 +2842,20 @@ router.post("/driver-depot-orders/:orderId/supplier-signature", requireSupplier,
         orderId: updatedOrder.id,
         status: updatedOrder.status,
       });
+
+      const { notificationService } = await import("./notification-service");
+      const depotName = updatedOrder.depots?.name || "Depot";
+      const msg =
+        updatedOrder.status === "ready_for_pickup"
+          ? "The supplier signed your depot order. It is ready for pickup when payment is complete."
+          : "The supplier signed your depot order. Check the order status for next steps.";
+      await notificationService.notifyDriverDepotSupplierProgress(order.drivers.user_id, {
+        orderId: updatedOrder.id,
+        depotName,
+        title: "Depot order updated",
+        message: msg,
+        status: updatedOrder.status,
+      });
     }
 
     res.json(updatedOrder);
@@ -3007,6 +3034,18 @@ router.post("/driver-depot-orders/:orderId/confirm-delivery", requireSupplier, a
         type: "driver_depot_delivery_confirmed",
         orderId: updatedOrder.id,
         actualLitres: actualLitresNum,
+      });
+
+      const { notificationService } = await import("./notification-service");
+      const depotName = updatedOrder.depots?.name || "Depot";
+      const litresNote =
+        actualLitresNum != null ? ` Confirmed volume: ${actualLitresNum}L.` : "";
+      await notificationService.notifyDriverDepotSupplierProgress(order.drivers.user_id, {
+        orderId: updatedOrder.id,
+        depotName,
+        title: "Delivery details confirmed",
+        message: `The supplier confirmed delivery details for your order at ${depotName}.${litresNote} Please sign to complete the order when ready.`,
+        status: updatedOrder.status,
       });
     }
 
@@ -3207,11 +3246,11 @@ router.post("/documents", async (req, res) => {
               // Notify supplier that resubmission was received
               try {
                 await notificationService.createNotification({
-                  user_id: user.id,
+                  userId: user.id,
                   type: "account_verification_required",
                   title: "KYB Resubmission Received",
                   message: "Your KYB resubmission has been received and is under review. You will be notified once it's been reviewed.",
-                  metadata: { supplierId: supplier.id, type: "kyb_resubmission" }
+                  data: { supplierId: supplier.id, type: "kyb_resubmission" },
                 });
               } catch (supplierNotifError) {
                 console.error("[KYB Resubmission] Error notifying supplier:", supplierNotifError);
@@ -3550,11 +3589,11 @@ router.put("/compliance", async (req, res) => {
         try {
           const { notificationService: notifService } = await import("./notification-service");
           await notifService.createNotification({
-            user_id: user.id,
+            userId: user.id,
             type: "account_verification_required",
             title: "KYB Resubmission Received",
             message: "Your KYB resubmission has been received and is under review. You will be notified once it's been reviewed.",
-            metadata: { supplierId: supplier.id, type: "kyb_resubmission" }
+            data: { supplierId: supplier.id, type: "kyb_resubmission" },
           });
         } catch (supplierNotifError) {
           console.error("[KYB Resubmission] Error notifying supplier:", supplierNotifError);

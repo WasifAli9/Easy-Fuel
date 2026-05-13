@@ -1,4 +1,5 @@
 import { Resend } from "resend";
+import { pool } from "./db";
 
 function resolveResend(): { client: Resend; fromEmail: string } | null {
   const apiKey = process.env.RESEND_API_KEY?.trim();
@@ -559,5 +560,147 @@ export async function sendDeliveryCompletionEmail(
   } catch (error) {
     console.error("Error in sendDeliveryCompletionEmail:", error);
     throw error;
+  }
+}
+
+function escapeHtml(s: string): string {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * Optional comma- or semicolon-separated list. When set, only these addresses receive
+ * compliance alerts (useful for a shared ops inbox). When unset, all admin users with
+ * a row in `local_auth_users` receive mail.
+ */
+export async function getAdminNotificationEmailRecipients(): Promise<string[]> {
+  const raw = process.env.ADMIN_COMPLIANCE_EMAILS?.trim();
+  if (raw) {
+    return [...new Set(raw.split(/[,;]+/).map((s) => s.trim().toLowerCase()).filter(Boolean))];
+  }
+  try {
+    const result = await pool.query<{ email: string }>(
+      `SELECT DISTINCT LOWER(TRIM(lau.email)) AS email
+       FROM profiles p
+       INNER JOIN local_auth_users lau ON lau.id = p.id
+       WHERE p.role = 'admin'
+         AND lau.email IS NOT NULL
+         AND TRIM(lau.email) <> ''`,
+    );
+    return [...new Set(result.rows.map((r) => r.email).filter(Boolean))];
+  } catch (e) {
+    console.error("[getAdminNotificationEmailRecipients]", e);
+    return [];
+  }
+}
+
+function adminReviewPortalUrl(): string {
+  const base = (process.env.PUBLIC_APP_URL || "").trim().replace(/\/+$/, "");
+  if (!base) return "";
+  return `${base}/admin`;
+}
+
+export type AdminComplianceEmailKind = "kyc_submitted" | "document_uploaded" | "vehicle_pending";
+
+export interface AdminComplianceReviewEmailParams {
+  kind: AdminComplianceEmailKind;
+  applicantName: string;
+  /** Short role / context, e.g. Driver, Supplier, Fleet company, vehicle */
+  applicantContext: string;
+  /** Extra rows for the email body (document type, registration, etc.) */
+  detailRows?: { label: string; value: string }[];
+}
+
+/**
+ * Email all configured admin recipients when something needs compliance review in the portal.
+ * Skips quietly if RESEND_API_KEY is missing or there are no recipient addresses.
+ */
+export async function sendAdminComplianceReviewEmail(params: AdminComplianceReviewEmailParams): Promise<void> {
+  try {
+    const resolved = resolveResend();
+    if (!resolved) {
+      console.warn("RESEND_API_KEY not set; skipping admin compliance email");
+      return;
+    }
+    const recipients = await getAdminNotificationEmailRecipients();
+    if (recipients.length === 0) {
+      console.warn(
+        "[sendAdminComplianceReviewEmail] No admin emails — set ADMIN_COMPLIANCE_EMAILS or ensure admin users have local_auth_users.email",
+      );
+      return;
+    }
+
+    const subject =
+      params.kind === "kyc_submitted"
+        ? "[Easy Fuel] New KYC / KYB submission — please review"
+        : params.kind === "document_uploaded"
+          ? "[Easy Fuel] Document uploaded — verification required"
+          : "[Easy Fuel] New vehicle — compliance review required";
+
+    const portalUrl = adminReviewPortalUrl();
+    const ctaBlock = portalUrl
+      ? `<p style="margin:24px 0;"><a class="button" href="${escapeHtml(portalUrl)}">Open admin portal</a></p>
+         <p style="font-size:14px;color:#64748b;">If the button does not work, copy this link:<br/><span style="word-break:break-all;">${escapeHtml(portalUrl)}</span></p>`
+      : "<p><strong>Please open the Easy Fuel admin portal</strong> and review the compliance queue.</p>";
+
+    const detailHtml = (params.detailRows || [])
+      .map(
+        (r) =>
+          `<div class="info-row"><span class="label">${escapeHtml(r.label)}:</span><span>${escapeHtml(r.value)}</span></div>`,
+      )
+      .join("");
+
+    const { client, fromEmail } = resolved;
+    const [toFirst, ...bccRest] = recipients;
+
+    const { error } = await client.emails.send({
+      from: fromEmail,
+      to: [toFirst],
+      ...(bccRest.length > 0 ? { bcc: bccRest } : {}),
+      subject,
+      html: `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <style>
+              body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background: linear-gradient(135deg, #1fbfb8 0%, #0e6763 100%); color: #fff; padding: 28px 20px; border-radius: 8px 8px 0 0; text-align: center; }
+              .content { background: #fff; padding: 28px; border: 1px solid #e2e8f0; border-top: none; }
+              .info-row { margin: 12px 0; padding: 10px 12px; background: #f8fafc; border-radius: 6px; }
+              .label { font-weight: 600; color: #0e6763; display: inline-block; min-width: 140px; }
+              .footer { background: #f1f5f9; padding: 16px; border-radius: 0 0 8px 8px; text-align: center; font-size: 13px; color: #64748b; }
+              .button { display: inline-block; background: #0e6763; color: #fff !important; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1 style="margin:0;font-size:22px;">Action required</h1>
+              <p style="margin:10px 0 0;font-size:15px;opacity:.95;">Compliance review</p>
+            </div>
+            <div class="content">
+              <p>Hello,</p>
+              <p>There is new activity in Easy Fuel that needs your attention in the <strong>admin portal</strong>. Please sign in and review it when you can.</p>
+              <div class="info-row"><span class="label">Applicant / subject:</span><span>${escapeHtml(params.applicantName)}</span></div>
+              <div class="info-row"><span class="label">Type:</span><span>${escapeHtml(params.applicantContext)}</span></div>
+              ${detailHtml}
+              ${ctaBlock}
+              <p style="margin-top:20px;font-size:14px;color:#64748b;">This is an automated message. Do not reply unless your mailbox is monitored for support.</p>
+            </div>
+            <div class="footer"><strong>Easy Fuel ZA</strong> — Admin notifications</div>
+          </body>
+        </html>
+      `,
+    });
+
+    if (error) {
+      console.error("[sendAdminComplianceReviewEmail] Resend error:", error);
+    }
+  } catch (e) {
+    console.error("[sendAdminComplianceReviewEmail]", e);
   }
 }

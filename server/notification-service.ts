@@ -1,5 +1,6 @@
 import { websocketService } from "./websocket";
 import { pushNotificationService } from "./push-service";
+import { sendAdminComplianceReviewEmail } from "./email-service";
 import {
   createNotification,
   findRecentDuplicateNotification,
@@ -65,6 +66,7 @@ export type NotificationType =
   // Admin notifications
   | "admin_document_uploaded"
   | "admin_kyc_submitted"
+  | "admin_vehicle_review_required"
   | "admin_vehicle_approved"
   | "admin_vehicle_rejected"
   | "admin_document_approved"
@@ -829,28 +831,123 @@ class NotificationService {
     ownerName: string,
     userId?: string
   ) {
-    return this.sendToMultipleUsers(adminUserIds, {
+    const out = await this.sendToMultipleUsers(adminUserIds, {
       type: "admin_document_uploaded",
       title: "New Document Uploaded",
       message: `${ownerName} uploaded a new ${documentType} document (${ownerType}). Please review.`,
       data: { documentId, documentType, ownerType, ownerName, userId },
       priority: "medium",
     });
+    try {
+      await sendAdminComplianceReviewEmail({
+        kind: "document_uploaded",
+        applicantName: ownerName,
+        applicantContext: `${ownerType} — document: ${documentType}`,
+        detailRows: [
+          { label: "Document type", value: documentType },
+          { label: "Document ID", value: documentId },
+          ...(userId ? [{ label: "Uploader user ID", value: userId }] : []),
+        ],
+      });
+    } catch (e) {
+      console.error("[notifyAdminDocumentUploaded] admin email:", e);
+    }
+    return out;
   }
 
   async notifyAdminKycSubmitted(
     adminUserIds: string[],
     userId: string,
     userName: string,
-    userType: "driver" | "supplier"
+    userType: "driver" | "supplier" | "company"
   ) {
-    return this.sendToMultipleUsers(adminUserIds, {
+    const roleLabel =
+      userType === "company" ? "fleet company" : userType === "supplier" ? "supplier" : "driver";
+    const out = await this.sendToMultipleUsers(adminUserIds, {
       type: "admin_kyc_submitted",
       title: "New KYC Submission",
-      message: `${userName} (${userType}) has submitted KYC documents. Please review.`,
+      message: `${userName} (${roleLabel}) has submitted verification documents. Please review.`,
       data: { userId, userName, userType },
       priority: "high",
       requireInteraction: true,
+    });
+    try {
+      await sendAdminComplianceReviewEmail({
+        kind: "kyc_submitted",
+        applicantName: userName,
+        applicantContext: `${roleLabel} — KYC / KYB`,
+        detailRows: [
+          { label: "Applicant user ID", value: userId },
+          { label: "Account type", value: userType },
+        ],
+      });
+    } catch (e) {
+      console.error("[notifyAdminKycSubmitted] admin email:", e);
+    }
+    return out;
+  }
+
+  /** New vehicle registered (driver or company fleet) pending compliance review */
+  async notifyAdminsVehicleReviewRequired(
+    adminUserIds: string[],
+    params: {
+      vehicleId: string;
+      registrationNumber: string;
+      submittedByUserId: string;
+      submitterName: string;
+      scope: "driver" | "company";
+    }
+  ) {
+    const scopeLabel = params.scope === "company" ? "Company fleet" : "Driver";
+    const out = await this.sendToMultipleUsers(adminUserIds, {
+      type: "admin_vehicle_review_required",
+      title: `${scopeLabel} vehicle pending review`,
+      message: `${params.submitterName} registered vehicle ${params.registrationNumber}. Please review compliance and documents.`,
+      data: {
+        vehicleId: params.vehicleId,
+        registrationNumber: params.registrationNumber,
+        userId: params.submittedByUserId,
+        submitterName: params.submitterName,
+        scope: params.scope,
+      },
+      priority: "high",
+      requireInteraction: true,
+    });
+    try {
+      await sendAdminComplianceReviewEmail({
+        kind: "vehicle_pending",
+        applicantName: params.submitterName,
+        applicantContext: `${scopeLabel} — new vehicle`,
+        detailRows: [
+          { label: "Registration", value: params.registrationNumber },
+          { label: "Vehicle ID", value: params.vehicleId },
+          { label: "Registered by (user ID)", value: params.submittedByUserId },
+        ],
+      });
+    } catch (e) {
+      console.error("[notifyAdminsVehicleReviewRequired] admin email:", e);
+    }
+    return out;
+  }
+
+  /** Supplier-side depot order update for the driver (signature, delivery confirmation, etc.) */
+  async notifyDriverDepotSupplierProgress(
+    driverUserId: string,
+    params: { orderId: string; depotName: string; title: string; message: string; status?: string }
+  ) {
+    return this.createAndSend({
+      userId: driverUserId,
+      type: "system_alert",
+      title: params.title,
+      message: params.message,
+      entityType: "depot_order",
+      entityId: params.orderId,
+      data: {
+        depotOrderId: params.orderId,
+        depotName: params.depotName,
+        status: params.status,
+      },
+      priority: "medium",
     });
   }
 
@@ -918,13 +1015,15 @@ class NotificationService {
 
   async notifyAdminKycApproved(
     userId: string,
-    userType: "driver" | "supplier"
+    userType: "driver" | "supplier" | "company"
   ) {
+    const label =
+      userType === "company" ? "Fleet company verification" : userType === "supplier" ? "Supplier KYB" : "Driver KYC";
     return this.createAndSend({
       userId,
       type: "admin_kyc_approved",
-      title: "KYC Approved",
-      message: `Your ${userType} KYC has been approved. Your account is now active.`,
+      title: "Verification approved",
+      message: `${label} has been approved. Your account is now active.`,
       data: { userType },
       priority: "high",
     });
@@ -932,14 +1031,16 @@ class NotificationService {
 
   async notifyAdminKycRejected(
     userId: string,
-    userType: "driver" | "supplier",
+    userType: "driver" | "supplier" | "company",
     reason?: string
   ) {
+    const label =
+      userType === "company" ? "Fleet company verification" : userType === "supplier" ? "Supplier KYB" : "Driver KYC";
     return this.createAndSend({
       userId,
       type: "admin_kyc_rejected",
-      title: "KYC Rejected",
-      message: `Your ${userType} KYC has been rejected${reason ? `. Reason: ${reason}` : ""}. Please review and resubmit.`,
+      title: "Verification rejected",
+      message: `${label} has been rejected${reason ? `. Reason: ${reason}` : ""}. Please review and resubmit.`,
       data: { userType, reason },
       priority: "high",
     });

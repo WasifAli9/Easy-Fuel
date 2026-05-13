@@ -341,8 +341,19 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
         markAsReadMutation.mutate(notification.id);
       }
       
-      // Handle admin notifications (document uploads, KYC submissions)
-      if (notification.type === "admin_document_uploaded" || notification.type === "admin_kyc_submitted") {
+      // Handle admin notifications (document uploads, KYC submissions, vehicle review)
+      const adminInboxTypes = new Set([
+        "admin_document_uploaded",
+        "admin_kyc_submitted",
+        "admin_vehicle_review_required",
+        "admin_document_approved",
+        "admin_document_rejected",
+        "admin_kyc_approved",
+        "admin_kyc_rejected",
+        "admin_vehicle_approved",
+        "admin_vehicle_rejected",
+      ]);
+      if (adminInboxTypes.has(notification.type)) {
         if (onAdminNotificationClick) {
           onAdminNotificationClick(notification);
           setNotificationsOpen(false);

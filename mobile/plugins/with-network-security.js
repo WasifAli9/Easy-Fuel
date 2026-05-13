@@ -81,15 +81,25 @@ const withNetworkSecurity = (config) => {
 
       const networkSecurityConfig = `<?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
+    <!-- User CAs in base help debugging (corporate proxies) and match domain rules below. -->
     <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
+            <certificates src="user" />
         </trust-anchors>
     </base-config>
 
+    <!-- List more-specific hosts before the parent domain so Android applies the intended rule. -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">portal.easyfuel.ai</domain>
+        <trust-anchors>
+            <certificates src="system" />
+${bundledAnchor}            <certificates src="user" />
+        </trust-anchors>
+    </domain-config>
+
     <domain-config cleartextTrafficPermitted="false">
         <domain includeSubdomains="true">easyfuel.ai</domain>
-        <domain includeSubdomains="true">portal.easyfuel.ai</domain>
         <trust-anchors>
             <certificates src="system" />
 ${bundledAnchor}            <certificates src="user" />

@@ -52,10 +52,12 @@ export function SignInScreen() {
           error instanceof Error ? error.message : "Please check your credentials and try again.",
         );
       } else if (isLikelyNetworkFailure(error)) {
-        Alert.alert(
-          "Cannot reach server",
-          `Check that ${portalOrigin} opens in your phone's browser. Try Wi‑Fi or disable VPN. ${envHint}`,
-        );
+        const baseMsg = `Check that ${portalOrigin} opens in your phone's browser. Try Wi‑Fi or disable VPN. ${envHint}`;
+        const body =
+          __DEV__ && error instanceof Error
+            ? `${baseMsg}\n\n--- Debug (from app) ---\n${error.message}\n\nAlso watch Metro for lines starting with [API] Transport diagnostic`
+            : baseMsg;
+        Alert.alert("Cannot reach server", body);
       } else {
         const msg = error instanceof Error ? error.message : "Something went wrong. Please try again.";
         const title =

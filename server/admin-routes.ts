@@ -355,6 +355,47 @@ const adminDb = {
   },
 };
 
+/** Resolve profile user id to notify for a compliance document owner */
+async function resolveDocumentOwnerUserId(
+  ownerType: string | null | undefined,
+  ownerId: string | null | undefined,
+): Promise<string | null> {
+  if (!ownerType || !ownerId) return null;
+  if (ownerType === "driver") {
+    const { data: driver } = await adminDb.from("drivers").select("user_id").eq("id", ownerId).maybeSingle();
+    return (driver as any)?.user_id ?? null;
+  }
+  if (ownerType === "supplier") {
+    const { data: supById } = await adminDb.from("suppliers").select("owner_id").eq("id", ownerId).maybeSingle();
+    if ((supById as any)?.owner_id) return (supById as any).owner_id;
+    return ownerId;
+  }
+  if (ownerType === "customer") {
+    const { data: customer } = await adminDb.from("customers").select("user_id").eq("id", ownerId).maybeSingle();
+    return (customer as any)?.user_id ?? null;
+  }
+  if (ownerType === "vehicle") {
+    const { data: vehicle } = await adminDb
+      .from("vehicles")
+      .select("driver_id, company_id, drivers(user_id)")
+      .eq("id", ownerId)
+      .maybeSingle();
+    const v: any = vehicle;
+    const fromDriver = v?.drivers?.user_id;
+    if (fromDriver) return fromDriver;
+    if (v?.company_id) {
+      const { data: comp } = await adminDb
+        .from("companies")
+        .select("owner_user_id")
+        .eq("id", v.company_id)
+        .maybeSingle();
+      return (comp as any)?.owner_user_id ?? null;
+    }
+    return null;
+  }
+  return null;
+}
+
 // Get all users with their profiles and role-specific data
 router.get("/users", async (req, res) => {
   try {
@@ -2021,42 +2062,35 @@ router.patch("/documents/:documentId/status", async (req, res) => {
 
     console.log("Document status updated:", { documentId, status: verificationStatus });
 
-    // Send WebSocket notification to driver or supplier if document belongs to them
+    // Send WebSocket + in-app / push notifications to document owner
     const ownerType = updatedDocument?.owner_type ?? updatedDocument?.ownerType;
     const ownerId = updatedDocument?.owner_id ?? updatedDocument?.ownerId;
-    if (ownerType === "driver") {
-      // Get driver's user_id
-      const { data: driver } = await adminDb
-        .from("drivers")
-        .select("user_id")
-        .eq("id", ownerId)
-        .single();
+    const notifyUserId = await resolveDocumentOwnerUserId(ownerType, ownerId);
 
-      if (driver?.user_id) {
-        websocketService.sendToUser(driver.user_id, {
-          type: verificationStatus === "approved" ? "document_approved" : "document_rejected",
-          payload: {
-            documentId: documentId,
-            status: verificationStatus,
-          },
-        });
-      }
-    } else if (ownerType === "supplier") {
-      // Get supplier's owner_id (which is the user_id)
-      const { data: supplier } = await adminDb
-        .from("suppliers")
-        .select("owner_id")
-        .eq("id", ownerId)
-        .single();
+    if (
+      notifyUserId &&
+      (verificationStatus === "approved" || verificationStatus === "rejected")
+    ) {
+      websocketService.sendToUser(notifyUserId, {
+        type: verificationStatus === "approved" ? "document_approved" : "document_rejected",
+        payload: {
+          documentId: documentId,
+          status: verificationStatus,
+        },
+      });
 
-      if (supplier?.owner_id) {
-        websocketService.sendToUser(supplier.owner_id, {
-          type: verificationStatus === "approved" ? "document_approved" : "document_rejected",
-          payload: {
-            documentId: documentId,
-            status: verificationStatus,
-          },
-        });
+      const docType =
+        (updatedDocument as any)?.doc_type ?? (updatedDocument as any)?.docType ?? "document";
+      const { notificationService } = await import("./notification-service");
+      if (verificationStatus === "approved") {
+        await notificationService.notifyAdminDocumentApproved(notifyUserId, documentId, docType);
+      } else {
+        await notificationService.notifyAdminDocumentRejected(
+          notifyUserId,
+          documentId,
+          docType,
+          rejectionReason,
+        );
       }
     }
 
@@ -2267,6 +2301,8 @@ router.post("/compliance/driver/:id/approve", async (req, res) => {
           type: "driver",
         },
       });
+      const { notificationService } = await import("./notification-service");
+      await notificationService.notifyAccountApproved(driver.user_id, "driver");
     }
 
     res.json({ success: true, message: "Driver compliance approved" });
@@ -2330,6 +2366,8 @@ router.post("/compliance/driver/:id/reject", async (req, res) => {
           reason,
         },
       });
+      const { notificationService } = await import("./notification-service");
+      await notificationService.notifyAccountRejected(driver.user_id, "driver", reason);
     }
 
     res.json({ success: true, message: "Driver compliance rejected" });
@@ -2386,6 +2424,8 @@ router.post("/compliance/supplier/:id/approve", async (req, res) => {
           type: "supplier",
         },
       });
+      const { notificationService } = await import("./notification-service");
+      await notificationService.notifyAccountApproved(supplier.owner_id, "supplier");
     }
 
     res.json({ success: true, message: "Supplier compliance approved" });
@@ -2449,6 +2489,8 @@ router.post("/compliance/supplier/:id/reject", async (req, res) => {
           reason,
         },
       });
+      const { notificationService } = await import("./notification-service");
+      await notificationService.notifyAccountRejected(supplier.owner_id, "supplier", reason);
     }
 
     res.json({ success: true, message: "Supplier compliance rejected" });
@@ -2488,39 +2530,7 @@ router.post("/compliance/documents/:id/approve", async (req, res) => {
 
     // Send notification to document owner
     if (document) {
-      let userId: string | null = null;
-      
-      // Get user_id based on owner_type
-      if (document.owner_type === "driver") {
-        const { data: driver } = await adminDb
-          .from("drivers")
-          .select("user_id")
-          .eq("id", document.owner_id)
-          .single();
-        userId = driver?.user_id || null;
-      } else if (document.owner_type === "supplier") {
-        const { data: supplier } = await adminDb
-          .from("suppliers")
-          .select("owner_id")
-          .eq("id", document.owner_id)
-          .single();
-        userId = supplier?.owner_id || null;
-      } else if (document.owner_type === "customer") {
-        const { data: customer } = await adminDb
-          .from("customers")
-          .select("user_id")
-          .eq("id", document.owner_id)
-          .single();
-        userId = customer?.user_id || null;
-      } else if (document.owner_type === "vehicle") {
-        // For vehicle documents, get the driver's user_id
-        const { data: vehicle } = await adminDb
-          .from("vehicles")
-          .select("driver_id, drivers!inner(user_id)")
-          .eq("id", document.owner_id)
-          .single();
-        userId = vehicle?.drivers?.user_id || null;
-      }
+      const userId = await resolveDocumentOwnerUserId(document.owner_type, document.owner_id);
 
       if (userId) {
         const { notificationService } = await import("./notification-service");
@@ -2550,6 +2560,14 @@ router.post("/compliance/documents/:id/reject", async (req, res) => {
       return res.status(400).json({ error: "Rejection reason is required" });
     }
 
+    const { data: document, error: docError } = await adminDb
+      .from("documents")
+      .select("owner_type, owner_id, doc_type")
+      .eq("id", id)
+      .single();
+
+    if (docError) throw docError;
+
     const { error: updateError } = await adminDb
       .from("documents")
       .update({
@@ -2562,6 +2580,19 @@ router.post("/compliance/documents/:id/reject", async (req, res) => {
       .eq("id", id);
 
     if (updateError) throw updateError;
+
+    if (document) {
+      const userId = await resolveDocumentOwnerUserId(document.owner_type, document.owner_id);
+      if (userId) {
+        const { notificationService } = await import("./notification-service");
+        await notificationService.notifyAdminDocumentRejected(
+          userId,
+          id,
+          document.doc_type || "document",
+          reason,
+        );
+      }
+    }
 
     res.json({ success: true, message: "Document rejected" });
   } catch (error: any) {

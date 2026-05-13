@@ -15,6 +15,8 @@ export default {
     scheme: "easyfuel",
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
+    /** Used for iOS + Android store / launcher (see android.adaptiveIcon for Android 8+). */
+    icon: "./assets/images/icon-512.png",
     assetBundlePatterns: ["**/*"],
     ios: {
       supportsTablet: false,
@@ -26,6 +28,10 @@ export default {
     },
     android: {
       package: "com.easyfuel.mobile",
+      adaptiveIcon: {
+        foregroundImage: "./assets/images/icon-512.png",
+        backgroundColor: "#0D9488",
+      },
       versionCode: 1,
       /** Resize the app window when the keyboard opens so inputs stay visible (vs pan). */
       softwareKeyboardLayoutMode: "resize",
@@ -49,6 +55,9 @@ export default {
       "./plugins/with-network-security.js",
     ],
     extra: {
+      eas: {
+        projectId: "84b0d361-c107-4a26-8a03-5f01d4ae72f5",
+      },
       apiUrl: apiFromEnv || defaultProductionApi,
       apiBaseUrl: apiFromEnv || defaultProductionApi,
     },

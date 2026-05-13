@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Image, Pressable, StyleSheet, View } from "react-native";
 import { Text } from "react-native-paper";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -22,6 +23,7 @@ export function FuelPortalHeader({ onOpenMenu }: FuelPortalHeaderProps) {
   const theme = mode === "dark" ? darkTheme : lightTheme;
   const isDark = mode === "dark";
   const t = getFuelPortalTokens(theme, isDark);
+  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const authMeQuery = useQuery({
     queryKey: ["/api/auth/me"],
     queryFn: async () => (await apiClient.get("/api/auth/me")).data as { profile?: { profile_photo_url?: string | null } },
@@ -30,9 +32,36 @@ export function FuelPortalHeader({ onOpenMenu }: FuelPortalHeaderProps) {
 
   const rawPhotoUrl = authMeQuery.data?.profile?.profile_photo_url ?? null;
   const normalizedPhotoPath = normalizeFilePath(rawPhotoUrl);
-  const avatarUri = normalizedPhotoPath
-    ? resolveApiUrl(appConfig.apiBaseUrl, normalizedPhotoPath)
-    : null;
+  /** `/objects/...` requires auth; RN `Image` does not send session cookies — use tokenized view URL. */
+  const needsObjectPresign = Boolean(normalizedPhotoPath?.startsWith("/objects/"));
+
+  const presignAvatarQuery = useQuery({
+    queryKey: ["/api/objects/presigned-url", "fuel-header-avatar", normalizedPhotoPath],
+    enabled:
+      authMeQuery.isSuccess &&
+      needsObjectPresign &&
+      Boolean(normalizedPhotoPath),
+    staleTime: 50 * 60 * 1000,
+    queryFn: async () => {
+      const path = normalizedPhotoPath;
+      if (!path) throw new Error("Missing profile photo path.");
+      const { data } = await apiClient.post<{ signedUrl: string }>("/api/objects/presigned-url", {
+        objectPath: path,
+      });
+      return data.signedUrl;
+    },
+  });
+
+  const avatarUri =
+    normalizedPhotoPath == null
+      ? null
+      : needsObjectPresign
+        ? presignAvatarQuery.data ?? null
+        : resolveApiUrl(appConfig.apiBaseUrl, normalizedPhotoPath);
+
+  useEffect(() => {
+    setAvatarLoadFailed(false);
+  }, [normalizedPhotoPath, presignAvatarQuery.data]);
 
   return (
     <View style={[styles.bar, { backgroundColor: t.headerBg, borderBottomColor: t.borderSubtle }]}>
@@ -54,8 +83,13 @@ export function FuelPortalHeader({ onOpenMenu }: FuelPortalHeaderProps) {
         accessibilityRole="button"
         accessibilityLabel="Account and menu"
       >
-        {avatarUri ? (
-          <Image source={{ uri: avatarUri }} style={styles.avatarImage} resizeMode="cover" />
+        {avatarUri && !avatarLoadFailed ? (
+          <Image
+            source={{ uri: avatarUri }}
+            style={styles.avatarImage}
+            resizeMode="cover"
+            onError={() => setAvatarLoadFailed(true)}
+          />
         ) : (
           <MaterialCommunityIcons name="account" size={26} color={t.brandText} />
         )}

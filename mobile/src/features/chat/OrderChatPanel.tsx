@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { FlatList, ScrollView, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActivityIndicator, Text, TextInput } from "react-native-paper";
@@ -97,6 +97,29 @@ export function OrderChatPanel({
     refetchInterval: 5_000,
   });
 
+  const scrollViewRef = useRef<ScrollView>(null);
+  const flatListRef = useRef<FlatList<ChatMessage>>(null);
+
+  const sortedMessages = useMemo(() => {
+    const raw = messagesQuery.data ?? [];
+    return [...raw].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    );
+  }, [messagesQuery.data]);
+
+  const scrollChatToEnd = useCallback(
+    (animated: boolean) => {
+      requestAnimationFrame(() => {
+        if (orderDetailLayout) {
+          scrollViewRef.current?.scrollToEnd({ animated });
+        } else {
+          flatListRef.current?.scrollToEnd({ animated });
+        }
+      });
+    },
+    [orderDetailLayout],
+  );
+
   const sendMessageMutation = useMutation({
     mutationFn: async () => {
       if (!threadQuery.data?.id || !messageText.trim()) return;
@@ -106,9 +129,10 @@ export function OrderChatPanel({
         messageType: "text",
       });
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       setMessageText("");
-      queryClient.invalidateQueries({ queryKey: ["/api/chat/messages", threadQuery.data?.id] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/chat/messages", threadQuery.data?.id] });
+      scrollChatToEnd(true);
     },
   });
 
@@ -160,26 +184,34 @@ export function OrderChatPanel({
       )}
       {orderDetailLayout ? (
         <ScrollView
+          ref={scrollViewRef}
           style={styles.chatList}
           contentContainerStyle={styles.chatListContent}
           nestedScrollEnabled
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator
+          onContentSizeChange={() => {
+            if (sortedMessages.length > 0) scrollChatToEnd(false);
+          }}
         >
-          {(messagesQuery.data ?? []).length === 0 ? (
+          {sortedMessages.length === 0 ? (
             <Text style={styles.chatEmpty}>No messages yet.</Text>
           ) : (
-            (messagesQuery.data ?? []).map((item) => renderMessageBubble(item, viewerRole, styles))
+            sortedMessages.map((item) => renderMessageBubble(item, viewerRole, styles))
           )}
         </ScrollView>
       ) : (
         <FlatList
-          data={messagesQuery.data ?? []}
+          ref={flatListRef}
+          data={sortedMessages}
           keyExtractor={(item) => item.id}
           style={styles.chatList}
           contentContainerStyle={styles.chatListContent}
           ListEmptyComponent={<Text style={styles.chatEmpty}>No messages yet.</Text>}
           renderItem={({ item }) => renderMessageBubble(item, viewerRole, styles)}
+          onContentSizeChange={() => {
+            if (sortedMessages.length > 0) scrollChatToEnd(false);
+          }}
         />
       )}
       <View style={styles.chatInputRow}>
@@ -271,6 +303,9 @@ const getStyles = (theme: typeof lightTheme, orderDetailLayout: boolean) => {
       paddingBottom: 12,
       paddingHorizontal: 12,
       paddingTop: 12,
+      ...(orderDetailLayout
+        ? { flexGrow: 1, justifyContent: "flex-end" as const }
+        : {}),
     },
     chatEmpty: {
       ...p.muted,

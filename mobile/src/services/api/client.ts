@@ -7,6 +7,7 @@ import {
   rewriteApiBaseUrlWithExpoHost,
 } from "@/services/config";
 import { clearSecureSession, readSecureSession } from "@/services/storage";
+import { useSessionStore } from "@/store/session-store";
 
 /** Cookie sessions (Inspect360-style): send session cookie on every API request. */
 export const apiClient = axios.create({
