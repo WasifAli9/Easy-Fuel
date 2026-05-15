@@ -36,6 +36,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
+import { extractUploadObjectPath } from "@/lib/upload-object-path";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { normalizeFilePath } from "@/lib/utils";
 import { normalizeDocuments } from "@/lib/document-normalize";
@@ -117,6 +118,17 @@ const formatDateForInput = (dateString: string | null | undefined): string => {
   }
 };
 
+function parseApiErrorJson(error: unknown): Record<string, any> | null {
+  const msg = error instanceof Error ? error.message : String(error);
+  const idx = msg.indexOf("{");
+  if (idx === -1) return null;
+  try {
+    return JSON.parse(msg.slice(idx));
+  } catch {
+    return null;
+  }
+}
+
 export default function SupplierProfile() {
   const { toast } = useToast();
   const { updatePassword, refetchProfile } = useAuth();
@@ -131,6 +143,11 @@ export default function SupplierProfile() {
     queryKey: ["/api/supplier/compliance/status"],
   });
 
+  const { data: kybReadiness, isLoading: kybReadinessLoading } = useQuery<any>({
+    queryKey: ["/api/supplier/compliance/kyb-readiness"],
+    refetchInterval: 8000,
+  });
+
   // Get supplier documents
   const { data: documents = [] } = useQuery<any[]>({
     queryKey: ["/api/supplier/documents"],
@@ -143,11 +160,12 @@ export default function SupplierProfile() {
   useWebSocket((message) => {
     if (message.type === "document_approved" || message.type === "document_rejected" || 
         message.type === "kyc_approved" || message.type === "compliance_approved" || 
-        message.type === "kyb_approved") {
+        message.type === "kyb_approved" || message.type === "kyc_rejected" || message.type === "kyc_submitted") {
       console.log("[SupplierProfile] Received WebSocket message:", message.type);
       queryClient.invalidateQueries({ queryKey: ["/api/supplier/documents"] });
       queryClient.invalidateQueries({ queryKey: ["/api/supplier/profile"] });
       queryClient.invalidateQueries({ queryKey: ["/api/supplier/compliance/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/supplier/compliance/kyb-readiness"] });
       queryClient.refetchQueries({ queryKey: ["/api/supplier/documents"] });
       queryClient.refetchQueries({ queryKey: ["/api/supplier/profile"] });
     }
@@ -315,17 +333,50 @@ export default function SupplierProfile() {
       // Invalidate and refetch profile data to get updated values
       await queryClient.invalidateQueries({ queryKey: ["/api/supplier/profile"] });
       await queryClient.invalidateQueries({ queryKey: ["/api/supplier/compliance/status"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/supplier/compliance/kyb-readiness"] });
       // Refetch profile to update form values
       await queryClient.refetchQueries({ queryKey: ["/api/supplier/profile"] });
       toast({
         title: "Success",
-        description: "Compliance information updated successfully",
+        description: "Draft saved. Submit KYB when your checklist is complete.",
       });
     },
     onError: (error: any) => {
+      const body = parseApiErrorJson(error);
       toast({
         title: "Error",
-        description: error.message || "Failed to update compliance information",
+        description: body?.error || error.message || "Failed to update compliance information",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const submitKybMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/supplier/compliance/submit-kyb");
+      return res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/supplier/compliance/status"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/supplier/compliance/kyb-readiness"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/supplier/documents"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/supplier/profile"] });
+      toast({
+        title: "KYB submitted",
+        description: "Your package has been sent for admin review.",
+      });
+    },
+    onError: (error: any) => {
+      const body = parseApiErrorJson(error);
+      const base = body?.error || error?.message || "Failed to submit KYB";
+      const parts: string[] = [base];
+      const md = body?.missing_docs ?? body?.missingDocs;
+      const mf = body?.missing_fields ?? body?.missingFields;
+      if (Array.isArray(md) && md.length) parts.push(`Missing documents: ${md.join(", ")}`);
+      if (Array.isArray(mf) && mf.length) parts.push(`Missing fields: ${mf.join(", ")}`);
+      toast({
+        title: "Cannot submit KYB",
+        description: parts.join(" — "),
         variant: "destructive",
       });
     },
@@ -339,18 +390,18 @@ export default function SupplierProfile() {
     if (!result.successful || result.successful.length === 0) return;
     
     const uploadedFile = result.successful[0];
-    if (!uploadedFile?.uploadURL) return;
+    const documentURL = extractUploadObjectPath(uploadedFile);
+    if (!documentURL) {
+      toast({
+        title: "Error",
+        description: "Could not resolve uploaded file path",
+        variant: "destructive",
+      });
+      return;
+    }
 
     try {
-      const headers = await getAuthHeaders();
-      const response = await fetch("/api/documents", {
-        method: "PUT",
-        headers,
-        body: JSON.stringify({ documentURL: uploadedFile.uploadURL }),
-      });
-
-      if (!response.ok) throw new Error("Failed to set document ACL");
-
+      const response = await apiRequest("PUT", "/api/documents", { documentURL });
       const { objectPath } = await response.json();
       
       await apiRequest("POST", "/api/supplier/documents", {
@@ -364,6 +415,7 @@ export default function SupplierProfile() {
       
       queryClient.invalidateQueries({ queryKey: ["/api/supplier/documents"] });
       queryClient.invalidateQueries({ queryKey: ["/api/supplier/compliance/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/supplier/compliance/kyb-readiness"] });
       
       toast({
         title: "Success",
@@ -417,6 +469,11 @@ export default function SupplierProfile() {
         return <Badge variant="default" className="bg-green-600"><CheckCircle2 className="h-3 w-3 mr-1" />Approved</Badge>;
       case "rejected":
         return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Rejected</Badge>;
+      case "pending":
+      case "pending_review":
+        return <Badge variant="secondary">Pending</Badge>;
+      case "draft":
+        return <Badge variant="outline">Draft</Badge>;
       default:
         return <Badge variant="secondary">Pending</Badge>;
     }
@@ -817,7 +874,7 @@ export default function SupplierProfile() {
                   Compliance Status
                 </CardTitle>
                 <CardDescription>
-                  Your compliance status and document checklist
+                  Your compliance status and document checklist. Uploads stay as drafts until you submit your KYB package.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -845,6 +902,33 @@ export default function SupplierProfile() {
                     </Badge>
                   </div>
                 </div>
+
+                {(() => {
+                  const pkgAt =
+                    complianceStatus.package_submitted_at ?? complianceStatus.packageSubmittedAt;
+                  const awaitingRev =
+                    !!pkgAt && complianceStatus.overallStatus === "pending";
+                  if (complianceStatus.overallStatus === "approved") return null;
+                  if (awaitingRev) {
+                    return (
+                      <Alert>
+                        <FileText className="h-4 w-4" />
+                        <AlertTitle>Submitted for admin review</AlertTitle>
+                        <AlertDescription>
+                          Your KYB package is pending. Editing is locked until an admin approves or rejects it.
+                        </AlertDescription>
+                      </Alert>
+                    );
+                  }
+                  return (
+                    <Alert>
+                      <AlertTitle>Draft mode</AlertTitle>
+                      <AlertDescription>
+                        Save fields and upload documents as drafts. Admins are notified only after you use Submit KYB.
+                      </AlertDescription>
+                    </Alert>
+                  );
+                })()}
 
                 {complianceStatus.checklist && (
                   <>
@@ -896,7 +980,7 @@ export default function SupplierProfile() {
                 Compliance Information
               </CardTitle>
               <CardDescription>
-                Complete your compliance profile to access platform features
+                Save your answers as a draft with the button below. When every required field and document is complete, submit your full KYB package for review.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -2259,18 +2343,70 @@ export default function SupplierProfile() {
                     </div>
                   </div>
 
-                  <div className="pt-6 border-t-2 border-primary/20">
-                    <Button type="submit" size="lg" disabled={updateComplianceMutation.isPending} className="w-full md:w-auto">
+                  <div className="pt-6 border-t-2 border-primary/20 flex flex-col sm:flex-row sm:items-center gap-3">
+                    <Button type="submit" size="lg" disabled={updateComplianceMutation.isPending} className="w-full sm:w-auto">
                       {updateComplianceMutation.isPending ? (
                         <>
                           <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                           Saving...
                         </>
                       ) : (
-                        "Save Compliance Information"
+                        "Save draft"
+                      )}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="lg"
+                      variant="default"
+                      className="w-full sm:w-auto"
+                      disabled={
+                        submitKybMutation.isPending ||
+                        kybReadinessLoading ||
+                        !(kybReadiness?.can_submit ?? kybReadiness?.canSubmit)
+                      }
+                      onClick={() => submitKybMutation.mutate()}
+                    >
+                      {submitKybMutation.isPending ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Submitting...
+                        </>
+                      ) : (
+                        "Submit KYB"
                       )}
                     </Button>
                   </div>
+                  {kybReadiness &&
+                    !(kybReadiness.can_submit ?? kybReadiness.canSubmit) &&
+                    (() => {
+                      const pkgAt =
+                        kybReadiness.package_submitted_at ?? kybReadiness.packageSubmittedAt;
+                      const pend =
+                        (kybReadiness.overall_status ?? kybReadiness.overallStatus) === "pending";
+                      if (pkgAt && pend) {
+                        return (
+                          <p className="text-sm text-muted-foreground">
+                            Your package is already submitted and awaiting review.
+                          </p>
+                        );
+                      }
+                      if ((kybReadiness.overall_status ?? kybReadiness.overallStatus) === "approved") {
+                        return null;
+                      }
+                      const md = kybReadiness.missing_docs ?? kybReadiness.missingDocs ?? [];
+                      const mf = kybReadiness.missing_fields ?? kybReadiness.missingFields ?? [];
+                      return (
+                        <div className="text-sm text-muted-foreground space-y-1">
+                          <p>Submit KYB is enabled when all required fields and documents are complete.</p>
+                          {Array.isArray(md) && md.length > 0 && (
+                            <p>Missing documents: {md.join(", ")}</p>
+                          )}
+                          {Array.isArray(mf) && mf.length > 0 && (
+                            <p>Missing fields: {mf.join(", ")}</p>
+                          )}
+                        </div>
+                      );
+                    })()}
                 </form>
               </Form>
             </CardContent>

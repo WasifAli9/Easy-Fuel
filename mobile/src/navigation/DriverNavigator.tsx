@@ -2,6 +2,7 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useMemo, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Text } from "react-native-paper";
 import { Button } from "@/design/paper-button";
 import { fuelPortalTabBarOptions, getFuelPortalTokens } from "@/design/fuel-portal-tokens";
@@ -82,6 +83,7 @@ function DriverPortalTabs() {
 
 export function DriverNavigator() {
   const { logout } = useAuth();
+  const insets = useSafeAreaInsets();
   const mode = useUiThemeStore((state) => state.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
   const styles = getStyles(theme);
@@ -132,7 +134,7 @@ export function DriverNavigator() {
 
       <Modal transparent visible={menuVisible} animationType="fade" onRequestClose={() => setMenuVisible(false)}>
         <View style={styles.overlay}>
-          <View style={styles.sideMenu}>
+          <View style={[styles.sideMenu, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
             <Text variant="titleMedium" style={styles.menuTitle}>
               Driver Menu
             </Text>
@@ -208,7 +210,7 @@ const getStyles = (theme: typeof lightTheme) => {
     },
     menuTitle: {
       marginHorizontal: 14,
-      paddingTop: 12,
+      paddingTop: 4,
       paddingBottom: 4,
       color: theme.colors.onSurface,
       fontWeight: "700",
@@ -244,7 +246,7 @@ const getStyles = (theme: typeof lightTheme) => {
     menuFooter: {
       paddingHorizontal: 12,
       paddingTop: 10,
-      paddingBottom: 14,
+      paddingBottom: 10,
       borderTopWidth: 1,
       borderTopColor: theme.colors.outline,
       backgroundColor: theme.colors.surface,

@@ -355,6 +355,27 @@ const adminDb = {
   },
 };
 
+async function attachPendingDocumentCounts(
+  ownerType: "driver" | "supplier",
+  rows: Record<string, unknown>[],
+) {
+  return Promise.all(
+    rows.map(async (row) => {
+      const ownerId = row.id as string;
+      const countResult = await pool.query(
+        `SELECT COUNT(*)::int AS count FROM documents
+         WHERE owner_type = $1 AND owner_id = $2::uuid
+           AND verification_status IN ('pending', 'pending_review', 'draft')`,
+        [ownerType, ownerId],
+      );
+      return {
+        ...row,
+        pending_document_count: countResult.rows[0]?.count ?? 0,
+      };
+    }),
+  );
+}
+
 /** Resolve profile user id to notify for a compliance document owner */
 async function resolveDocumentOwnerUserId(
   ownerType: string | null | undefined,
@@ -690,21 +711,28 @@ router.get("/drivers", async (req, res) => {
 // Get pending KYC/KYB applications
 router.get("/kyc/pending", async (req, res) => {
   try {
-    // Fetch pending drivers
-    const { data: pendingDrivers, error: driversError } = await adminDb
+    // Package submitted for review (draft phase drivers are excluded from this queue)
+    const { data: pendingDriversRaw, error: driversError } = await adminDb
       .from("drivers")
       .select("*")
       .eq("kyc_status", "pending");
 
     if (driversError) throw driversError;
 
-    // Fetch pending suppliers
-    const { data: pendingSuppliers, error: suppliersError } = await adminDb
+    const pendingDrivers = (pendingDriversRaw || []).filter(
+      (d: any) => (d.kyc_submitted_at ?? d.kycSubmittedAt) != null,
+    );
+
+    const { data: pendingSuppliersRaw, error: suppliersError } = await adminDb
       .from("suppliers")
       .select("*")
       .eq("kyb_status", "pending");
 
     if (suppliersError) throw suppliersError;
+
+    const pendingSuppliers = (pendingSuppliersRaw || []).filter(
+      (s: any) => (s.kyb_submitted_at ?? s.kybSubmittedAt) != null,
+    );
 
     // Fetch profiles for drivers
     const driversWithProfiles = await Promise.all(
@@ -857,17 +885,30 @@ router.post("/kyc/driver/:id/reject", async (req, res) => {
       .eq("id", id)
       .single();
 
+    const { reason } = req.body;
+
     const { error } = await adminDb
       .from("drivers")
-      .update({ 
+      .update({
         kyc_status: "rejected",
         status: "rejected",
         compliance_status: "rejected",
-        updated_at: new Date() 
+        kyc_submitted_at: null,
+        compliance_rejection_reason: reason || null,
+        updated_at: new Date(),
       })
       .eq("id", id);
 
     if (error) throw error;
+
+    await pool.query(
+      `UPDATE documents
+       SET verification_status = 'draft',
+           document_rejection_reason = NULL,
+           updated_at = now()
+       WHERE owner_type = 'driver' AND owner_id = $1::uuid`,
+      [id],
+    );
     
     // Also update the profile's is_active field
     if (driver?.user_id) {
@@ -902,7 +943,6 @@ router.post("/kyc/driver/:id/reject", async (req, res) => {
 
       // Send notification to driver
       const { notificationService } = await import("./notification-service");
-      const { reason } = req.body;
       await notificationService.notifyAdminKycRejected(driver.user_id, "driver", reason);
     }
 
@@ -1020,17 +1060,32 @@ router.post("/kyc/supplier/:id/reject", async (req, res) => {
       .eq("id", id)
       .single();
 
+    const { reason } = req.body;
+
     const { error } = await adminDb
       .from("suppliers")
-      .update({ 
+      .update({
         kyb_status: "rejected",
         status: "rejected",
         compliance_status: "rejected",
-        updated_at: new Date() 
+        kyb_submitted_at: null,
+        compliance_rejection_reason: reason || null,
+        updated_at: new Date(),
       })
       .eq("id", id);
 
     if (error) throw error;
+
+    if (supplier?.owner_id) {
+      await pool.query(
+        `UPDATE documents
+         SET verification_status = 'draft',
+             document_rejection_reason = NULL,
+             updated_at = now()
+         WHERE owner_type = 'supplier' AND owner_id = $1::uuid`,
+        [supplier.owner_id],
+      );
+    }
     
     // Also update the profile's is_active field
     if (supplier?.owner_id) {
@@ -1065,7 +1120,6 @@ router.post("/kyc/supplier/:id/reject", async (req, res) => {
 
       // Send notification to supplier
       const { notificationService } = await import("./notification-service");
-      const { reason } = req.body;
       await notificationService.notifyAdminKycRejected(supplier.owner_id, "supplier", reason);
     }
 
@@ -2166,27 +2220,39 @@ router.put("/users/:userId/profile-picture", async (req, res) => {
 // Get all pending compliance reviews
 router.get("/compliance/pending", async (req, res) => {
   try {
-    // Get drivers pending compliance
-    const { data: pendingDrivers, error: driversError } = await adminDb
-      .from("drivers")
-      .select("id, user_id, status, compliance_status")
-      .in("status", ["pending_compliance"])
-      .in("compliance_status", ["pending", "incomplete"]);
+    // Drivers needing review: submitted KYC package, pending_compliance status, or any pending document
+    const driversResult = await pool.query(
+      `SELECT DISTINCT d.id, d.user_id, d.status, d.compliance_status, d.kyc_status, d.kyc_submitted_at
+       FROM drivers d
+       WHERE (
+         (d.kyc_status = 'pending' AND d.kyc_submitted_at IS NOT NULL)
+         OR (d.status = 'pending_compliance' AND d.compliance_status IN ('pending', 'incomplete'))
+         OR EXISTS (
+           SELECT 1 FROM documents doc
+           WHERE doc.owner_type = 'driver'
+             AND doc.owner_id = d.id
+             AND doc.verification_status IN ('pending', 'pending_review', 'draft')
+         )
+       )`,
+    );
+    const pendingDrivers = await attachPendingDocumentCounts("driver", driversResult.rows);
 
-    if (driversError) {
-      console.error("Error fetching pending drivers:", driversError);
-    }
-
-    // Get suppliers pending compliance
-    const { data: pendingSuppliers, error: suppliersError } = await adminDb
-      .from("suppliers")
-      .select("id, owner_id, status, compliance_status, name, registered_name")
-      .in("status", ["pending_compliance"])
-      .in("compliance_status", ["pending", "incomplete"]);
-
-    if (suppliersError) {
-      console.error("Error fetching pending suppliers:", suppliersError);
-    }
+    const suppliersResult = await pool.query(
+      `SELECT DISTINCT s.id, s.owner_id, s.status, s.compliance_status, s.name, s.registered_name,
+              s.kyb_status, s.kyb_submitted_at
+       FROM suppliers s
+       WHERE (
+         (s.kyb_status = 'pending' AND s.kyb_submitted_at IS NOT NULL)
+         OR (s.status = 'pending_compliance' AND s.compliance_status IN ('pending', 'incomplete'))
+         OR EXISTS (
+           SELECT 1 FROM documents doc
+           WHERE doc.owner_type = 'supplier'
+             AND doc.owner_id = s.id
+             AND doc.verification_status IN ('pending', 'pending_review', 'draft')
+         )
+       )`,
+    );
+    const pendingSuppliers = await attachPendingDocumentCounts("supplier", suppliersResult.rows);
 
     // Fetch profiles for drivers separately
     const driversWithProfiles = await Promise.all(
@@ -2226,6 +2292,29 @@ router.get("/compliance/pending", async (req, res) => {
     });
   } catch (error: any) {
     console.error("Error getting pending compliance:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Documents awaiting per-document admin review (driver or supplier)
+router.get("/compliance/:ownerType/:ownerId/review-documents", async (req, res) => {
+  try {
+    const { ownerType, ownerId } = req.params;
+    if (ownerType !== "driver" && ownerType !== "supplier") {
+      return res.status(400).json({ error: "ownerType must be driver or supplier" });
+    }
+    const result = await pool.query(
+      `SELECT id, doc_type, title, file_path, mime_type, verification_status,
+              created_at, document_rejection_reason, expiry_date
+       FROM documents
+       WHERE owner_type = $1 AND owner_id = $2::uuid
+         AND verification_status IN ('pending', 'pending_review', 'draft')
+       ORDER BY created_at DESC`,
+      [ownerType, ownerId],
+    );
+    res.json(result.rows);
+  } catch (error: any) {
+    console.error("Error fetching review documents:", error);
     res.status(500).json({ error: error.message });
   }
 });

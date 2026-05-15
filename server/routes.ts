@@ -19,7 +19,7 @@ import { db } from "./db";
 import { companies, fuelTypes, profiles } from "@shared/schema";
 import { and, asc, eq, ilike } from "drizzle-orm";
 import fs from "fs/promises";
-import { objectPathToAbsolute, writeLocalObject } from "./local-object-storage";
+import { objectPathToAbsolute, uploadUrlToObjectPath, writeLocalObject } from "./local-object-storage";
 import {
   normalizeToObjectPath,
   readObjectViewToken,
@@ -437,8 +437,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
+      const raw = String(documentURL);
+
+      // Local dev storage: normalize upload URL to /objects/... (no GCS ACL)
+      if (
+        raw.includes("/api/storage/upload/") ||
+        raw.includes("/api/object-storage/upload/") ||
+        raw.startsWith("/objects/")
+      ) {
+        const objectPath = uploadUrlToObjectPath(raw);
+        return res.json({ objectPath });
+      }
+
+      // bucket/path from client (local upload response body)
+      if (raw.includes("/") && !raw.startsWith("/") && !raw.startsWith("http")) {
+        const objectPath = uploadUrlToObjectPath(raw);
+        return res.json({ objectPath });
+      }
+
       const objectPath = await objectStorageService.trySetObjectEntityAclPolicy(
-        documentURL,
+        raw,
         {
           owner: user.id,
           visibility: "private", // Documents are private

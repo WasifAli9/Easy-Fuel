@@ -166,7 +166,7 @@ export function OrderChat({ orderId, currentUserType, variant = "default" }: Ord
     <div
       className={
         embedded
-          ? "flex min-h-0 flex-1 flex-col"
+          ? "flex h-full min-h-0 flex-1 flex-col overflow-hidden"
           : "flex h-full min-h-[500px] flex-col"
       }
     >

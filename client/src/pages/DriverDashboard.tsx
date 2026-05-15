@@ -718,8 +718,9 @@ export default function DriverDashboard() {
                         </div>
                       </CardHeader>
                       <CardContent className="p-0">
-                        <div className="flex flex-col border-t border-border/80 lg:flex-row lg:items-start">
-                          <div className="flex-1 min-w-0 space-y-6 bg-muted/25 p-6 dark:bg-muted/15">
+                        <div className="grid min-h-0 grid-cols-1 border-t border-border/80 lg:h-[clamp(22rem,calc(100dvh-11rem),56rem)] lg:grid-rows-[minmax(0,1fr)] lg:overflow-hidden lg:grid-cols-[minmax(0,1fr)_420px] xl:grid-cols-[minmax(0,1fr)_440px]">
+                          <div className="flex min-h-0 min-w-0 flex-col bg-muted/25 dark:bg-muted/15 lg:h-full lg:max-h-full lg:min-h-0 lg:overflow-hidden">
+                            <div className="flex min-h-0 flex-1 flex-col space-y-6 overflow-y-auto overscroll-y-contain p-6 lg:overflow-y-auto">
                             <div className="flex items-start gap-3 rounded-xl border border-border/60 bg-background/60 p-3 shadow-sm dark:bg-background/40">
                               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
                                 <ClipboardList className="h-5 w-5" />
@@ -786,13 +787,14 @@ export default function DriverDashboard() {
                                 </div>
                               </div>
                             </div>
+                            </div>
                           </div>
                           <div
-                            className="relative flex max-h-[min(70vh,640px)] min-h-0 w-full flex-col overflow-hidden border-t border-primary/25 bg-gradient-to-b from-primary/[0.08] via-muted/30 to-background p-6 dark:from-primary/[0.12] dark:via-muted/20 lg:max-h-[min(75vh,680px)] lg:w-[min(100%,420px)] lg:shrink-0 lg:border-l-2 lg:border-t-0 lg:border-primary/35 xl:w-[440px]"
+                            className="relative flex h-full min-h-0 w-full min-w-0 max-h-[min(28rem,58dvh)] flex-col overflow-hidden border-t border-primary/25 bg-gradient-to-b from-primary/[0.08] via-muted/30 to-background p-6 dark:from-primary/[0.12] dark:via-muted/20 lg:max-h-none lg:border-l-2 lg:border-t-0 lg:border-primary/35"
                             aria-label="Order chat"
                           >
                             <span
-                              className="pointer-events-none absolute left-0 top-4 bottom-4 hidden w-1 rounded-full bg-gradient-to-b from-primary from-40% via-primary/50 to-transparent lg:block"
+                              className="pointer-events-none absolute left-0 top-0 bottom-0 hidden w-1 rounded-full bg-gradient-to-b from-primary from-40% via-primary/50 to-transparent lg:block"
                               aria-hidden
                             />
                             <div className="mb-4 flex shrink-0 items-center gap-2 rounded-lg border border-primary/20 bg-primary/10 px-3 py-2 dark:bg-primary/15">
@@ -1373,8 +1375,9 @@ export default function DriverDashboard() {
                         </div>
                       </CardHeader>
                       <CardContent className="p-0">
-                        <div className="flex flex-col border-t border-border/80 lg:flex-row lg:items-start">
-                          <div className="flex-1 min-w-0 space-y-6 bg-muted/25 p-6 dark:bg-muted/15">
+                        <div className="grid min-h-0 grid-cols-1 border-t border-border/80 lg:h-[clamp(22rem,calc(100dvh-11rem),56rem)] lg:grid-rows-[minmax(0,1fr)] lg:overflow-hidden lg:grid-cols-[minmax(0,1fr)_420px] xl:grid-cols-[minmax(0,1fr)_440px]">
+                          <div className="flex min-h-0 min-w-0 flex-col bg-muted/25 dark:bg-muted/15 lg:h-full lg:max-h-full lg:min-h-0 lg:overflow-hidden">
+                            <div className="flex min-h-0 flex-1 flex-col space-y-6 overflow-y-auto overscroll-y-contain p-6 lg:overflow-y-auto">
                             <div className="flex items-start gap-3 rounded-xl border border-border/60 bg-background/60 p-3 shadow-sm dark:bg-background/40">
                               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
                                 <ClipboardList className="h-5 w-5" />
@@ -1491,14 +1494,15 @@ export default function DriverDashboard() {
                                 </div>
                               </div>
                             </div>
+                            </div>
                           </div>
 
                           <div
-                            className="relative flex max-h-[min(70vh,640px)] min-h-0 w-full flex-col overflow-hidden border-t border-primary/25 bg-gradient-to-b from-primary/[0.08] via-muted/30 to-background p-6 dark:from-primary/[0.12] dark:via-muted/20 lg:max-h-[min(75vh,680px)] lg:w-[min(100%,420px)] lg:shrink-0 lg:border-l-2 lg:border-t-0 lg:border-primary/35 xl:w-[440px]"
+                            className="relative flex h-full min-h-0 w-full min-w-0 max-h-[min(28rem,58dvh)] flex-col overflow-hidden border-t border-primary/25 bg-gradient-to-b from-primary/[0.08] via-muted/30 to-background p-6 dark:from-primary/[0.12] dark:via-muted/20 lg:max-h-none lg:border-l-2 lg:border-t-0 lg:border-primary/35"
                             aria-label="Order chat"
                           >
                             <span
-                              className="pointer-events-none absolute left-0 top-4 bottom-4 hidden w-1 rounded-full bg-gradient-to-b from-primary from-40% via-primary/50 to-transparent lg:block"
+                              className="pointer-events-none absolute left-0 top-0 bottom-0 hidden w-1 rounded-full bg-gradient-to-b from-primary from-40% via-primary/50 to-transparent lg:block"
                               aria-hidden
                             />
                             <div className="mb-4 flex shrink-0 items-center gap-2 rounded-lg border border-primary/20 bg-primary/10 px-3 py-2 dark:bg-primary/15">

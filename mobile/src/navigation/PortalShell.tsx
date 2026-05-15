@@ -1,5 +1,6 @@
 import { ReactNode, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Text } from "react-native-paper";
 import { Button } from "@/design/paper-button";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -53,6 +54,7 @@ export function PortalShell({
   children,
 }: PortalShellProps) {
   const { logout } = useAuth();
+  const insets = useSafeAreaInsets();
   const mode = useUiThemeStore((state) => state.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
   const brand = brandStylesByVariant[brandVariant];
@@ -79,7 +81,7 @@ export function PortalShell({
 
       <Modal transparent visible={menuVisible} animationType="fade" onRequestClose={() => setMenuVisible(false)}>
         <View style={styles.overlay}>
-          <View style={styles.sideMenu}>
+          <View style={[styles.sideMenu, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
             <Text variant="titleMedium" style={styles.menuTitle}>
               {menuTitle}
             </Text>
@@ -154,7 +156,7 @@ const getStyles = (theme: typeof lightTheme, menuActiveBg: string) => {
     },
     menuTitle: {
       marginHorizontal: 14,
-      paddingTop: 14,
+      paddingTop: 4,
       paddingBottom: 4,
       color: theme.colors.onSurface,
       fontWeight: "700",
@@ -190,7 +192,7 @@ const getStyles = (theme: typeof lightTheme, menuActiveBg: string) => {
     menuFooter: {
       paddingHorizontal: 12,
       paddingTop: 10,
-      paddingBottom: 14,
+      paddingBottom: 10,
       borderTopWidth: 1,
       borderTopColor: theme.colors.outline,
       backgroundColor: theme.colors.surface,

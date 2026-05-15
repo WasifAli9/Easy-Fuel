@@ -78,15 +78,18 @@ export function SignInScreen() {
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
       keyboardVerticalOffset={Platform.OS === "ios" ? insets.top : 0}
     >
       <ScrollView
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={[styles.scrollContent, { minHeight: scrollMinHeight }]}
-        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { minHeight: scrollMinHeight, paddingBottom: Math.max(insets.bottom, 16) + 32 },
+        ]}
+        automaticallyAdjustKeyboardInsets
       >
         <View style={styles.card}>
           <View style={styles.logoWrap}>

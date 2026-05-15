@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo } from "react";
 import { KeyboardAvoidingView, Modal, Platform, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActivityIndicator, Card, Chip, Divider, Text } from "react-native-paper";
@@ -9,7 +9,7 @@ import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { OrderChatPanel } from "@/features/chat/OrderChatPanel";
 import { formatCustomerOrderAddress } from "@/features/customer/customerOrderUtils";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 type Offer = {
   id: string;
@@ -57,7 +57,6 @@ export function CustomerOrderDetailModal({
   const styles = getStyles(theme);
   const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
-  const bodyScrollRef = useRef<ScrollView>(null);
 
   const orderQuery = useQuery({
     queryKey: ["/api/orders", orderId],
@@ -126,39 +125,40 @@ export function CustomerOrderDetailModal({
 
   return (
     <Modal visible={visible && !!orderId} animationType="slide" onRequestClose={onDismiss}>
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={Platform.OS === "ios" ? insets.top : 0}
-      >
-        <View style={styles.header}>
-          <Text variant="titleLarge">Order details</Text>
-          <Button onPress={onDismiss}>Close</Button>
-        </View>
-        {orderQuery.isLoading ? (
-          <View style={styles.center}>
-            <ActivityIndicator />
+      <SafeAreaView style={[styles.modalSafe, { backgroundColor: theme.colors.background }]} edges={["top", "left", "right", "bottom"]}>
+        <KeyboardAvoidingView
+          style={styles.flexFill}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={Platform.OS === "ios" ? insets.top : 0}
+        >
+          <View style={styles.header}>
+            <Text variant="titleLarge">Order details</Text>
+            <Button onPress={onDismiss}>Close</Button>
           </View>
-        ) : orderQuery.isError || !order ? (
-          <Text style={styles.center}>Could not load this order.</Text>
-        ) : (
-          <ScrollView
-            ref={bodyScrollRef}
-            style={styles.bodyScroll}
-            contentContainerStyle={styles.scroll}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag"
-            automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
-            refreshControl={
-              <RefreshControl
-                refreshing={orderQuery.isFetching || offersQuery.isFetching}
-                onRefresh={() => {
-                  void queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId] });
-                  void queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId, "offers"] });
-                }}
-              />
-            }
-          >
+          {orderQuery.isLoading ? (
+            <View style={styles.center}>
+              <ActivityIndicator />
+            </View>
+          ) : orderQuery.isError || !order ? (
+            <Text style={styles.center}>Could not load this order.</Text>
+          ) : (
+            <View style={styles.flexFill}>
+              <ScrollView
+                style={styles.bodyScroll}
+                contentContainerStyle={styles.scroll}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+                automaticallyAdjustKeyboardInsets
+                refreshControl={
+                  <RefreshControl
+                    refreshing={orderQuery.isFetching || offersQuery.isFetching}
+                    onRefresh={() => {
+                      void queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId] });
+                      void queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId, "offers"] });
+                    }}
+                  />
+                }
+              >
             <Card mode="outlined" style={styles.card}>
               <Card.Content>
                 <View style={styles.rowBetween}>
@@ -231,23 +231,17 @@ export function CustomerOrderDetailModal({
             ) : null}
 
             <Divider style={styles.divider} />
-
-            <Text variant="titleSmall" style={styles.sectionTitle}>
-              Messages
-            </Text>
-            <View style={styles.chatInset}>
-              <OrderChatPanel
-                orderId={orderId!}
-                viewerRole="customer"
-                orderDetailLayout
-                onMessageInputFocus={() =>
-                  bodyScrollRef.current?.scrollToEnd({ animated: true })
-                }
-              />
+              </ScrollView>
+              <View style={styles.chatDock}>
+                <Text variant="titleSmall" style={styles.sectionTitle}>
+                  Messages
+                </Text>
+                <OrderChatPanel orderId={orderId!} viewerRole="customer" orderDetailLayout />
+              </View>
             </View>
-          </ScrollView>
-        )}
-      </KeyboardAvoidingView>
+          )}
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </Modal>
   );
 }
@@ -255,7 +249,16 @@ export function CustomerOrderDetailModal({
 const getStyles = (theme: typeof lightTheme) => {
   const p = getPortalUiStyleDefs(theme);
   return StyleSheet.create({
-    container: p.screenContainer,
+    modalSafe: { flex: 1 },
+    flexFill: { flex: 1, minHeight: 0 },
+    chatDock: {
+      flexShrink: 0,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.colors.outline,
+      paddingHorizontal: 14,
+      paddingTop: 6,
+      backgroundColor: theme.colors.surface,
+    },
     header: {
       flexDirection: "row",
       alignItems: "center",
@@ -268,14 +271,13 @@ const getStyles = (theme: typeof lightTheme) => {
       borderLeftColor: theme.colors.primary,
     },
     bodyScroll: { flex: 1 },
-    scroll: { padding: 14, paddingBottom: 32, gap: 10 },
+    scroll: { padding: 14, paddingBottom: 16, gap: 10 },
     offersHeaderRow: {
       flexDirection: "row" as const,
       alignItems: "center" as const,
       justifyContent: "space-between" as const,
       marginTop: 4,
     },
-    chatInset: { minHeight: 120, marginBottom: 16 },
     center: { ...p.center, padding: 24 },
     card: p.listCard,
     rowBetween: p.rowBetween,

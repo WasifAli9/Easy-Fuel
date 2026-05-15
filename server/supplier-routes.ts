@@ -3097,12 +3097,22 @@ router.post("/documents", async (req, res) => {
   }
   
   try {
+    const supplierResult = await drizzleClient
+      .from("suppliers")
+      .select("id, name, registered_name")
+      .eq("owner_id", user.id)
+      .maybeSingle();
+    const supplier = supplierResult.data;
+    if (!supplier) {
+      return res.status(404).json({ error: "Supplier profile not found" });
+    }
+
     // Insert document first
     const { data, error } = await drizzleClient
       .from("documents")
       .insert({
         owner_type: owner_type || "supplier",
-        owner_id: user.id,
+        owner_id: supplier.id,
         doc_type,
         title: title || doc_type,
         file_path,
@@ -3111,6 +3121,7 @@ router.post("/documents", async (req, res) => {
         document_issue_date: document_issue_date || null,
         expiry_date: expiry_date || null,
         uploaded_by: user.id,
+        verification_status: "pending",
       })
       .select()
       .single();
@@ -3127,161 +3138,50 @@ router.post("/documents", async (req, res) => {
       return res.status(500).json({ error: "Document created but no data returned" });
     }
 
-    // Send notifications asynchronously (don't block response)
+    try {
+      const { notifyAdminsComplianceDocumentUploaded } = await import("./compliance-document-review");
+      const ownerDisplayName =
+        supplier.name || supplier.registered_name || "Supplier";
+      await notifyAdminsComplianceDocumentUploaded({
+        documentId: data.id,
+        docType: doc_type,
+        ownerType: "supplier",
+        ownerDisplayName,
+        uploaderUserId: user.id,
+      });
+    } catch (notifError) {
+      console.error("[supplier/documents] Admin notification error:", notifError);
+    }
+
     setImmediate(async () => {
       try {
-        const { notificationService } = await import("./notification-service");
-        
-        // Fetch admin profiles and supplier data in parallel
-        const [adminProfilesResult, supplierProfileResult, supplierResult] = await Promise.all([
-          drizzleClient
-            .from("profiles")
-            .select("id")
-            .eq("role", "admin"),
-          drizzleClient
-            .from("profiles")
-            .select("full_name")
-            .eq("id", user.id)
-            .maybeSingle(),
-          drizzleClient
+        if (
+          supplier &&
+          (supplier.kyb_status === "rejected" ||
+            supplier.status === "rejected" ||
+            supplier.compliance_status === "rejected")
+        ) {
+          await drizzleClient
             .from("suppliers")
-            .select("id, kyb_status, status, compliance_status")
-            .eq("owner_id", user.id)
-            .maybeSingle()
-        ]);
-        
-        // Check for errors in parallel queries
-        if (adminProfilesResult.error) {
-          console.error("[supplier/documents] Error fetching admin profiles:", adminProfilesResult.error);
-        }
-        if (supplierProfileResult.error) {
-          console.error("[supplier/documents] Error fetching supplier profile:", supplierProfileResult.error);
-        }
-        if (supplierResult.error) {
-          console.error("[supplier/documents] Error fetching supplier:", supplierResult.error);
-        }
-        
-        const adminProfiles = adminProfilesResult.data;
-        const supplierProfile = supplierProfileResult.data;
-        const supplier = supplierResult.data;
-        
-        if (adminProfiles && adminProfiles.length > 0) {
-          const adminUserIds = adminProfiles.map(p => p.id);
-          const ownerName = supplierProfile?.full_name || "Supplier";
-          
-          // Send document upload notification
-          await notificationService.notifyAdminDocumentUploaded(
-            adminUserIds,
-            data.id,
-            doc_type,
-            "supplier",
-            ownerName,
-            user.id
-          ).catch(err => console.error("[supplier/documents] Notification error:", err));
-
-          // Check if supplier was rejected - if so, reset to pending for resubmission
-          if (supplier && (supplier.kyb_status === "rejected" || supplier.status === "rejected" || supplier.compliance_status === "rejected")) {
-            try {
-              console.log(`[KYB Resubmission] Supplier ${supplier.id} was rejected, resetting to pending status after document upload`);
-              
-              // Update supplier status
-              const { error: supplierUpdateError } = await drizzleClient
-                .from("suppliers")
-                .update({
-                  kyb_status: "pending",
-                  status: "pending_compliance",
-                  compliance_status: "pending",
-                  compliance_rejection_reason: null,
-                  updated_at: new Date()
-                })
-                .eq("id", supplier.id);
-              
-              if (supplierUpdateError) {
-                console.error(`[KYB Resubmission] Error updating supplier ${supplier.id} status:`, supplierUpdateError);
-                throw supplierUpdateError;
-              }
-              
-              // Also update profile approval status
-              const { error: profileUpdateError } = await drizzleClient
-                .from("profiles")
-                .update({ 
-                  approval_status: "pending",
-                  updated_at: new Date()
-                })
-                .eq("id", user.id);
-              
-              if (profileUpdateError) {
-                console.error(`[KYB Resubmission] Error updating profile for supplier ${supplier.id}:`, profileUpdateError);
-                // Continue with notifications even if profile update fails
-              }
-              
-              // Notify admins that supplier has resubmitted KYB
-              try {
-                await notificationService.notifyAdminKycSubmitted(
-                  adminUserIds,
-                  user.id,
-                  ownerName,
-                  "supplier"
-                );
-              } catch (notifyError) {
-                console.error("[KYB Resubmission] Error notifying admins:", notifyError);
-              }
-              
-              // Broadcast resubmission to admins via WebSocket
-              try {
-                const { websocketService } = await import("./websocket");
-                websocketService.broadcastToRole("admin", {
-                  type: "kyc_submitted",
-                  payload: {
-                    supplierId: supplier.id,
-                    userId: user.id,
-                    type: "supplier",
-                    isResubmission: true
-                  },
-                });
-              } catch (wsError) {
-                console.error("[KYB Resubmission] Error broadcasting WebSocket message:", wsError);
-              }
-              
-              // Notify supplier that resubmission was received
-              try {
-                await notificationService.createNotification({
-                  userId: user.id,
-                  type: "account_verification_required",
-                  title: "KYB Resubmission Received",
-                  message: "Your KYB resubmission has been received and is under review. You will be notified once it's been reviewed.",
-                  data: { supplierId: supplier.id, type: "kyb_resubmission" },
-                });
-              } catch (supplierNotifError) {
-                console.error("[KYB Resubmission] Error notifying supplier:", supplierNotifError);
-              }
-            } catch (resubmissionError) {
-              console.error(`[KYB Resubmission] Error in resubmission flow for supplier ${supplier.id}:`, resubmissionError);
-              // Don't fail the document upload if resubmission logic fails
-            }
-          } else if (supplier && (supplier.kyb_status === "pending" || supplier.status === "pending_compliance")) {
-            // Check if this is the first document (new KYC submission)
-            const { data: existingDocs } = await drizzleClient
-              .from("documents")
-              .select("id")
-              .eq("owner_type", "supplier")
-              .eq("owner_id", user.id)
-              .neq("id", data.id)
-              .limit(1);
-            
-            if (!existingDocs || existingDocs.length === 0) {
-              await notificationService.notifyAdminKycSubmitted(
-                adminUserIds,
-                user.id,
-                ownerName,
-                "supplier"
-              ).catch(err => console.error("[supplier/documents] KYC notification error:", err));
-            }
-          }
+            .update({
+              kyb_status: "pending",
+              status: "pending_compliance",
+              compliance_status: "pending",
+              compliance_rejection_reason: null,
+              kyb_submitted_at: null,
+              updated_at: new Date(),
+            })
+            .eq("id", supplier.id);
+          await drizzleClient
+            .from("profiles")
+            .update({
+              approval_status: "pending",
+              updated_at: new Date(),
+            })
+            .eq("id", user.id);
         }
       } catch (notifError) {
-        console.error("[supplier/documents] Error in notification handler:", notifError);
-        // Don't fail the upload if notification fails
+        console.error("[supplier/documents] Error in post-upload handler:", notifError);
       }
     });
 
@@ -3321,6 +3221,130 @@ router.get("/compliance/status", async (req, res) => {
   }
 });
 
+router.get("/compliance/kyb-readiness", async (req, res) => {
+  const user = (req as any).user;
+  try {
+    const { data: supplier, error: supplierError } = await drizzleClient
+      .from("suppliers")
+      .select("id")
+      .eq("owner_id", user.id)
+      .maybeSingle();
+    if (supplierError || !supplier) {
+      return res.status(404).json({ error: "Supplier not found" });
+    }
+    const full = await getSupplierComplianceStatus(supplier.id);
+    const awaitingReview = !!full.packageSubmittedAt && full.overallStatus === "pending";
+    const canSubmit =
+      (full.missingFields?.length ?? 0) === 0 &&
+      (full.checklist?.missing?.length ?? 0) === 0 &&
+      full.overallStatus !== "approved" &&
+      !awaitingReview;
+    res.json({
+      canSubmit,
+      missingDocs: full.checklist.missing,
+      missingFields: full.missingFields ?? [],
+      packageSubmittedAt: full.packageSubmittedAt ?? null,
+      overallStatus: full.overallStatus,
+    });
+  } catch (error: any) {
+    console.error("Error getting KYB readiness:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/compliance/submit-kyb", async (req, res) => {
+  const user = (req as any).user;
+  try {
+    const { data: supplier, error: supplierError } = await drizzleClient
+      .from("suppliers")
+      .select("id")
+      .eq("owner_id", user.id)
+      .maybeSingle();
+    if (supplierError || !supplier) {
+      return res.status(404).json({ error: "Supplier not found" });
+    }
+    const supplierId = supplier.id;
+    const full = await getSupplierComplianceStatus(supplierId);
+    const awaitingReview = !!full.packageSubmittedAt && full.overallStatus === "pending";
+    if (full.overallStatus === "approved") {
+      return res.status(400).json({ error: "KYB is already approved" });
+    }
+    if (awaitingReview) {
+      return res.status(409).json({ error: "KYB package is already submitted for review" });
+    }
+    if ((full.missingFields?.length ?? 0) > 0 || (full.checklist?.missing?.length ?? 0) > 0) {
+      return res.status(400).json({
+        error: "Complete all required fields and documents before submitting",
+        missingDocs: full.checklist.missing,
+        missingFields: full.missingFields ?? [],
+      });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `UPDATE documents
+         SET verification_status = 'pending', updated_at = now()
+         WHERE owner_type = 'supplier' AND owner_id = $1 AND verification_status = 'draft'`,
+        [user.id],
+      );
+      await client.query(
+        `UPDATE suppliers
+         SET kyb_submitted_at = COALESCE(kyb_submitted_at, now()),
+             compliance_status = 'pending',
+             kyb_status = 'pending',
+             status = 'pending_compliance',
+             updated_at = now()
+         WHERE id = $1`,
+        [supplierId],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+
+    const { notificationService } = await import("./notification-service");
+    const { data: adminProfiles } = await drizzleClient.from("profiles").select("id").eq("role", "admin");
+    const { data: supplierProfile } = await drizzleClient
+      .from("profiles")
+      .select("full_name")
+      .eq("id", user.id)
+      .maybeSingle();
+    if (adminProfiles?.length) {
+      const adminUserIds = adminProfiles.map((p: { id: string }) => p.id);
+      await notificationService.notifyAdminKycSubmitted(
+        adminUserIds,
+        user.id,
+        supplierProfile?.full_name || "Supplier",
+        "supplier",
+      );
+    }
+    try {
+      const { websocketService } = await import("./websocket");
+      websocketService.broadcastToRole("admin", {
+        type: "kyc_submitted",
+        payload: { supplierId, userId: user.id, type: "supplier", isResubmission: false },
+      });
+    } catch (wsErr) {
+      console.error("[submit-kyb] websocket:", wsErr);
+    }
+
+    const updated = await getSupplierComplianceStatus(supplierId);
+    res.json({
+      success: true,
+      submittedAt: updated.packageSubmittedAt,
+      compliance: updated,
+    });
+  } catch (error: any) {
+    console.error("Error submitting KYB:", error);
+    res.status(500).json({ error: error.message || "Failed to submit KYB" });
+  }
+});
+
 // Update supplier compliance information
 router.put("/compliance", async (req, res) => {
   const user = (req as any).user;
@@ -3331,7 +3355,7 @@ router.put("/compliance", async (req, res) => {
     // Get supplier ID and current status
     const { data: supplier, error: supplierError } = await drizzleClient
       .from("suppliers")
-      .select("id, kyb_status, status, compliance_status")
+      .select("id, kyb_status, status, compliance_status, kyb_submitted_at")
       .eq("owner_id", user.id)
       .maybeSingle();
 
@@ -3340,7 +3364,19 @@ router.put("/compliance", async (req, res) => {
       return res.status(404).json({ error: "Supplier not found" });
     }
 
+    if (
+      supplier.kyb_submitted_at &&
+      supplier.compliance_status === "pending" &&
+      supplier.kyb_status === "pending"
+    ) {
+      return res.status(409).json({
+        error: "Your KYB is awaiting admin review and cannot be edited until approved or rejected.",
+      });
+    }
+
     console.log("Found supplier:", supplier.id);
+
+    const updateData: any = {};
 
     // Check if supplier was rejected - if so, reset to pending for resubmission
     if (supplier.kyb_status === "rejected" || supplier.status === "rejected" || supplier.compliance_status === "rejected") {
@@ -3423,8 +3459,6 @@ router.put("/compliance", async (req, res) => {
       env_insurance_expiry_date,
     } = bodyFields;
 
-    const updateData: any = {};
-    
     // Process each field - only include non-null, non-empty values
     // Map company_name to registered_name (database column name)
     if (shouldInclude(bodyFields.company_name)) updateData.registered_name = bodyFields.company_name;

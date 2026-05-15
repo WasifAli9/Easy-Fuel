@@ -17,6 +17,7 @@ import { offerNotifications, orderNotifications } from "./notification-helpers";
 import { getDriverComplianceStatus, getVehicleComplianceStatus, canDriverAccessPlatform } from "./compliance-service";
 import { getDriverMaxRadiusMiles } from "./subscription-service";
 import { vehicleToCamelCase, syncDriverVehicleCapacityLitres } from "./vehicle-utils";
+import { getOpenDispatchOfferExpiry, notifyCustomersDriverPricingChanged } from "./dispatch-service";
 import { z } from "zod";
 import dotenv from "dotenv";
 import { normalizeSignatureForStorage, uploadUrlToObjectPath } from "./local-object-storage";
@@ -1612,11 +1613,6 @@ router.post("/offers/:id/accept", checkDriverCompliance, async (req, res) => {
       orderId = offer.order_id;
     }
 
-    // Check if offer has expired (only for regular offers, pending offers don't expire)
-    if (!offerId.startsWith("pending-") && offer.expires_at && new Date(offer.expires_at) < new Date()) {
-      return res.status(400).json({ error: "Offer has expired" });
-    }
-
     // Check if order is still open for offers
     if (offer.orders.state !== "created" && offer.orders.state !== "awaiting_payment") {
       return res.status(409).json({
@@ -1650,7 +1646,7 @@ router.post("/offers/:id/accept", checkDriverCompliance, async (req, res) => {
           proposed_delivery_time: proposedDeliveryTime || null,
           proposed_price_per_km_cents: finalPricePerKmCents,
           proposed_notes: notes || null,
-          expires_at: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+          expires_at: getOpenDispatchOfferExpiry().toISOString(),
         })
         .select("*, orders(*)")
         .single();
@@ -2654,6 +2650,11 @@ router.put("/pricing/:fuelTypeId", async (req, res) => {
       );
     }
 
+    const previousCents = existingPricing?.fuel_price_per_liter_cents ?? null;
+    if (previousCents !== fuelPricePerLiterCents) {
+      void notifyCustomersDriverPricingChanged(driver.id, fuelTypeId);
+    }
+
     res.json(updatedPricing);
   } catch (error: any) {
     
@@ -2991,6 +2992,7 @@ router.post("/documents", async (req, res) => {
     }
 
     // Insert document directly via PostgreSQL so writes cannot silently no-op.
+    const verificationStatus = "pending";
     const insertResult = await pool.query(
       `INSERT INTO documents (
         owner_type, owner_id, doc_type, title, file_path, file_size,
@@ -3007,181 +3009,82 @@ router.post("/documents", async (req, res) => {
         mime_type || null,
         user.id,
         expiry_date || null,
-        "pending",
+        verificationStatus,
       ]
     );
     const document = insertResult.rows[0] || null;
 
-    // Notify all admins about the new document upload
-    if (document && (finalOwnerType === "driver" || finalOwnerType === "vehicle")) {
+    if (document) {
       try {
-        const { notificationService } = await import("./notification-service");
-        const { data: adminProfiles } = await drizzleAdmin
-          .from("profiles")
-          .select("id")
-          .eq("role", "admin");
-        
-        if (adminProfiles && adminProfiles.length > 0) {
-          const adminUserIds = adminProfiles.map(p => p.id);
-          
-          // Get owner name for notification
-          let ownerName = "Driver";
-          if (finalOwnerType === "vehicle") {
-            const { data: vehicle } = await drizzleAdmin
-              .from("vehicles")
-              .select("registration_number")
-              .eq("id", finalOwnerId)
-              .single();
-            ownerName = vehicle?.registration_number || "Vehicle";
-          } else {
-            const { data: driverProfile } = await drizzleAdmin
-              .from("profiles")
-              .select("full_name")
-              .eq("id", user.id)
-              .maybeSingle();
-            ownerName = driverProfile?.full_name || "Driver";
-          }
-          
-          await notificationService.notifyAdminDocumentUploaded(
-            adminUserIds,
-            document.id,
-            doc_type,
-            finalOwnerType,
-            ownerName,
-            user.id
-          );
-
-          // Check if driver was rejected - if so, reset to pending for resubmission
-          if (finalOwnerType === "driver") {
-            const { data: driverStatus } = await drizzleAdmin
-              .from("drivers")
-              .select("kyc_status, status, compliance_status")
-              .eq("id", finalOwnerId)
-              .single();
-            
-            // If driver was rejected, reset status to pending for resubmission
-            if (driverStatus && (driverStatus.kyc_status === "rejected" || driverStatus.status === "rejected" || driverStatus.compliance_status === "rejected")) {
-              try {
-                console.log(`[KYC Resubmission] Driver ${finalOwnerId} was rejected, resetting to pending status after document upload`);
-                
-                // Update driver status
-                const { error: driverUpdateError } = await drizzleAdmin
-                  .from("drivers")
-                  .update({
-                    kyc_status: "pending",
-                    status: "pending_compliance",
-                    compliance_status: "pending",
-                    compliance_rejection_reason: null,
-                    updated_at: new Date()
-                  })
-                  .eq("id", finalOwnerId);
-                
-                if (driverUpdateError) {
-                  console.error(`[KYC Resubmission] Error updating driver ${finalOwnerId} status:`, driverUpdateError);
-                  throw driverUpdateError;
-                }
-                
-                // Also update profile approval status
-                const { error: profileUpdateError } = await drizzleAdmin
-                  .from("profiles")
-                  .update({ 
-                    approval_status: "pending",
-                    updated_at: new Date()
-                  })
-                  .eq("id", user.id);
-                
-                if (profileUpdateError) {
-                  console.error(`[KYC Resubmission] Error updating profile for driver ${finalOwnerId}:`, profileUpdateError);
-                  // Continue with notifications even if profile update fails
-                }
-                
-                // Notify admins that driver has resubmitted KYC
-                const { data: driverProfile, error: profileError } = await drizzleAdmin
-                  .from("profiles")
-                  .select("full_name")
-                  .eq("id", user.id)
-                  .maybeSingle();
-                
-                if (profileError) {
-                  console.error(`[KYC Resubmission] Error fetching driver profile:`, profileError);
-                }
-                
-                const userName = driverProfile?.full_name || "Driver";
-                
-                try {
-                  await notificationService.notifyAdminKycSubmitted(
-                    adminUserIds,
-                    user.id,
-                    userName,
-                    "driver"
-                  );
-                } catch (notifyError) {
-                  console.error(`[KYC Resubmission] Error notifying admins:`, notifyError);
-                }
-                
-                // Broadcast resubmission to admins via WebSocket
-                try {
-                  websocketService.broadcastToRole("admin", {
-                    type: "kyc_submitted",
-                    payload: {
-                      driverId: finalOwnerId,
-                      userId: user.id,
-                      type: "driver",
-                      isResubmission: true
-                    },
-                  });
-                } catch (wsError) {
-                  console.error(`[KYC Resubmission] Error broadcasting WebSocket message:`, wsError);
-                }
-                
-                // Notify driver that resubmission was received
-                try {
-                await notificationService.createNotification({
-                  userId: user.id,
-                  type: "account_verification_required",
-                  title: "KYC Resubmission Received",
-                  message: "Your KYC resubmission has been received and is under review. You will be notified once it's been reviewed.",
-                  data: { driverId: finalOwnerId, type: "kyc_resubmission" },
-                });
-                } catch (driverNotifError) {
-                  console.error(`[KYC Resubmission] Error notifying driver:`, driverNotifError);
-                }
-              } catch (resubmissionError) {
-                console.error(`[KYC Resubmission] Error in resubmission flow for driver ${finalOwnerId}:`, resubmissionError);
-                // Don't fail the document upload if resubmission logic fails
-              }
-            } else if (driverStatus && (driverStatus.kyc_status === "pending" || driverStatus.status === "pending_compliance")) {
-              // Check if this is the first document (new KYC submission)
-              const { data: existingDocs } = await drizzleAdmin
-                .from("documents")
-                .select("id")
-                .eq("owner_type", "driver")
-                .eq("owner_id", finalOwnerId)
-                .neq("id", document.id)
-                .limit(1);
-              
-              // If no other documents exist, this is a new KYC submission
-              if (!existingDocs || existingDocs.length === 0) {
-                const { data: driverProfile } = await drizzleAdmin
-                  .from("profiles")
-                  .select("full_name")
-                  .eq("id", user.id)
-                  .maybeSingle();
-                const userName = driverProfile?.full_name || "Driver";
-                
-                await notificationService.notifyAdminKycSubmitted(
-                  adminUserIds,
-                  user.id,
-                  userName,
-                  "driver"
-                );
-              }
-            }
-          }
+        const { notifyAdminsComplianceDocumentUploaded } = await import("./compliance-document-review");
+        let ownerDisplayName = "Driver";
+        if (finalOwnerType === "vehicle") {
+          const { data: vehicle } = await drizzleAdmin
+            .from("vehicles")
+            .select("registration_number")
+            .eq("id", finalOwnerId)
+            .single();
+          ownerDisplayName = vehicle?.registration_number || "Vehicle";
+        } else {
+          const { data: driverProfile } = await drizzleAdmin
+            .from("profiles")
+            .select("full_name")
+            .eq("id", user.id)
+            .maybeSingle();
+          ownerDisplayName = driverProfile?.full_name || "Driver";
         }
+        await notifyAdminsComplianceDocumentUploaded({
+          documentId: document.id,
+          docType: doc_type,
+          ownerType: finalOwnerType as "driver" | "vehicle",
+          ownerDisplayName,
+          uploaderUserId: user.id,
+        });
       } catch (notifError) {
         console.error("Error sending admin notification for document upload:", notifError);
-        // Don't fail the upload if notification fails
+      }
+    }
+
+    if (document && finalOwnerType === "driver") {
+      try {
+        const { data: driverStatus } = await drizzleAdmin
+          .from("drivers")
+          .select("kyc_status, status, compliance_status")
+          .eq("id", finalOwnerId)
+          .single();
+
+        if (
+          driverStatus &&
+          (driverStatus.kyc_status === "rejected" ||
+            driverStatus.status === "rejected" ||
+            driverStatus.compliance_status === "rejected")
+        ) {
+          const { error: driverUpdateError } = await drizzleAdmin
+            .from("drivers")
+            .update({
+              kyc_status: "pending",
+              status: "pending_compliance",
+              compliance_status: "pending",
+              compliance_rejection_reason: null,
+              kyc_submitted_at: null,
+              updated_at: new Date(),
+            })
+            .eq("id", finalOwnerId);
+
+          if (driverUpdateError) {
+            console.error(`[KYC Resubmission] Error updating driver ${finalOwnerId} status:`, driverUpdateError);
+          } else {
+            await drizzleAdmin
+              .from("profiles")
+              .update({
+                approval_status: "pending",
+                updated_at: new Date(),
+              })
+              .eq("id", user.id);
+          }
+        }
+      } catch (resubmissionError) {
+        console.error(`[KYC draft upload] Error adjusting driver ${finalOwnerId} after rejection:`, resubmissionError);
       }
     }
 
@@ -4386,6 +4289,157 @@ router.get("/compliance/status", async (req, res) => {
   }
 });
 
+// KYC package readiness (authoritative for Submit KYC button)
+router.get("/compliance/kyc-readiness", async (req, res) => {
+  const user = (req as any).user;
+  try {
+    const { data: driver, error: driverError } = await drizzleAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (driverError || !driver) {
+      return res.status(404).json({ error: "Driver not found" });
+    }
+    const full = await getDriverComplianceStatus(driver.id);
+    const awaitingReview = !!full.packageSubmittedAt && full.overallStatus === "pending";
+    const draftCountResult = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM documents
+       WHERE owner_type = 'driver' AND owner_id = $1 AND verification_status = 'draft'`,
+      [driver.id],
+    );
+    const draftDocCount = draftCountResult.rows[0]?.count ?? 0;
+    const checklistComplete =
+      (full.missingFields?.length ?? 0) === 0 && (full.checklist?.missing?.length ?? 0) === 0;
+    const canSubmit =
+      checklistComplete &&
+      (draftDocCount > 0 ||
+        (full.overallStatus !== "approved" && !awaitingReview));
+    res.json({
+      canSubmit,
+      missingDocs: full.checklist.missing,
+      missingFields: full.missingFields ?? [],
+      packageSubmittedAt: full.packageSubmittedAt ?? null,
+      overallStatus: full.overallStatus,
+    });
+  } catch (error: any) {
+    console.error("Error getting KYC readiness:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Submit full driver KYC package for admin review (single notification)
+router.post("/compliance/submit-kyc", async (req, res) => {
+  const user = (req as any).user;
+  try {
+    const { data: driver, error: driverError } = await drizzleAdmin
+      .from("drivers")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (driverError || !driver) {
+      return res.status(404).json({ error: "Driver not found" });
+    }
+    const driverId = driver.id;
+    const full = await getDriverComplianceStatus(driverId);
+    const awaitingReview = !!full.packageSubmittedAt && full.overallStatus === "pending";
+    const draftCountResult = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM documents
+       WHERE owner_type = 'driver' AND owner_id = $1 AND verification_status = 'draft'`,
+      [driverId],
+    );
+    const draftDocCount = draftCountResult.rows[0]?.count ?? 0;
+
+    if (full.overallStatus === "approved" && draftDocCount === 0) {
+      return res.status(400).json({ error: "KYC is already approved" });
+    }
+    if (awaitingReview && draftDocCount === 0) {
+      return res.status(409).json({ error: "KYC package is already submitted for review" });
+    }
+    if ((full.missingFields?.length ?? 0) > 0 || (full.checklist?.missing?.length ?? 0) > 0) {
+      return res.status(400).json({
+        error: "Complete all required fields and documents before submitting",
+        missingDocs: full.checklist.missing,
+        missingFields: full.missingFields ?? [],
+      });
+    }
+
+    const isResubmission =
+      full.overallStatus === "approved" ||
+      full.overallStatus === "rejected" ||
+      awaitingReview;
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `UPDATE documents
+         SET verification_status = 'pending', updated_at = now()
+         WHERE owner_type = 'driver' AND owner_id = $1 AND verification_status = 'draft'`,
+        [driverId],
+      );
+      await client.query(
+        `UPDATE drivers
+         SET kyc_submitted_at = COALESCE(kyc_submitted_at, now()),
+             compliance_status = 'pending',
+             kyc_status = 'pending',
+             status = 'pending_compliance',
+             compliance_rejection_reason = NULL,
+             updated_at = now()
+         WHERE id = $1`,
+        [driverId],
+      );
+      await client.query(
+        `UPDATE profiles
+         SET approval_status = 'pending', updated_at = now()
+         WHERE id = $1`,
+        [user.id],
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+
+    const { notificationService } = await import("./notification-service");
+    const { data: adminProfiles } = await drizzleAdmin.from("profiles").select("id").eq("role", "admin");
+    const { data: driverProfile } = await drizzleAdmin
+      .from("profiles")
+      .select("full_name")
+      .eq("id", user.id)
+      .maybeSingle();
+    if (adminProfiles?.length) {
+      const adminUserIds = adminProfiles.map((p: { id: string }) => p.id);
+      await notificationService.notifyAdminKycSubmitted(
+        adminUserIds,
+        user.id,
+        driverProfile?.full_name || "Driver",
+        "driver",
+      );
+    }
+    try {
+      websocketService.broadcastToRole("admin", {
+        type: "kyc_submitted",
+        payload: { driverId, userId: user.id, type: "driver", isResubmission },
+      });
+    } catch (wsErr) {
+      console.error("[submit-kyc] websocket:", wsErr);
+    }
+
+    const updated = await getDriverComplianceStatus(driverId);
+    res.json({
+      success: true,
+      submittedAt: updated.packageSubmittedAt,
+      compliance: updated,
+    });
+  } catch (error: any) {
+    console.error("Error submitting KYC:", error);
+    res.status(500).json({ error: error.message || "Failed to submit KYC" });
+  }
+});
+
 // Update driver compliance information
 router.put("/compliance", async (req, res) => {
   const user = (req as any).user;
@@ -4400,6 +4454,16 @@ router.put("/compliance", async (req, res) => {
 
     if (driverError || !driver) {
       return res.status(404).json({ error: "Driver not found" });
+    }
+
+    if (
+      driver.kyc_submitted_at &&
+      driver.compliance_status === "pending" &&
+      driver.kyc_status === "pending"
+    ) {
+      return res.status(409).json({
+        error: "Your KYC is awaiting admin review and cannot be edited until approved or rejected.",
+      });
     }
 
     // Extract all fields from request body

@@ -15,7 +15,11 @@ import {
   paymentMethods,
   profiles,
 } from "@shared/schema";
-import { createDispatchOffers } from "./dispatch-service";
+import {
+  closeOpenDispatchOffersForOrder,
+  createDispatchOffers,
+  refreshDispatchOffersForOrder,
+} from "./dispatch-service";
 import {
   sendDriverAcceptanceEmail,
   sendDriverOrderConfirmedByCustomerEmail,
@@ -245,15 +249,30 @@ router.get("/orders/:id/offers", async (req, res) => {
       return res.status(404).json({ error: "Customer profile not found" });
     }
 
-    // Ensure order belongs to customer
+    // Ensure order belongs to customer and refresh offers for newly eligible drivers
     const orderCheckRows = await db
-      .select({ id: orders.id })
+      .select({
+        id: orders.id,
+        state: orders.state,
+        assigned_driver_id: orders.assignedDriverId,
+      })
       .from(orders)
       .where(and(eq(orders.id, orderId), eq(orders.customerId, customer.id)))
       .limit(1);
     const orderCheck = orderCheckRows[0];
     if (!orderCheck) {
       return res.status(404).json({ error: "Order not found" });
+    }
+
+    if (
+      !orderCheck.assigned_driver_id &&
+      (orderCheck.state === "created" || orderCheck.state === "awaiting_payment")
+    ) {
+      try {
+        await refreshDispatchOffersForOrder(orderId);
+      } catch (refreshErr) {
+        console.error(`[GET offers] refreshDispatchOffersForOrder failed for ${orderId}:`, refreshErr);
+      }
     }
 
     // Get all offers for this order - including pending_customer (auto-calculated offers)
@@ -295,7 +314,6 @@ router.get("/orders/:id/offers", async (req, res) => {
               id: drivers.id,
               user_id: drivers.userId,
               vehicle_capacity_litres: drivers.vehicleCapacityLitres,
-              premium_status: drivers.premiumStatus,
             })
             .from(drivers)
             .where(inArray(drivers.id, driverIds))
@@ -405,7 +423,6 @@ router.get("/orders/:id/offers", async (req, res) => {
         driver: driver
           ? {
               id: driver.id,
-              premiumStatus: driver.premium_status,
               vehicleCapacityLitres: driver.vehicle_capacity_litres,
               profile: profile
                 ? {
@@ -1182,6 +1199,8 @@ router.delete("/orders/:id", async (req, res) => {
         .where(eq(orders.id, orderId))
         .returning()
     )[0];
+
+    await closeOpenDispatchOffersForOrder(orderId);
 
     // Broadcast order cancellation
     websocketService.sendOrderUpdate(user.id, {

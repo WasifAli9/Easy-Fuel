@@ -50,11 +50,21 @@ function invalidateForMessage(
     type === "order_created" ||
     type === "order_state_changed" ||
     type === "driver_offer_received" ||
+    type === "driver_offers_available" ||
+    type === "driver_offer_pricing_updated" ||
     type === "order_update"
   ) {
     if (role === "customer" || role === "company") {
       invalidate(["/api/orders"]);
       if (orderId) invalidate(["/api/orders", orderId]);
+      if (
+        orderId &&
+        (type === "driver_offers_available" ||
+          type === "driver_offer_received" ||
+          type === "driver_offer_pricing_updated")
+      ) {
+        invalidate(["/api/orders", orderId, "offers"]);
+      }
     }
     if (role === "driver") {
       invalidate(["/api/driver/assigned-orders"]);

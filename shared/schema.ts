@@ -329,6 +329,8 @@ export const suppliers = pgTable("suppliers", {
   complianceReviewerId: uuid("compliance_reviewer_id"),
   complianceReviewDate: timestamp("compliance_review_date"),
   complianceRejectionReason: text("compliance_rejection_reason"),
+  /** Set when supplier submits full KYB package for admin review; null while drafting. */
+  kybSubmittedAt: timestamp("kyb_submitted_at"),
   subscriptionTier: text("subscription_tier"), // standard | enterprise; synced from supplier_subscriptions
   accountManagerId: uuid("account_manager_id"), // FK admins; Enterprise only
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -447,6 +449,8 @@ export const drivers = pgTable("drivers", {
   complianceReviewerId: uuid("compliance_reviewer_id"),
   complianceReviewDate: timestamp("compliance_review_date"),
   complianceRejectionReason: text("compliance_rejection_reason"),
+  /** Set when driver submits full KYC package for admin review; null while drafting. */
+  kycSubmittedAt: timestamp("kyc_submitted_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

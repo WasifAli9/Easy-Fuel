@@ -14,7 +14,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Users, Truck, TrendingUp, Building2, UserCheck, Search, Shield, FileText, CheckCircle2, XCircle, Eye, Activity, BarChart3, ArrowUpRight, Filter, Bell, DollarSign, Save, Edit2, MapPin, Menu, Settings as SettingsIcon } from "lucide-react";
+import { Users, Truck, TrendingUp, Building2, UserCheck, Search, Shield, FileText, CheckCircle2, XCircle, Eye, Activity, BarChart3, ArrowUpRight, Filter, Bell, DollarSign, Save, Edit2, MapPin, Menu, Settings as SettingsIcon, AlertTriangle } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
@@ -27,6 +27,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { formatDistanceToNow } from "date-fns";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { ComplianceReviewDocuments } from "@/components/admin/ComplianceReviewDocuments";
 
 interface PendingKYC {
   drivers: Array<{
@@ -599,9 +600,8 @@ export default function AdminDashboard() {
     retry: false, // Don't retry on errors
   });
 
-  // Filter admin-related notifications
   const adminNotifications = notifications.filter(
-    (n) => n.type === "admin_document_uploaded" || n.type === "admin_kyc_submitted"
+    (n) => n.type === "admin_kyc_submitted" || n.type === "admin_document_uploaded",
   );
 
   // Handler for admin notification clicks
@@ -663,10 +663,17 @@ export default function AdminDashboard() {
   useWebSocket((message) => {
     console.log("[AdminDashboard] WebSocket message received:", message.type, message);
     
-    if (message.type === "kyc_submitted" || message.type === "kyc_approved" || message.type === "kyc_rejected") {
-      // Refresh KYC pending list when applications are submitted or reviewed
-      console.log("[AdminDashboard] Invalidating KYC pending due to:", message.type);
+    if (
+      message.type === "kyc_submitted" ||
+      message.type === "kyc_approved" ||
+      message.type === "kyc_rejected" ||
+      message.type === "compliance_document_uploaded"
+    ) {
+      console.log("[AdminDashboard] Invalidating compliance queues due to:", message.type);
       queryClient.invalidateQueries({ queryKey: ["/api/admin/kyc/pending"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/compliance/pending"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
     }
     
     if (message.type === "user_created" || message.type === "user_updated" || message.type === "kyc_approved" || message.type === "kyc_rejected") {
@@ -1418,6 +1425,11 @@ export default function AdminDashboard() {
                       <div className="text-sm space-y-1">
                         <p><span className="text-muted-foreground">Status:</span> {driver.status}</p>
                         <p><span className="text-muted-foreground">Compliance:</span> {driver.compliance_status}</p>
+                        {(driver.pending_document_count ?? 0) > 0 && (
+                          <p className="text-primary font-medium">
+                            {driver.pending_document_count} document(s) awaiting review
+                          </p>
+                        )}
                       </div>
                       <div className="flex gap-2">
                         <Button
@@ -1482,6 +1494,11 @@ export default function AdminDashboard() {
                       <div className="text-sm space-y-1">
                         <p><span className="text-muted-foreground">Status:</span> {supplier.status}</p>
                         <p><span className="text-muted-foreground">Compliance:</span> {supplier.compliance_status}</p>
+                        {(supplier.pending_document_count ?? 0) > 0 && (
+                          <p className="text-primary font-medium">
+                            {supplier.pending_document_count} document(s) awaiting review
+                          </p>
+                        )}
                       </div>
                       <div className="flex gap-2">
                         <Button
@@ -1642,6 +1659,21 @@ export default function AdminDashboard() {
                         </AlertDescription>
                       </Alert>
                     )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Documents for review</CardTitle>
+                    <CardDescription>
+                      Approve or reject each uploaded document. Full KYC submit is not required.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <ComplianceReviewDocuments
+                      ownerType={selectedComplianceEntity.type}
+                      ownerId={selectedComplianceEntity.id}
+                    />
                   </CardContent>
                 </Card>
 

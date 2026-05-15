@@ -24,6 +24,7 @@ export default {
       buildNumber: "1",
       infoPlist: {
         UIBackgroundModes: ["remote-notification"],
+        ITSAppUsesNonExemptEncryption: false,
       },
     },
     android: {

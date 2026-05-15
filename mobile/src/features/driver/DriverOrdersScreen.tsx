@@ -11,7 +11,7 @@ import { useUiThemeStore } from "@/store/ui-theme-store";
 import { useUiOverlayStore } from "@/store/ui-overlay-store";
 import { OrderChatPanel } from "@/features/chat/OrderChatPanel";
 import { formatCustomerOrderAddress } from "@/features/customer/customerOrderUtils";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaView } from "react-native-safe-area-context";
 import Signature from "react-native-signature-canvas";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
@@ -74,7 +74,6 @@ export function DriverOrdersScreen() {
   const orderModalScrollRef = useRef<ScrollView>(null);
   const queryClient = useQueryClient();
   const setHideDriverHeader = useUiOverlayStore((state) => state.setHideDriverHeader);
-  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     setHideDriverHeader(!!selectedOrder);
@@ -240,10 +239,10 @@ export function DriverOrdersScreen() {
         presentationStyle="fullScreen"
         onRequestClose={() => setSelectedOrder(null)}
       >
-        <View style={styles.modalContainer}>
+        <SafeAreaView style={styles.modalContainer} edges={["top", "left", "right", "bottom"]}>
           {selectedOrder ? (
             <>
-              <View style={[styles.modalHeader, { paddingTop: Math.max(insets.top, 12) }]}>
+              <View style={[styles.modalHeader, { paddingTop: 12 }]}>
                 <Text style={styles.modalTitle}>Order Details</Text>
                 <Pressable
                   onPress={() => setSelectedOrder(null)}
@@ -256,18 +255,19 @@ export function DriverOrdersScreen() {
               </View>
               <KeyboardAvoidingView
                 style={styles.modalKeyboardWrap}
-                behavior={Platform.OS === "ios" ? "padding" : undefined}
-                keyboardVerticalOffset={Platform.OS === "ios" ? Math.max(insets.top, 12) + 8 : 0}
+                behavior={Platform.OS === "ios" ? "padding" : "height"}
+                keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
               >
-                <ScrollView
-                  ref={orderModalScrollRef}
-                  style={styles.modalScroll}
-                  contentContainerStyle={styles.modalScrollContent}
-                  keyboardShouldPersistTaps="handled"
-                  keyboardDismissMode="on-drag"
-                  automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
-                  showsVerticalScrollIndicator={false}
-                >
+                <View style={styles.modalBodySplit}>
+                  <ScrollView
+                    ref={orderModalScrollRef}
+                    style={styles.modalScroll}
+                    contentContainerStyle={styles.modalScrollContent}
+                    keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode="on-drag"
+                    automaticallyAdjustKeyboardInsets
+                    showsVerticalScrollIndicator={false}
+                  >
                 <View style={[styles.statusPill, { backgroundColor: theme.colors.primaryContainer }]}>
                   <View style={[styles.statusDot, { backgroundColor: theme.colors.primary }]} />
                   <Text style={[styles.statusPillText, { color: theme.colors.primary }]}>
@@ -434,21 +434,17 @@ export function DriverOrdersScreen() {
                   {chatVisible ? "Hide Chat" : "Open Chat"}
                 </Button>
 
-                {chatVisible ? (
-                  <OrderChatPanel
-                    orderId={selectedOrder.id}
-                    viewerRole="driver"
-                    orderDetailLayout
-                    onMessageInputFocus={() =>
-                      orderModalScrollRef.current?.scrollToEnd({ animated: true })
-                    }
-                  />
-                ) : null}
-                </ScrollView>
+                  </ScrollView>
+                  {chatVisible ? (
+                    <View style={styles.modalChatDock}>
+                      <OrderChatPanel orderId={selectedOrder.id} viewerRole="driver" orderDetailLayout />
+                    </View>
+                  ) : null}
+                </View>
               </KeyboardAvoidingView>
             </>
           ) : null}
-        </View>
+        </SafeAreaView>
       </Modal>
     </View>
   );
@@ -640,6 +636,19 @@ const getStyles = (theme: typeof lightTheme) => {
   },
   modalKeyboardWrap: {
     flex: 1,
+    minHeight: 0,
+  },
+  modalBodySplit: {
+    flex: 1,
+    minHeight: 0,
+  },
+  modalChatDock: {
+    flexShrink: 0,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.outline,
+    paddingHorizontal: 18,
+    paddingTop: 8,
+    backgroundColor: theme.colors.surface,
   },
   modalScroll: {
     flex: 1,

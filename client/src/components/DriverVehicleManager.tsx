@@ -12,6 +12,7 @@ import { Truck, Plus, Edit, Trash2, Calendar, Gauge, Shield, Upload, FileText, C
 import { normalizeFilePath, cn } from "@/lib/utils";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
+import { extractUploadObjectPath } from "@/lib/upload-object-path";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -143,17 +144,18 @@ export function DriverVehicleManager() {
     if (!result.successful || result.successful.length === 0) return;
     
     const uploadedFile = result.successful[0];
-    if (!uploadedFile?.uploadURL) return;
+    const documentURL = extractUploadObjectPath(uploadedFile);
+    if (!documentURL) {
+      toast({
+        title: "Error",
+        description: "Could not resolve uploaded file path",
+        variant: "destructive",
+      });
+      return;
+    }
 
     try {
-      const headers = await getAuthHeaders();
-      const response = await fetch("/api/documents", {
-        method: "PUT",
-        headers,
-        body: JSON.stringify({ documentURL: uploadedFile.uploadURL }),
-      });
-
-      if (!response.ok) throw new Error("Failed to set document ACL");
+      const response = await apiRequest("PUT", "/api/documents", { documentURL });
       const { objectPath } = await response.json();
       
       const documentResponse = await apiRequest("POST", "/api/driver/documents", {

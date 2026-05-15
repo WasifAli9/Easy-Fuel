@@ -1,7 +1,6 @@
 import { db } from "./db";
 import { calculateDistance, milesToKm } from "./utils/distance";
 import { websocketService } from "./websocket";
-import { pushNotificationService } from "./push-service";
 import { offerNotifications } from "./notification-helpers";
 import { getSubscriptionRadiusMiles } from "./subscription-service";
 import {
@@ -14,7 +13,63 @@ import {
   fuelTypes,
   orders,
 } from "@shared/schema";
-import { and, eq, inArray, isNotNull, lt } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
+
+/** Offers stay open until the order is cancelled or the customer accepts a quote (column is NOT NULL). */
+export function getOpenDispatchOfferExpiry(): Date {
+  return new Date("2099-12-31T23:59:59.000Z");
+}
+
+const OPEN_DISPATCH_OFFER_STATES = ["pending_customer", "offered"] as const;
+
+/** Close remaining quotes when the customer cancels the order. */
+export async function closeOpenDispatchOffersForOrder(orderId: string): Promise<void> {
+  await db
+    .update(dispatchOffers)
+    .set({ state: "customer_declined", updatedAt: new Date() })
+    .where(
+      and(
+        eq(dispatchOffers.orderId, orderId),
+        inArray(dispatchOffers.state, [...OPEN_DISPATCH_OFFER_STATES]),
+      ),
+    );
+}
+
+/** Push updated totals to customers viewing open orders after a driver changes fuel price. */
+export async function notifyCustomersDriverPricingChanged(
+  driverId: string,
+  fuelTypeId: string,
+): Promise<void> {
+  const rows = await db
+    .select({
+      orderId: orders.id,
+      customerUserId: customers.userId,
+    })
+    .from(dispatchOffers)
+    .innerJoin(orders, eq(orders.id, dispatchOffers.orderId))
+    .innerJoin(customers, eq(customers.id, orders.customerId))
+    .where(
+      and(
+        eq(dispatchOffers.driverId, driverId),
+        inArray(dispatchOffers.state, [...OPEN_DISPATCH_OFFER_STATES]),
+        inArray(orders.state, ["created", "awaiting_payment"]),
+        isNull(orders.assignedDriverId),
+        eq(orders.fuelTypeId, fuelTypeId),
+      ),
+    );
+
+  const notifiedOrders = new Set<string>();
+  for (const row of rows) {
+    if (!row.customerUserId || notifiedOrders.has(row.orderId)) continue;
+    notifiedOrders.add(row.orderId);
+    websocketService.sendOrderUpdate(row.customerUserId, {
+      type: "driver_offer_pricing_updated",
+      orderId: row.orderId,
+      driverId,
+      fuelTypeId,
+    });
+  }
+}
 
 interface CreateDispatchOffersParams {
   orderId: string;
@@ -23,16 +78,71 @@ interface CreateDispatchOffersParams {
   dropLng: number;
   litres: number;
   maxBudgetCents?: number | null;
+  /** Drivers who already have an offer row for this order (refresh skips them). */
+  excludeDriverIds?: Set<string>;
+}
+
+const OPEN_ORDER_STATES = new Set(["created", "awaiting_payment"]);
+const OFFER_REFRESH_THROTTLE_MS = 25_000;
+const lastOfferRefreshAt = new Map<string, number>();
+
+/** Re-scan eligible drivers and add offers for any not already on this order. */
+export async function refreshDispatchOffersForOrder(orderId: string): Promise<number> {
+  const orderRows = await db
+    .select({
+      id: orders.id,
+      state: orders.state,
+      assignedDriverId: orders.assignedDriverId,
+      fuelTypeId: orders.fuelTypeId,
+      dropLat: orders.dropLat,
+      dropLng: orders.dropLng,
+      litres: orders.litres,
+      maxBudgetCents: orders.maxBudgetCents,
+    })
+    .from(orders)
+    .where(eq(orders.id, orderId))
+    .limit(1);
+  const order = orderRows[0];
+  if (!order) return 0;
+  if (order.assignedDriverId) return 0;
+  if (!OPEN_ORDER_STATES.has(String(order.state))) return 0;
+
+  const dropLat = order.dropLat != null ? Number(order.dropLat) : NaN;
+  const dropLng = order.dropLng != null ? Number(order.dropLng) : NaN;
+  const litres = Number(order.litres);
+  if (!order.fuelTypeId || !Number.isFinite(dropLat) || !Number.isFinite(dropLng) || !Number.isFinite(litres)) {
+    return 0;
+  }
+
+  const now = Date.now();
+  const last = lastOfferRefreshAt.get(orderId) ?? 0;
+  if (now - last < OFFER_REFRESH_THROTTLE_MS) {
+    return 0;
+  }
+  lastOfferRefreshAt.set(orderId, now);
+
+  const existingRows = await db
+    .select({ driverId: dispatchOffers.driverId })
+    .from(dispatchOffers)
+    .where(eq(dispatchOffers.orderId, orderId));
+  const excludeDriverIds = new Set(existingRows.map((r) => r.driverId));
+
+  return createDispatchOffers({
+    orderId,
+    fuelTypeId: order.fuelTypeId,
+    dropLat,
+    dropLng,
+    litres,
+    maxBudgetCents: order.maxBudgetCents,
+    excludeDriverIds,
+  });
 }
 
 interface DriverWithLocation {
   id: string;
   user_id: string;
-  premium_status: string;
-  availability_status: string;
   current_lat: number | null;
   current_lng: number | null;
-  job_radius_preference_miles: number;
   vehicle_capacity_litres: number | null;
 }
 
@@ -47,9 +157,8 @@ interface DriverWithLocation {
  * - Fuel cost = driver's price per liter × order litres
  * - Delivery fee = admin-set price per km × distance (driver to customer)
  * - Total = Fuel cost + Delivery fee
- * 
- * Premium drivers receive offers first (5 minute exclusive window)
  */
+/** @returns Number of new dispatch offer rows created */
 export async function createDispatchOffers({
   orderId,
   fuelTypeId,
@@ -57,7 +166,8 @@ export async function createDispatchOffers({
   dropLng,
   litres,
   maxBudgetCents,
-}: CreateDispatchOffersParams): Promise<void> {
+  excludeDriverIds,
+}: CreateDispatchOffersParams): Promise<number> {
   try {
     // Get admin-set price per km from app_settings
     const appSettingsRows = await db
@@ -74,11 +184,8 @@ export async function createDispatchOffers({
       .select({
         id: drivers.id,
         user_id: drivers.userId,
-        premium_status: drivers.premiumStatus,
-        availability_status: drivers.availabilityStatus,
         current_lat: drivers.currentLat,
         current_lng: drivers.currentLng,
-        job_radius_preference_miles: drivers.jobRadiusPreferenceMiles,
         vehicle_capacity_litres: drivers.vehicleCapacityLitres,
         status: drivers.status,
         compliance_status: drivers.complianceStatus,
@@ -87,12 +194,19 @@ export async function createDispatchOffers({
       .where(and(eq(drivers.status, "active"), eq(drivers.complianceStatus, "approved")));
 
     if (!driversRows || driversRows.length === 0) {
-      return;
+      return 0;
     }
 
     let driversWithSub = driversRows as any[];
     if (driversWithSub.length === 0) {
-      return;
+      return 0;
+    }
+
+    if (excludeDriverIds?.size) {
+      driversWithSub = driversWithSub.filter((d: any) => !excludeDriverIds.has(d.id));
+      if (driversWithSub.length === 0) {
+        return 0;
+      }
     }
 
     // Company-scoped disable: still linked to a company but disabled by that company → not eligible for platform dispatch
@@ -119,7 +233,7 @@ export async function createDispatchOffers({
     }
     if (driversWithSub.length === 0) {
       console.log(`[createDispatchOffers] Order ${orderId}: No drivers left after company disable filter`);
-      return;
+      return 0;
     }
 
     // Get driver pricing for this fuel type
@@ -153,7 +267,7 @@ export async function createDispatchOffers({
     // Filter drivers by:
     // 1. Has pricing set for this fuel type
     // 2. Vehicle capacity (if set)
-    // 3. Within radius (if location is set); cap radius by subscription tier
+    // 3. Within radius (if location is set); cap from admin pickup radius settings
     const eligibleDrivers = (driversWithSub as DriverWithLocation[]).filter((driver) => {
       // Must have pricing set
       if (!pricingMap.has(driver.id)) {
@@ -192,18 +306,8 @@ export async function createDispatchOffers({
 
     if (eligibleDrivers.length === 0) {
       console.log(`[createDispatchOffers] No eligible drivers found for order ${orderId}. Total drivers with sub: ${driversWithSub.length}, With pricing: ${pricingMap.size}, Fuel type: ${fuelTypeId}`);
-      return;
+      return 0;
     }
-
-    // Sort: Premium first (ratings boost), then Professional, then Starter
-    const tierOrder = (code: string) => (code === "premium" ? 0 : code === "professional" ? 1 : 2);
-    const driverTierMap = new Map<string, string>(
-      eligibleDrivers.map((d) => [d.id, String(d.premium_status || "starter").toLowerCase()]),
-    );
-    eligibleDrivers.sort(
-      (a, b) =>
-        tierOrder(driverTierMap.get(a.id) || "starter") - tierOrder(driverTierMap.get(b.id) || "starter"),
-    );
 
     console.log(`[createDispatchOffers] Found ${eligibleDrivers.length} eligible drivers for order ${orderId}`);
 
@@ -247,18 +351,25 @@ export async function createDispatchOffers({
 
     if (finalDrivers.length === 0) {
       console.log(`No drivers within budget for order ${orderId}`);
-      return;
+      return 0;
     }
 
-    // Create offers for ALL drivers immediately (no premium window)
-    // Customer sees all drivers with pricing right away
     console.log(
-      `Found ${finalDrivers.length} drivers with pricing - creating offers immediately`
+      `[createDispatchOffers] Order ${orderId}: creating ${finalDrivers.length} offer(s)${
+        excludeDriverIds?.size ? ` (${excludeDriverIds.size} driver(s) already had offers)` : ""
+      }`,
     );
 
-    await createDriverOffersWithPricing(orderId, finalDrivers, pricePerKmCents, fuelTypeId, litres, false);
+    return await createDriverOffersWithPricing(
+      orderId,
+      finalDrivers,
+      pricePerKmCents,
+      fuelTypeId,
+      litres,
+    );
   } catch (error) {
     console.error(`[createDispatchOffers] Error in createDispatchOffers for order ${orderId}:`, error);
+    return 0;
   }
 }
 
@@ -278,22 +389,24 @@ async function createDriverOffersWithPricing(
   pricePerKmCents: number,
   fuelTypeId: string,
   litres: number,
-  isPremium: boolean
-): Promise<void> {
+): Promise<number> {
   if (drivers.length === 0) {
-    return;
+    return 0;
   }
 
   // Check if order was already accepted
   const orderRows = await db
-    .select({ state: orders.state, assigned_driver_id: orders.assignedDriverId })
+    .select({ state: orders.state, assignedDriverId: orders.assignedDriverId })
     .from(orders)
     .where(eq(orders.id, orderId))
     .limit(1);
   const order = orderRows[0];
 
-  if (order?.state === "assigned" || order?.assigned_driver_id) {
-    return;
+  if (order?.assignedDriverId) {
+    return 0;
+  }
+  if (order?.state && !OPEN_ORDER_STATES.has(String(order.state))) {
+    return 0;
   }
 
   // Create offers with automatically calculated pricing
@@ -303,8 +416,10 @@ async function createDriverOffersWithPricing(
     driver_id: d.driver.id,
     state: "pending_customer" as const,
     proposed_price_per_km_cents: pricePerKmCents, // Admin-set price per km
-    expires_at: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(), // 12 hours
+    expires_at: getOpenDispatchOfferExpiry().toISOString(),
   }));
+
+  const offerExpiry = getOpenDispatchOfferExpiry();
 
   const insertedOffers = await db
     .insert(dispatchOffers)
@@ -314,7 +429,7 @@ async function createDriverOffersWithPricing(
         driverId: o.driver_id,
         state: o.state,
         proposedPricePerKmCents: o.proposed_price_per_km_cents,
-        expiresAt: new Date(o.expires_at),
+        expiresAt: offerExpiry,
       })),
     )
     .returning({ id: dispatchOffers.id, driver_id: dispatchOffers.driverId });
@@ -341,8 +456,7 @@ async function createDriverOffersWithPricing(
         orderId,
         offerId: realOfferId,
         fuelTypeId,
-        expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
-        isPremium: false, // All drivers treated equally now
+        expiresAt: getOpenDispatchOfferExpiry().toISOString(),
       });
 
     // Send notification using helper if we have a real offer ID
@@ -370,18 +484,22 @@ async function createDriverOffersWithPricing(
     .limit(1);
   const orderForCustomer = orderForCustomerRows[0];
 
-  if (orderForCustomer?.customer_user_id) {
+  const added = insertedOffers?.length ?? 0;
+
+  if (added > 0 && orderForCustomer?.customer_user_id) {
     websocketService.sendOrderUpdate(orderForCustomer.customer_user_id, {
       type: "driver_offers_available",
       orderId,
-      offerCount: insertedOffers?.length || 0,
+      offerCount: added,
     });
   }
+
+  return added;
 }
 
 
 /**
- * Expires old dispatch offers that haven't been accepted
+ * Legacy: only times out old "offered" rows. Customer quotes (pending_customer) do not auto-expire.
  */
 export async function expireOldOffers(): Promise<void> {
   try {

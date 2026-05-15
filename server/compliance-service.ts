@@ -2,6 +2,17 @@ import { db } from "./db";
 import { customers, documents, drivers, suppliers, vehicles } from "@shared/schema";
 import { and, eq, gt, inArray, isNotNull, lte } from "drizzle-orm";
 import { notificationService } from "./notification-service";
+import {
+  getDriverKycMissingDocuments,
+  getDriverKycMissingFields,
+  getRequiredDriverDocumentTypes,
+  getSupplierKybMissingDocuments,
+  getSupplierKybMissingFields,
+  latestDocStatusByType,
+  latestDocVerificationByType,
+  isDocStatusSatisfying,
+  SUPPLIER_REQUIRED_DOCUMENT_TYPES,
+} from "./kyc-requirements";
 
 export interface ComplianceChecklist {
   required: string[];
@@ -20,22 +31,11 @@ export interface ComplianceStatus {
   rejectionReason?: string;
   reviewerId?: string;
   reviewDate?: string;
+  /** ISO timestamp when full KYC/KYB package was submitted for review (null while drafting). */
+  packageSubmittedAt?: string | null;
+  /** Driver-only: missing compliance fields (not documents). */
+  missingFields?: string[];
 }
-
-/**
- * Required documents for drivers
- */
-const DRIVER_REQUIRED_DOCUMENTS = [
-  "za_id",
-  "passport", // If not SA_ID
-  "proof_of_address",
-  "drivers_license",
-  "prdp", // If transporting fuel
-  "dangerous_goods_training", // If transporting fuel
-  "medical_fitness", // If transporting fuel
-  "criminal_check",
-  "banking_proof",
-];
 
 /**
  * Required documents for vehicles
@@ -49,38 +49,48 @@ const VEHICLE_REQUIRED_DOCUMENTS = [
 ];
 
 /**
- * Required documents for suppliers
- */
-const SUPPLIER_REQUIRED_DOCUMENTS = [
-  "cipc_certificate",
-  "vat_certificate",
-  "tax_clearance",
-  "dmre_license",
-  "site_license",
-  "environmental_authorisation",
-  "fire_certificate",
-  "sabs_certificate",
-  "calibration_certificate",
-  "public_liability_insurance",
-];
-
-/**
  * Get driver compliance status and checklist
  */
 export async function getDriverComplianceStatus(driverId: string): Promise<ComplianceStatus> {
   try {
-    // Get driver record
     const driverRows = await db
       .select({
         id: drivers.id,
-        user_id: drivers.userId,
-        prdp_required: drivers.prdpRequired,
-        dg_training_required: drivers.dgTrainingRequired,
-        compliance_status: drivers.complianceStatus,
+        userId: drivers.userId,
+        idType: drivers.idType,
+        prdpRequired: drivers.prdpRequired,
+        dgTrainingRequired: drivers.dgTrainingRequired,
+        complianceStatus: drivers.complianceStatus,
         status: drivers.status,
-        compliance_rejection_reason: drivers.complianceRejectionReason,
-        compliance_reviewer_id: drivers.complianceReviewerId,
-        compliance_review_date: drivers.complianceReviewDate,
+        complianceRejectionReason: drivers.complianceRejectionReason,
+        complianceReviewerId: drivers.complianceReviewerId,
+        complianceReviewDate: drivers.complianceReviewDate,
+        kycSubmittedAt: drivers.kycSubmittedAt,
+        addressLine1: drivers.addressLine1,
+        city: drivers.city,
+        province: drivers.province,
+        postalCode: drivers.postalCode,
+        driversLicenseNumber: drivers.driversLicenseNumber,
+        licenseCode: drivers.licenseCode,
+        driversLicenseIssueDate: drivers.driversLicenseIssueDate,
+        driversLicenseExpiry: drivers.driversLicenseExpiry,
+        prdpNumber: drivers.prdpNumber,
+        prdpCategory: drivers.prdpCategory,
+        prdpIssueDate: drivers.prdpIssueDate,
+        prdpExpiry: drivers.prdpExpiry,
+        dgTrainingProvider: drivers.dgTrainingProvider,
+        dgTrainingCertificateNumber: drivers.dgTrainingCertificateNumber,
+        dgTrainingIssueDate: drivers.dgTrainingIssueDate,
+        dgTrainingExpiryDate: drivers.dgTrainingExpiryDate,
+        criminalCheckDone: drivers.criminalCheckDone,
+        criminalCheckReference: drivers.criminalCheckReference,
+        criminalCheckDate: drivers.criminalCheckDate,
+        bankAccountName: drivers.bankAccountName,
+        bankName: drivers.bankName,
+        accountNumber: drivers.accountNumber,
+        branchCode: drivers.branchCode,
+        zaIdNumber: drivers.zaIdNumber,
+        passportNumber: drivers.passportNumber,
       })
       .from(drivers)
       .where(eq(drivers.id, driverId))
@@ -90,8 +100,6 @@ export async function getDriverComplianceStatus(driverId: string): Promise<Compl
       throw new Error("Driver not found");
     }
 
-    // Get all documents for driver
-    // NOTE: Documents are stored with owner_id = driver.id (not driver.user_id)
     const driverDocuments = await db
       .select({
         id: documents.id,
@@ -101,99 +109,39 @@ export async function getDriverComplianceStatus(driverId: string): Promise<Compl
         owner_type: documents.ownerType,
         owner_id: documents.ownerId,
         title: documents.title,
+        created_at: documents.createdAt,
       })
       .from(documents)
       .where(and(eq(documents.ownerType, "driver"), eq(documents.ownerId, driver.id)));
 
-    // Get vehicle documents
-    const vehicleRows = await db
-      .select({ id: vehicles.id })
-      .from(vehicles)
-      .where(eq(vehicles.driverId, driverId));
-    const vehicleIds = vehicleRows.map((v) => v.id);
-    let vehicleDocuments: any[] = [];
+    const docCtx = {
+      idType: driver.idType,
+      prdpRequired: !!driver.prdpRequired,
+      dgTrainingRequired: !!driver.dgTrainingRequired,
+      criminalCheckDone: !!driver.criminalCheckDone,
+    };
 
-    if (vehicleIds.length > 0) {
-      const vDocs = await db
-        .select({
-          id: documents.id,
-          doc_type: documents.docType,
-          verification_status: documents.verificationStatus,
-          document_status: documents.verificationStatus,
-          owner_type: documents.ownerType,
-          owner_id: documents.ownerId,
-          title: documents.title,
-        })
-        .from(documents)
-        .where(and(eq(documents.ownerType, "vehicle"), inArray(documents.ownerId, vehicleIds)));
-      vehicleDocuments = vDocs || [];
+    const missingDocKeys = getDriverKycMissingDocuments(driverDocuments, docCtx);
+    const requiredDocs = getRequiredDriverDocumentTypes(docCtx).filter((d) => d !== "__identity__");
+    if (getRequiredDriverDocumentTypes(docCtx).includes("__identity__")) {
+      requiredDocs.push("za_id_or_passport");
     }
 
-    const allDocuments = [...(driverDocuments || []), ...vehicleDocuments];
+    const satisfyingLatest = latestDocStatusByType(driverDocuments);
+    const uploaded = [...satisfyingLatest.keys()].filter((k) =>
+      isDocStatusSatisfying(satisfyingLatest.get(k)),
+    );
 
-    // Debug: Log all documents found
-    console.log("[Compliance Service] Driver documents found:", {
-      driverId: driverId,
-      driverUserId: driver.user_id,
-      documentsCount: driverDocuments?.length || 0,
-      vehicleDocumentsCount: vehicleDocuments.length,
-      allDocumentsCount: allDocuments.length,
-      documentDetails: allDocuments.map(d => ({
-        id: d.id,
-        doc_type: d.doc_type,
-        verification_status: d.verification_status,
-        document_status: d.document_status,
-        owner_type: d.owner_type,
-        owner_id: d.owner_id,
-        title: d.title
-      }))
-    });
+    const inclusiveLatest = latestDocVerificationByType(driverDocuments);
+    const approved = [...inclusiveLatest.entries()]
+      .filter(([, st]) => st === "approved" || st === "verified")
+      .map(([k]) => k);
+    const rejected = [...inclusiveLatest.entries()].filter(([, st]) => st === "rejected").map(([k]) => k);
+    const pending = [...inclusiveLatest.entries()]
+      .filter(([, st]) => st === "pending" || st === "pending_review" || st === "draft")
+      .map(([k]) => k);
 
-    // Determine required documents based on driver type and requirements
-    const requiredDocs = [...DRIVER_REQUIRED_DOCUMENTS];
-    
-    // If driver is transporting fuel, add fuel-specific requirements
-    if (driver.prdp_required || driver.dg_training_required) {
-      // Already included in DRIVER_REQUIRED_DOCUMENTS
-    }
-
-    // Check which documents are uploaded, approved, rejected, pending
-    const uploaded = allDocuments.map(d => d.doc_type);
-    // Check for approved documents - support multiple status values
-    const approvedDocs = allDocuments.filter(d => {
-      const isApproved = d.verification_status === "verified" || 
-                         d.verification_status === "approved" || 
-                         d.document_status === "approved";
-      if (isApproved) {
-        console.log("[Compliance Service] Found approved document:", {
-          doc_type: d.doc_type,
-          verification_status: d.verification_status,
-          document_status: d.document_status,
-          title: d.title
-        });
-      }
-      return isApproved;
-    });
-    const approved = approvedDocs.map(d => d.doc_type);
-    
-    console.log("[Compliance Service] Document status summary:", {
-      uploaded: uploaded,
-      approved: approved,
-      approvedCount: approved.length,
-      requiredDocs: requiredDocs
-    });
-    const rejected = allDocuments.filter(d => 
-      d.verification_status === "rejected" || 
-      d.document_status === "rejected"
-    ).map(d => d.doc_type);
-    const pending = allDocuments.filter(d => 
-      (d.verification_status === "pending" || 
-       d.verification_status === "pending_review" || 
-       d.document_status === "pending" || 
-       d.document_status === "pending_review") && 
-      !approved.includes(d.doc_type)
-    ).map(d => d.doc_type);
-    const missing = requiredDocs.filter(doc => !uploaded.includes(doc));
+    const missingFields = getDriverKycMissingFields(driver);
 
     const checklist: ComplianceChecklist = {
       required: requiredDocs,
@@ -202,25 +150,34 @@ export async function getDriverComplianceStatus(driverId: string): Promise<Compl
       approved,
       rejected,
       pending,
-      missing,
+      missing: missingDocKeys,
     };
 
-    // Determine overall status
     let overallStatus: "pending" | "approved" | "rejected" | "incomplete" = "pending";
     let canAccessPlatform = false;
 
-    if (driver.compliance_status === "approved" && driver.status === "active") {
+    const submittedAt = driver.kycSubmittedAt;
+    const packageSubmittedAt =
+      submittedAt instanceof Date
+        ? submittedAt.toISOString()
+        : submittedAt
+          ? String(submittedAt)
+          : null;
+
+    if (driver.complianceStatus === "approved" && driver.status === "active") {
       overallStatus = "approved";
       canAccessPlatform = true;
-    } else if (driver.compliance_status === "rejected" || driver.status === "rejected") {
+    } else if (driver.complianceStatus === "rejected" || driver.status === "rejected") {
       overallStatus = "rejected";
       canAccessPlatform = false;
-    } else if (missing.length > 0 || pending.length > 0) {
+    } else if (missingDocKeys.length > 0 || missingFields.length > 0) {
       overallStatus = "incomplete";
       canAccessPlatform = false;
-    } else if (approved.length === requiredDocs.length && driver.compliance_status === "pending") {
-      // All documents approved but compliance status not yet set
+    } else if (packageSubmittedAt && driver.complianceStatus === "pending") {
       overallStatus = "pending";
+      canAccessPlatform = false;
+    } else {
+      overallStatus = "incomplete";
       canAccessPlatform = false;
     }
 
@@ -228,9 +185,16 @@ export async function getDriverComplianceStatus(driverId: string): Promise<Compl
       overallStatus,
       canAccessPlatform,
       checklist,
-      rejectionReason: driver.compliance_rejection_reason || undefined,
-      reviewerId: driver.compliance_reviewer_id || undefined,
-      reviewDate: driver.compliance_review_date || undefined,
+      rejectionReason: driver.complianceRejectionReason || undefined,
+      reviewerId: driver.complianceReviewerId || undefined,
+      reviewDate:
+        driver.complianceReviewDate instanceof Date
+          ? driver.complianceReviewDate.toISOString()
+          : driver.complianceReviewDate
+            ? String(driver.complianceReviewDate)
+            : undefined,
+      packageSubmittedAt,
+      missingFields,
     };
   } catch (error: any) {
     console.error("Error getting driver compliance status:", error);
@@ -324,12 +288,19 @@ export async function getSupplierComplianceStatus(supplierId: string): Promise<C
     const supplierRows = await db
       .select({
         id: suppliers.id,
-        owner_id: suppliers.ownerId,
-        compliance_status: suppliers.complianceStatus,
+        ownerId: suppliers.ownerId,
+        complianceStatus: suppliers.complianceStatus,
         status: suppliers.status,
-        compliance_rejection_reason: suppliers.complianceRejectionReason,
-        compliance_reviewer_id: suppliers.complianceReviewerId,
-        compliance_review_date: suppliers.complianceReviewDate,
+        complianceRejectionReason: suppliers.complianceRejectionReason,
+        complianceReviewerId: suppliers.complianceReviewerId,
+        complianceReviewDate: suppliers.complianceReviewDate,
+        kybSubmittedAt: suppliers.kybSubmittedAt,
+        registeredName: suppliers.registeredName,
+        cipcNumber: suppliers.cipcNumber,
+        bankAccountName: suppliers.bankAccountName,
+        bankName: suppliers.bankName,
+        accountNumber: suppliers.accountNumber,
+        branchCode: suppliers.branchCode,
       })
       .from(suppliers)
       .where(eq(suppliers.id, supplierId))
@@ -344,17 +315,36 @@ export async function getSupplierComplianceStatus(supplierId: string): Promise<C
         doc_type: documents.docType,
         verification_status: documents.verificationStatus,
         document_status: documents.verificationStatus,
+        created_at: documents.createdAt,
       })
       .from(documents)
-      .where(and(eq(documents.ownerType, "supplier"), eq(documents.ownerId, supplier.owner_id)));
+      .where(and(eq(documents.ownerType, "supplier"), eq(documents.ownerId, supplier.ownerId)));
 
-    const requiredDocs = [...SUPPLIER_REQUIRED_DOCUMENTS];
+    const requiredDocs = [...SUPPLIER_REQUIRED_DOCUMENT_TYPES];
+    const missingDocs = getSupplierKybMissingDocuments(supplierDocuments);
 
-    const uploaded = (supplierDocuments || []).map(d => d.doc_type);
-    const approved = (supplierDocuments || []).filter(d => d.verification_status === "verified" || d.verification_status === "approved" || d.document_status === "approved").map(d => d.doc_type);
-    const rejected = (supplierDocuments || []).filter(d => d.verification_status === "rejected" || d.document_status === "rejected").map(d => d.doc_type);
-    const pending = (supplierDocuments || []).filter(d => (d.verification_status === "pending" || d.verification_status === "pending_review" || d.document_status === "pending" || d.document_status === "pending_review") && !approved.includes(d.doc_type)).map(d => d.doc_type);
-    const missing = requiredDocs.filter(doc => !uploaded.includes(doc));
+    const satisfyingLatest = latestDocStatusByType(supplierDocuments);
+    const uploaded = [...satisfyingLatest.keys()].filter((k) =>
+      isDocStatusSatisfying(satisfyingLatest.get(k)),
+    );
+
+    const inclusiveLatest = latestDocVerificationByType(supplierDocuments);
+    const approved = [...inclusiveLatest.entries()]
+      .filter(([, st]) => st === "approved" || st === "verified")
+      .map(([k]) => k);
+    const rejected = [...inclusiveLatest.entries()].filter(([, st]) => st === "rejected").map(([k]) => k);
+    const pending = [...inclusiveLatest.entries()]
+      .filter(([, st]) => st === "pending" || st === "pending_review" || st === "draft")
+      .map(([k]) => k);
+
+    const missingFields = getSupplierKybMissingFields({
+      registeredName: supplier.registeredName,
+      cipcNumber: supplier.cipcNumber,
+      bankAccountName: supplier.bankAccountName,
+      bankName: supplier.bankName,
+      accountNumber: supplier.accountNumber,
+      branchCode: supplier.branchCode,
+    });
 
     const checklist: ComplianceChecklist = {
       required: requiredDocs,
@@ -363,23 +353,34 @@ export async function getSupplierComplianceStatus(supplierId: string): Promise<C
       approved,
       rejected,
       pending,
-      missing,
+      missing: missingDocs,
     };
 
     let overallStatus: "pending" | "approved" | "rejected" | "incomplete" = "pending";
     let canAccessPlatform = false;
 
-    if (supplier.compliance_status === "approved" && supplier.status === "active") {
+    const submittedAt = supplier.kybSubmittedAt;
+    const packageSubmittedAt =
+      submittedAt instanceof Date
+        ? submittedAt.toISOString()
+        : submittedAt
+          ? String(submittedAt)
+          : null;
+
+    if (supplier.complianceStatus === "approved" && supplier.status === "active") {
       overallStatus = "approved";
       canAccessPlatform = true;
-    } else if (supplier.compliance_status === "rejected" || supplier.status === "rejected") {
+    } else if (supplier.complianceStatus === "rejected" || supplier.status === "rejected") {
       overallStatus = "rejected";
       canAccessPlatform = false;
-    } else if (missing.length > 0 || pending.length > 0) {
+    } else if (missingDocs.length > 0 || missingFields.length > 0) {
       overallStatus = "incomplete";
       canAccessPlatform = false;
-    } else if (approved.length === requiredDocs.length && supplier.compliance_status === "pending") {
+    } else if (packageSubmittedAt && supplier.complianceStatus === "pending") {
       overallStatus = "pending";
+      canAccessPlatform = false;
+    } else {
+      overallStatus = "incomplete";
       canAccessPlatform = false;
     }
 
@@ -387,9 +388,16 @@ export async function getSupplierComplianceStatus(supplierId: string): Promise<C
       overallStatus,
       canAccessPlatform,
       checklist,
-      rejectionReason: supplier.compliance_rejection_reason || undefined,
-      reviewerId: supplier.compliance_reviewer_id || undefined,
-      reviewDate: supplier.compliance_review_date || undefined,
+      rejectionReason: supplier.complianceRejectionReason || undefined,
+      reviewerId: supplier.complianceReviewerId || undefined,
+      reviewDate:
+        supplier.complianceReviewDate instanceof Date
+          ? supplier.complianceReviewDate.toISOString()
+          : supplier.complianceReviewDate
+            ? String(supplier.complianceReviewDate)
+            : undefined,
+      packageSubmittedAt,
+      missingFields,
     };
   } catch (error: any) {
     console.error("Error getting supplier compliance status:", error);

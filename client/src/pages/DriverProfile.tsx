@@ -23,11 +23,22 @@ import { normalizeFilePath, normalizeProfilePhotoUrl, cn } from "@/lib/utils";
 import { normalizeDocuments } from "@/lib/document-normalize";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
+import { extractUploadObjectPath } from "@/lib/upload-object-path";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { DashboardSidebarAside } from "@/components/dashboard/DashboardSidebar";
 import { DriverWorkspaceSidebar } from "@/components/dashboard/DriverWorkspaceSidebar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ChevronRight, ArrowLeft } from "lucide-react";
@@ -59,6 +70,18 @@ function formatLocalYmd(d: Date): string {
   const mo = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${mo}-${day}`;
+}
+
+/** Parse JSON body from apiRequest errors like `400: {"error":"..."}`. */
+function parseApiErrorJson(error: unknown): Record<string, any> | null {
+  const msg = error instanceof Error ? error.message : String(error);
+  const idx = msg.indexOf("{");
+  if (idx === -1) return null;
+  try {
+    return JSON.parse(msg.slice(idx));
+  } catch {
+    return null;
+  }
 }
 
 function ComplianceDateField({
@@ -147,6 +170,7 @@ export default function DriverProfile() {
   const { toast } = useToast();
   const { updatePassword, refetchProfile } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [submitKycDialogOpen, setSubmitKycDialogOpen] = useState(false);
 
   const { data: profile, isLoading } = useQuery<any>({
     queryKey: ["/api/driver/profile"],
@@ -175,10 +199,13 @@ export default function DriverProfile() {
   // Listen for document status updates and KYC approval via WebSocket
   useWebSocket((message) => {
     if (message.type === "document_approved" || message.type === "document_rejected" || 
-        message.type === "kyc_approved" || message.type === "compliance_approved") {
+        message.type === "kyc_approved" || message.type === "compliance_approved" ||
+        message.type === "kyc_rejected" || message.type === "kyc_submitted") {
       console.log("[DriverProfile] Received WebSocket message:", message.type);
       queryClient.invalidateQueries({ queryKey: ["/api/driver/documents"] });
       queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/compliance/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/compliance/kyc-readiness"] });
       queryClient.refetchQueries({ queryKey: ["/api/driver/documents"] });
       queryClient.refetchQueries({ queryKey: ["/api/driver/profile"] });
     }
@@ -187,6 +214,11 @@ export default function DriverProfile() {
   // Get compliance status
   const { data: complianceStatus } = useQuery<any>({
     queryKey: ["/api/driver/compliance/status"],
+  });
+
+  const { data: kycReadiness, isLoading: kycReadinessLoading } = useQuery<any>({
+    queryKey: ["/api/driver/compliance/kyc-readiness"],
+    refetchInterval: 8000,
   });
 
   // Helper function to find document by type
@@ -273,7 +305,12 @@ export default function DriverProfile() {
 
   const updateComplianceMutation = useMutation({
     mutationFn: async (data: any) => {
-      return apiRequest("PUT", "/api/driver/compliance", data);
+      const res = await apiRequest("PUT", "/api/driver/compliance", data);
+      const ct = res.headers.get("content-type") || "";
+      if (ct.includes("application/json")) {
+        return (await res.json()) as Record<string, unknown>;
+      }
+      return null;
     },
     onSuccess: async (responseData) => {
       // Update the query cache with the response data if available
@@ -302,19 +339,57 @@ export default function DriverProfile() {
       // Invalidate and refetch to get updated data
       await queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
       await queryClient.invalidateQueries({ queryKey: ["/api/driver/compliance/status"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/compliance/kyc-readiness"] });
       await queryClient.refetchQueries({ queryKey: ["/api/driver/profile"] });
       
       toast({
         title: "Success",
-        description: "Compliance information updated successfully",
+        description: "Draft saved. Submit KYC when your checklist is complete.",
       });
     },
     onError: (error: any) => {
       console.error("Compliance update error:", error);
-      const errorMessage = error.details?.join?.(", ") || error.message || "Failed to update compliance information";
+      const body = parseApiErrorJson(error);
+      const errorMessage =
+        body?.error ||
+        error.details?.join?.(", ") ||
+        error.message ||
+        "Failed to update compliance information";
       toast({
         title: "Error",
         description: errorMessage,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const submitKycMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/driver/compliance/submit-kyc");
+      return res.json();
+    },
+    onSuccess: async () => {
+      setSubmitKycDialogOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/compliance/status"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/compliance/kyc-readiness"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/documents"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
+      toast({
+        title: "KYC submitted",
+        description: "Your package has been sent for admin review.",
+      });
+    },
+    onError: (error: any) => {
+      const body = parseApiErrorJson(error);
+      const base = body?.error || error?.message || "Failed to submit KYC";
+      const parts: string[] = [base];
+      const md = body?.missing_docs ?? body?.missingDocs;
+      const mf = body?.missing_fields ?? body?.missingFields;
+      if (Array.isArray(md) && md.length) parts.push(`Missing documents: ${md.join(", ")}`);
+      if (Array.isArray(mf) && mf.length) parts.push(`Missing fields: ${mf.join(", ")}`);
+      toast({
+        title: "Cannot submit KYC",
+        description: parts.join(" — "),
         variant: "destructive",
       });
     },
@@ -574,18 +649,18 @@ export default function DriverProfile() {
     if (!result.successful || result.successful.length === 0) return;
     
     const uploadedFile = result.successful[0];
-    if (!uploadedFile?.uploadURL) return;
+    const documentURL = extractUploadObjectPath(uploadedFile);
+    if (!documentURL) {
+      toast({
+        title: "Error",
+        description: "Could not resolve uploaded file path",
+        variant: "destructive",
+      });
+      return;
+    }
 
     try {
-      const headers = await getAuthHeaders();
-      const response = await fetch("/api/documents", {
-        method: "PUT",
-        headers,
-        body: JSON.stringify({ documentURL: uploadedFile.uploadURL }),
-      });
-
-      if (!response.ok) throw new Error("Failed to set document ACL");
-
+      const response = await apiRequest("PUT", "/api/documents", { documentURL });
       const { objectPath } = await response.json();
       
       await apiRequest("POST", "/api/driver/documents", {
@@ -597,6 +672,8 @@ export default function DriverProfile() {
       });
       
       queryClient.invalidateQueries({ queryKey: ["/api/driver/documents"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/compliance/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/compliance/kyc-readiness"] });
       
       toast({
         title: "Success",
@@ -665,6 +742,9 @@ export default function DriverProfile() {
         return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Rejected</Badge>;
       case "pending":
       case "pending_review":
+        return <Badge variant="secondary">Pending</Badge>;
+      case "draft":
+        return <Badge variant="outline">Draft</Badge>;
       default:
         return <Badge variant="secondary">Pending</Badge>;
     }
@@ -1025,7 +1105,7 @@ export default function DriverProfile() {
                   Compliance Status
                 </CardTitle>
                 <CardDescription>
-                  Your compliance status and document checklist
+                  Your compliance status and document checklist. Uploads stay as drafts until you submit your KYC package.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -1053,6 +1133,33 @@ export default function DriverProfile() {
                     </Badge>
                   </div>
                 </div>
+
+                {(() => {
+                  const pkgAt =
+                    complianceStatus.package_submitted_at ?? complianceStatus.packageSubmittedAt;
+                  const awaitingRev =
+                    !!pkgAt && complianceStatus.overallStatus === "pending";
+                  if (complianceStatus.overallStatus === "approved") return null;
+                  if (awaitingRev) {
+                    return (
+                      <Alert>
+                        <FileText className="h-4 w-4" />
+                        <AlertTitle>Submitted for admin review</AlertTitle>
+                        <AlertDescription>
+                          Your KYC package is pending. Editing is locked until an admin approves or rejects it.
+                        </AlertDescription>
+                      </Alert>
+                    );
+                  }
+                  return (
+                    <Alert>
+                      <AlertTitle>Draft mode</AlertTitle>
+                      <AlertDescription>
+                        Save fields and upload documents as drafts. Admins are notified only after you use Submit KYC.
+                      </AlertDescription>
+                    </Alert>
+                  );
+                })()}
 
                 {complianceStatus.checklist && (
                   <>
@@ -1104,7 +1211,7 @@ export default function DriverProfile() {
                 Compliance Information
               </CardTitle>
               <CardDescription>
-                Complete your compliance profile to access platform features
+                Save your answers as a draft with the button below. When every required field and document is complete, submit your full KYC package for review.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -1716,6 +1823,9 @@ export default function DriverProfile() {
                     {/* G. Criminal / Clearance */}
                     <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
                       <h3 className="text-lg font-semibold text-primary">F. Criminal / Clearance</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Optional unless you have completed a criminal clearance check.
+                      </p>
                       
                       <FormField
                         control={complianceForm.control}
@@ -1956,18 +2066,149 @@ export default function DriverProfile() {
                     </div>
                   </div>
 
-                  <div className="pt-6 border-t-2 border-primary/20">
-                    <Button type="submit" size="lg" disabled={updateComplianceMutation.isPending} className="w-full md:w-auto">
+                  <div className="pt-6 border-t-2 border-primary/20 flex flex-col sm:flex-row sm:items-center gap-3">
+                    <Button type="submit" size="lg" disabled={updateComplianceMutation.isPending} className="w-full sm:w-auto">
                       {updateComplianceMutation.isPending ? (
                         <>
                           <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                           Saving...
                         </>
                       ) : (
-                        "Save Compliance Information"
+                        "Save draft"
                       )}
                     </Button>
+                    <Button
+                      type="button"
+                      size="lg"
+                      variant="default"
+                      className="w-full sm:w-auto"
+                      disabled={
+                        submitKycMutation.isPending ||
+                        kycReadinessLoading ||
+                        !(kycReadiness?.can_submit ?? kycReadiness?.canSubmit)
+                      }
+                      onClick={() => setSubmitKycDialogOpen(true)}
+                    >
+                      {submitKycMutation.isPending ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Submitting...
+                        </>
+                      ) : (
+                        "Submit KYC"
+                      )}
+                    </Button>
+                    <AlertDialog open={submitKycDialogOpen} onOpenChange={setSubmitKycDialogOpen}>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Submit KYC for review?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Your documents and details will be sent to an admin for review. You will not be able to
+                            edit this package while it is pending. Make sure everything is correct before continuing.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel disabled={submitKycMutation.isPending}>Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            disabled={submitKycMutation.isPending}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              submitKycMutation.mutate();
+                            }}
+                          >
+                            {submitKycMutation.isPending ? (
+                              <>
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                Submitting...
+                              </>
+                            ) : (
+                              "Yes, submit KYC"
+                            )}
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   </div>
+                  {kycReadiness &&
+                    !(kycReadiness.can_submit ?? kycReadiness.canSubmit) &&
+                    (() => {
+                      const pkgAt =
+                        kycReadiness.package_submitted_at ?? kycReadiness.packageSubmittedAt;
+                      const pend =
+                        (kycReadiness.overall_status ?? kycReadiness.overallStatus) === "pending";
+                      if (pkgAt && pend) {
+                        return (
+                          <p className="text-sm text-muted-foreground">
+                            Your package is already submitted and awaiting review.
+                          </p>
+                        );
+                      }
+                      if ((kycReadiness.overall_status ?? kycReadiness.overallStatus) === "approved") {
+                        return (
+                          <p className="text-sm text-muted-foreground">
+                            Your KYC is already approved. Submit KYC is not needed.
+                          </p>
+                        );
+                      }
+                      const md = kycReadiness.missing_docs ?? kycReadiness.missingDocs ?? [];
+                      const mf = kycReadiness.missing_fields ?? kycReadiness.missingFields ?? [];
+                      return (
+                        <div className="text-sm text-muted-foreground space-y-1">
+                          <p>Complete the items below, then click Save draft before Submit KYC.</p>
+                          {Array.isArray(md) && md.length > 0 && (
+                            <p>
+                              Missing documents:{" "}
+                              {md
+                                .map(
+                                  (k: string) =>
+                                    ({
+                                      za_id: "SA ID document",
+                                      passport: "Passport document",
+                                      za_id_or_passport: "ID or passport document",
+                                      drivers_license: "Driver's licence document",
+                                      banking_proof: "Banking proof document",
+                                      criminal_check: "Criminal clearance document",
+                                      prdp: "PrDP document",
+                                      dangerous_goods_training:
+                                        "Dangerous goods training certificate",
+                                      proof_of_address: "Proof of address document",
+                                    }[k] ?? k),
+                                )
+                                .join(", ")}
+                            </p>
+                          )}
+                          {Array.isArray(mf) && mf.length > 0 && (
+                            <p>
+                              Missing fields:{" "}
+                              {mf
+                                .map(
+                                  (k: string) =>
+                                    ({
+                                      address_line_1: "Street address",
+                                      city: "City",
+                                      province: "Province",
+                                      postal_code: "Postal code",
+                                      id_type: "ID type",
+                                      za_id_number: "ID number",
+                                      passport_number: "Passport number",
+                                      drivers_license_number: "Licence number",
+                                      license_code: "Licence code",
+                                      drivers_license_issue_date: "Licence issue date",
+                                      drivers_license_expiry: "Licence expiry date",
+                                      bank_account_name: "Account holder name",
+                                      bank_name: "Bank name",
+                                      account_number: "Account number",
+                                      branch_code: "Branch code",
+                                      criminal_check_reference: "Criminal check reference",
+                                      criminal_check_date: "Criminal check date",
+                                    }[k] ?? k),
+                                )
+                                .join(", ")}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })()}
                 </form>
               </Form>
             </CardContent>

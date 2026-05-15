@@ -104,6 +104,15 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
         return old;
       });
     }
+
+    if (
+      msgOrderId === orderId &&
+      (messageType === "driver_offers_available" ||
+        messageType === "driver_offer_received" ||
+        messageType === "driver_offer_pricing_updated")
+    ) {
+      queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId, "offers"] });
+    }
   });
 
   // Get accepted or pending quote for pricing calculation
@@ -473,11 +482,6 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                                           {quote.driver.profile.phone}
                                         </a>
                                       </p>
-                                    )}
-                                    {quote.driver?.premiumStatus === "active" && (
-                                      <Badge variant="outline" className="mt-1 text-xs">
-                                        Premium Driver
-                                      </Badge>
                                     )}
                                   </div>
                                 </div>

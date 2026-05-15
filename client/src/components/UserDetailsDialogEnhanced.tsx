@@ -1417,8 +1417,8 @@ function DocumentsTab({ userId, userRole }: { userId: string; userRole: string }
                     <Eye className="h-3 w-3 mr-1" />
                     View
                   </Button>
-                  {((doc.document_status === "pending_review" || doc.document_status === "pending" || !doc.document_status) && 
-                    (doc.verification_status === "pending" || doc.verification_status === "pending_review" || !doc.verification_status)) && (
+                  {((doc.document_status === "pending_review" || doc.document_status === "pending" || doc.document_status === "draft" || !doc.document_status) && 
+                    (doc.verification_status === "pending" || doc.verification_status === "pending_review" || doc.verification_status === "draft" || !doc.verification_status)) && (
                     <>
                       <Button
                         variant="default"

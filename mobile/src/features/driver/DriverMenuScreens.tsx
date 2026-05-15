@@ -124,6 +124,19 @@ type DriverDocument = {
   created_at?: string;
 };
 
+type DriverKycReadiness = {
+  can_submit?: boolean;
+  canSubmit?: boolean;
+  missing_docs?: string[];
+  missingDocs?: string[];
+  missing_fields?: string[];
+  missingFields?: string[];
+  package_submitted_at?: string | null;
+  packageSubmittedAt?: string | null;
+  overall_status?: string;
+  overallStatus?: string;
+};
+
 const KYC_REQUIRED_DOC_TYPES = [
   { docType: "za_id", aliases: ["id_document"], title: "South African ID", required: true },
   { docType: "passport", aliases: [], title: "Passport", required: true },
@@ -457,7 +470,8 @@ export function DriverKycDocumentsScreen() {
       }
       await queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
       await queryClient.refetchQueries({ queryKey: ["/api/driver/profile"] });
-      Alert.alert("Saved", "Your compliance details were saved.");
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/compliance/kyc-readiness"] });
+      Alert.alert("Saved", "Your compliance draft was saved. Submit KYC when your checklist is complete.");
     },
     onError: (err: unknown) => {
       if (err instanceof Error && err.message === "SELECT_ID_TYPE") {
@@ -478,6 +492,45 @@ export function DriverKycDocumentsScreen() {
     queryKey: ["/api/driver/documents"],
     queryFn: async () => (await apiClient.get<DriverDocument[]>("/api/driver/documents")).data ?? [],
     refetchInterval: 8_000,
+  });
+
+  const kycReadinessQuery = useQuery({
+    queryKey: ["/api/driver/compliance/kyc-readiness"],
+    queryFn: async () => (await apiClient.get<DriverKycReadiness>("/api/driver/compliance/kyc-readiness")).data,
+    refetchInterval: 8_000,
+  });
+
+  const submitKycMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.post<Record<string, unknown>>("/api/driver/compliance/submit-kyc");
+      return res.data;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/compliance/kyc-readiness"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/documents"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
+      Alert.alert("KYC submitted", "Your package was sent for admin review.");
+    },
+    onError: (err: unknown) => {
+      const ax = err as {
+        response?: {
+          data?: {
+            error?: string;
+            missing_docs?: string[];
+            missing_fields?: string[];
+            missingDocs?: string[];
+            missingFields?: string[];
+          };
+        };
+      };
+      const d = ax.response?.data;
+      const parts: string[] = [typeof d?.error === "string" ? d.error : "Could not submit KYC."];
+      const md = d?.missing_docs ?? d?.missingDocs;
+      const mf = d?.missing_fields ?? d?.missingFields;
+      if (Array.isArray(md) && md.length) parts.push(`Missing documents: ${md.join(", ")}`);
+      if (Array.isArray(mf) && mf.length) parts.push(`Missing fields: ${mf.join(", ")}`);
+      Alert.alert("Submit KYC", parts.join("\n\n"));
+    },
   });
 
   const uploadDoc = async (docType: string, title: string) => {
@@ -509,6 +562,7 @@ export function DriverKycDocumentsScreen() {
         file_size: file.size || null,
       });
       await queryClient.invalidateQueries({ queryKey: ["/api/driver/documents"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/compliance/kyc-readiness"] });
     } catch (e) {
       Alert.alert("Upload failed", (e as Error)?.message || "Could not upload document.");
     } finally {
@@ -658,6 +712,12 @@ export function DriverKycDocumentsScreen() {
         textColor: isDark ? "#FCA5A5" : "#991B1B",
       };
     }
+    if (label === "draft") {
+      return {
+        backgroundColor: isDark ? "rgba(148, 163, 184, 0.22)" : "#E2E8F0",
+        textColor: isDark ? "#CBD5E1" : "#475569",
+      };
+    }
     return {
       backgroundColor: isDark ? "rgba(251, 191, 36, 0.18)" : "#FEF3C7",
       textColor: isDark ? "#FCD34D" : "#92400E",
@@ -677,8 +737,12 @@ export function DriverKycDocumentsScreen() {
       showsVerticalScrollIndicator={false}
       refreshControl={
         <RefreshControl
-          refreshing={profileQuery.isRefetching}
-          onRefresh={() => void profileQuery.refetch()}
+          refreshing={profileQuery.isRefetching || docsQuery.isRefetching || kycReadinessQuery.isRefetching}
+          onRefresh={() => {
+            void profileQuery.refetch();
+            void docsQuery.refetch();
+            void kycReadinessQuery.refetch();
+          }}
           tintColor={theme.colors.primary}
         />
       }
@@ -698,7 +762,7 @@ export function DriverKycDocumentsScreen() {
               Verification {"\u0026"} KYC
             </Text>
             <Text variant="bodyMedium" style={styles.kycHeroSubtitle}>
-              Complete your compliance details, then upload each document. Clear PDFs or photos speed up review.
+              Save your details and upload documents as drafts. Admins are notified only after you submit your full KYC package.
             </Text>
           </View>
         </View>
@@ -721,13 +785,69 @@ export function DriverKycDocumentsScreen() {
             />
           </View>
         </View>
+
+        {kycReadinessQuery.data ? (
+          <View
+            style={[
+              styles.kycStatusBanner,
+              {
+                borderColor: theme.colors.outline,
+                backgroundColor: isDark ? "rgba(30, 41, 59, 0.55)" : "rgba(241, 245, 249, 0.95)",
+              },
+            ]}
+          >
+            {(() => {
+              const r = kycReadinessQuery.data;
+              const pkg = r.package_submitted_at ?? r.packageSubmittedAt;
+              const overall = r.overall_status ?? r.overallStatus ?? "";
+              if (overall === "approved") {
+                return (
+                  <>
+                    <Text variant="titleSmall" style={{ color: theme.colors.primary, fontWeight: "700" }}>
+                      KYC approved
+                    </Text>
+                    <Text variant="bodySmall" style={styles.kycBlockHint}>
+                      You are verified on the platform.
+                    </Text>
+                  </>
+                );
+              }
+              if (pkg && overall === "pending") {
+                return (
+                  <>
+                    <Text variant="titleSmall" style={{ color: theme.colors.primary, fontWeight: "700" }}>
+                      Submitted for review
+                    </Text>
+                    <Text variant="bodySmall" style={styles.kycBlockHint}>
+                      Awaiting admin. You cannot edit your package until it is approved or rejected.
+                    </Text>
+                  </>
+                );
+              }
+              return (
+                <>
+                  <Text variant="titleSmall" style={{ fontWeight: "700", color: theme.colors.onSurface }}>
+                    Draft
+                  </Text>
+                  <Text variant="bodySmall" style={styles.kycBlockHint}>
+                    Complete required fields and documents, then tap Submit KYC at the bottom.
+                  </Text>
+                </>
+              );
+            })()}
+          </View>
+        ) : kycReadinessQuery.isLoading ? (
+          <View style={styles.kycStatusBanner}>
+            <ActivityIndicator size="small" color={theme.colors.primary} />
+          </View>
+        ) : null}
       </View>
 
       <Text variant="titleMedium" style={styles.kycBlockTitle}>
         Your details
       </Text>
       <Text variant="bodySmall" style={styles.kycBlockHint}>
-        Save as you go — use the buttons at the end of PrDP and banking sections.
+        Save as you go. Uploads stay in draft until you submit your KYC package at the bottom.
       </Text>
 
       {kycFormCard(
@@ -888,7 +1008,7 @@ export function DriverKycDocumentsScreen() {
             onPress={() => saveComplianceMutation.mutate()}
             loading={saveComplianceMutation.isPending}
           >
-            Save compliance details
+            Save draft
           </Button>
         </>,
       )}
@@ -956,7 +1076,7 @@ export function DriverKycDocumentsScreen() {
             onPress={() => saveComplianceMutation.mutate()}
             loading={saveComplianceMutation.isPending}
           >
-            Save all compliance information
+            Save draft
           </Button>
         </>,
       )}
@@ -980,7 +1100,9 @@ export function DriverKycDocumentsScreen() {
             ? "approved"
             : normalizedStatus === "rejected"
               ? "rejected"
-              : "pending";
+              : normalizedStatus === "draft"
+                ? "draft"
+                : "pending";
         const chip = statusChipStyle(statusLabel);
         const iconName = kycDocIcon(def.docType);
         return (
@@ -1035,6 +1157,67 @@ export function DriverKycDocumentsScreen() {
           </Card>
         );
       })}
+      {(() => {
+        const r = kycReadinessQuery.data;
+        const canSubmit = Boolean(r?.can_submit ?? r?.canSubmit);
+        const pkg = r?.package_submitted_at ?? r?.packageSubmittedAt;
+        const overall = r?.overall_status ?? r?.overallStatus ?? "";
+        const awaiting = Boolean(pkg && overall === "pending");
+        const hint = awaiting
+          ? "Your package is awaiting admin review."
+          : overall === "approved"
+            ? "Your KYC is approved."
+            : r
+              ? (() => {
+                  const md = r.missing_docs ?? r.missingDocs ?? [];
+                  const mf = r.missing_fields ?? r.missingFields ?? [];
+                  const bits: string[] = [];
+                  if (md.length) bits.push(`Missing documents: ${md.join(", ")}`);
+                  if (mf.length) bits.push(`Missing fields: ${mf.join(", ")}`);
+                  return bits.length > 0 ? bits.join("\n") : "Complete all required items to enable Submit KYC.";
+                })()
+              : "Loading readiness…";
+        return (
+          <Card style={[styles.card, { marginTop: 8, marginBottom: 24 }]} mode="contained">
+            <Card.Content>
+              <Text variant="titleSmall" style={{ fontWeight: "700", marginBottom: 6 }}>
+                Submit for review
+              </Text>
+              <Text variant="bodySmall" style={[styles.kycBlockHint, { marginBottom: 12 }]}>
+                {hint}
+              </Text>
+              <View style={styles.kycSubmitFooterRow}>
+                <Button
+                  mode="outlined"
+                  style={{ flex: 1 }}
+                  onPress={() => saveComplianceMutation.mutate()}
+                  loading={saveComplianceMutation.isPending}
+                  disabled={saveComplianceMutation.isPending || awaiting}
+                >
+                  Save draft
+                </Button>
+                <Button
+                  mode="contained"
+                  style={{ flex: 1 }}
+                  buttonColor={theme.colors.primary}
+                  textColor={theme.colors.onPrimary}
+                  loading={submitKycMutation.isPending}
+                  disabled={
+                    submitKycMutation.isPending ||
+                    kycReadinessQuery.isLoading ||
+                    !canSubmit ||
+                    awaiting ||
+                    overall === "approved"
+                  }
+                  onPress={() => submitKycMutation.mutate()}
+                >
+                  Submit KYC
+                </Button>
+              </View>
+            </Card.Content>
+          </Card>
+        );
+      })()}
       {Platform.OS === "ios" && iosDateKey ? (
         <DateTimePicker
           value={parseYmdToLocalDate(getKycYmd(iosDateKey))}
@@ -1515,6 +1698,15 @@ const getStyles = (theme: typeof lightTheme) => {
     overflow: "hidden",
   },
   kycProgressFill: { height: 8, borderRadius: 4 },
+  kycStatusBanner: {
+    marginTop: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: 4,
+  },
+  kycSubmitFooterRow: { flexDirection: "row", gap: 10, alignItems: "stretch" },
     kycBlockTitle: { ...p.blockTitle, marginTop: 6 },
     kycBlockHint: p.blockHint,
     kycFormCard: p.sectionCard,

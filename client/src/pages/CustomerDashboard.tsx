@@ -143,13 +143,27 @@ export default function CustomerDashboard() {
       if (selectedOrderId && orderId === selectedOrderId) {
         queryClient.setQueryData(["/api/orders", orderId], orderData);
       }
-    } else if (messageType === "order_update" || messageType === "order_created" || messageType === "order_state_changed" || messageType === "driver_offer_received") {
+    } else if (
+      messageType === "order_update" ||
+      messageType === "order_created" ||
+      messageType === "order_state_changed" ||
+      messageType === "driver_offer_received" ||
+      messageType === "driver_offers_available" ||
+      messageType === "driver_offer_pricing_updated"
+    ) {
       // Fallback: invalidate queries for other message types
       console.log("[CustomerDashboard] Invalidating orders due to:", messageType);
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       
       if (selectedOrderId && orderId === selectedOrderId) {
         queryClient.invalidateQueries({ queryKey: ["/api/orders", selectedOrderId] });
+        if (
+          messageType === "driver_offers_available" ||
+          messageType === "driver_offer_received" ||
+          messageType === "driver_offer_pricing_updated"
+        ) {
+          queryClient.invalidateQueries({ queryKey: ["/api/orders", selectedOrderId, "offers"] });
+        }
       }
     }
   });
