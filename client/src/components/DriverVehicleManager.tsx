@@ -19,6 +19,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
 import type { Vehicle } from "@shared/schema";
 import { DriverFleetCompanySettings } from "@/components/DriverFleetCompanySettings";
+import { NativeFormDatePicker, dateValueToYmd } from "@/components/FormDatePicker";
 
 export function DriverVehicleManager() {
   const { toast } = useToast();
@@ -599,7 +600,7 @@ export function DriverVehicleManager() {
             </DialogDescription>
           </DialogHeader>
           
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form key={editingVehicle?.id ?? "new"} onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
                 <Label htmlFor="registration_number">Registration Number *</Label>
@@ -686,49 +687,31 @@ export function DriverVehicleManager() {
               </div>
 
               <div>
-                <Label htmlFor="license_disk_expiry">License Disk Expiry</Label>
-                <Input
+                <NativeFormDatePicker
                   id="license_disk_expiry"
                   name="license_disk_expiry"
-                  type="date"
-                  defaultValue={(() => {
-                    const date = editingVehicle?.licenseDiskExpiry;
-                    if (!date) return "";
-                    const dateStr = typeof date === "string" ? date : new Date(date).toISOString();
-                    return dateStr.split("T")[0];
-                  })()}
+                  label="License Disk Expiry"
+                  defaultValue={dateValueToYmd(editingVehicle?.licenseDiskExpiry)}
                   data-testid="input-license-expiry"
                 />
               </div>
 
               <div>
-                <Label htmlFor="roadworthy_expiry">Roadworthy Expiry</Label>
-                <Input
+                <NativeFormDatePicker
                   id="roadworthy_expiry"
                   name="roadworthy_expiry"
-                  type="date"
-                  defaultValue={(() => {
-                    const date = editingVehicle?.roadworthyExpiry;
-                    if (!date) return "";
-                    const dateStr = typeof date === "string" ? date : new Date(date).toISOString();
-                    return dateStr.split("T")[0];
-                  })()}
+                  label="Roadworthy Expiry"
+                  defaultValue={dateValueToYmd(editingVehicle?.roadworthyExpiry)}
                   data-testid="input-roadworthy-expiry"
                 />
               </div>
 
               <div>
-                <Label htmlFor="insurance_expiry">Insurance Expiry</Label>
-                <Input
+                <NativeFormDatePicker
                   id="insurance_expiry"
                   name="insurance_expiry"
-                  type="date"
-                  defaultValue={(() => {
-                    const date = editingVehicle?.insuranceExpiry;
-                    if (!date) return "";
-                    const dateStr = typeof date === "string" ? date : new Date(date).toISOString();
-                    return dateStr.split("T")[0];
-                  })()}
+                  label="Insurance Expiry"
+                  defaultValue={dateValueToYmd(editingVehicle?.insuranceExpiry)}
                   data-testid="input-insurance-expiry"
                 />
               </div>
@@ -791,17 +774,11 @@ export function DriverVehicleManager() {
                 </div>
 
                 <div>
-                  <Label htmlFor="roadworthy_issue_date">Roadworthy Issue Date</Label>
-                  <Input
+                  <NativeFormDatePicker
                     id="roadworthy_issue_date"
                     name="roadworthy_issue_date"
-                    type="date"
-                    defaultValue={(() => {
-                      const date = (editingVehicle as any)?.roadworthyIssueDate;
-                      if (!date) return "";
-                      const dateStr = typeof date === "string" ? date : new Date(date).toISOString();
-                      return dateStr.split("T")[0];
-                    })()}
+                    label="Roadworthy Issue Date"
+                    defaultValue={dateValueToYmd((editingVehicle as any)?.roadworthyIssueDate)}
                   />
                 </div>
 
@@ -836,31 +813,19 @@ export function DriverVehicleManager() {
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <Label htmlFor="dg_vehicle_permit_issue_date">Permit Issue Date</Label>
-                        <Input
+                        <NativeFormDatePicker
                           id="dg_vehicle_permit_issue_date"
                           name="dg_vehicle_permit_issue_date"
-                          type="date"
-                          defaultValue={(() => {
-                            const date = (editingVehicle as any)?.dgVehiclePermitIssueDate;
-                            if (!date) return "";
-                            const dateStr = typeof date === "string" ? date : new Date(date).toISOString();
-                            return dateStr.split("T")[0];
-                          })()}
+                          label="Permit Issue Date"
+                          defaultValue={dateValueToYmd((editingVehicle as any)?.dgVehiclePermitIssueDate)}
                         />
                       </div>
                       <div>
-                        <Label htmlFor="dg_vehicle_permit_expiry_date">Permit Expiry Date</Label>
-                        <Input
+                        <NativeFormDatePicker
                           id="dg_vehicle_permit_expiry_date"
                           name="dg_vehicle_permit_expiry_date"
-                          type="date"
-                          defaultValue={(() => {
-                            const date = (editingVehicle as any)?.dgVehiclePermitExpiryDate;
-                            if (!date) return "";
-                            const dateStr = typeof date === "string" ? date : new Date(date).toISOString();
-                            return dateStr.split("T")[0];
-                          })()}
+                          label="Permit Expiry Date"
+                          defaultValue={dateValueToYmd((editingVehicle as any)?.dgVehiclePermitExpiryDate)}
                         />
                       </div>
                     </div>
@@ -906,17 +871,11 @@ export function DriverVehicleManager() {
                       />
                     </div>
                     <div>
-                      <Label htmlFor="policy_expiry_date">Policy Expiry Date</Label>
-                      <Input
+                      <NativeFormDatePicker
                         id="policy_expiry_date"
                         name="policy_expiry_date"
-                        type="date"
-                        defaultValue={(() => {
-                          const date = (editingVehicle as any)?.policyExpiryDate;
-                          if (!date) return "";
-                          const dateStr = typeof date === "string" ? date : new Date(date).toISOString();
-                          return dateStr.split("T")[0];
-                        })()}
+                        label="Policy Expiry Date"
+                        defaultValue={dateValueToYmd((editingVehicle as any)?.policyExpiryDate)}
                       />
                     </div>
                   </>
@@ -943,31 +902,19 @@ export function DriverVehicleManager() {
                 })() && (
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <Label htmlFor="loa_issue_date">LOA Issue Date</Label>
-                      <Input
+                      <NativeFormDatePicker
                         id="loa_issue_date"
                         name="loa_issue_date"
-                        type="date"
-                        defaultValue={(() => {
-                          const date = (editingVehicle as any)?.loaIssueDate;
-                          if (!date) return "";
-                          const dateStr = typeof date === "string" ? date : new Date(date).toISOString();
-                          return dateStr.split("T")[0];
-                        })()}
+                        label="LOA Issue Date"
+                        defaultValue={dateValueToYmd((editingVehicle as any)?.loaIssueDate)}
                       />
                     </div>
                     <div>
-                      <Label htmlFor="loa_expiry_date">LOA Expiry Date</Label>
-                      <Input
+                      <NativeFormDatePicker
                         id="loa_expiry_date"
                         name="loa_expiry_date"
-                        type="date"
-                        defaultValue={(() => {
-                          const date = (editingVehicle as any)?.loaExpiryDate;
-                          if (!date) return "";
-                          const dateStr = typeof date === "string" ? date : new Date(date).toISOString();
-                          return dateStr.split("T")[0];
-                        })()}
+                        label="LOA Expiry Date"
+                        defaultValue={dateValueToYmd((editingVehicle as any)?.loaExpiryDate)}
                       />
                     </div>
                   </div>

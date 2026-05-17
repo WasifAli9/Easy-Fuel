@@ -36,6 +36,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Plus, MapPin, Truck, CreditCard, FileSignature } from "lucide-react";
 import { AddAddressDialog } from "@/components/AddAddressDialog";
+import { FormDatePicker } from "@/components/FormDatePicker";
 import { SignaturePad } from "@/components/SignaturePad";
 
 const orderFormSchema = z.object({
@@ -333,25 +334,14 @@ export function CreateOrderDialog({ trigger, onOrderCreated }: CreateOrderDialog
                   )}
                 />
 
-                <FormField
+                <FormDatePicker
                   control={form.control}
                   name="deliveryDate"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Delivery Date</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="date"
-                          {...field}
-                          data-testid="input-delivery-date"
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        Select your preferred delivery date
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
+                  label="Delivery Date"
+                  description="Select your preferred delivery date"
+                  placeholder="Pick a date"
+                  minDate={new Date()}
+                  data-testid="input-delivery-date"
                 />
 
                 <div className="grid grid-cols-2 gap-4">
