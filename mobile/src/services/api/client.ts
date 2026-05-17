@@ -1,6 +1,7 @@
 import axios from "axios";
 import * as Network from "expo-network";
 import { Platform } from "react-native";
+import { withCaseAliasesDeep } from "@/lib/case-normalize";
 import {
   getResolvedApiBaseUrl,
   isExpoDevelopmentRuntime,
@@ -51,11 +52,29 @@ apiClient.interceptors.request.use(async (config) => {
   } else {
     delete config.headers.Authorization;
   }
+
+  const data = config.data;
+  if (
+    data &&
+    typeof data === "object" &&
+    !(data instanceof FormData) &&
+    !(data instanceof URLSearchParams) &&
+    !(data instanceof Blob) &&
+    !(data instanceof ArrayBuffer)
+  ) {
+    config.data = withCaseAliasesDeep(data);
+  }
+
   return config;
 });
 
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    if (response.data != null && typeof response.data === "object") {
+      response.data = withCaseAliasesDeep(response.data);
+    }
+    return response;
+  },
   async (error) => {
     const originalRequest = error.config;
     if (

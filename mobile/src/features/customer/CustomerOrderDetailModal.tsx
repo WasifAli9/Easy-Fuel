@@ -9,7 +9,7 @@ import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { OrderChatPanel } from "@/features/chat/OrderChatPanel";
 import { formatCustomerOrderAddress } from "@/features/customer/customerOrderUtils";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { ModalSafeArea } from "@/components/ModalSafeArea";
 
 type Offer = {
   id: string;
@@ -56,7 +56,6 @@ export function CustomerOrderDetailModal({
   const theme = mode === "dark" ? darkTheme : lightTheme;
   const styles = getStyles(theme);
   const queryClient = useQueryClient();
-  const insets = useSafeAreaInsets();
 
   const orderQuery = useQuery({
     queryKey: ["/api/orders", orderId],
@@ -125,11 +124,11 @@ export function CustomerOrderDetailModal({
 
   return (
     <Modal visible={visible && !!orderId} animationType="slide" onRequestClose={onDismiss}>
-      <SafeAreaView style={[styles.modalSafe, { backgroundColor: theme.colors.background }]} edges={["top", "left", "right", "bottom"]}>
+      <ModalSafeArea style={[styles.modalSafe, { backgroundColor: theme.colors.background }]}>
         <KeyboardAvoidingView
           style={styles.flexFill}
           behavior={Platform.OS === "ios" ? "padding" : "height"}
-          keyboardVerticalOffset={Platform.OS === "ios" ? insets.top : 0}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
         >
           <View style={styles.header}>
             <Text variant="titleLarge">Order details</Text>
@@ -241,7 +240,7 @@ export function CustomerOrderDetailModal({
             </View>
           )}
         </KeyboardAvoidingView>
-      </SafeAreaView>
+      </ModalSafeArea>
     </Modal>
   );
 }

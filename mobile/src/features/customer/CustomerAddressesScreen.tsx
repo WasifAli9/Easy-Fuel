@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { FlatList, Modal, StyleSheet, View } from "react-native";
+import { ModalSafeArea } from "@/components/ModalSafeArea";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, Switch, Text, TextInput } from "react-native-paper";
 import { Button } from "@/design/paper-button";
@@ -162,8 +163,8 @@ export function CustomerAddressesScreen() {
         )}
       />
 
-      <Modal visible={modalOpen} animationType="slide" onRequestClose={() => setModalOpen(false)}>
-        <View style={styles.modal}>
+      <Modal visible={modalOpen} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setModalOpen(false)}>
+        <ModalSafeArea style={styles.modal}>
           <View style={styles.modalHeader}>
             <Text variant="titleLarge">{editing ? "Edit address" : "New address"}</Text>
             <Button onPress={() => setModalOpen(false)}>Close</Button>
@@ -190,7 +191,7 @@ export function CustomerAddressesScreen() {
             </Button>
             {saveMutation.isError ? <Text style={styles.error}>{(saveMutation.error as Error).message}</Text> : null}
           </View>
-        </View>
+        </ModalSafeArea>
       </Modal>
     </View>
   );

@@ -1773,48 +1773,64 @@ router.get("/profile", async (req, res) => {
 // Update customer profile
 router.put("/profile", async (req, res) => {
   const user = (req as any).user;
-  const {
-    fullName,
-    phone,
-    companyName,
-    tradingAs,
-    vatNumber,
-    billingAddressStreet,
-    billingAddressCity,
-    billingAddressProvince,
-    billingAddressPostalCode,
-    billingAddressCountry
-  } = req.body;
+  const body = req.body ?? {};
+  const fullName = body.fullName ?? body.full_name;
+  const phone = body.phone;
+  const companyName = body.companyName ?? body.company_name;
+  const tradingAs = body.tradingAs ?? body.trading_as;
+  const vatNumber = body.vatNumber ?? body.vat_number;
+  const billingAddressStreet = body.billingAddressStreet ?? body.billing_address_street;
+  const billingAddressCity = body.billingAddressCity ?? body.billing_address_city;
+  const billingAddressProvince = body.billingAddressProvince ?? body.billing_address_province;
+  const billingAddressPostalCode = body.billingAddressPostalCode ?? body.billing_address_postal_code;
+  const billingAddressCountry = body.billingAddressCountry ?? body.billing_address_country;
+  const profilePhotoUrl = body.profilePhotoUrl ?? body.profile_photo_url;
   
   try {
-    // Update profile table
-    await db
-      .update(profiles)
-      .set({
-        fullName: fullName,
-        phone,
-        updatedAt: new Date(),
-      })
-      .where(eq(profiles.id, user.id));
+    const profileUpdate: {
+      fullName?: string;
+      phone?: string;
+      profilePhotoUrl?: string;
+      updatedAt: Date;
+    } = {
+      updatedAt: new Date(),
+    };
+    if (fullName !== undefined) profileUpdate.fullName = fullName;
+    if (phone !== undefined) profileUpdate.phone = phone;
+    if (profilePhotoUrl !== undefined) profileUpdate.profilePhotoUrl = profilePhotoUrl;
 
-    // Update customer table
-    const updatedCustomer = (
+    // Update profile table
+    await db.update(profiles).set(profileUpdate).where(eq(profiles.id, user.id));
+
+    const customerPayload = {
+      companyName: companyName,
+      tradingAs: tradingAs,
+      vatNumber: vatNumber,
+      billingAddressStreet: billingAddressStreet,
+      billingAddressCity: billingAddressCity,
+      billingAddressProvince: billingAddressProvince,
+      billingAddressPostalCode: billingAddressPostalCode,
+      billingAddressCountry: billingAddressCountry,
+      updatedAt: new Date(),
+    };
+
+    // Update customer table (create row if missing, same as GET /profile)
+    let updatedCustomer = (
       await db
         .update(customers)
-        .set({
-          companyName: companyName,
-          tradingAs: tradingAs,
-          vatNumber: vatNumber,
-          billingAddressStreet: billingAddressStreet,
-          billingAddressCity: billingAddressCity,
-          billingAddressProvince: billingAddressProvince,
-          billingAddressPostalCode: billingAddressPostalCode,
-          billingAddressCountry: billingAddressCountry,
-          updatedAt: new Date(),
-        })
+        .set(customerPayload)
         .where(eq(customers.userId, user.id))
         .returning()
     )[0];
+
+    if (!updatedCustomer) {
+      updatedCustomer = (
+        await db
+          .insert(customers)
+          .values({ userId: user.id, ...customerPayload })
+          .returning()
+      )[0];
+    }
 
     // Broadcast customer profile update
     websocketService.sendToUser(user.id, {
@@ -1822,7 +1838,19 @@ router.put("/profile", async (req, res) => {
       payload: { userId: user.id },
     });
 
-    res.json({ success: true, customer: updatedCustomer });
+    const updatedProfile = (
+      await db
+        .select({ profilePhotoUrl: profiles.profilePhotoUrl })
+        .from(profiles)
+        .where(eq(profiles.id, user.id))
+        .limit(1)
+    )[0];
+
+    res.json({
+      success: true,
+      customer: updatedCustomer,
+      profile_photo_url: updatedProfile?.profilePhotoUrl ?? null,
+    });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

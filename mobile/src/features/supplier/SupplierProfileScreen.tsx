@@ -3,6 +3,7 @@ import { ScrollView, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, Text, TextInput } from "react-native-paper";
 import { Button } from "@/design/paper-button";
+import { ProfilePhotoPicker } from "@/components/ProfilePhotoPicker";
 import { apiClient } from "@/services/api/client";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
@@ -51,16 +52,16 @@ export function SupplierProfileScreen() {
   const [country, setCountry] = useState("South Africa");
 
   useEffect(() => {
-    const p = profileQuery.data as any;
+    const p = profileQuery.data as Record<string, unknown> | undefined;
     if (!p) return;
-    setFullName(p.full_name ?? "");
-    setPhone(p.phone ?? "");
-    setStreet(p.address_street ?? "");
-    setCity(p.address_city ?? "");
-    setProvince(p.address_province ?? "");
-    setPostal(p.address_postal_code ?? "");
-    setCountry(p.address_country ?? "South Africa");
-  }, [profileQuery.data]);
+    setFullName(String(p.full_name ?? p.fullName ?? ""));
+    setPhone(String(p.phone ?? ""));
+    setStreet(String(p.address_street ?? p.addressStreet ?? ""));
+    setCity(String(p.address_city ?? p.addressCity ?? ""));
+    setProvince(String(p.address_province ?? p.addressProvince ?? ""));
+    setPostal(String(p.address_postal_code ?? p.addressPostalCode ?? ""));
+    setCountry(String(p.address_country ?? p.addressCountry ?? "South Africa"));
+  }, [profileQuery.dataUpdatedAt]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -76,6 +77,7 @@ export function SupplierProfileScreen() {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["/api/supplier/profile"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
     },
   });
 
@@ -100,23 +102,32 @@ export function SupplierProfileScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Card mode="outlined" style={styles.card}>
-        <Card.Content>
-          <Text variant="headlineSmall">Supplier profile</Text>
-          <Text style={styles.subtitle}>Business details and compliance (same API as web).</Text>
-          <Text style={styles.meta}>
-            Status: {p?.status} · KYB: {p?.kyb_status} · Compliance: {p?.compliance_status}
-          </Text>
-        </Card.Content>
-      </Card>
+      <View style={styles.pageHeader}>
+        <Text variant="headlineSmall">My Profile</Text>
+        <Text style={styles.pageSubtitle}>Manage your account information</Text>
+      </View>
 
       <Card mode="outlined" style={styles.card}>
         <Card.Content>
-          <Text variant="titleMedium">Contact & address</Text>
-          <TextInput mode="outlined" label="Full name" value={fullName} onChangeText={setFullName} style={styles.input} />
+          <Text variant="titleMedium">Personal Information</Text>
+          <Text style={styles.sectionSubtitle}>Your basic account details</Text>
+          <ProfilePhotoPicker
+            role="supplier"
+            photoUrl={(p?.profile_photo_url ?? p?.profilePhotoUrl) as string | null | undefined}
+          />
+          <Text style={styles.meta}>
+            Status: {p?.status} · KYB: {p?.kyb_status ?? p?.kybStatus} · Compliance:{" "}
+            {p?.compliance_status ?? p?.complianceStatus}
+          </Text>
+          <TextInput mode="outlined" label="Full Name" value={fullName} onChangeText={setFullName} style={styles.input} />
           <Text style={styles.meta}>Email: {p?.email ?? "—"}</Text>
-          <TextInput mode="outlined" label="Phone" value={phone} onChangeText={setPhone} style={styles.input} />
-          <TextInput mode="outlined" label="Street" value={street} onChangeText={setStreet} style={styles.input} />
+          <Text style={styles.metaHint}>Email cannot be changed</Text>
+          <TextInput mode="outlined" label="Phone Number" value={phone} onChangeText={setPhone} style={styles.input} />
+          <Text variant="titleMedium" style={styles.addressTitle}>
+            Address
+          </Text>
+          <Text style={styles.sectionSubtitle}>Your registered business address</Text>
+          <TextInput mode="outlined" label="Street Address" value={street} onChangeText={setStreet} style={styles.input} />
           <TextInput mode="outlined" label="City" value={city} onChangeText={setCity} style={styles.input} />
           <TextInput mode="outlined" label="Province" value={province} onChangeText={setProvince} style={styles.input} />
           <TextInput mode="outlined" label="Postal code" value={postal} onChangeText={setPostal} style={styles.input} />
@@ -217,9 +228,13 @@ const getStyles = (theme: typeof lightTheme) => {
   return StyleSheet.create({
     container: p.screenContainer,
     content: { ...p.screenScrollContentCompact, paddingBottom: 32 },
+    pageHeader: { marginBottom: 4, paddingHorizontal: 4 },
+    pageSubtitle: { marginTop: 4, color: theme.colors.onSurfaceVariant, fontSize: 15 },
     card: p.sectionCard,
-    subtitle: p.subtitle,
-    meta: { marginTop: 6, color: theme.colors.onSurfaceVariant },
+    sectionSubtitle: { ...p.subtitle, marginBottom: 12 },
+    addressTitle: { marginTop: 16 },
+    meta: { marginTop: 6, color: theme.colors.onSurface },
+    metaHint: { marginTop: 2, fontSize: 12, color: theme.colors.onSurfaceVariant },
     input: p.input,
     hint: { marginTop: 8, color: theme.colors.onSurfaceVariant, fontSize: 12 },
     badgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },

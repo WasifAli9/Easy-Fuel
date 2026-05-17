@@ -48,9 +48,14 @@ export async function listPushSubscriptionsByUser(userId: string) {
   return db.select().from(pushSubscriptions).where(eq(pushSubscriptions.userId, userId));
 }
 
+/** Expo tokens are stored in `endpoint`; format is `ExponentPushToken[...]` (legacy alias `ExpoPushToken[...]`). */
+export function isExpoPushEndpoint(endpoint: string): boolean {
+  return endpoint.startsWith("ExponentPushToken[") || endpoint.startsWith("ExpoPushToken[");
+}
+
 export async function listExpoPushTokensByUser(userId: string) {
   const rows = await listPushSubscriptionsByUser(userId);
-  return rows.filter((row) => row.endpoint.startsWith("ExpoPushToken["));
+  return rows.filter((row) => isExpoPushEndpoint(row.endpoint));
 }
 
 export async function listWebPushSubscriptionsByUser(userId: string) {

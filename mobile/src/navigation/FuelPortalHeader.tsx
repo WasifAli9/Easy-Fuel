@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Image, Pressable, StyleSheet, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Text } from "react-native-paper";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
@@ -19,6 +20,7 @@ type FuelPortalHeaderProps = {
  * Top bar: logo + wordmark (opens menu) and avatar affordance (opens menu) — matches portal reference layout.
  */
 export function FuelPortalHeader({ onOpenMenu }: FuelPortalHeaderProps) {
+  const insets = useSafeAreaInsets();
   const mode = useUiThemeStore((s) => s.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
   const isDark = mode === "dark";
@@ -64,7 +66,16 @@ export function FuelPortalHeader({ onOpenMenu }: FuelPortalHeaderProps) {
   }, [normalizedPhotoPath, presignAvatarQuery.data]);
 
   return (
-    <View style={[styles.bar, { backgroundColor: t.headerBg, borderBottomColor: t.borderSubtle }]}>
+    <View
+      style={[
+        styles.bar,
+        {
+          paddingTop: insets.top,
+          backgroundColor: t.headerBg,
+          borderBottomColor: t.borderSubtle,
+        },
+      ]}
+    >
       <Pressable
         onPress={onOpenMenu}
         style={styles.leftBrand}

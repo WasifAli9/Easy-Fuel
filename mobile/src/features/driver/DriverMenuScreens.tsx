@@ -16,6 +16,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as DocumentPicker from "expo-document-picker";
 import * as ExpoLocation from "expo-location";
+import { navigateFromNotificationPayload } from "@/services/notification-navigation";
 import {
   ActivityIndicator,
   Card,
@@ -28,6 +29,7 @@ import {
   TextInput,
 } from "react-native-paper";
 import { Button } from "@/design/paper-button";
+import { ProfilePhotoPicker } from "@/components/ProfilePhotoPicker";
 import { apiClient } from "@/services/api/client";
 import { openStoredDocument, putFileToUploadUrl } from "@/lib/files";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
@@ -79,6 +81,9 @@ type KycDateKey =
 
 type DriverProfile = {
   full_name?: string;
+  fullName?: string;
+  profile_photo_url?: string | null;
+  profilePhotoUrl?: string | null;
   phone?: string;
   email?: string;
   driver_type?: string;
@@ -160,6 +165,7 @@ type DriverNotification = {
   message?: string;
   read?: boolean;
   created_at?: string;
+  data?: Record<string, unknown> | null;
 };
 
 type DriverPricing = {
@@ -225,7 +231,10 @@ export function DriverProfileMenuScreen() {
   const saveMutation = useMutation({
     mutationFn: async () =>
       apiClient.put("/api/driver/profile", { fullName, phone: phone.trim() || null }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+    },
   });
 
   const passwordMutation = useMutation({
@@ -255,10 +264,11 @@ export function DriverProfileMenuScreen() {
 
   useEffect(() => {
     if (profileQuery.data) {
-      setFullName(profileQuery.data.full_name || "");
-      setPhone(profileQuery.data.phone || profileQuery.data.mobile_number || "");
+      const d = profileQuery.data;
+      setFullName(d.full_name || (d as { fullName?: string }).fullName || "");
+      setPhone(d.phone || d.mobile_number || (d as { mobileNumber?: string }).mobileNumber || "");
     }
-  }, [profileQuery.data]);
+  }, [profileQuery.dataUpdatedAt]);
 
   if (profileQuery.isLoading) return <View style={styles.center}><ActivityIndicator /></View>;
 
@@ -266,8 +276,15 @@ export function DriverProfileMenuScreen() {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {cardContainer(
         <>
-          <Text variant="headlineSmall">Profile</Text>
-          <Text style={styles.subtitle}>View and update your profile details.</Text>
+          <Text variant="headlineSmall">My Profile</Text>
+          <Text style={styles.subtitle}>Manage your account information</Text>
+          <ProfilePhotoPicker
+            role="driver"
+            photoUrl={
+              profileQuery.data?.profile_photo_url ??
+              (profileQuery.data as { profilePhotoUrl?: string })?.profilePhotoUrl
+            }
+          />
           <TextInput mode="outlined" label="Full Name" value={fullName} onChangeText={setFullName} style={styles.input} />
           <TextInput mode="outlined" label="Email" value={profileQuery.data?.email || ""} disabled style={styles.input} />
           <TextInput mode="outlined" label="Mobile Number" value={phone} onChangeText={setPhone} style={styles.input} keyboardType="phone-pad" />
@@ -1231,6 +1248,7 @@ export function DriverKycDocumentsScreen() {
 }
 
 export function DriverNotificationsMenuScreen() {
+  const { user } = useAuth();
   const mode = useUiThemeStore((state) => state.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
   const styles = getStyles(theme);
@@ -1255,18 +1273,41 @@ export function DriverNotificationsMenuScreen() {
           contentContainerStyle={styles.content}
           ListEmptyComponent={<Text style={styles.empty}>No notifications.</Text>}
           renderItem={({ item }) => (
-            <Card style={styles.card}>
-              <Card.Content>
-                <Text variant="titleSmall">{item.title || "Notification"}</Text>
-                <Text style={styles.meta}>{item.message || "-"}</Text>
-                <View style={styles.rowBetween}>
-                  <Text style={styles.meta}>{item.created_at ? new Date(item.created_at).toLocaleString("en-ZA") : ""}</Text>
-                  {!item.read ? (
-                    <Button mode="contained" buttonColor={theme.colors.primary} textColor={theme.colors.onPrimary} onPress={() => markReadMutation.mutate(item.id)} loading={markReadMutation.isPending}>Mark read</Button>
-                  ) : <Chip compact>Read</Chip>}
-                </View>
-              </Card.Content>
-            </Card>
+            <Pressable
+              onPress={() => {
+                if (!item.read) {
+                  markReadMutation.mutate(item.id);
+                }
+                const payload = {
+                  ...(item.data ?? {}),
+                  notificationId: item.id,
+                };
+                navigateFromNotificationPayload("driver", payload);
+              }}
+            >
+              <Card style={styles.card}>
+                <Card.Content>
+                  <Text variant="titleSmall">{item.title || "Notification"}</Text>
+                  <Text style={styles.meta}>{item.message || "-"}</Text>
+                  <View style={styles.rowBetween}>
+                    <Text style={styles.meta}>{item.created_at ? new Date(item.created_at).toLocaleString("en-ZA") : ""}</Text>
+                    {!item.read ? (
+                      <Button
+                        mode="contained"
+                        buttonColor={theme.colors.primary}
+                        textColor={theme.colors.onPrimary}
+                        onPress={() => markReadMutation.mutate(item.id)}
+                        loading={markReadMutation.isPending}
+                      >
+                        Mark read
+                      </Button>
+                    ) : (
+                      <Chip compact>Read</Chip>
+                    )}
+                  </View>
+                </Card.Content>
+              </Card>
+            </Pressable>
           )}
         />
       )}

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import {
   SupplierDashboardScreen,
@@ -37,9 +38,13 @@ type SupplierSection =
   | "settings";
 
 function SupplierTabNavigator() {
+  const insets = useSafeAreaInsets();
   const mode = useUiThemeStore((s) => s.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
-  const tabOpts = useMemo(() => fuelPortalTabBarOptions(theme, mode === "dark"), [theme, mode]);
+  const tabOpts = useMemo(
+    () => fuelPortalTabBarOptions(theme, mode === "dark", insets.bottom),
+    [theme, mode, insets.bottom],
+  );
 
   return (
     <Tab.Navigator
@@ -90,6 +95,7 @@ export function SupplierNavigator() {
       menuItems={supplierMenuItems}
       activeMenuKey={section}
       onSelectMenu={(key) => setSection(key as SupplierSection)}
+      contentUsesTabBar={section === "portal"}
     >
       {section === "portal" ? (
         <SupplierTabNavigator />

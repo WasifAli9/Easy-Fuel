@@ -1,55 +1,26 @@
 import { ReactNode, useMemo, useState } from "react";
 import { Alert, FlatList, Modal, Pressable, StyleSheet, View } from "react-native";
+import { ModalSafeArea } from "@/components/ModalSafeArea";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActivityIndicator, Card, Text, TextInput } from "react-native-paper";
 import { Button } from "@/design/paper-button";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { apiClient } from "@/services/api/client";
+import { openStoredDocument } from "@/lib/files";
 import { getFuelPortalTokens } from "@/design/fuel-portal-tokens";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { downloadAndShareSupplierInvoicePdf } from "@/features/supplier/supplierInvoicePdf";
-
-type DepotOrder = {
-  id: string;
-  status: string;
-  payment_status?: string;
-  payment_method?: string;
-  payment_proof_url?: string | null;
-  litres?: number;
-  total_price_cents?: number;
-  created_at?: string;
-  depots?: { name?: string };
-  fuel_types?: { label?: string };
-  drivers?: { profile?: { full_name?: string } };
-};
-
-function fuelIconName(label: string) {
-  const l = label.toLowerCase();
-  if (l.includes("adblue")) return "water-outline" as const;
-  return "gas-station-outline" as const;
-}
-
-function formatStatusLabel(status: string) {
-  if (status === "completed") return "Completed";
-  if (status === "pending") return "Pending";
-  if (status === "pending_payment") return "Pending payment";
-  return status.replace(/_/g, " ");
-}
-
-function statusBadgeStyle(status: string, t: ReturnType<typeof getFuelPortalTokens>, theme: typeof lightTheme) {
-  if (status === "completed") {
-    return { bg: t.accentPositive, fg: "#FFFFFF" };
-  }
-  if (status === "pending") {
-    return { bg: t.badgeActiveTint, fg: t.badgeActiveText };
-  }
-  if (status === "rejected" || status === "cancelled") {
-    return { bg: "rgba(148, 163, 184, 0.4)", fg: theme.colors.onSurface };
-  }
-  return { bg: "rgba(100,116,139,0.22)", fg: theme.colors.onSurface };
-}
+import { SupplierDepotOrderDetailModal } from "@/features/supplier/SupplierDepotOrderDetailModal";
+import {
+  formatOrderStatusLabel,
+  fuelIconName,
+  getDriverDisplayName,
+  mutationErrorMessage,
+  statusBadgeStyle,
+  type SupplierDepotOrder,
+} from "@/features/supplier/supplierDepotOrderHelpers";
 
 type SupplierDepotOrdersPanelProps = {
   listHeader?: ReactNode;
@@ -65,8 +36,10 @@ export function SupplierDepotOrdersPanel({ listHeader, listChrome = "default" }:
   const styles = getStyles(theme, t);
   const queryClient = useQueryClient();
   const [rejectReason, setRejectReason] = useState<Record<string, string>>({});
-  const [receiptOrder, setReceiptOrder] = useState<DepotOrder | null>(null);
+  const [receiptOrder, setReceiptOrder] = useState<SupplierDepotOrder | null>(null);
   const [receiptPdfLoading, setReceiptPdfLoading] = useState(false);
+  const [detailOrder, setDetailOrder] = useState<SupplierDepotOrder | null>(null);
+  const [showAllOrders, setShowAllOrders] = useState(false);
 
   const ordersQuery = useQuery({
     queryKey: ["/api/supplier/driver-depot-orders"],
@@ -74,41 +47,63 @@ export function SupplierDepotOrdersPanel({ listHeader, listChrome = "default" }:
     refetchInterval: 15_000,
   });
 
-  const orders: DepotOrder[] = useMemo(() => {
-    const data = ordersQuery.data as { orders?: DepotOrder[] } | DepotOrder[] | undefined;
+  const orders: SupplierDepotOrder[] = useMemo(() => {
+    const data = ordersQuery.data as { orders?: SupplierDepotOrder[] } | SupplierDepotOrder[] | undefined;
     if (Array.isArray(data)) return data;
     return data?.orders ?? [];
   }, [ordersQuery.data]);
 
+  const invalidate = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["/api/supplier/driver-depot-orders"] });
+  };
+
   const acceptMutation = useMutation({
     mutationFn: (orderId: string) => apiClient.post(`/api/supplier/driver-depot-orders/${orderId}/accept`),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["/api/supplier/driver-depot-orders"] });
-    },
+    onSuccess: invalidate,
+    onError: (e) => Alert.alert("Error", mutationErrorMessage(e)),
   });
 
   const rejectMutation = useMutation({
     mutationFn: ({ orderId, reason }: { orderId: string; reason?: string }) =>
       apiClient.post(`/api/supplier/driver-depot-orders/${orderId}/reject`, { reason }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["/api/supplier/driver-depot-orders"] });
-    },
+    onSuccess: invalidate,
+    onError: (e) => Alert.alert("Error", mutationErrorMessage(e)),
   });
 
   const verifyPaymentMutation = useMutation({
     mutationFn: (orderId: string) => apiClient.post(`/api/supplier/driver-depot-orders/${orderId}/verify-payment`),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["/api/supplier/driver-depot-orders"] });
-    },
+    onSuccess: invalidate,
+    onError: (e) => Alert.alert("Error", mutationErrorMessage(e)),
   });
 
   const rejectPaymentMutation = useMutation({
     mutationFn: ({ orderId, reason }: { orderId: string; reason?: string }) =>
       apiClient.post(`/api/supplier/driver-depot-orders/${orderId}/reject-payment`, { reason }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["/api/supplier/driver-depot-orders"] });
-    },
+    onSuccess: invalidate,
+    onError: (e) => Alert.alert("Error", mutationErrorMessage(e)),
   });
+
+  const releaseFuelMutation = useMutation({
+    mutationFn: (orderId: string) => apiClient.post(`/api/supplier/driver-depot-orders/${orderId}/release`),
+    onSuccess: async () => {
+      await invalidate();
+      Alert.alert("Fuel released", "The driver will be notified to sign for receipt.");
+    },
+    onError: (e) => Alert.alert("Error", mutationErrorMessage(e)),
+  });
+
+  const openOrderDetail = (order: SupplierDepotOrder) => setDetailOrder(order);
+
+  const confirmReleaseFuel = (order: SupplierDepotOrder) => {
+    Alert.alert(
+      "Release fuel",
+      `Release ${order.litres ?? 0} L to ${getDriverDisplayName(order)}?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Release", onPress: () => releaseFuelMutation.mutate(order.id) },
+      ],
+    );
+  };
 
   if (ordersQuery.isLoading && !listHeader) {
     return (
@@ -124,13 +119,151 @@ export function SupplierDepotOrdersPanel({ listHeader, listChrome = "default" }:
       {listChrome === "default" ? (
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Recent deliveries</Text>
-          <Pressable hitSlop={8}>
+          <Pressable hitSlop={8} onPress={() => setShowAllOrders(true)}>
             <Text style={styles.viewAll}>View all</Text>
           </Pressable>
         </View>
       ) : null}
     </>
   );
+
+  const renderOrderCard = (item: SupplierDepotOrder) => {
+    const fuelLabel = item.fuel_types?.label ?? "Fuel";
+    const badge = statusBadgeStyle(item.status, t, theme);
+    const statusLabel = formatOrderStatusLabel(item);
+
+    return (
+      <Pressable onPress={() => openOrderDetail(item)} accessibilityRole="button">
+        <Card mode="elevated" elevation={isDark ? 2 : 3} style={styles.card}>
+          <Card.Content style={styles.cardInner}>
+            <View style={styles.rowBetween}>
+              <Text style={[styles.orderId, { color: theme.colors.primary }]}>#{item.id.slice(0, 8)}</Text>
+              <View style={[styles.statusPill, { backgroundColor: badge.bg }]}>
+                <Text style={[styles.statusPillText, { color: badge.fg }]}>{statusLabel}</Text>
+              </View>
+            </View>
+            <Text style={styles.fuelTitle}>{fuelLabel}</Text>
+            <View style={styles.driverRow}>
+              <MaterialCommunityIcons name="account-outline" size={18} color={theme.colors.onSurfaceVariant} />
+              <Text style={styles.driverText}>Driver: {getDriverDisplayName(item)}</Text>
+            </View>
+            <View style={styles.volumeRow}>
+              <MaterialCommunityIcons name={fuelIconName(fuelLabel)} size={18} color={theme.colors.onSurfaceVariant} />
+              <Text style={styles.volumeText}>{item.litres ?? 0} L</Text>
+              <Text style={styles.dot}>·</Text>
+              <Text style={[styles.priceText, { color: t.accentPositiveStrong }]}>
+                R {((item.total_price_cents ?? 0) / 100).toLocaleString("en-ZA", { minimumFractionDigits: 2 })}
+              </Text>
+            </View>
+            <Text style={styles.tapHint}>Tap to manage order</Text>
+
+            {item.status === "pending" ? (
+              <View style={styles.actions} onStartShouldSetResponder={() => true}>
+                <Button
+                  mode="contained"
+                  buttonColor={theme.colors.primary}
+                  textColor={theme.colors.onPrimary}
+                  onPress={() => acceptMutation.mutate(item.id)}
+                  loading={acceptMutation.isPending}
+                >
+                  Accept
+                </Button>
+                <Button
+                  onPress={() =>
+                    rejectMutation.mutate({ orderId: item.id, reason: rejectReason[item.id] || undefined })
+                  }
+                  loading={rejectMutation.isPending}
+                >
+                  Reject
+                </Button>
+              </View>
+            ) : null}
+            {item.status === "pending" ? (
+              <TextInput
+                mode="outlined"
+                label="Reject reason (optional)"
+                value={rejectReason[item.id] ?? ""}
+                onChangeText={(text) => setRejectReason((p) => ({ ...p, [item.id]: text }))}
+                style={styles.input}
+              />
+            ) : null}
+            {item.status === "pending_payment" &&
+            item.payment_status === "paid" &&
+            item.payment_method === "bank_transfer" &&
+            item.payment_proof_url ? (
+              <View style={styles.actions} onStartShouldSetResponder={() => true}>
+                <Button
+                  mode="outlined"
+                  onPress={async () => {
+                    try {
+                      await openStoredDocument(item.payment_proof_url);
+                    } catch (e) {
+                      Alert.alert("Payment proof", mutationErrorMessage(e));
+                    }
+                  }}
+                >
+                  View proof
+                </Button>
+                <Button
+                  mode="contained"
+                  onPress={() => verifyPaymentMutation.mutate(item.id)}
+                  loading={verifyPaymentMutation.isPending}
+                >
+                  Confirm payment
+                </Button>
+              </View>
+            ) : null}
+            {item.status === "ready_for_pickup" ? (
+              <View style={styles.actions} onStartShouldSetResponder={() => true}>
+                <Button
+                  mode="contained"
+                  buttonColor={theme.colors.primary}
+                  textColor={theme.colors.onPrimary}
+                  icon="gas-station"
+                  onPress={() => confirmReleaseFuel(item)}
+                  loading={releaseFuelMutation.isPending}
+                >
+                  Release fuel
+                </Button>
+              </View>
+            ) : null}
+            {item.status === "completed" ? (
+              <View style={styles.dualActions} onStartShouldSetResponder={() => true}>
+                <Button
+                  mode="contained"
+                  buttonColor={t.brandText}
+                  textColor="#FFFFFF"
+                  icon="download-outline"
+                  style={styles.actionBtn}
+                  contentStyle={styles.actionBtnContent}
+                  onPress={async () => {
+                    try {
+                      await downloadAndShareSupplierInvoicePdf(item.id);
+                    } catch (e) {
+                      Alert.alert("PDF", mutationErrorMessage(e));
+                    }
+                  }}
+                >
+                  Download PDF
+                </Button>
+                <Button
+                  mode="outlined"
+                  textColor={theme.colors.primary}
+                  theme={{ colors: { outline: theme.colors.primary } }}
+                  style={styles.actionBtn}
+                  contentStyle={styles.actionBtnContent}
+                  icon="receipt"
+                  onPress={() => setReceiptOrder(item)}
+                >
+                  Receipt
+                </Button>
+              </View>
+            ) : null}
+          </Card.Content>
+        </Card>
+      </Pressable>
+    );
+  };
 
   return (
     <>
@@ -149,134 +282,43 @@ export function SupplierDepotOrdersPanel({ listHeader, listChrome = "default" }:
             <Text style={styles.muted}>No driver depot orders yet.</Text>
           )
         }
-        renderItem={({ item }) => {
-          const fuelLabel = item.fuel_types?.label ?? "Fuel";
-          const badge = statusBadgeStyle(item.status, t, theme);
-          return (
-            <Card mode="elevated" elevation={isDark ? 2 : 3} style={styles.card}>
-              <Card.Content style={styles.cardInner}>
-                <View style={styles.rowBetween}>
-                  <Text style={[styles.orderId, { color: theme.colors.primary }]}>#{item.id.slice(0, 8)}</Text>
-                  <View style={[styles.statusPill, { backgroundColor: badge.bg }]}>
-                    <Text style={[styles.statusPillText, { color: badge.fg }]}>{formatStatusLabel(item.status)}</Text>
-                  </View>
-                </View>
-                <Text style={styles.fuelTitle}>{fuelLabel}</Text>
-                <View style={styles.driverRow}>
-                  <MaterialCommunityIcons name="account-outline" size={18} color={theme.colors.onSurfaceVariant} />
-                  <Text style={styles.driverText}>Driver: {item.drivers?.profile?.full_name ?? "—"}</Text>
-                </View>
-                <View style={styles.volumeRow}>
-                  <MaterialCommunityIcons name={fuelIconName(fuelLabel)} size={18} color={theme.colors.onSurfaceVariant} />
-                  <Text style={styles.volumeText}>{item.litres ?? 0} L</Text>
-                  <Text style={styles.dot}>·</Text>
-                  <Text style={[styles.priceText, { color: t.accentPositiveStrong }]}>
-                    R {((item.total_price_cents ?? 0) / 100).toLocaleString("en-ZA", { minimumFractionDigits: 2 })}
-                  </Text>
-                </View>
-                {item.status === "pending" ? (
-                  <View style={styles.actions}>
-                    <Button
-                      mode="contained"
-                      buttonColor={theme.colors.primary}
-                      textColor={theme.colors.onPrimary}
-                      onPress={() => acceptMutation.mutate(item.id)}
-                      loading={acceptMutation.isPending}
-                    >
-                      Accept
-                    </Button>
-                    <Button
-                      onPress={() =>
-                        rejectMutation.mutate({ orderId: item.id, reason: rejectReason[item.id] || undefined })
-                      }
-                      loading={rejectMutation.isPending}
-                    >
-                      Reject
-                    </Button>
-                  </View>
-                ) : null}
-                {item.status === "pending" ? (
-                  <TextInput
-                    mode="outlined"
-                    label="Reject reason (optional)"
-                    value={rejectReason[item.id] ?? ""}
-                    onChangeText={(text) => setRejectReason((p) => ({ ...p, [item.id]: text }))}
-                    style={styles.input}
-                  />
-                ) : null}
-                {item.status === "pending_payment" &&
-                item.payment_status === "paid" &&
-                item.payment_method === "bank_transfer" &&
-                item.payment_proof_url ? (
-                  <View style={styles.actions}>
-                    <Button
-                      mode="contained"
-                      onPress={() => verifyPaymentMutation.mutate(item.id)}
-                      loading={verifyPaymentMutation.isPending}
-                    >
-                      Confirm payment
-                    </Button>
-                    <Button
-                      onPress={() => rejectPaymentMutation.mutate({ orderId: item.id })}
-                      loading={rejectPaymentMutation.isPending}
-                    >
-                      Reject payment
-                    </Button>
-                  </View>
-                ) : null}
-                {item.status === "completed" ? (
-                  <View style={styles.dualActions}>
-                    <Button
-                      mode="contained"
-                      buttonColor={t.brandText}
-                      textColor="#FFFFFF"
-                      icon="download-outline"
-                      style={styles.actionBtn}
-                      contentStyle={styles.actionBtnContent}
-                      onPress={async () => {
-                        try {
-                          await downloadAndShareSupplierInvoicePdf(item.id);
-                        } catch (e) {
-                          const msg =
-                            (e as { response?: { data?: { error?: string } } })?.response?.data?.error ||
-                            (e as Error).message ||
-                            "Could not download receipt.";
-                          Alert.alert("PDF", msg);
-                        }
-                      }}
-                    >
-                      Download PDF
-                    </Button>
-                    <Button
-                      mode="outlined"
-                      textColor={theme.colors.primary}
-                      theme={{ colors: { outline: theme.colors.primary } }}
-                      style={styles.actionBtn}
-                      contentStyle={styles.actionBtnContent}
-                      icon="receipt"
-                      onPress={() => setReceiptOrder(item)}
-                    >
-                      Receipt
-                    </Button>
-                  </View>
-                ) : null}
-              </Card.Content>
-            </Card>
-          );
-        }}
+        renderItem={({ item }) => renderOrderCard(item)}
         ListFooterComponent={
           listChrome === "default" ? (
             <View style={styles.listFooter}>
               <MaterialCommunityIcons name="history" size={18} color={theme.colors.onSurfaceVariant} />
-              <Text style={styles.footerHint}>Showing last 24 hours</Text>
+              <Text style={styles.footerHint}>Showing last 24 hours · tap an order to manage</Text>
             </View>
           ) : (
             <View style={{ height: 16 }} />
           )
         }
       />
-      <Modal visible={!!receiptOrder} animationType="slide" onRequestClose={() => setReceiptOrder(null)}>
-        <View style={styles.receiptModal}>
+
+      <SupplierDepotOrderDetailModal
+        order={detailOrder}
+        visible={!!detailOrder}
+        onDismiss={() => setDetailOrder(null)}
+      />
+
+      <Modal visible={showAllOrders} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setShowAllOrders(false)}>
+        <ModalSafeArea style={styles.allOrdersModal}>
+          <View style={styles.receiptHeader}>
+            <Text variant="titleLarge">All depot orders</Text>
+            <Button onPress={() => setShowAllOrders(false)}>Close</Button>
+          </View>
+          <FlatList
+            data={orders}
+            keyExtractor={(item) => `all-${item.id}`}
+            contentContainerStyle={styles.list}
+            renderItem={({ item }) => renderOrderCard(item)}
+            ListEmptyComponent={<Text style={styles.muted}>No orders.</Text>}
+          />
+        </ModalSafeArea>
+      </Modal>
+
+      <Modal visible={!!receiptOrder} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setReceiptOrder(null)}>
+        <ModalSafeArea style={styles.receiptModal}>
           <View style={styles.receiptHeader}>
             <Text variant="titleLarge">Receipt</Text>
             <Button onPress={() => setReceiptOrder(null)}>Close</Button>
@@ -288,7 +330,7 @@ export function SupplierDepotOrdersPanel({ listHeader, listChrome = "default" }:
                 {receiptOrder.depots?.name ?? "Depot"} · {receiptOrder.fuel_types?.label ?? "Fuel"}
               </Text>
               <Text style={styles.meta}>
-                Driver: {receiptOrder.drivers?.profile?.full_name ?? "—"} · {receiptOrder.litres ?? 0} L
+                Driver: {getDriverDisplayName(receiptOrder)} · {receiptOrder.litres ?? 0} L
               </Text>
               <Text style={styles.metaStrong}>
                 Total R {((receiptOrder.total_price_cents ?? 0) / 100).toFixed(2)}
@@ -308,11 +350,7 @@ export function SupplierDepotOrdersPanel({ listHeader, listChrome = "default" }:
                   try {
                     await downloadAndShareSupplierInvoicePdf(receiptOrder.id);
                   } catch (e) {
-                    const msg =
-                      (e as { response?: { data?: { error?: string } } })?.response?.data?.error ||
-                      (e as Error).message ||
-                      "Could not download receipt.";
-                    Alert.alert("PDF", msg);
+                    Alert.alert("PDF", mutationErrorMessage(e));
                   } finally {
                     setReceiptPdfLoading(false);
                   }
@@ -322,7 +360,7 @@ export function SupplierDepotOrdersPanel({ listHeader, listChrome = "default" }:
               </Button>
             </View>
           ) : null}
-        </View>
+        </ModalSafeArea>
       </Modal>
     </>
   );
@@ -355,6 +393,7 @@ const getStyles = (theme: typeof lightTheme, t: ReturnType<typeof getFuelPortalT
     volumeText: { fontSize: 14, color: theme.colors.onSurfaceVariant, fontWeight: "600" },
     dot: { color: theme.colors.onSurfaceVariant, fontWeight: "700" },
     priceText: { fontSize: 15, fontWeight: "800" },
+    tapHint: { marginTop: 10, fontSize: 12, color: theme.colors.primary, fontWeight: "600" },
     sectionHeader: {
       flexDirection: "row",
       alignItems: "center",
@@ -385,6 +424,7 @@ const getStyles = (theme: typeof lightTheme, t: ReturnType<typeof getFuelPortalT
     actionBtnContent: { height: 44 },
     input: { ...p.input, marginTop: 8 },
     muted: { ...p.empty, paddingVertical: 8, paddingHorizontal: 16 },
+    allOrdersModal: { flex: 1, backgroundColor: theme.colors.background },
     receiptModal: { flex: 1, backgroundColor: theme.colors.background },
     receiptHeader: {
       flexDirection: "row",

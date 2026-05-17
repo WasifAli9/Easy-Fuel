@@ -23,6 +23,8 @@ type PortalShellProps = {
   menuItems: PortalMenuItem[];
   activeMenuKey: string;
   onSelectMenu: (key: string) => void;
+  /** When true, children include a bottom tab bar (do not add extra bottom safe padding). */
+  contentUsesTabBar?: boolean;
   children: ReactNode;
 };
 
@@ -51,6 +53,7 @@ export function PortalShell({
   menuItems,
   activeMenuKey,
   onSelectMenu,
+  contentUsesTabBar = false,
   children,
 }: PortalShellProps) {
   const { logout } = useAuth();
@@ -77,7 +80,14 @@ export function PortalShell({
     <View style={styles.root}>
       <FuelPortalHeader onOpenMenu={() => setMenuVisible(true)} />
 
-      <View style={styles.content}>{children}</View>
+      <View
+        style={[
+          styles.content,
+          !contentUsesTabBar && insets.bottom > 0 ? { paddingBottom: insets.bottom } : null,
+        ]}
+      >
+        {children}
+      </View>
 
       <Modal transparent visible={menuVisible} animationType="fade" onRequestClose={() => setMenuVisible(false)}>
         <View style={styles.overlay}>

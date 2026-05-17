@@ -24,6 +24,8 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { User, Building2, Mail, Phone, MapPin } from "lucide-react";
+import { ProfilePhotoUpload } from "@/components/ProfilePhotoUpload";
+import { Separator } from "@/components/ui/separator";
 
 const profileSchema = z.object({
   fullName: z.string().min(2, "Full name is required"),
@@ -132,6 +134,11 @@ export default function CustomerProfile() {
                 <CardDescription>Your basic account details</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
+                <ProfilePhotoUpload
+                  photoUrl={profile?.profile_photo_url ?? profile?.profilePhotoUrl}
+                  profilePutPath="/api/profile"
+                />
+                <Separator />
                 <div className="grid grid-cols-2 gap-4">
                   <FormField
                     control={form.control}

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ScrollView, StyleSheet, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { Card, Chip, Text } from "react-native-paper";
@@ -12,6 +12,7 @@ import { useUiThemeStore } from "@/store/ui-theme-store";
 import { filterOutOldCustomerOrders, formatCustomerOrderAddress } from "@/features/customer/customerOrderUtils";
 import { CustomerCreateOrderModal } from "@/features/customer/CustomerCreateOrderModal";
 import { CustomerOrderDetailModal } from "@/features/customer/CustomerOrderDetailModal";
+import { useNotificationDeepLinkStore } from "@/store/notification-deep-link-store";
 
 type OrderRow = {
   id: string;
@@ -38,12 +39,27 @@ export function CustomerDashboardScreen() {
   const [createOpen, setCreateOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const consumeDeepLink = useNotificationDeepLinkStore((s) => s.consume);
 
   const ordersQuery = useQuery({
     queryKey: ["/api/orders"],
     queryFn: async () => (await apiClient.get<OrderRow[]>("/api/orders")).data ?? [],
     staleTime: 15_000,
   });
+
+  useEffect(() => {
+    const link = useNotificationDeepLinkStore.getState().pending;
+    if (!link?.orderId) return;
+
+    const exists = (ordersQuery.data ?? []).some((o) => o.id === link.orderId);
+    if (!exists && !ordersQuery.isSuccess) return;
+
+    const consumed = consumeDeepLink();
+    if (!consumed?.orderId) return;
+
+    setDetailId(consumed.orderId);
+    setDetailOpen(true);
+  }, [ordersQuery.data, ordersQuery.isSuccess, consumeDeepLink]);
 
   const summary = useMemo(() => {
     const list = ordersQuery.data ?? [];

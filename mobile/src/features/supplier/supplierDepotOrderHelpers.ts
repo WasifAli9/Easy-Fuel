@@ -1,0 +1,77 @@
+import { getFuelPortalTokens } from "@/design/fuel-portal-tokens";
+import { lightTheme } from "@/design/theme";
+
+export type SupplierDepotOrder = {
+  id: string;
+  status: string;
+  payment_status?: string;
+  payment_method?: string;
+  payment_proof_url?: string | null;
+  litres?: number;
+  total_price_cents?: number;
+  created_at?: string;
+  updated_at?: string;
+  completed_at?: string;
+  depots?: { name?: string };
+  fuel_types?: { label?: string };
+  drivers?: { profile?: { full_name?: string; fullName?: string } };
+};
+
+export function getDriverDisplayName(order: SupplierDepotOrder) {
+  return (
+    order.drivers?.profile?.full_name ||
+    order.drivers?.profile?.fullName ||
+    "—"
+  );
+}
+
+export function fuelIconName(label: string) {
+  const l = label.toLowerCase();
+  if (l.includes("adblue")) return "water-outline" as const;
+  return "gas-station-outline" as const;
+}
+
+export function formatOrderStatusLabel(order: SupplierDepotOrder) {
+  const status = order.status;
+  const paymentStatus = order.payment_status;
+
+  if (status === "pending_payment") {
+    if (paymentStatus === "paid" && order.payment_method === "bank_transfer") {
+      return "Waiting payment confirmation";
+    }
+    if (paymentStatus === "payment_failed") {
+      return "Payment failed";
+    }
+    return "Awaiting payment";
+  }
+  if (status === "paid") return "Awaiting signatures";
+  if (status === "ready_for_pickup") return "Ready for pickup";
+  if (status === "awaiting_signature" || status === "released") return "Awaiting driver signature";
+  if (status === "completed") return "Completed";
+  if (status === "pending") return "Pending";
+  if (status === "rejected") return "Rejected";
+  if (status === "cancelled") return "Cancelled";
+  return status.replace(/_/g, " ");
+}
+
+export function statusBadgeStyle(
+  status: string,
+  t: ReturnType<typeof getFuelPortalTokens>,
+  theme: typeof lightTheme,
+) {
+  if (status === "completed") {
+    return { bg: t.accentPositive, fg: "#FFFFFF" };
+  }
+  if (status === "pending" || status === "ready_for_pickup") {
+    return { bg: t.badgeActiveTint, fg: t.badgeActiveText };
+  }
+  if (status === "rejected" || status === "cancelled") {
+    return { bg: "rgba(148, 163, 184, 0.4)", fg: theme.colors.onSurface };
+  }
+  return { bg: "rgba(100,116,139,0.22)", fg: theme.colors.onSurface };
+}
+
+export function mutationErrorMessage(error: unknown) {
+  const e = error as { response?: { data?: { error?: string } }; message?: string };
+  return e.response?.data?.error || e.message || "Something went wrong.";
+}

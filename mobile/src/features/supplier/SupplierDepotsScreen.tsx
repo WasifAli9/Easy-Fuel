@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { FlatList, Modal, StyleSheet, View } from "react-native";
+import { ModalSafeArea } from "@/components/ModalSafeArea";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActivityIndicator, Card, Switch, Text, TextInput } from "react-native-paper";
 import { Button } from "@/design/paper-button";
@@ -131,8 +132,8 @@ export function SupplierDepotsScreen() {
         />
       )}
 
-      <Modal visible={modalOpen} animationType="slide" onRequestClose={() => setModalOpen(false)}>
-        <View style={styles.modal}>
+      <Modal visible={modalOpen} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setModalOpen(false)}>
+        <ModalSafeArea style={styles.modal}>
           <View style={styles.modalHeader}>
             <Text variant="titleLarge">New depot</Text>
             <Button onPress={() => setModalOpen(false)}>Close</Button>
@@ -160,7 +161,7 @@ export function SupplierDepotsScreen() {
             </Button>
             {createMutation.isError ? <Text style={styles.error}>{(createMutation.error as Error).message}</Text> : null}
           </View>
-        </View>
+        </ModalSafeArea>
       </Modal>
     </View>
   );

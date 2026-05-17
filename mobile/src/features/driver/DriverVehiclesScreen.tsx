@@ -21,6 +21,7 @@ import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { ModalSafeArea } from "@/components/ModalSafeArea";
 
 type Vehicle = {
   id: string;
@@ -684,6 +685,7 @@ export function DriverVehiclesScreen() {
           presentationStyle="fullScreen"
           onRequestClose={() => setShowAdd(false)}
         >
+          <ModalSafeArea style={styles.addVehicleModalRoot}>
           <KeyboardAvoidingView
             style={styles.addVehicleModalRoot}
             behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -793,6 +795,7 @@ export function DriverVehiclesScreen() {
               </View>
             </View>
           </KeyboardAvoidingView>
+          </ModalSafeArea>
         </Modal>
       </Portal>
     </View>

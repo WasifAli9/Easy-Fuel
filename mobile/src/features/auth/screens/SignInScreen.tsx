@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
+import {
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  View,
+} from "react-native";
 import { Button, Text, TextInput } from "react-native-paper";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/contexts/AuthContext";
@@ -35,7 +42,6 @@ export function SignInScreen() {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const insets = useSafeAreaInsets();
-  const { height: windowHeight } = useWindowDimensions();
 
   async function onSubmit() {
     try {
@@ -73,76 +79,83 @@ export function SignInScreen() {
     }
   }
 
-  const scrollMinHeight = Math.max(0, windowHeight - insets.top - insets.bottom);
+  const scrollContent = (
+    <ScrollView
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="on-drag"
+      showsVerticalScrollIndicator={false}
+      automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+      contentContainerStyle={[
+        styles.scrollContent,
+        {
+          paddingTop: insets.top + 48,
+          paddingBottom: Math.max(insets.bottom, 16) + 24,
+        },
+      ]}
+    >
+      <View style={styles.card}>
+        <View style={styles.logoWrap}>
+          <EasyFuelLogo size={68} borderRadius={14} />
+        </View>
+        <Text variant="headlineMedium" style={styles.title}>
+          Easy Fuel
+        </Text>
+        <Text variant="titleMedium" style={styles.subtitle}>
+          Welcome back
+        </Text>
+        <Text variant="bodyMedium" style={styles.description}>
+          Sign in to manage orders, deliveries, and account activity.
+        </Text>
+
+        <TextInput
+          mode="outlined"
+          label="Email"
+          autoCapitalize="none"
+          keyboardType="email-address"
+          value={email}
+          onChangeText={setEmail}
+          style={styles.input}
+          left={<TextInput.Icon icon="email-outline" />}
+        />
+        <TextInput
+          mode="outlined"
+          label="Password"
+          secureTextEntry={!showPassword}
+          value={password}
+          onChangeText={setPassword}
+          style={styles.input}
+          left={<TextInput.Icon icon="lock-outline" />}
+          right={
+            <TextInput.Icon
+              icon={showPassword ? "eye-off-outline" : "eye-outline"}
+              onPress={() => setShowPassword((prev) => !prev)}
+            />
+          }
+        />
+        <Button
+          mode="contained"
+          loading={loading || authBusy}
+          onPress={onSubmit}
+          disabled={loading || authBusy || !email.trim() || !password}
+          style={styles.button}
+          contentStyle={styles.buttonContent}
+        >
+          Sign In
+        </Button>
+      </View>
+    </ScrollView>
+  );
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={Platform.OS === "ios" ? insets.top : 0}
-    >
-      <ScrollView
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={[
-          styles.scrollContent,
-          { minHeight: scrollMinHeight, paddingBottom: Math.max(insets.bottom, 16) + 32 },
-        ]}
-        automaticallyAdjustKeyboardInsets
-      >
-        <View style={styles.card}>
-          <View style={styles.logoWrap}>
-            <EasyFuelLogo size={68} borderRadius={14} />
-          </View>
-          <Text variant="headlineMedium" style={styles.title}>
-            Easy Fuel
-          </Text>
-          <Text variant="titleMedium" style={styles.subtitle}>
-            Welcome back
-          </Text>
-          <Text variant="bodyMedium" style={styles.description}>
-            Sign in to manage orders, deliveries, and account activity.
-          </Text>
-
-          <TextInput
-            mode="outlined"
-            label="Email"
-            autoCapitalize="none"
-            keyboardType="email-address"
-            value={email}
-            onChangeText={setEmail}
-            style={styles.input}
-            left={<TextInput.Icon icon="email-outline" />}
-          />
-          <TextInput
-            mode="outlined"
-            label="Password"
-            secureTextEntry={!showPassword}
-            value={password}
-            onChangeText={setPassword}
-            style={styles.input}
-            left={<TextInput.Icon icon="lock-outline" />}
-            right={
-              <TextInput.Icon
-                icon={showPassword ? "eye-off-outline" : "eye-outline"}
-                onPress={() => setShowPassword((prev) => !prev)}
-              />
-            }
-          />
-          <Button
-            mode="contained"
-            loading={loading || authBusy}
-            onPress={onSubmit}
-            disabled={loading || authBusy || !email.trim() || !password}
-            style={styles.button}
-            contentStyle={styles.buttonContent}
-          >
-            Sign In
-          </Button>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+    <View style={styles.container}>
+      {Platform.OS === "android" ? (
+        <KeyboardAvoidingView style={styles.flex} behavior="padding" keyboardVerticalOffset={0}>
+          {scrollContent}
+        </KeyboardAvoidingView>
+      ) : (
+        scrollContent
+      )}
+    </View>
   );
 }
 
@@ -151,11 +164,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: appTheme.colors.background,
   },
+  flex: {
+    flex: 1,
+  },
   scrollContent: {
     flexGrow: 1,
-    justifyContent: "center",
     paddingHorizontal: 20,
-    paddingVertical: 24,
   },
   card: {
     backgroundColor: "#FFFFFF",

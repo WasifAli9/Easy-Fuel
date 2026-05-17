@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, Image, Modal, Platform, ScrollView, StyleSheet, View } from "react-native";
+import { ModalSafeArea } from "@/components/ModalSafeArea";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as DocumentPicker from "expo-document-picker";
 import DateTimePicker, { DateTimePickerAndroid, DateTimePickerEvent } from "@react-native-community/datetimepicker";
@@ -529,7 +530,7 @@ export function DriverDepotScreen() {
 
       <Portal>
         <Modal visible={!!selectedDepot} onRequestClose={() => setSelectedDepot(null)} animationType="slide" presentationStyle="fullScreen">
-          <View style={styles.modalContainer}>
+          <ModalSafeArea style={styles.modalContainer}>
             <View style={styles.modalHeader}>
               <Text variant="titleLarge">Place Depot Order</Text>
               <Button onPress={() => setSelectedDepot(null)}>Close</Button>
@@ -615,7 +616,7 @@ export function DriverDepotScreen() {
                 Place Order
               </Button>
             </View>
-          </View>
+          </ModalSafeArea>
         </Modal>
 
         <Dialog
@@ -748,7 +749,7 @@ export function DriverDepotScreen() {
         animationType="slide"
         presentationStyle="fullScreen"
       >
-        <View style={styles.modalContainer}>
+        <ModalSafeArea style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <Text variant="titleLarge">Depot Order Receipt</Text>
             <View style={styles.receiptHeaderActions}>
@@ -811,7 +812,7 @@ export function DriverDepotScreen() {
               )}
             </View>
           </ScrollView>
-        </View>
+        </ModalSafeArea>
       </Modal>
     </View>
   );

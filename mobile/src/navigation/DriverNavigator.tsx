@@ -1,6 +1,6 @@
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Text } from "react-native-paper";
@@ -14,6 +14,7 @@ import { DriverDepotScreen } from "@/features/driver/DriverDepotScreen";
 import { useAuth } from "@/contexts/AuthContext";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { useUiOverlayStore } from "@/store/ui-overlay-store";
+import { useNotificationDeepLinkStore } from "@/store/notification-deep-link-store";
 import {
   DriverHistoryMenuScreen,
   DriverKycDocumentsScreen,
@@ -51,9 +52,13 @@ const menuItems: MenuItem[] = [
 ];
 
 function DriverPortalTabs() {
+  const insets = useSafeAreaInsets();
   const mode = useUiThemeStore((state) => state.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
-  const tabOpts = useMemo(() => fuelPortalTabBarOptions(theme, mode === "dark"), [theme, mode]);
+  const tabOpts = useMemo(
+    () => fuelPortalTabBarOptions(theme, mode === "dark", insets.bottom),
+    [theme, mode, insets.bottom],
+  );
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -91,6 +96,13 @@ export function DriverNavigator() {
   const [menuVisible, setMenuVisible] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [activeScreen, setActiveScreen] = useState<DriverScreenKey>("portal");
+  const pendingDeepLink = useNotificationDeepLinkStore((s) => s.pending);
+
+  useEffect(() => {
+    if (pendingDeepLink?.orderId) {
+      setActiveScreen("portal");
+    }
+  }, [pendingDeepLink?.orderId]);
 
   const handleSignOut = async () => {
     if (isSigningOut) return;
@@ -130,7 +142,14 @@ export function DriverNavigator() {
         <FuelPortalHeader onOpenMenu={() => setMenuVisible(true)} />
       ) : null}
 
-      <View style={styles.content}>{renderContent()}</View>
+      <View
+        style={[
+          styles.content,
+          activeScreen !== "portal" && insets.bottom > 0 ? { paddingBottom: insets.bottom } : null,
+        ]}
+      >
+        {renderContent()}
+      </View>
 
       <Modal transparent visible={menuVisible} animationType="fade" onRequestClose={() => setMenuVisible(false)}>
         <View style={styles.overlay}>

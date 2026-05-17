@@ -40,8 +40,9 @@ export function getFuelPortalTokens(theme: AppTheme, isDark: boolean) {
   };
 }
 
-export function fuelPortalTabBarOptions(theme: AppTheme, isDark: boolean) {
+export function fuelPortalTabBarOptions(theme: AppTheme, isDark: boolean, bottomInset = 0) {
   const t = getFuelPortalTokens(theme, isDark);
+  const tabBarBottom = Math.max(bottomInset, 8);
   return {
     headerShown: false,
     tabBarActiveTintColor: t.tabBarActive,
@@ -50,8 +51,8 @@ export function fuelPortalTabBarOptions(theme: AppTheme, isDark: boolean) {
       backgroundColor: isDark ? theme.colors.surface : "#FFFFFF",
       borderTopColor: t.borderSubtle,
       borderTopWidth: 1,
-      height: 62,
-      paddingBottom: 8,
+      height: 54 + tabBarBottom,
+      paddingBottom: tabBarBottom,
       paddingTop: 6,
     },
     tabBarLabelStyle: {

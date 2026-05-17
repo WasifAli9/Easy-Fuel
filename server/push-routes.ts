@@ -29,10 +29,6 @@ router.post("/subscribe", async (req, res) => {
     const isExpo = typeof req.body?.expoPushToken === "string";
     if (isExpo) {
       const validatedExpo = expoSubscriptionSchema.parse(req.body);
-      const existingExpo = await findPushSubscriptionByEndpoint(validatedExpo.expoPushToken);
-      if (existingExpo) {
-        return res.json({ success: true, message: "Expo subscription already exists" });
-      }
 
       await createPushSubscription({
         userId: user.id,
@@ -41,7 +37,7 @@ router.post("/subscribe", async (req, res) => {
         auth: "expo",
         userAgent: validatedExpo.userAgent || (req.headers["user-agent"] as string | undefined),
       });
-      return res.json({ success: true, message: "Expo subscription created successfully" });
+      return res.json({ success: true, message: "Expo subscription saved successfully" });
     }
 
     const validated = subscriptionSchema.parse(req.body);

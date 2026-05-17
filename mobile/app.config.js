@@ -10,14 +10,18 @@ export default {
   expo: {
     name: "Easy Fuel",
     slug: "easy-fuel-mobile",
-    version: "1.0.0",
+    version: "1.0.1",
     orientation: "portrait",
     scheme: "easyfuel",
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
-    /** Used for iOS + Android store / launcher (see android.adaptiveIcon for Android 8+). */
     icon: "./assets/images/icon-512.png",
     assetBundlePatterns: ["**/*"],
+    splash: {
+      image: "./assets/images/icon-512.png",
+      resizeMode: "contain",
+      backgroundColor: "#0D9488",
+    },
     ios: {
       supportsTablet: false,
       bundleIdentifier: "com.easyfuel.mobile",
@@ -25,6 +29,14 @@ export default {
       infoPlist: {
         UIBackgroundModes: ["remote-notification"],
         ITSAppUsesNonExemptEncryption: false,
+        NSLocationWhenInUseUsageDescription:
+          "Easy Fuel uses your location to show nearby depots, set your work area, and support deliveries while you use the app.",
+        NSLocationAlwaysAndWhenInUseUsageDescription:
+          "Easy Fuel uses your location to support delivery tracking while you use the app.",
+        NSCameraUsageDescription: "Easy Fuel may use the camera to capture documents or signatures when required.",
+        NSPhotoLibraryUsageDescription:
+          "Easy Fuel may access photos when you upload compliance or vehicle documents.",
+        NSFaceIDUsageDescription: "Easy Fuel uses Face ID for quick sign-in.",
       },
     },
     android: {
@@ -34,23 +46,49 @@ export default {
         backgroundColor: "#0D9488",
       },
       versionCode: 1,
-      /** Resize the app window when the keyboard opens so inputs stay visible (vs pan). */
       softwareKeyboardLayoutMode: "resize",
       permissions: [
+        "INTERNET",
+        "ACCESS_NETWORK_STATE",
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
-        "ACCESS_NETWORK_STATE",
-        "INTERNET",
+        "POST_NOTIFICATIONS",
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT",
+        "VIBRATE",
       ],
-      edgeToEdgeEnabled: true,
+      edgeToEdgeEnabled: false,
       predictiveBackGestureEnabled: false,
     },
     plugins: [
+      [
+        "expo-splash-screen",
+        {
+          image: "./assets/images/icon-512.png",
+          imageWidth: 200,
+          resizeMode: "contain",
+          backgroundColor: "#0D9488",
+        },
+      ],
+      [
+        "expo-location",
+        {
+          locationWhenInUsePermission:
+            "Easy Fuel uses your location for delivery routing and depot distance while you use the app.",
+        },
+      ],
+      [
+        "expo-notifications",
+        {
+          icon: "./assets/images/icon-512.png",
+          color: "#0D9488",
+          defaultChannel: "default",
+          sounds: [],
+        },
+      ],
       "@react-native-community/datetimepicker",
       "expo-secure-store",
       "expo-local-authentication",
-      "expo-location",
-      "expo-notifications",
       "expo-asset",
       "expo-font",
       "./plugins/with-network-security.js",
@@ -62,5 +100,6 @@ export default {
       apiUrl: apiFromEnv || defaultProductionApi,
       apiBaseUrl: apiFromEnv || defaultProductionApi,
     },
+    owner: "wasifali9",
   },
 };

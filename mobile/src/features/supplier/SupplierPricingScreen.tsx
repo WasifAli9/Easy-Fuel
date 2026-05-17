@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { ModalSafeArea } from "@/components/ModalSafeArea";
 import { ActivityIndicator, Card, Text, TextInput } from "react-native-paper";
 import { Button } from "@/design/paper-button";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -403,8 +404,8 @@ export function SupplierPricingScreen() {
         </ScrollView>
       )}
 
-      <Modal visible={addOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setAddOpen(false)}>
-        <View style={[styles.modal, { paddingTop: insets.top }]}>
+      <Modal visible={addOpen} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setAddOpen(false)}>
+        <ModalSafeArea style={styles.modal}>
           <View style={styles.modalHeader}>
             <View>
               <Text variant="titleLarge" style={styles.modalTitle}>
@@ -452,11 +453,11 @@ export function SupplierPricingScreen() {
             </Button>
             {addTierMutation.isError ? <Text style={styles.error}>{errMessage(addTierMutation.error)}</Text> : null}
           </ScrollView>
-        </View>
+        </ModalSafeArea>
       </Modal>
 
-      <Modal visible={editOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setEditOpen(false)}>
-        <View style={[styles.modal, { paddingTop: insets.top }]}>
+      <Modal visible={editOpen} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setEditOpen(false)}>
+        <ModalSafeArea style={styles.modal}>
           <View style={styles.modalHeader}>
             <View>
               <Text variant="titleLarge" style={styles.modalTitle}>
@@ -506,7 +507,7 @@ export function SupplierPricingScreen() {
               <Text style={styles.error}>{errMessage(updateTierMutation.error)}</Text>
             ) : null}
           </ScrollView>
-        </View>
+        </ModalSafeArea>
       </Modal>
     </View>
   );

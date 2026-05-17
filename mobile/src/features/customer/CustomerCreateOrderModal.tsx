@@ -8,6 +8,7 @@ import { apiClient } from "@/services/api/client";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
+import { ModalSafeArea } from "@/components/ModalSafeArea";
 
 type FuelType = { id: string; label: string; code?: string };
 type Address = {
@@ -156,8 +157,8 @@ export function CustomerCreateOrderModal({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onDismiss}>
-      <View style={styles.sheet}>
+    <Modal visible={visible} animationType="slide" onRequestClose={onDismiss} presentationStyle="fullScreen">
+      <ModalSafeArea style={[styles.sheet, { backgroundColor: theme.colors.background }]}>
         <View style={styles.header}>
           <Text variant="titleLarge">New order</Text>
           <Button onPress={onDismiss}>Close</Button>
@@ -349,7 +350,7 @@ export function CustomerCreateOrderModal({
             ) : null}
           </ScrollView>
         )}
-      </View>
+      </ModalSafeArea>
     </Modal>
   );
 }

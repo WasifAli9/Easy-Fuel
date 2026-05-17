@@ -9,9 +9,10 @@ import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { buttonBorderRadius, darkTheme, lightTheme, paperMd3ControlRoundness } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { useUiOverlayStore } from "@/store/ui-overlay-store";
+import { useNotificationDeepLinkStore } from "@/store/notification-deep-link-store";
 import { OrderChatPanel } from "@/features/chat/OrderChatPanel";
 import { formatCustomerOrderAddress } from "@/features/customer/customerOrderUtils";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { ModalSafeArea } from "@/components/ModalSafeArea";
 import Signature from "react-native-signature-canvas";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
@@ -80,6 +81,8 @@ export function DriverOrdersScreen() {
     return () => setHideDriverHeader(false);
   }, [selectedOrder, setHideDriverHeader]);
 
+  const consumeDeepLink = useNotificationDeepLinkStore((s) => s.consume);
+
   useEffect(() => {
     if (!pendingCompleteOrderId || !signatureData) return;
     statusMutation.mutate({ action: "complete", orderId: pendingCompleteOrderId });
@@ -96,6 +99,23 @@ export function DriverOrdersScreen() {
     queryFn: async () => (await apiClient.get<DriverOrder[]>("/api/driver/completed-orders")).data,
     staleTime: 20_000,
   });
+
+  useEffect(() => {
+    const link = useNotificationDeepLinkStore.getState().pending;
+    if (!link?.orderId) return;
+
+    const all = [...(assignedQuery.data ?? []), ...(completedQuery.data ?? [])];
+    const match = all.find((o) => o.id === link.orderId);
+    if (!match) return;
+
+    const consumed = consumeDeepLink();
+    if (!consumed?.orderId) return;
+
+    setSelectedOrder(match);
+    if (consumed.openChat) {
+      setChatVisible(true);
+    }
+  }, [assignedQuery.data, completedQuery.data, consumeDeepLink]);
 
   const statusMutation = useMutation({
     mutationFn: async ({ action, orderId }: { action: "start" | "pickup" | "complete"; orderId: string }) => {
@@ -239,7 +259,7 @@ export function DriverOrdersScreen() {
         presentationStyle="fullScreen"
         onRequestClose={() => setSelectedOrder(null)}
       >
-        <SafeAreaView style={styles.modalContainer} edges={["top", "left", "right", "bottom"]}>
+        <ModalSafeArea style={styles.modalContainer}>
           {selectedOrder ? (
             <>
               <View style={[styles.modalHeader, { paddingTop: 12 }]}>
@@ -444,7 +464,7 @@ export function DriverOrdersScreen() {
               </KeyboardAvoidingView>
             </>
           ) : null}
-        </SafeAreaView>
+        </ModalSafeArea>
       </Modal>
     </View>
   );

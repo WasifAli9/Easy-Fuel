@@ -2,9 +2,10 @@ import { PropsWithChildren, useEffect, useMemo } from "react";
 import { NavigationContainer, DefaultTheme, DarkTheme as NavDarkTheme } from "@react-navigation/native";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { PaperProvider } from "react-native-paper";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { RealtimeSync } from "@/app/RealtimeSync";
+import { PushNotificationSync } from "@/app/PushNotificationSync";
 import { readThemeMode } from "@/services/storage";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { navigationRef } from "@/navigation/navigationRef";
@@ -42,19 +43,19 @@ export function AppProviders({ children }: PropsWithChildren) {
 
   return (
     <SafeAreaProvider>
-      <SafeAreaView style={{ flex: 1 }} edges={["top", "left", "right"]}>
-        <PaperProvider theme={paperTheme}>
-          <QueryClientProvider client={queryClient}>
-            <AuthProvider>
-              <RealtimeSync>
+      <PaperProvider theme={paperTheme}>
+        <QueryClientProvider client={queryClient}>
+          <AuthProvider>
+            <RealtimeSync>
+              <PushNotificationSync>
                 <NavigationContainer ref={navigationRef} theme={navTheme}>
                   {children}
                 </NavigationContainer>
-              </RealtimeSync>
-            </AuthProvider>
-          </QueryClientProvider>
-        </PaperProvider>
-      </SafeAreaView>
+              </PushNotificationSync>
+            </RealtimeSync>
+          </AuthProvider>
+        </QueryClientProvider>
+      </PaperProvider>
     </SafeAreaProvider>
   );
 }

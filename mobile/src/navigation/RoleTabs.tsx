@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import {
   CompanyFleetScreen,
@@ -17,9 +18,13 @@ const Tab = createBottomTabNavigator();
  * Company role bottom tabs — theme matches driver/supplier/customer (dynamic light/dark).
  */
 export function RoleTabs() {
+  const insets = useSafeAreaInsets();
   const mode = useUiThemeStore((s) => s.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
-  const tabOpts = useMemo(() => fuelPortalTabBarOptions(theme, mode === "dark"), [theme, mode]);
+  const tabOpts = useMemo(
+    () => fuelPortalTabBarOptions(theme, mode === "dark", insets.bottom),
+    [theme, mode, insets.bottom],
+  );
 
   return (
     <Tab.Navigator

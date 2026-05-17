@@ -41,6 +41,8 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { normalizeFilePath } from "@/lib/utils";
 import { normalizeDocuments } from "@/lib/document-normalize";
 import { ChevronRight } from "lucide-react";
+import { ProfilePhotoUpload } from "@/components/ProfilePhotoUpload";
+import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { DashboardSidebarAside } from "@/components/dashboard/DashboardSidebar";
 import { SupplierWorkspaceSidebar } from "@/components/dashboard/SupplierWorkspaceSidebar";
@@ -662,6 +664,11 @@ export default function SupplierProfile() {
             <CardContent>
               <Form {...profileForm}>
                 <form onSubmit={profileForm.handleSubmit(onProfileSubmit)} className="space-y-6">
+                  <ProfilePhotoUpload
+                    photoUrl={profile?.profile_photo_url ?? profile?.profilePhotoUrl}
+                    profilePutPath="/api/supplier/profile"
+                  />
+                  <Separator />
                   <FormField
                     control={profileForm.control}
                     name="fullName"

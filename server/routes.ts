@@ -392,7 +392,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Set profile picture ACL (protected)
+  // Set profile picture ACL (protected) and persist on profiles row
   app.put("/api/profile-picture", requireAuth, async (req, res) => {
     const user = (req as any).user;
     const { profilePictureURL } = req.body;
@@ -402,28 +402,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      if (profilePictureURL.includes("/") && !profilePictureURL.startsWith("/") && !profilePictureURL.startsWith("http")) {
-        res.json({ objectPath: profilePictureURL });
-        return;
-      }
+      const raw = String(profilePictureURL).trim();
+      const isLocalOrRelative =
+        raw.startsWith("/objects/") ||
+        raw.startsWith("/api/storage/upload/") ||
+        raw.startsWith("/api/object-storage/upload/") ||
+        (!raw.startsWith("http://") && !raw.startsWith("https://"));
 
-      // Hosted object storage (Replit/GCS): apply ACL metadata
-      const objectPath = await objectStorageService.trySetObjectEntityAclPolicy(
-        profilePictureURL,
-        {
-          owner: user.id,
-          visibility: "public", // Profile pictures are public
-        }
-      );
+      let forDb: string;
 
-      res.json({ objectPath });
-    } catch (error: any) {
-      console.error("Error setting profile picture ACL:", error);
-      if (profilePictureURL) {
-        res.json({ objectPath: profilePictureURL });
+      if (isLocalOrRelative) {
+        const objectPath = uploadUrlToObjectPath(raw);
+        await fs.access(objectPathToAbsolute(objectPath));
+        forDb = objectPath.replace(/^\/objects\//, "");
       } else {
-        res.status(500).json({ error: "Internal server error" });
+        const storedPath = await objectStorageService.trySetObjectEntityAclPolicy(raw, {
+          owner: user.id,
+          visibility: "public",
+        });
+        forDb = normalizeToObjectPath(storedPath).replace(/^\/objects\//, "");
       }
+
+      await db
+        .update(profiles)
+        .set({ profilePhotoUrl: forDb, updatedAt: new Date() })
+        .where(eq(profiles.id, user.id));
+
+      res.json({ objectPath: forDb, profile_photo_url: forDb });
+    } catch (error: any) {
+      console.error("Error setting profile picture:", error);
+      res.status(500).json({
+        error: error?.message || "Failed to save profile picture",
+      });
     }
   });
 

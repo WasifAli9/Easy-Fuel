@@ -9,6 +9,8 @@ import { initializeRoleCapabilities } from "@/services/mobile-capabilities";
 import { DriverNavigator } from "@/navigation/DriverNavigator";
 import { SupplierNavigator } from "@/navigation/SupplierNavigator";
 import { CustomerNavigator } from "@/navigation/CustomerNavigator";
+import { useUiThemeStore } from "@/store/ui-theme-store";
+import { darkTheme, lightTheme } from "@/design/theme";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -24,6 +26,8 @@ function SplashScreen() {
 
 export function RootNavigator() {
   const { user, isLoading } = useAuth();
+  const mode = useUiThemeStore((s) => s.mode);
+  const canvasBg = (mode === "dark" ? darkTheme : lightTheme).colors.background;
 
   useEffect(() => {
     const role = user?.role;
@@ -41,7 +45,7 @@ export function RootNavigator() {
   const role = user?.role ?? null;
 
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
+    <Stack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: canvasBg } }}>
       {!user ? (
         <Stack.Screen name="AuthSignIn" component={SignInScreen} />
       ) : role === "driver" ? (

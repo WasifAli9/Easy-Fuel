@@ -109,6 +109,11 @@ function invalidateForMessage(
   if (type === "customer_profile_updated" && role === "customer") {
     invalidate(["/api/profile"]);
   }
+
+  if (type === "notification") {
+    invalidate(["/api/notifications"]);
+    invalidate(["/api/notifications/unread-count"]);
+  }
 }
 
 /** Keeps React Query caches aligned with the same WebSocket events the web app uses. */

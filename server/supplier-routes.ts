@@ -1525,11 +1525,19 @@ router.get("/profile", async (req, res) => {
 // Update supplier profile
 router.put("/profile", async (req, res) => {
   const user = (req as any).user;
-  const { fullName, phone, addressStreet, addressCity, addressProvince, addressPostalCode, addressCountry } = req.body;
+  const body = req.body ?? {};
+  const fullName = body.fullName ?? body.full_name;
+  const phone = body.phone;
+  const profilePhotoUrl = body.profilePhotoUrl ?? body.profile_photo_url;
+  const addressStreet = body.addressStreet ?? body.address_street;
+  const addressCity = body.addressCity ?? body.address_city;
+  const addressProvince = body.addressProvince ?? body.address_province;
+  const addressPostalCode = body.addressPostalCode ?? body.address_postal_code;
+  const addressCountry = body.addressCountry ?? body.address_country;
 
   try {
     // Validate that at least one field is being updated
-    const hasUpdates = fullName !== undefined || phone !== undefined ||
+    const hasUpdates = fullName !== undefined || phone !== undefined || profilePhotoUrl !== undefined ||
       addressStreet !== undefined || addressCity !== undefined ||
       addressProvince !== undefined || addressPostalCode !== undefined ||
       addressCountry !== undefined;
@@ -1671,6 +1679,10 @@ router.put("/profile", async (req, res) => {
 
     if (phone !== undefined) {
       updateData.phone = phone || null;
+    }
+
+    if (profilePhotoUrl !== undefined) {
+      updateData.profile_photo_url = profilePhotoUrl || null;
     }
 
     if (addressStreet !== undefined) {
