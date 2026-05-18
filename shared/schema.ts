@@ -361,6 +361,8 @@ export const depotPrices = pgTable("depot_prices", {
   depotId: uuid("depot_id").notNull().references(() => depots.id),
   fuelTypeId: uuid("fuel_type_id").notNull().references(() => fuelTypes.id),
   priceCents: integer("price_cents").notNull(),
+  minLitres: integer("min_litres").default(0),
+  availableLitres: doublePrecision("available_litres"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

@@ -1,11 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, BarChart3, Download, TrendingUp, Droplets, CircleDollarSign, PackageCheck } from "lucide-react";
+import { Loader2, TrendingUp, Droplets, CircleDollarSign, PackageCheck } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
 import {
-  BarChart,
-  Bar,
   CartesianGrid,
   XAxis,
   YAxis,
@@ -22,16 +19,6 @@ export function SupplierAnalyticsTab() {
   const { data, isLoading, error } = useQuery<any>({
     queryKey: ["/api/supplier/analytics"],
   });
-  const advanced = useQuery<any>({
-    queryKey: ["/api/supplier/analytics", "advanced"],
-    queryFn: async () => {
-      const res = await fetch("/api/supplier/analytics?detail=advanced", { credentials: "include" });
-      if (res.status === 403) return null;
-      if (!res.ok) throw new Error(await res.text());
-      return res.json();
-    },
-  });
-
   if (isLoading || !data) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -46,14 +33,6 @@ export function SupplierAnalyticsTab() {
   const statusData = Object.entries(data.byStatus || {}).map(([status, count]) => ({
     status: status.replace(/_/g, " "),
     count: Number(count || 0),
-  }));
-
-  const depotData = (advanced.data?.byDepot || []).map((d: any) => ({
-    depotId: d.depotId,
-    depotName: d.depotName,
-    orderCount: Number(d.orderCount || 0),
-    totalLitres: Number(d.totalLitres || 0),
-    totalValueCents: Number(d.totalValueCents || 0),
   }));
 
   const trendData = [
@@ -161,57 +140,6 @@ export function SupplierAnalyticsTab() {
           </CardContent>
         </Card>
       </div>
-
-      {advanced.data?.byDepot?.length > 0 && (
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-base">By depot (Enterprise)</CardTitle>
-            <Button variant="outline" size="sm" asChild>
-              <a href="/api/supplier/analytics/export?format=csv" download="analytics.csv">
-                <Download className="h-4 w-4 mr-2" />
-                Export CSV
-              </a>
-            </Button>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="h-80">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={depotData}>
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                    <XAxis dataKey="depotName" />
-                    <YAxis />
-                    <Tooltip formatter={(value: number, name: string) => [name === "totalValueCents" ? formatCurrency(value / 100) : value, name]} />
-                    <Bar dataKey="orderCount" fill="#14b8a6" radius={[6, 6, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="overflow-auto rounded-md border">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/50">
-                    <tr>
-                      <th className="text-left px-3 py-2">Depot</th>
-                      <th className="text-right px-3 py-2">Orders</th>
-                      <th className="text-right px-3 py-2">Litres</th>
-                      <th className="text-right px-3 py-2">Value</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {depotData.map((d: any) => (
-                      <tr key={d.depotId} className="border-t">
-                        <td className="px-3 py-2">{d.depotName}</td>
-                        <td className="px-3 py-2 text-right">{d.orderCount}</td>
-                        <td className="px-3 py-2 text-right">{d.totalLitres}</td>
-                        <td className="px-3 py-2 text-right">{formatCurrency((d.totalValueCents || 0) / 100)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }

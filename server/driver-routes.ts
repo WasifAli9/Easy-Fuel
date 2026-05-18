@@ -101,6 +101,35 @@ async function fetchHydratedDriverDepotOrder(orderId: string, driverId: string) 
   return r.rows[0] ?? null;
 }
 
+/** Reliable supplier owner lookup (drizzle compat ignores nested embeds). */
+async function lookupSupplierContextForDepotOrder(orderId: string) {
+  const r = await pool.query(
+    `SELECT s.owner_id AS supplier_owner_id,
+            d.name AS depot_name,
+            COALESCE(ft.label, 'fuel') AS fuel_label,
+            o.litres,
+            o.total_price_cents,
+            o.payment_method
+     FROM driver_depot_orders o
+     INNER JOIN depots d ON d.id = o.depot_id
+     INNER JOIN suppliers s ON s.id = d.supplier_id
+     LEFT JOIN fuel_types ft ON ft.id = o.fuel_type_id
+     WHERE o.id = $1
+     LIMIT 1`,
+    [orderId],
+  );
+  const row = r.rows[0];
+  if (!row?.supplier_owner_id) return null;
+  return {
+    supplierOwnerId: row.supplier_owner_id as string,
+    depotName: (row.depot_name as string) || "Depot",
+    fuelLabel: (row.fuel_label as string) || "fuel",
+    litres: parseFloat(String(row.litres ?? "0")),
+    totalPriceCents: Number(row.total_price_cents ?? 0),
+    paymentMethod: (row.payment_method as string) || "",
+  };
+}
+
 // Helper middleware to check driver compliance
 async function checkDriverCompliance(req: any, res: any, next: any) {
   try {
@@ -3798,32 +3827,31 @@ router.post("/depot-orders/:orderId/cancel", async (req, res) => {
     // Since we only allow cancelling pending orders, no stock restoration is needed
 
     // Notify supplier about cancellation
-    if (order.depots?.suppliers?.owner_id) {
-      const { websocketService } = await import("./websocket");
-      const { notificationService } = await import("./notification-service");
-      
-      const depotName = order.depots?.name || "Depot";
-      const fuelTypeLabel = order.fuel_types?.label || "Fuel";
-      const litres = parseFloat(order.litres || "0");
-      const reason = req.body.reason;
+    try {
+      const supplierCtx = await lookupSupplierContextForDepotOrder(orderId);
+      if (supplierCtx) {
+        const { websocketService } = await import("./websocket");
+        const { notificationService } = await import("./notification-service");
+        const reason = req.body.reason;
 
-      // Send WebSocket update for real-time delivery
-      websocketService.sendOrderUpdate(order.depots.suppliers.owner_id, {
-        type: "driver_depot_order_cancelled",
-        orderId: updatedOrder.id,
-        status: "cancelled",
-      });
+        websocketService.sendOrderUpdate(supplierCtx.supplierOwnerId, {
+          type: "driver_depot_order_cancelled",
+          orderId: updatedOrder.id,
+          status: "cancelled",
+        });
 
-      // Create notification for supplier and driver
-      await notificationService.notifyDriverDepotOrderCancelled(
-        order.depots.suppliers.owner_id,
-        user.id,
-        updatedOrder.id,
-        depotName,
-        fuelTypeLabel,
-        litres,
-        reason
-      );
+        await notificationService.notifyDriverDepotOrderCancelled(
+          supplierCtx.supplierOwnerId,
+          user.id,
+          updatedOrder.id,
+          supplierCtx.depotName,
+          supplierCtx.fuelLabel,
+          supplierCtx.litres,
+          reason,
+        );
+      }
+    } catch (notifyError) {
+      console.error("[driver depot cancel] Supplier notification failed:", notifyError);
     }
 
     res.json(updatedOrder);
@@ -3858,19 +3886,8 @@ router.post("/depot-orders/:orderId/payment", checkDriverCompliance, async (req,
       return res.status(404).json({ error: "Driver profile not found" });
     }
 
-    // Get order and verify ownership
-    const { data: order, error: orderError } = await drizzleAdmin
-      .from("driver_depot_orders")
-      .select(`
-        *,
-        depots (id, name, supplier_id, suppliers!inner(owner_id)),
-        fuel_types (id, label)
-      `)
-      .eq("id", orderId)
-      .eq("driver_id", driver.id)
-      .maybeSingle();
-
-    if (orderError || !order) {
+    const order = await fetchHydratedDriverDepotOrder(orderId, driver.id);
+    if (!order) {
       return res.status(404).json({ error: "Order not found" });
     }
 
@@ -3948,41 +3965,44 @@ router.post("/depot-orders/:orderId/payment", checkDriverCompliance, async (req,
     );
     const updatedOrder = updatedOrderResult.rows[0] || { ...order, ...updateData };
 
-    // Notify supplier
-    if (order.depots?.suppliers?.owner_id) {
-      const { websocketService } = await import("./websocket");
-      websocketService.sendOrderUpdate(order.depots.suppliers.owner_id, {
-        type: "driver_depot_payment_submitted",
-        orderId: updatedOrder.id,
-        paymentMethod: updatedOrder.payment_method,
-        paymentStatus: updatedOrder.payment_status,
-      });
+    // Notify supplier (SQL lookup — nested drizzle embeds are not hydrated)
+    try {
+      const supplierCtx = await lookupSupplierContextForDepotOrder(orderId);
+      if (supplierCtx) {
+        const { websocketService } = await import("./websocket");
+        websocketService.sendOrderUpdate(supplierCtx.supplierOwnerId, {
+          type: "driver_depot_payment_submitted",
+          orderId: updatedOrder.id,
+          paymentMethod: updatedOrder.payment_method ?? paymentMethod,
+          paymentStatus: updatedOrder.payment_status,
+        });
 
-      // Send notification to supplier
-      const { notificationService } = await import("./notification-service");
-      const depotName = order.depots?.name || "Depot";
-      const fuelType = order.fuel_types?.label || "fuel";
-      const litres = parseFloat(order.litres || "0");
-      const totalPrice = parseFloat(order.total_price_cents || "0") / 100;
-      const currency = "ZAR";
-      const { data: driverProfile } = await drizzleAdmin
-        .from("profiles")
-        .select("full_name")
-        .eq("id", user.id)
-        .maybeSingle();
-      const driverName = driverProfile?.full_name || "Driver";
-      
-      await notificationService.notifySupplierPaymentReceived(
-        order.depots.suppliers.owner_id,
-        updatedOrder.id,
-        depotName,
-        fuelType,
-        litres,
-        totalPrice,
-        currency,
-        paymentMethod,
-        driverName
-      );
+        const { notificationService } = await import("./notification-service");
+        const { data: driverProfile } = await drizzleAdmin
+          .from("profiles")
+          .select("full_name")
+          .eq("id", user.id)
+          .maybeSingle();
+        const driverName = driverProfile?.full_name || "Driver";
+        const totalPrice = supplierCtx.totalPriceCents / 100;
+        const currency = "ZAR";
+
+        await notificationService.notifySupplierPaymentReceived(
+          supplierCtx.supplierOwnerId,
+          updatedOrder.id,
+          supplierCtx.depotName,
+          supplierCtx.fuelLabel,
+          supplierCtx.litres,
+          totalPrice,
+          currency,
+          paymentMethod,
+          driverName,
+        );
+      } else {
+        console.warn("[driver depot payment] No supplier owner found for order", { orderId });
+      }
+    } catch (notifyError) {
+      console.error("[driver depot payment] Supplier notification failed:", notifyError);
     }
 
     res.json(updatedOrder);

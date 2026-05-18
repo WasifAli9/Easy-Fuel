@@ -29,6 +29,7 @@ import { useCurrency } from "@/hooks/use-currency";
 import { DriverDepotOrderPaymentDialog } from "@/components/DriverDepotOrderPaymentDialog";
 import { SignaturePad } from "@/components/SignaturePad";
 import { DriverDepotOrderReceipt } from "@/components/DriverDepotOrderReceipt";
+import { DateTimePickerField } from "@/components/FormDatePicker";
 
 interface DriverDepotsViewProps {
   defaultTab?: "orders" | "depots";
@@ -751,14 +752,14 @@ export function DriverDepotsView({ defaultTab = "orders" }: DriverDepotsViewProp
             )}
 
             <div className="space-y-2">
-              <Label htmlFor="pickupDate">Pickup Date *</Label>
-              <Input
+              <DateTimePickerField
                 id="pickupDate"
-                type="datetime-local"
+                label="Pickup Date *"
                 value={pickupDate}
-                onChange={(e) => setPickupDate(e.target.value)}
-                min={new Date().toISOString().slice(0, 16)}
-                required
+                onChange={setPickupDate}
+                minDateTime={new Date()}
+                placeholder="Pick pickup date and time"
+                data-testid="input-pickup-date"
               />
               <p className="text-xs text-muted-foreground">
                 Select the date and time when you will pick up the fuel from this depot

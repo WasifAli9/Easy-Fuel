@@ -199,6 +199,7 @@ class NotificationService {
 
       return notification.id;
     } catch (error) {
+      console.error("[notification] createAndSend failed:", error, { userId, type });
       return null;
     }
   }

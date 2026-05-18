@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Control, FieldPath, FieldValues } from "react-hook-form";
 import { Calendar as CalendarIcon } from "lucide-react";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -41,6 +42,116 @@ export function dateValueToYmd(date: Date | string | null | undefined): string {
 
 function startOfDay(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+/** `YYYY-MM-DDTHH:mm` for datetime-local compatibility */
+export function formatLocalDateTime(d: Date): string {
+  const h = String(d.getHours()).padStart(2, "0");
+  const min = String(d.getMinutes()).padStart(2, "0");
+  return `${formatLocalYmd(d)}T${h}:${min}`;
+}
+
+export function parseLocalDateTime(value: string | undefined): Date | undefined {
+  if (!value?.trim()) return undefined;
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value.trim());
+  if (m) {
+    return new Date(
+      Number(m[1]),
+      Number(m[2]) - 1,
+      Number(m[3]),
+      Number(m[4]),
+      Number(m[5]),
+    );
+  }
+  return parseLocalYmd(value.slice(0, 10));
+}
+
+type DateTimePickerFieldProps = {
+  id?: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  minDateTime?: Date;
+  placeholder?: string;
+  "data-testid"?: string;
+};
+
+/** Calendar + time input; value is `YYYY-MM-DDTHH:mm`. */
+export function DateTimePickerField({
+  id,
+  label,
+  value,
+  onChange,
+  minDateTime,
+  placeholder = "Pick date and time",
+  "data-testid": dataTestId,
+}: DateTimePickerFieldProps) {
+  const datePart = value.length >= 10 ? value.slice(0, 10) : "";
+  const timePart = value.length >= 16 ? value.slice(11, 16) : "";
+  const selected = parseLocalYmd(datePart);
+  const selectedDateTime = parseLocalDateTime(value);
+  const min = minDateTime ? startOfDay(minDateTime) : startOfDay(new Date());
+
+  const setDate = (d: Date | undefined) => {
+    if (!d) {
+      onChange("");
+      return;
+    }
+    const ymd = formatLocalYmd(d);
+    const time = timePart || "09:00";
+    onChange(`${ymd}T${time}`);
+  };
+
+  const setTime = (time: string) => {
+    const ymd = datePart || formatLocalYmd(new Date());
+    onChange(time ? `${ymd}T${time}` : datePart ? `${datePart}T00:00` : "");
+  };
+
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>{label}</Label>
+      <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2">
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              id={id}
+              type="button"
+              variant="outline"
+              data-testid={dataTestId}
+              className={cn(
+                "w-full pl-3 text-left font-normal h-9",
+                !selectedDateTime && "text-muted-foreground",
+              )}
+            >
+              <CalendarIcon className="mr-2 h-4 w-4 shrink-0 opacity-70" />
+              {selectedDateTime
+                ? selectedDateTime.toLocaleString("en-ZA", {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                  })
+                : placeholder}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-0" align="start">
+            <Calendar
+              mode="single"
+              selected={selected}
+              onSelect={setDate}
+              disabled={(date) => startOfDay(date) < min}
+              initialFocus
+            />
+          </PopoverContent>
+        </Popover>
+        <Input
+          type="time"
+          value={timePart}
+          onChange={(e) => setTime(e.target.value)}
+          className="h-9 w-full sm:w-[140px] bg-background"
+          aria-label="Pickup time"
+        />
+      </div>
+    </div>
+  );
 }
 
 type NativeFormDatePickerProps = {

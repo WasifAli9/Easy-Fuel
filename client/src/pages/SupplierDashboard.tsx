@@ -138,8 +138,15 @@ export default function SupplierDashboard() {
       queryClient.invalidateQueries({ queryKey: ["/api/supplier/depots"] });
     }
     
-    if (message.type === "driver_depot_order_placed" || message.type === "driver_depot_order_confirmed" || message.type === "driver_depot_order_fulfilled" || message.type === "driver_depot_order_cancelled") {
-      // Refresh orders when order status changes
+    if (
+      message.type === "driver_depot_order_placed" ||
+      message.type === "driver_depot_order_confirmed" ||
+      message.type === "driver_depot_order_fulfilled" ||
+      message.type === "driver_depot_order_cancelled" ||
+      message.type === "driver_depot_payment_submitted" ||
+      message.type === "supplier_payment_received"
+    ) {
+      // Refresh orders when order status or payment changes
       console.log("[SupplierDashboard] Invalidating orders due to:", message.type);
       queryClient.invalidateQueries({ queryKey: ["/api/supplier/driver-depot-orders"] });
     }

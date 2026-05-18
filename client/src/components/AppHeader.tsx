@@ -367,6 +367,8 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
         
         if (profile?.role === "driver") {
           setLocation("/driver");
+        } else if (profile?.role === "supplier") {
+          setLocation("/supplier?tab=driver-orders");
         } else if (profile?.role === "company") {
           setLocation("/company");
         } else if (profile?.role === "customer") {

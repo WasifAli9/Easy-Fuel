@@ -42,7 +42,6 @@ import { normalizeFilePath } from "@/lib/utils";
 import { normalizeDocuments } from "@/lib/document-normalize";
 import { ChevronRight } from "lucide-react";
 import { ProfilePhotoUpload } from "@/components/ProfilePhotoUpload";
-import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { DashboardSidebarAside } from "@/components/dashboard/DashboardSidebar";
 import { SupplierWorkspaceSidebar } from "@/components/dashboard/SupplierWorkspaceSidebar";
