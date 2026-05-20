@@ -18,6 +18,18 @@ router.get("/", async (req, res) => {
   const user = (req as any).user;
   
   try {
+    const profileRes = await import("./db").then(({ pool }) =>
+      pool.query(`SELECT role FROM profiles WHERE id = $1 LIMIT 1`, [user.id]),
+    );
+    if (profileRes.rows[0]?.role === "admin") {
+      try {
+        const { seedMissingAdminComplianceAlerts } = await import("./admin-notify");
+        await seedMissingAdminComplianceAlerts();
+      } catch (seedErr) {
+        console.error("[notification-routes] seed admin compliance alerts:", seedErr);
+      }
+    }
+
     // 1. Fetch ALL unread notifications (no limit)
     const unreadNotifications = await listUnreadNotifications(user.id);
 

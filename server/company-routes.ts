@@ -213,18 +213,14 @@ router.post("/vehicles", async (req, res) => {
     const inserted = await db.insert(vehicles).values(insert).returning();
     const vehicle = inserted[0];
     try {
-      const adminRows = await db.select({ id: profiles.id }).from(profiles).where(eq(profiles.role, "admin"));
+      const { getAdminUserIds, getProfileDisplayName } = await import("./admin-notify");
+      const adminUserIds = await getAdminUserIds();
       const authUser = (req as any).user;
-      if (adminRows.length > 0 && authUser?.id) {
+      if (adminUserIds.length > 0 && authUser?.id) {
         const { notificationService } = await import("./notification-service");
-        const prof = await db
-          .select({ fullName: profiles.fullName })
-          .from(profiles)
-          .where(eq(profiles.id, authUser.id))
-          .limit(1);
-        const submitterName = prof[0]?.fullName || "Company";
+        const submitterName = await getProfileDisplayName(authUser.id);
         await notificationService.notifyAdminsVehicleReviewRequired(
-          adminRows.map((r) => r.id),
+          adminUserIds,
           {
             vehicleId: String((vehicle as any).id),
             registrationNumber: String((vehicle as any).registrationNumber ?? b.registration_number),

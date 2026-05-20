@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { normalizeFilePath } from "@/lib/utils";
+import { documentObjectUrl } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, Eye, FileText, Loader2, XCircle } from "lucide-react";
@@ -146,7 +146,10 @@ export function ComplianceReviewDocuments({
               variant="outline"
               size="sm"
               onClick={() => {
-                const url = normalizeFilePath(doc.file_path);
+                const url = documentObjectUrl(doc.file_path, {
+                  title: doc.title,
+                  mime_type: doc.mime_type,
+                });
                 if (url) window.open(url, "_blank");
                 else
                   toast({

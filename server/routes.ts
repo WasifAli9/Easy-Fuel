@@ -254,7 +254,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!objectPath) {
         return res.status(401).json({ error: "Invalid or expired link" });
       }
-      await streamLocalObjectToResponse(res, objectPath);
+      const { parseObjectFileQuery } = await import("./file-response-utils");
+      const fileQuery = parseObjectFileQuery(req);
+      await streamLocalObjectToResponse(res, objectPath, fileQuery);
     } catch (e) {
       console.error("[api/objects/view]", e);
       return res.status(404).json({ error: "File not found" });
@@ -275,10 +277,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!userId) {
         return res.status(401).json({ error: "Unauthorized" });
       }
+      const { parseObjectFileQuery } = await import("./file-response-utils");
+      const fileQuery = parseObjectFileQuery(req);
+
       try {
         const abs = objectPathToAbsolute(canonicalPath);
         await fs.access(abs);
-        await streamLocalObjectToResponse(res, canonicalPath);
+        await streamLocalObjectToResponse(res, canonicalPath, fileQuery);
         return;
       } catch {
         // fall through to Replit / GCS-backed object storage
@@ -293,7 +298,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!canAccess) {
         return res.status(401).json({ error: "Unauthorized" });
       }
-      objectStorageService.downloadObject(objectFile, res);
+      objectStorageService.downloadObject(objectFile, res, 3600, fileQuery);
     } catch (error: any) {
       console.error("Error checking object access:", error);
       if (error instanceof ObjectNotFoundError) {

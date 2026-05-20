@@ -1593,36 +1593,15 @@ router.put("/profile", async (req, res) => {
           const { notificationService } = await import("./notification-service");
           const { websocketService } = await import("./websocket");
           
-          // Get admin user IDs
-          const { data: adminProfiles, error: adminProfilesError } = await drizzleClient
-            .from("profiles")
-            .select("id")
-            .eq("role", "admin");
-          
-          if (adminProfilesError) {
-            console.error("[KYB Resubmission] Error fetching admin profiles:", adminProfilesError);
-          } else if (adminProfiles && adminProfiles.length > 0) {
-            const adminUserIds = adminProfiles.map(p => p.id);
-            
-            // Get supplier name
-            const { data: supplierProfile, error: profileError } = await drizzleClient
-              .from("profiles")
-              .select("full_name")
-              .eq("id", user.id)
-              .maybeSingle();
-            
-            if (profileError) {
-              console.error("[KYB Resubmission] Error fetching supplier profile:", profileError);
-            }
-            
-            const userName = supplierProfile?.full_name || "Supplier";
-            
-            // Notify admins that supplier has resubmitted KYB
+          const { getAdminUserIds, getProfileDisplayName } = await import("./admin-notify");
+          const adminUserIds = await getAdminUserIds();
+
+          if (adminUserIds.length > 0) {
             try {
               await notificationService.notifyAdminKycSubmitted(
                 adminUserIds,
                 user.id,
-                userName,
+                await getProfileDisplayName(user.id),
                 "supplier"
               );
             } catch (notifyError) {
@@ -3320,18 +3299,13 @@ router.post("/compliance/submit-kyb", async (req, res) => {
     }
 
     const { notificationService } = await import("./notification-service");
-    const { data: adminProfiles } = await drizzleClient.from("profiles").select("id").eq("role", "admin");
-    const { data: supplierProfile } = await drizzleClient
-      .from("profiles")
-      .select("full_name")
-      .eq("id", user.id)
-      .maybeSingle();
-    if (adminProfiles?.length) {
-      const adminUserIds = adminProfiles.map((p: { id: string }) => p.id);
+    const { getAdminUserIds, getProfileDisplayName } = await import("./admin-notify");
+    const adminUserIds = await getAdminUserIds();
+    if (adminUserIds.length) {
       await notificationService.notifyAdminKycSubmitted(
         adminUserIds,
         user.id,
-        supplierProfile?.full_name || "Supplier",
+        await getProfileDisplayName(user.id),
         "supplier",
       );
     }
@@ -3579,43 +3553,21 @@ router.put("/compliance", async (req, res) => {
         const { notificationService } = await import("./notification-service");
         const { websocketService } = await import("./websocket");
         
-        // Get admin user IDs
-        const { data: adminProfiles, error: adminProfilesError } = await drizzleClient
-          .from("profiles")
-          .select("id")
-          .eq("role", "admin");
-        
-        if (adminProfilesError) {
-          console.error("[KYB Resubmission] Error fetching admin profiles:", adminProfilesError);
-        } else if (adminProfiles && adminProfiles.length > 0) {
-          const adminUserIds = adminProfiles.map(p => p.id);
-          
-          // Get supplier name
-          const { data: supplierProfile, error: profileError } = await drizzleClient
-            .from("profiles")
-            .select("full_name")
-            .eq("id", user.id)
-            .maybeSingle();
-          
-          if (profileError) {
-            console.error("[KYB Resubmission] Error fetching supplier profile:", profileError);
-          }
-          
-          const userName = supplierProfile?.full_name || "Supplier";
-          
-          // Notify admins that supplier has resubmitted KYB
+        const { getAdminUserIds, getProfileDisplayName } = await import("./admin-notify");
+        const adminUserIds = await getAdminUserIds();
+
+        if (adminUserIds.length > 0) {
           try {
             await notificationService.notifyAdminKycSubmitted(
               adminUserIds,
               user.id,
-              userName,
+              await getProfileDisplayName(user.id),
               "supplier"
             );
           } catch (notifyError) {
             console.error("[KYB Resubmission] Error notifying admins:", notifyError);
           }
-          
-          // Broadcast resubmission to admins via WebSocket
+
           try {
             websocketService.broadcastToRole("admin", {
               type: "kyc_submitted",
@@ -3630,11 +3582,9 @@ router.put("/compliance", async (req, res) => {
             console.error("[KYB Resubmission] Error broadcasting WebSocket message:", wsError);
           }
         }
-        
-        // Notify supplier that resubmission was received
+
         try {
-          const { notificationService: notifService } = await import("./notification-service");
-          await notifService.createNotification({
+          await notificationService.createNotification({
             userId: user.id,
             type: "account_verification_required",
             title: "KYB Resubmission Received",

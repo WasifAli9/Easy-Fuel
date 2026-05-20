@@ -194,10 +194,10 @@ class NotificationService {
         },
       });
 
-      if (wsDelivered || pushSentCount > 0) {
-        await markNotificationDelivered(notification.id);
-      } else {
-        await markNotificationFailed(notification.id);
+      // Persisted in DB = visible in the in-app inbox; push/WebSocket are best-effort.
+      await markNotificationDelivered(notification.id);
+      if (!wsDelivered && pushSentCount === 0) {
+        console.debug("[notification] stored for inbox; realtime delivery skipped", { userId, type });
       }
 
       return notification.id;

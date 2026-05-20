@@ -148,6 +148,20 @@ export async function registerLocalUser(input: {
   const accessToken = signAccessToken({ sub: userId, email, role });
   const refreshToken = signRefreshToken({ sub: userId, email, role });
   await storeRefreshToken(userId, refreshToken);
+
+  if (role && role !== "admin") {
+    try {
+      const { notifyAdminsUserRegistered } = await import("./admin-notify");
+      await notifyAdminsUserRegistered({
+        userId,
+        fullName: input.fullName,
+        role,
+      });
+    } catch (e) {
+      console.error("[registerLocalUser] admin notify:", e);
+    }
+  }
+
   return { user: { id: userId, email, role }, accessToken, refreshToken };
 }
 

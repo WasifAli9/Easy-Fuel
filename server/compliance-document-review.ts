@@ -1,6 +1,4 @@
-import { eq } from "drizzle-orm";
-import { db } from "./db";
-import { profiles } from "@shared/schema";
+import { getAdminUserIds } from "./admin-notify";
 import { notificationService } from "./notification-service";
 import { websocketService } from "./websocket";
 
@@ -14,14 +12,11 @@ export async function notifyAdminsComplianceDocumentUploaded(params: {
   ownerDisplayName: string;
   uploaderUserId: string;
 }) {
-  const adminProfiles = await db
-    .select({ id: profiles.id })
-    .from(profiles)
-    .where(eq(profiles.role, "admin"));
-
-  if (!adminProfiles.length) return;
-
-  const adminUserIds = adminProfiles.map((p) => p.id);
+  const adminUserIds = await getAdminUserIds();
+  if (!adminUserIds.length) {
+    console.warn("[notifyAdminsComplianceDocumentUploaded] No admin profiles found — skipping alert");
+    return;
+  }
   await notificationService.notifyAdminDocumentUploaded(
     adminUserIds,
     params.documentId,

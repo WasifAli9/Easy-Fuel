@@ -102,16 +102,23 @@ export class ObjectStorageService {
     return null;
   }
 
-  async downloadObject(file: File, res: Response, cacheTtlSec: number = 3600) {
+  async downloadObject(
+    file: File,
+    res: Response,
+    cacheTtlSec: number = 3600,
+    opts?: { filename?: string; mimeType?: string; inline?: boolean },
+  ) {
     try {
       const [metadata] = await file.getMetadata();
       const aclPolicy = await getObjectAclPolicy(file);
       const isPublic = aclPolicy?.visibility === "public";
-
-      res.set({
-        "Content-Type": metadata.contentType || "application/octet-stream",
-        "Content-Length": metadata.size,
-        "Cache-Control": `${isPublic ? "public" : "private"}, max-age=${cacheTtlSec}`,
+      const { setFileResponseHeaders } = await import("./file-response-utils");
+      setFileResponseHeaders(res, {
+        filename: opts?.filename,
+        mimeType: opts?.mimeType || metadata.contentType || "application/octet-stream",
+        inline: opts?.inline ?? true,
+        size: metadata.size != null ? Number(metadata.size) : undefined,
+        cacheControl: `${isPublic ? "public" : "private"}, max-age=${cacheTtlSec}`,
       });
 
       const stream = file.createReadStream();

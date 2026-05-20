@@ -114,6 +114,40 @@ export function normalizeFilePath(filePath: string | null | undefined): string |
   return `/objects/${cleanPath}`;
 }
 
+const MIME_TO_EXT: Record<string, string> = {
+  "application/pdf": ".pdf",
+  "image/jpeg": ".jpg",
+  "image/jpg": ".jpg",
+  "image/png": ".png",
+  "image/gif": ".gif",
+  "image/webp": ".webp",
+};
+
+function buildDocumentFilename(title: string | undefined, mimeType?: string | null): string {
+  const base = (title || "document").replace(/[/\\?%*:|"<>]/g, "-").trim() || "document";
+  if (/\.\w{2,5}$/i.test(base)) return base;
+  const ext = mimeType ? MIME_TO_EXT[mimeType.toLowerCase().split(";")[0].trim()] || "" : "";
+  return ext ? `${base}${ext}` : base;
+}
+
+/**
+ * URL for viewing/downloading a stored document with correct type and filename.
+ */
+export function documentObjectUrl(
+  filePath: string | null | undefined,
+  doc?: { title?: string; mime_type?: string | null; mimeType?: string | null },
+): string | null {
+  const base = normalizeFilePath(filePath);
+  if (!base) return null;
+  const mime = doc?.mime_type ?? doc?.mimeType ?? null;
+  const filename = buildDocumentFilename(doc?.title, mime);
+  const params = new URLSearchParams();
+  if (filename) params.set("filename", filename);
+  if (mime) params.set("mime", mime);
+  const qs = params.toString();
+  return qs ? `${base}?${qs}` : base;
+}
+
 /**
  * Normalizes a profile photo URL for display
  * This is a convenience wrapper around normalizeFilePath specifically for profile photos

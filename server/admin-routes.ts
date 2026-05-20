@@ -36,12 +36,70 @@ async function getLocalAuthEmailsByIds(userIds: string[]): Promise<Map<string, s
   return new Map(result.rows.map((row: { id: string; email: string }) => [row.id, row.email]));
 }
 
+async function getCompanyByOwnerUserId(ownerUserId: string): Promise<Record<string, unknown> | null> {
+  const result = await pool.query(`SELECT * FROM companies WHERE owner_user_id = $1 LIMIT 1`, [
+    ownerUserId,
+  ]);
+  return result.rows[0] ?? null;
+}
+
+async function getCompanyOwnerUserId(companyId: string): Promise<string | null> {
+  const result = await pool.query(
+    `SELECT owner_user_id::text FROM companies WHERE id = $1 LIMIT 1`,
+    [companyId],
+  );
+  return result.rows[0]?.owner_user_id ?? null;
+}
+
 function getRowUserId(row: any): string | null {
   return row?.user_id ?? row?.userId ?? row?.owner_id ?? row?.ownerId ?? null;
 }
 
 function getRowCreatedAt(row: any): string | null {
   return row?.created_at ?? row?.createdAt ?? null;
+}
+
+function normalizeProfileRow(profile: Record<string, unknown> | null | undefined) {
+  if (!profile) return null;
+  return {
+    id: profile.id,
+    full_name: (profile.full_name ?? profile.fullName ?? null) as string | null,
+    email: (profile.email ?? null) as string | null,
+    phone: (profile.phone ?? null) as string | null,
+  };
+}
+
+function profileFromJoinedRow(row: Record<string, unknown>) {
+  const id = (row.user_id ?? row.owner_id ?? row.owner_user_id) as string | undefined;
+  const fullName = (row.profile_full_name ?? row.full_name) as string | null | undefined;
+  const email = row.profile_email as string | null | undefined;
+  const phone = row.profile_phone as string | null | undefined;
+  if (!fullName && !email && !phone) return null;
+  return {
+    id: id ?? null,
+    full_name: fullName ?? null,
+    email: email ?? null,
+    phone: phone ?? null,
+  };
+}
+
+async function fetchProfileByUserId(userId: string) {
+  const result = await pool.query(
+    `SELECT p.id::text, p.full_name, p.phone, lau.email AS profile_email
+     FROM profiles p
+     LEFT JOIN local_auth_users lau ON lau.id = p.id
+     WHERE p.id = $1::uuid
+     LIMIT 1`,
+    [userId],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    full_name: row.full_name ?? null,
+    email: row.profile_email ?? null,
+    phone: row.phone ?? null,
+  };
 }
 
 const tableMap = {
@@ -405,12 +463,7 @@ async function resolveDocumentOwnerUserId(
     const fromDriver = v?.drivers?.user_id;
     if (fromDriver) return fromDriver;
     if (v?.company_id) {
-      const { data: comp } = await adminDb
-        .from("companies")
-        .select("owner_user_id")
-        .eq("id", v.company_id)
-        .maybeSingle();
-      return (comp as any)?.owner_user_id ?? null;
+      return getCompanyOwnerUserId(v.company_id);
     }
     return null;
   }
@@ -462,6 +515,50 @@ router.get("/users", async (req, res) => {
     res.json(usersWithDetails || []);
   } catch (error: any) {
     console.error("Error fetching users:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all fleet companies (transport / fleet employers)
+router.get("/companies", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT c.id, c.name, c.status, c.contact_email, c.contact_phone, c.owner_user_id, c.created_at,
+              p.full_name, p.phone, p.role, p.approval_status, p.profile_photo_url,
+              (SELECT COUNT(*)::int FROM vehicles v WHERE v.company_id = c.id) AS vehicle_count,
+              (SELECT COUNT(*)::int FROM vehicles v
+               WHERE v.company_id = c.id
+                 AND COALESCE(v.vehicle_status::text, 'pending_compliance') NOT IN ('active')) AS pending_vehicle_count
+       FROM companies c
+       INNER JOIN profiles p ON p.id = c.owner_user_id
+       WHERE p.role = 'company'
+       ORDER BY c.created_at DESC`,
+    );
+    const ownerIds = result.rows.map((r: { owner_user_id: string }) => r.owner_user_id);
+    const authEmailById = await getLocalAuthEmailsByIds(ownerIds);
+    const rows = result.rows.map((row: Record<string, unknown>) => ({
+      id: row.id,
+      owner_user_id: row.owner_user_id,
+      name: row.name,
+      status: row.status,
+      contact_email: row.contact_email,
+      contact_phone: row.contact_phone,
+      created_at: row.created_at,
+      vehicle_count: row.vehicle_count ?? 0,
+      pending_vehicle_count: row.pending_vehicle_count ?? 0,
+      profiles: {
+        id: row.owner_user_id,
+        full_name: row.full_name,
+        phone: row.phone,
+        role: row.role,
+        approval_status: row.approval_status,
+        profile_photo_url: row.profile_photo_url,
+        email: authEmailById.get(row.owner_user_id as string) || row.contact_email || null,
+      },
+    }));
+    res.json(rows);
+  } catch (error: any) {
+    console.error("Error fetching companies:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -746,11 +843,12 @@ router.get("/kyc/pending", async (req, res) => {
               .maybeSingle()
           : { data: null as any };
         
+        const normalizedProfile = normalizeProfileRow(profile as Record<string, unknown> | null);
         return {
           ...driver,
           user_id: driverUserId,
           created_at: getRowCreatedAt(driver),
-          profiles: profile,
+          profiles: normalizedProfile,
         };
       })
     );
@@ -767,11 +865,12 @@ router.get("/kyc/pending", async (req, res) => {
               .maybeSingle()
           : { data: null as any };
         
+        const normalizedProfile = normalizeProfileRow(profile as Record<string, unknown> | null);
         return {
           ...supplier,
           owner_id: supplierUserId,
           created_at: getRowCreatedAt(supplier),
-          profiles: profile,
+          profiles: normalizedProfile,
         };
       })
     );
@@ -1300,6 +1399,27 @@ router.post("/users/create", async (req, res) => {
   }
 });
 
+// Activity timeline for a user (orders, vehicles, depot orders, fleet events, notifications)
+router.get("/users/:userId/activity", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { data: profile, error: profileError } = await adminDb
+      .from("profiles")
+      .select("role")
+      .eq("id", userId)
+      .maybeSingle();
+    if (profileError) throw profileError;
+    if (!profile) return res.status(404).json({ error: "User not found" });
+
+    const { getUserActivityLog } = await import("./user-activity-service");
+    const activities = await getUserActivityLog(userId, (profile as any).role || "customer");
+    res.json({ activities });
+  } catch (error: any) {
+    console.error("GET /admin/users/:userId/activity:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get user details by ID
 router.get("/users/:userId", async (req, res) => {
   try {
@@ -1390,6 +1510,80 @@ router.get("/users/:userId", async (req, res) => {
       }
       
       result.supplier = supplier || null;
+    } else if (normalizedProfile.role === "company") {
+      const company = await getCompanyByOwnerUserId(userId);
+      result.company = company;
+
+      const companyId = company?.id as string | undefined;
+      if (companyId) {
+        const vehiclesRes = await pool.query(
+          `SELECT * FROM vehicles WHERE company_id = $1 ORDER BY created_at DESC`,
+          [companyId],
+        );
+        result.vehicles = vehiclesRes.rows || [];
+
+        const driversRes = await pool.query(
+          `SELECT m.driver_id, m.membership_status::text AS membership_status,
+                  m.applied_at, m.reviewed_at, m.is_disabled_by_company, m.disabled_reason,
+                  m.work_independent,
+                  p.full_name, p.phone, p.id AS profile_id,
+                  d.kyc_status, d.compliance_status, d.status AS driver_status
+           FROM driver_company_memberships m
+           INNER JOIN drivers d ON d.id = m.driver_id
+           INNER JOIN profiles p ON p.id = d.user_id
+           WHERE m.company_id = $1
+           ORDER BY
+             CASE m.membership_status::text
+               WHEN 'pending' THEN 0
+               WHEN 'approved' THEN 1
+               WHEN 'rejected' THEN 2
+               ELSE 3
+             END,
+             m.applied_at DESC NULLS LAST`,
+          [companyId],
+        );
+        const authEmails = await getLocalAuthEmailsByIds(
+          driversRes.rows.map((r: { profile_id: string }) => r.profile_id),
+        );
+        result.linkedDrivers = driversRes.rows.map((r: any) => ({
+          driverId: r.driver_id,
+          profileId: r.profile_id,
+          fullName: r.full_name,
+          phone: r.phone,
+          email: authEmails.get(r.profile_id) || null,
+          membershipStatus: r.membership_status,
+          appliedAt: r.applied_at,
+          reviewedAt: r.reviewed_at,
+          workIndependent: r.work_independent,
+          isDisabledByCompany: r.is_disabled_by_company,
+          disabledReason: r.disabled_reason,
+          kycStatus: r.kyc_status,
+          complianceStatus: r.compliance_status,
+          driverStatus: r.driver_status,
+        }));
+
+        const appsRes = await pool.query(
+          `SELECT m.driver_id, m.applied_at, p.id AS profile_id, p.full_name, p.phone, d.compliance_status
+           FROM driver_company_memberships m
+           INNER JOIN drivers d ON d.id = m.driver_id
+           INNER JOIN profiles p ON p.id = d.user_id
+           WHERE m.company_id = $1 AND m.membership_status::text = 'pending'
+           ORDER BY m.applied_at DESC NULLS LAST`,
+          [companyId],
+        );
+        result.pendingApplications = appsRes.rows.map((r: any) => ({
+          driverId: r.driver_id,
+          profileId: r.profile_id,
+          fullName: r.full_name,
+          phone: r.phone,
+          appliedAt: r.applied_at,
+          complianceStatus: r.compliance_status,
+        }));
+      } else {
+        result.vehicles = [];
+        result.linkedDrivers = [];
+        result.pendingApplications = [];
+      }
     }
 
     res.json(result);
@@ -1615,7 +1809,7 @@ router.post("/vehicles/:vehicleId/approve", async (req, res) => {
     // Get vehicle to verify it exists
     const { data: vehicle, error: vehicleError } = await adminDb
       .from("vehicles")
-      .select("id, driver_id")
+      .select("id, driver_id, company_id, registration_number")
       .eq("id", vehicleId)
       .single();
 
@@ -1653,29 +1847,27 @@ router.post("/vehicles/:vehicleId/approve", async (req, res) => {
       },
     });
 
-    // Get driver's user_id to send notification
-    const { data: driver } = await adminDb
-      .from("drivers")
-      .select("user_id")
-      .eq("id", vehicle.driver_id)
-      .single();
+    const { notificationService } = await import("./notification-service");
+    const registrationNumber = (vehicle as any).registration_number || "Vehicle";
+    let notifyUserId: string | null = null;
 
-    if (driver?.user_id) {
-      websocketService.sendToUser(driver.user_id, {
+    if (vehicle.driver_id) {
+      const { data: driver } = await adminDb
+        .from("drivers")
+        .select("user_id")
+        .eq("id", vehicle.driver_id)
+        .maybeSingle();
+      notifyUserId = driver?.user_id ?? null;
+    } else if ((vehicle as any).company_id) {
+      notifyUserId = await getCompanyOwnerUserId((vehicle as any).company_id);
+    }
+
+    if (notifyUserId) {
+      websocketService.sendToUser(notifyUserId, {
         type: "vehicle_approved",
-        payload: {
-          vehicleId: vehicleId,
-        },
+        payload: { vehicleId },
       });
-
-      // Send notification to driver
-      const { notificationService } = await import("./notification-service");
-      const registrationNumber = vehicle.registration_number || "Vehicle";
-      await notificationService.notifyAdminVehicleApproved(
-        driver.user_id,
-        vehicleId,
-        registrationNumber
-      );
+      await notificationService.notifyAdminVehicleApproved(notifyUserId, vehicleId, registrationNumber);
     }
 
     res.json({ success: true, message: "Vehicle approved successfully", vehicle: updatedVehicle });
@@ -1694,7 +1886,7 @@ router.post("/vehicles/:vehicleId/reject", async (req, res) => {
     // Get vehicle to verify it exists
     const { data: vehicle, error: vehicleError } = await adminDb
       .from("vehicles")
-      .select("id, driver_id")
+      .select("id, driver_id, company_id, registration_number")
       .eq("id", vehicleId)
       .single();
 
@@ -1731,35 +1923,31 @@ router.post("/vehicles/:vehicleId/reject", async (req, res) => {
       },
     });
 
-    // Get driver's user_id to send notification
-    const { data: driver } = await adminDb
-      .from("drivers")
-      .select("user_id")
-      .eq("id", vehicle.driver_id)
-      .single();
+    const { notificationService } = await import("./notification-service");
+    const registrationNumber = (vehicle as any).registration_number || "Vehicle";
+    let notifyUserId: string | null = null;
 
-    if (driver?.user_id) {
-      websocketService.sendToUser(driver.user_id, {
+    if (vehicle.driver_id) {
+      const { data: driver } = await adminDb
+        .from("drivers")
+        .select("user_id")
+        .eq("id", vehicle.driver_id)
+        .maybeSingle();
+      notifyUserId = driver?.user_id ?? null;
+    } else if ((vehicle as any).company_id) {
+      notifyUserId = await getCompanyOwnerUserId((vehicle as any).company_id);
+    }
+
+    if (notifyUserId) {
+      websocketService.sendToUser(notifyUserId, {
         type: "vehicle_rejected",
-        payload: {
-          vehicleId: vehicleId,
-          rejectionReason,
-        },
+        payload: { vehicleId, rejectionReason },
       });
-
-      // Send notification to driver
-      const { notificationService } = await import("./notification-service");
-      const { data: vehicleData } = await adminDb
-        .from("vehicles")
-        .select("registration_number")
-        .eq("id", vehicleId)
-        .single();
-      const registrationNumber = vehicleData?.registration_number || "Vehicle";
       await notificationService.notifyAdminVehicleRejected(
-        driver.user_id,
+        notifyUserId,
         vehicleId,
         registrationNumber,
-        rejectionReason
+        rejectionReason,
       );
     }
 
@@ -1795,6 +1983,8 @@ router.get("/users/:userId/documents", async (req, res) => {
     }
     
     console.log("Profile role:", profile.role);
+
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     
     let ownerId = userId;
     let ownerType = profile.role;
@@ -1844,12 +2034,50 @@ router.get("/users/:userId/documents", async (req, res) => {
         ownerType = "supplier";
         console.log("Using userId as ownerId fallback:", ownerId);
       }
+    } else if (profile.role === "company") {
+      const company = await getCompanyByOwnerUserId(userId);
+      if (!company?.id) {
+        return res.json([]);
+      }
+      const vehiclesRes = await pool.query(`SELECT id::text FROM vehicles WHERE company_id = $1`, [
+        company.id,
+      ]);
+      const vehicleIds = vehiclesRes.rows
+        .map((r: { id: string }) => r.id)
+        .filter((id: string) => uuidRegex.test(id));
+      let fleetVehicleDocs: any[] = [];
+      if (vehicleIds.length > 0) {
+        const { data: vDocs, error: vDocsError } = await adminDb
+          .from("documents")
+          .select("*")
+          .in("owner_id", vehicleIds)
+          .eq("owner_type", "vehicle")
+          .order("created_at", { ascending: false });
+        if (vDocsError) throw vDocsError;
+        fleetVehicleDocs = vDocs || [];
+      }
+      const normalized = fleetVehicleDocs.map((doc: any) => ({
+        ...doc,
+        id: doc.id,
+        title: doc.title ?? "",
+        owner_id: doc.owner_id ?? doc.ownerId ?? null,
+        owner_type: doc.owner_type ?? doc.ownerType ?? null,
+        doc_type: doc.doc_type ?? doc.docType ?? null,
+        file_path: doc.file_path ?? doc.filePath ?? null,
+        mime_type: doc.mime_type ?? doc.mimeType ?? null,
+        created_at: doc.created_at ?? doc.createdAt ?? null,
+        expiry_date: doc.expiry_date ?? doc.expiryDate ?? null,
+        verification_status: doc.verification_status ?? doc.verificationStatus ?? null,
+        document_rejection_reason: doc.document_rejection_reason ?? doc.documentRejectionReason ?? null,
+      }));
+      const validDocuments = normalized.filter(
+        (doc: any) => doc.file_path && String(doc.file_path).trim() !== "",
+      );
+      return res.json(validDocuments);
     }
     
     console.log("Fetching documents with ownerId:", ownerId, "ownerType:", ownerType);
     
-    // Validate ownerId is a valid UUID before querying
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!ownerId || !uuidRegex.test(ownerId)) {
       console.warn("Invalid or empty ownerId:", ownerId, "Skipping document query");
       return res.json([]);
@@ -1877,23 +2105,6 @@ router.get("/users/:userId/documents", async (req, res) => {
           console.log("Found", vehicleDocuments.length, "vehicle documents");
         }
       }
-    }
-    
-    // First, let's check what documents actually exist in the database for debugging
-    const { data: allDriverDocs, error: debugError } = await adminDb
-      .from("documents")
-      .select("*")
-      .eq("owner_type", "driver")
-      .order("created_at", { ascending: false });
-    
-    console.log(`[DEBUG] Total documents with owner_type='driver' in database:`, allDriverDocs?.length || 0);
-    if (allDriverDocs && allDriverDocs.length > 0) {
-      console.log(`[DEBUG] Sample document owner_ids:`, allDriverDocs.slice(0, 5).map((d: any) => ({ 
-        owner_id: d.owner_id, 
-        owner_type: d.owner_type, 
-        doc_type: d.doc_type,
-        title: d.title 
-      })));
     }
     
     // Fetch documents for the owner
@@ -2222,8 +2433,11 @@ router.get("/compliance/pending", async (req, res) => {
   try {
     // Drivers needing review: submitted KYC package, pending_compliance status, or any pending document
     const driversResult = await pool.query(
-      `SELECT DISTINCT d.id, d.user_id, d.status, d.compliance_status, d.kyc_status, d.kyc_submitted_at
+      `SELECT DISTINCT d.id, d.user_id, d.status, d.compliance_status, d.kyc_status, d.kyc_submitted_at,
+              p.full_name AS profile_full_name, p.phone AS profile_phone, lau.email AS profile_email
        FROM drivers d
+       LEFT JOIN profiles p ON p.id = d.user_id
+       LEFT JOIN local_auth_users lau ON lau.id = d.user_id
        WHERE (
          (d.kyc_status = 'pending' AND d.kyc_submitted_at IS NOT NULL)
          OR (d.status = 'pending_compliance' AND d.compliance_status IN ('pending', 'incomplete'))
@@ -2236,11 +2450,25 @@ router.get("/compliance/pending", async (req, res) => {
        )`,
     );
     const pendingDrivers = await attachPendingDocumentCounts("driver", driversResult.rows);
+    const driversWithProfiles = pendingDrivers.map((driver) => {
+      const profiles = profileFromJoinedRow(driver);
+      return {
+        ...driver,
+        profiles,
+        display_name:
+          profiles?.full_name ||
+          (driver.profile_email as string | undefined) ||
+          null,
+      };
+    });
 
     const suppliersResult = await pool.query(
       `SELECT DISTINCT s.id, s.owner_id, s.status, s.compliance_status, s.name, s.registered_name,
-              s.kyb_status, s.kyb_submitted_at
+              s.kyb_status, s.kyb_submitted_at,
+              p.full_name AS profile_full_name, p.phone AS profile_phone, lau.email AS profile_email
        FROM suppliers s
+       LEFT JOIN profiles p ON p.id = s.owner_id
+       LEFT JOIN local_auth_users lau ON lau.id = s.owner_id
        WHERE (
          (s.kyb_status = 'pending' AND s.kyb_submitted_at IS NOT NULL)
          OR (s.status = 'pending_compliance' AND s.compliance_status IN ('pending', 'incomplete'))
@@ -2253,42 +2481,55 @@ router.get("/compliance/pending", async (req, res) => {
        )`,
     );
     const pendingSuppliers = await attachPendingDocumentCounts("supplier", suppliersResult.rows);
+    const suppliersWithProfiles = pendingSuppliers.map((supplier) => {
+      const profiles = profileFromJoinedRow(supplier);
+      const supplierName =
+        (supplier.name as string | undefined) ||
+        (supplier.registered_name as string | undefined) ||
+        null;
+      return {
+        ...supplier,
+        profiles,
+        display_name: supplierName || profiles?.full_name || (supplier.profile_email as string) || null,
+      };
+    });
 
-    // Fetch profiles for drivers separately
-    const driversWithProfiles = await Promise.all(
-      (pendingDrivers || []).map(async (driver) => {
-        const { data: profile } = await adminDb
-          .from("profiles")
-          .select("id, full_name, email, phone")
-          .eq("id", driver.user_id)
-          .maybeSingle();
-        
-        return {
-          ...driver,
-          profiles: profile || null,
-        };
-      })
+    const fleetVehiclesResult = await pool.query(
+      `SELECT v.id, v.registration_number, v.make, v.model, v.capacity_litres, v.vehicle_status, v.created_at,
+              c.id AS company_id, c.name AS company_name, c.owner_user_id
+       FROM vehicles v
+       INNER JOIN companies c ON c.id = v.company_id
+       WHERE COALESCE(v.vehicle_status::text, 'pending_compliance') NOT IN ('active', 'rejected')
+          OR EXISTS (
+            SELECT 1 FROM documents doc
+            WHERE doc.owner_type = 'vehicle'
+              AND doc.owner_id = v.id
+              AND doc.verification_status IN ('pending', 'pending_review', 'draft')
+          )
+       ORDER BY v.created_at DESC`,
     );
 
-    // Fetch profiles for suppliers separately
-    const suppliersWithProfiles = await Promise.all(
-      (pendingSuppliers || []).map(async (supplier) => {
-        const { data: profile } = await adminDb
-          .from("profiles")
-          .select("id, full_name, email, phone")
-          .eq("id", supplier.owner_id)
-          .maybeSingle();
-        
+    const fleetVehiclesWithProfiles = await Promise.all(
+      fleetVehiclesResult.rows.map(async (row: Record<string, unknown>) => {
+        const ownerId = row.owner_user_id as string;
+        const profiles = ownerId ? await fetchProfileByUserId(ownerId) : null;
+        const companyName = (row.company_name as string | undefined) || null;
         return {
-          ...supplier,
-          profiles: profile || null,
+          ...row,
+          profiles,
+          display_name:
+            companyName ||
+            (row.registration_number as string | undefined) ||
+            profiles?.full_name ||
+            null,
         };
-      })
+      }),
     );
 
     res.json({
       drivers: driversWithProfiles,
       suppliers: suppliersWithProfiles,
+      fleetVehicles: fleetVehiclesWithProfiles,
     });
   } catch (error: any) {
     console.error("Error getting pending compliance:", error);

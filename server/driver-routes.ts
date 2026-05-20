@@ -2152,23 +2152,16 @@ router.post("/vehicles", async (req, res) => {
     // Notify admins: new vehicle pending compliance review
     try {
       const { notificationService } = await import("./notification-service");
-      const { data: adminProfiles } = await drizzleAdmin.from("profiles").select("id").eq("role", "admin");
-      if (adminProfiles?.length && vehicle?.id) {
-        const { data: driverProfile } = await drizzleAdmin
-          .from("profiles")
-          .select("full_name")
-          .eq("id", user.id)
-          .maybeSingle();
-        await notificationService.notifyAdminsVehicleReviewRequired(
-          adminProfiles.map((p: any) => p.id),
-          {
-            vehicleId: vehicle.id,
-            registrationNumber: String(vehicle.registration_number || registrationNumber),
-            submittedByUserId: user.id,
-            submitterName: driverProfile?.full_name || "Driver",
-            scope: "driver",
-          },
-        );
+      const { getAdminUserIds, getProfileDisplayName } = await import("./admin-notify");
+      const adminUserIds = await getAdminUserIds();
+      if (adminUserIds.length && vehicle?.id) {
+        await notificationService.notifyAdminsVehicleReviewRequired(adminUserIds, {
+          vehicleId: vehicle.id,
+          registrationNumber: String(vehicle.registration_number || registrationNumber),
+          submittedByUserId: user.id,
+          submitterName: await getProfileDisplayName(user.id),
+          scope: "driver",
+        });
       }
     } catch (e) {
       console.error("[driver/vehicles] admin notify:", e);
@@ -3050,21 +3043,15 @@ router.post("/documents", async (req, res) => {
     if (document) {
       try {
         const { notifyAdminsComplianceDocumentUploaded } = await import("./compliance-document-review");
-        let ownerDisplayName = "Driver";
+        const { getProfileDisplayName } = await import("./admin-notify");
+        let ownerDisplayName = await getProfileDisplayName(user.id);
         if (finalOwnerType === "vehicle") {
           const { data: vehicle } = await drizzleAdmin
             .from("vehicles")
             .select("registration_number")
             .eq("id", finalOwnerId)
             .single();
-          ownerDisplayName = vehicle?.registration_number || "Vehicle";
-        } else {
-          const { data: driverProfile } = await drizzleAdmin
-            .from("profiles")
-            .select("full_name")
-            .eq("id", user.id)
-            .maybeSingle();
-          ownerDisplayName = driverProfile?.full_name || "Driver";
+          ownerDisplayName = vehicle?.registration_number || ownerDisplayName;
         }
         await notifyAdminsComplianceDocumentUploaded({
           documentId: document.id,
@@ -4428,18 +4415,14 @@ router.post("/compliance/submit-kyc", async (req, res) => {
     }
 
     const { notificationService } = await import("./notification-service");
-    const { data: adminProfiles } = await drizzleAdmin.from("profiles").select("id").eq("role", "admin");
-    const { data: driverProfile } = await drizzleAdmin
-      .from("profiles")
-      .select("full_name")
-      .eq("id", user.id)
-      .maybeSingle();
-    if (adminProfiles?.length) {
-      const adminUserIds = adminProfiles.map((p: { id: string }) => p.id);
+    const { getAdminUserIds, getProfileDisplayName } = await import("./admin-notify");
+    const adminUserIds = await getAdminUserIds();
+    const driverName = await getProfileDisplayName(user.id);
+    if (adminUserIds.length) {
       await notificationService.notifyAdminKycSubmitted(
         adminUserIds,
         user.id,
-        driverProfile?.full_name || "Driver",
+        driverName,
         "driver",
       );
     }
@@ -5036,28 +5019,14 @@ router.put("/compliance", async (req, res) => {
         const { notificationService } = await import("./notification-service");
         const { websocketService } = await import("./websocket");
         
-        // Get admin user IDs
-        const { data: adminProfiles } = await drizzleAdmin
-          .from("profiles")
-          .select("id")
-          .eq("role", "admin");
-        
-        if (adminProfiles && adminProfiles.length > 0) {
-          const adminUserIds = adminProfiles.map(p => p.id);
-          
-          // Get driver name
-          const { data: driverProfile } = await drizzleAdmin
-            .from("profiles")
-            .select("full_name")
-            .eq("id", user.id)
-            .maybeSingle();
-          const userName = driverProfile?.full_name || "Driver";
-          
-          // Notify admins that driver has resubmitted KYC
+        const { getAdminUserIds, getProfileDisplayName } = await import("./admin-notify");
+        const adminUserIds = await getAdminUserIds();
+
+        if (adminUserIds.length > 0) {
           await notificationService.notifyAdminKycSubmitted(
             adminUserIds,
             user.id,
-            userName,
+            await getProfileDisplayName(user.id),
             "driver"
           );
           

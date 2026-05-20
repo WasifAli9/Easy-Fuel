@@ -352,6 +352,7 @@ export function AppHeader({ onMenuClick, notificationCount: propNotificationCoun
         "admin_kyc_rejected",
         "admin_vehicle_approved",
         "admin_vehicle_rejected",
+        "system_alert",
       ]);
       if (adminInboxTypes.has(notification.type)) {
         if (onAdminNotificationClick) {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import {
@@ -24,8 +24,24 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Loader2, User, FileText, Truck, Building2, ShieldCheck, Upload, Camera, Eye, CheckCircle2, XCircle } from "lucide-react";
-import { normalizeFilePath, normalizeProfilePhotoUrl } from "@/lib/utils";
+import {
+  Loader2,
+  User,
+  FileText,
+  Truck,
+  Building2,
+  ShieldCheck,
+  Upload,
+  Camera,
+  Eye,
+  CheckCircle2,
+  XCircle,
+  Package,
+  Bell,
+  ClipboardList,
+} from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
+import { documentObjectUrl, normalizeProfilePhotoUrl } from "@/lib/utils";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
 import type { UploadResult } from "@uppy/core";
@@ -34,6 +50,8 @@ interface UserDetailsDialogProps {
   userId: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Open another user in this dialog (e.g. driver from fleet company view). */
+  onNavigateToUser?: (userId: string) => void;
 }
 
 interface UserDetails {
@@ -41,19 +59,147 @@ interface UserDetails {
   customer?: any;
   driver?: any;
   supplier?: any;
+  company?: any;
   admin?: any;
   vehicles?: any[];
+  linkedDrivers?: Array<{
+    driverId: string;
+    profileId?: string;
+    fullName?: string;
+    phone?: string;
+    email?: string;
+    membershipStatus?: string;
+    appliedAt?: string;
+    workIndependent?: boolean;
+    isDisabledByCompany?: boolean;
+    kycStatus?: string;
+    complianceStatus?: string;
+  }>;
+  pendingApplications?: Array<{
+    driverId: string;
+    profileId?: string;
+    fullName?: string;
+    phone?: string;
+    appliedAt?: string;
+    complianceStatus?: string;
+  }>;
 }
 
-export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDetailsDialogProps) {
+type ActivityEntry = {
+  id: string;
+  kind: string;
+  title: string;
+  detail: string;
+  occurredAt: string;
+};
+
+function activityKindIcon(kind: string) {
+  if (kind.startsWith("order_") || kind === "fleet_order") return Package;
+  if (kind.includes("vehicle") || kind.includes("depot")) return Truck;
+  if (kind.includes("document")) return FileText;
+  if (kind.includes("fleet") || kind.includes("driver_application") || kind.includes("driver_approved"))
+    return Building2;
+  if (kind.startsWith("notification_")) return Bell;
+  if (kind === "account_registered") return User;
+  return ClipboardList;
+}
+
+function activityKindBadgeVariant(kind: string): "default" | "secondary" | "outline" | "destructive" {
+  if (kind.includes("completed") || kind.includes("approved") || kind === "order_paid") return "default";
+  if (kind.includes("rejected") || kind.includes("declined")) return "destructive";
+  return "secondary";
+}
+
+function UserActivityTab({ activities, isLoading }: { activities: ActivityEntry[]; isLoading: boolean }) {
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (activities.length === 0) {
+    return (
+      <div className="text-center py-12 text-muted-foreground">
+        <ClipboardList className="h-12 w-12 mx-auto mb-3 opacity-50" />
+        <p>No activity recorded yet</p>
+        <p className="text-xs mt-2 max-w-sm mx-auto">
+          Orders, vehicles, depot pickups, fleet events, and notifications will appear here as this user uses the
+          platform.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted-foreground mb-2">
+        {activities.length} event{activities.length === 1 ? "" : "s"} · newest first
+      </p>
+      {activities.map((item) => {
+        const Icon = activityKindIcon(item.kind);
+        return (
+          <div
+            key={item.id}
+            className="flex gap-3 rounded-lg border p-3 bg-card/50"
+            data-testid={`activity-${item.id}`}
+          >
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted">
+              <Icon className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="font-medium text-sm">{item.title}</p>
+                <Badge variant={activityKindBadgeVariant(item.kind)} className="text-[10px] capitalize">
+                  {item.kind.replace(/_/g, " ")}
+                </Badge>
+              </div>
+              {item.detail ? (
+                <p className="text-sm text-muted-foreground mt-1 break-words">{item.detail}</p>
+              ) : null}
+              <p className="text-xs text-muted-foreground mt-1.5">
+                {formatDistanceToNow(new Date(item.occurredAt), { addSuffix: true })}
+                <span className="mx-1">·</span>
+                {new Date(item.occurredAt).toLocaleString()}
+              </p>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export function UserDetailsDialogEnhanced({
+  userId,
+  open,
+  onOpenChange,
+  onNavigateToUser,
+}: UserDetailsDialogProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState<any>({});
 
+  useEffect(() => {
+    setIsEditing(false);
+  }, [userId]);
+
   // Fetch user details
-  const { data: userDetails, isLoading, refetch: refetchUserDetails } = useQuery<UserDetails>({
+  const {
+    data: userDetails,
+    isLoading,
+    isError,
+    error,
+    refetch: refetchUserDetails,
+  } = useQuery<UserDetails>({
     queryKey: ["/api/admin/users", userId],
+    enabled: !!userId && open,
+  });
+
+  const { data: activityData, isLoading: activityLoading } = useQuery<{ activities: ActivityEntry[] }>({
+    queryKey: ["/api/admin/users", userId, "activity"],
     enabled: !!userId && open,
   });
 
@@ -193,20 +339,50 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
     );
   }
 
+  if (isError || (!isLoading && !userDetails)) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Could not load user</DialogTitle>
+            <DialogDescription>
+              {(error as Error)?.message || "The user record could not be loaded."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              Close
+            </Button>
+            <Button onClick={() => refetchUserDetails()}>Retry</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
   if (!userDetails) return null;
 
-  // Guard against partial payloads so opening "View KYC" never crashes the page.
+  const profile = userDetails.profile || {};
   const safeProfile = {
     id: userId || "",
-    full_name: userDetails.profile?.fullName ?? "Unknown User",
-    email: "",
-    phone: "",
-    role: userDetails.profile?.userRole ?? "customer",
-    profile_photo_url: null,
-    approval_status: "pending",
-    is_active: false,
-    ...(userDetails.profile || {}),
+    full_name: profile.full_name ?? profile.fullName ?? "Unknown User",
+    email: profile.email ?? "",
+    phone: profile.phone ?? "",
+    role: profile.role ?? profile.userRole ?? "customer",
+    profile_photo_url: profile.profile_photo_url ?? profile.profilePhotoUrl ?? null,
+    approval_status: profile.approval_status ?? profile.approvalStatus ?? "pending",
+    is_active: profile.is_active ?? profile.isActive ?? false,
+    phone_country_code: profile.phone_country_code ?? profile.phoneCountryCode ?? "+27",
+    notes: profile.notes ?? "",
+    address_street: profile.address_street ?? profile.addressStreet,
+    address_city: profile.address_city ?? profile.addressCity,
+    address_province: profile.address_province ?? profile.addressProvince,
+    address_postal_code: profile.address_postal_code ?? profile.addressPostalCode,
   } as any;
+
+  const isCompanyAccount = safeProfile.role === "company" || !!userDetails.company;
+  const tabCount =
+    4 + (userDetails.driver || isCompanyAccount ? 1 : 0) + (isCompanyAccount ? 1 : 0);
 
   const handleProfilePictureUpload = async (result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
     if (!result.successful || result.successful.length === 0) return;
@@ -325,7 +501,15 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
         </DialogHeader>
 
         <Tabs defaultValue="profile" className="flex-1 overflow-hidden flex flex-col">
-          <TabsList className={`grid w-full ${userDetails.driver ? 'grid-cols-5' : 'grid-cols-4'}`}>
+          <TabsList
+            className={`grid w-full ${
+              tabCount >= 6
+                ? "grid-cols-6"
+                : tabCount === 5
+                  ? "grid-cols-5"
+                  : "grid-cols-4"
+            }`}
+          >
             <TabsTrigger value="profile" className="flex items-center gap-1">
               <User className="h-3.5 w-3.5" />
               Profile
@@ -334,10 +518,16 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
               <FileText className="h-3.5 w-3.5" />
               Details
             </TabsTrigger>
-            {userDetails.driver && (
+            {(userDetails.driver || isCompanyAccount) && (
               <TabsTrigger value="vehicles" className="flex items-center gap-1">
                 <Truck className="h-3.5 w-3.5" />
-                Vehicles
+                {isCompanyAccount ? "Fleet vehicles" : "Vehicles"}
+              </TabsTrigger>
+            )}
+            {isCompanyAccount && (
+              <TabsTrigger value="drivers" className="flex items-center gap-1">
+                <User className="h-3.5 w-3.5" />
+                Drivers
               </TabsTrigger>
             )}
             <TabsTrigger value="documents" className="flex items-center gap-1">
@@ -487,19 +677,48 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
               {userDetails.driver && (
                 <DriverDetails driver={userDetails.driver} formData={formData} setFormData={setFormData} isEditing={isEditing} />
               )}
-              {userDetails.supplier ? (
+              {userDetails.supplier && (
                 <SupplierDetails supplier={userDetails.supplier} formData={formData} setFormData={setFormData} isEditing={isEditing} />
-              ) : (
+              )}
+              {isCompanyAccount && userDetails.company && <CompanyDetails company={userDetails.company} />}
+              {isCompanyAccount && !userDetails.company && (
                 <div className="text-center py-8 text-muted-foreground">
-                  <p>Supplier profile not found. The supplier may need to complete their profile setup.</p>
+                  <p>No fleet company record found for this account.</p>
+                  <p className="text-sm mt-2">The profile role is company but the companies table has no row.</p>
                 </div>
               )}
+              {!userDetails.customer &&
+                !userDetails.driver &&
+                !userDetails.supplier &&
+                !userDetails.company && (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <p>Role-specific profile not found.</p>
+                  </div>
+                )}
             </TabsContent>
 
-            {/* Vehicles Tab - Driver Only */}
-            {userDetails.driver && (
+            {(userDetails.driver || isCompanyAccount) && (
               <TabsContent value="vehicles" className="mt-0">
-                <VehiclesTab driverId={userDetails.driver.id} vehicles={userDetails.vehicles || []} userId={userId} />
+                <VehiclesTab
+                  driverId={userDetails.driver?.id}
+                  vehicles={userDetails.vehicles || []}
+                  userId={userId!}
+                  fleetCompanyName={userDetails.company?.name ?? userDetails.company?.companyName}
+                />
+              </TabsContent>
+            )}
+
+            {isCompanyAccount && (
+              <TabsContent value="drivers" className="mt-0">
+                <CompanyDriversTab
+                  linkedDrivers={userDetails.linkedDrivers || []}
+                  pendingApplications={userDetails.pendingApplications || []}
+                  onViewDriver={(driverProfileId) => {
+                    if (driverProfileId && onNavigateToUser) {
+                      onNavigateToUser(driverProfileId);
+                    }
+                  }}
+                />
               </TabsContent>
             )}
 
@@ -508,12 +727,11 @@ export function UserDetailsDialogEnhanced({ userId, open, onOpenChange }: UserDe
               <DocumentsTab userId={userId!} userRole={userDetails.profile.role} />
             </TabsContent>
 
-            {/* Activity Tab - Placeholder */}
             <TabsContent value="activity" className="mt-0">
-              <div className="text-center py-8 text-muted-foreground">
-                <Truck className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                <p>Activity history coming soon</p>
-              </div>
+              <UserActivityTab
+                activities={activityData?.activities ?? []}
+                isLoading={activityLoading}
+              />
             </TabsContent>
           </div>
         </Tabs>
@@ -1009,8 +1227,135 @@ function SupplierDetails({ supplier, formData, setFormData, isEditing }: any) {
   );
 }
 
-// Vehicles Tab Component - Driver Only
-function VehiclesTab({ driverId, vehicles, userId }: { driverId: string; vehicles: any[]; userId: string }) {
+function CompanyDetails({ company }: { company: any }) {
+  const name = company.name ?? company.companyName;
+  const contactEmail = company.contact_email ?? company.contactEmail;
+  const contactPhone = company.contact_phone ?? company.contactPhone;
+  return (
+    <div className="space-y-4">
+      <h3 className="font-semibold text-sm text-muted-foreground">Fleet company</h3>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <Label>Company name</Label>
+          <p className="text-sm mt-1">{name || "N/A"}</p>
+        </div>
+        <div>
+          <Label>Status</Label>
+          <p className="text-sm mt-1 capitalize">{company.status || "active"}</p>
+        </div>
+        <div>
+          <Label>Contact email</Label>
+          <p className="text-sm mt-1">{contactEmail || "N/A"}</p>
+        </div>
+        <div>
+          <Label>Contact phone</Label>
+          <p className="text-sm mt-1">{contactPhone || "N/A"}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function membershipStatusBadge(status?: string) {
+  const s = (status || "none").toLowerCase();
+  if (s === "approved") return <Badge className="bg-green-600">Approved</Badge>;
+  if (s === "pending") return <Badge variant="secondary">Pending</Badge>;
+  if (s === "rejected") return <Badge variant="destructive">Rejected</Badge>;
+  return <Badge variant="outline">{s}</Badge>;
+}
+
+function CompanyDriversTab({
+  linkedDrivers,
+  pendingApplications,
+  onViewDriver,
+}: {
+  linkedDrivers: UserDetails["linkedDrivers"];
+  pendingApplications: UserDetails["pendingApplications"];
+  onViewDriver: (profileId: string) => void;
+}) {
+  return (
+    <div className="space-y-6">
+      {pendingApplications && pendingApplications.length > 0 && (
+        <div>
+          <h3 className="font-semibold text-sm text-muted-foreground mb-3">Pending applications</h3>
+          <div className="space-y-2">
+            {pendingApplications.map((app) => (
+              <div key={app.driverId} className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-3">
+                <div>
+                  <p className="font-medium text-sm">{app.fullName || "Driver"}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {app.phone || "—"}
+                    {app.appliedAt ? ` · Applied ${new Date(app.appliedAt).toLocaleString()}` : ""}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {membershipStatusBadge("pending")}
+                  {app.profileId && (
+                    <Button size="sm" variant="outline" onClick={() => onViewDriver(app.profileId!)}>
+                      View driver
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div>
+        <h3 className="font-semibold text-sm text-muted-foreground mb-3">
+          Drivers linked to this company ({linkedDrivers?.length ?? 0})
+        </h3>
+        {!linkedDrivers?.length ? (
+          <p className="text-sm text-muted-foreground py-6 text-center">
+            No drivers have applied or been approved for this company yet.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {linkedDrivers.map((d) => (
+              <div
+                key={d.driverId}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-3"
+              >
+                <div>
+                  <p className="font-medium text-sm">{d.fullName || "Driver"}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {[d.email, d.phone].filter(Boolean).join(" · ") || "—"}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    KYC: {d.kycStatus || "—"} · Compliance: {d.complianceStatus || "—"}
+                    {d.isDisabledByCompany ? " · Disabled by company" : ""}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {membershipStatusBadge(d.membershipStatus)}
+                  {d.profileId && (
+                    <Button size="sm" variant="outline" onClick={() => onViewDriver(d.profileId!)}>
+                      View driver
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Vehicles tab — driver personal vehicles or company fleet pool
+function VehiclesTab({
+  driverId,
+  vehicles,
+  userId,
+  fleetCompanyName,
+}: {
+  driverId?: string;
+  vehicles: any[];
+  userId: string;
+  fleetCompanyName?: string;
+}) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -1022,8 +1367,9 @@ function VehiclesTab({ driverId, vehicles, userId }: { driverId: string; vehicle
     onSuccess: (data, vehicleId) => {
       // Invalidate admin queries
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users", userId] });
-      // Also invalidate any vehicle-specific queries that might be cached
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/companies"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/vehicles"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/compliance/pending"] });
       queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles"] });
       queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles", vehicleId, "compliance/status"] });
       toast({
@@ -1047,6 +1393,8 @@ function VehiclesTab({ driverId, vehicles, userId }: { driverId: string; vehicle
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users", userId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/companies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/compliance/pending"] });
       toast({
         title: "Success",
         description: "Vehicle rejected",
@@ -1087,7 +1435,9 @@ function VehiclesTab({ driverId, vehicles, userId }: { driverId: string; vehicle
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="font-semibold text-sm text-muted-foreground">Driver Vehicles</h3>
+        <h3 className="font-semibold text-sm text-muted-foreground">
+          {fleetCompanyName ? `Fleet vehicles — ${fleetCompanyName}` : "Driver vehicles"}
+        </h3>
         <Badge variant="secondary" data-testid="badge-vehicle-count">
           {vehicles.length} {vehicles.length === 1 ? 'Vehicle' : 'Vehicles'}
         </Badge>
@@ -1097,7 +1447,9 @@ function VehiclesTab({ driverId, vehicles, userId }: { driverId: string; vehicle
         <div className="text-center py-12 text-muted-foreground">
           <Truck className="h-12 w-12 mx-auto mb-3 opacity-50" />
           <p>No vehicles registered</p>
-          <p className="text-xs mt-1">Driver has not added any vehicles yet</p>
+          <p className="text-xs mt-1">
+            {fleetCompanyName ? "No fleet vehicles registered yet" : "Driver has not added any vehicles yet"}
+          </p>
         </div>
       ) : (
         <div className="grid gap-3">
@@ -1401,7 +1753,10 @@ function DocumentsTab({ userId, userRole }: { userId: string; userRole: string }
                     size="sm"
                     onClick={() => {
                       // Normalize the file path to work with /objects/ endpoint
-                      const fileUrl = normalizeFilePath(doc.file_path);
+                      const fileUrl = documentObjectUrl(doc.file_path, {
+                        title: doc.title,
+                        mime_type: doc.mime_type,
+                      });
                       if (fileUrl) {
                         window.open(fileUrl, "_blank");
                       } else {

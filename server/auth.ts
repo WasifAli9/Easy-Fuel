@@ -75,6 +75,20 @@ export async function registerSessionUser(input: {
   }
 
   const role = await getRoleByUserId(userId);
+
+  if (role && role !== "admin") {
+    try {
+      const { notifyAdminsUserRegistered } = await import("./admin-notify");
+      await notifyAdminsUserRegistered({
+        userId,
+        fullName: input.fullName,
+        role,
+      });
+    } catch (e) {
+      console.error("[registerSessionUser] admin notify:", e);
+    }
+  }
+
   return { id: userId, email, role } satisfies SessionUser;
 }
 

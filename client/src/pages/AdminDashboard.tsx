@@ -5,6 +5,7 @@ import { KYCDocumentCard } from "@/components/KYCDocumentCard";
 import { CustomerCard } from "@/components/CustomerCard";
 import { DriverCard } from "@/components/DriverCard";
 import { SupplierCard } from "@/components/SupplierCard";
+import { FleetCompanyCard } from "@/components/FleetCompanyCard";
 import { StatsCard } from "@/components/StatsCard";
 import { CreateUserDialog } from "@/components/CreateUserDialog";
 import { UserDetailsDialogEnhanced } from "@/components/UserDetailsDialogEnhanced";
@@ -14,7 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Users, Truck, TrendingUp, Building2, UserCheck, Search, Shield, FileText, CheckCircle2, XCircle, Eye, Activity, BarChart3, ArrowUpRight, Filter, Bell, DollarSign, Save, Edit2, MapPin, Menu, Settings as SettingsIcon, AlertTriangle } from "lucide-react";
+import { Users, Truck, TrendingUp, Building2, UserCheck, Search, Shield, FileText, CheckCircle2, XCircle, Eye, Activity, BarChart3, ArrowUpRight, Filter, Bell, DollarSign, Save, Edit2, MapPin, Menu, Settings as SettingsIcon, AlertTriangle, Landmark, UserCircle } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
@@ -107,6 +108,27 @@ interface Supplier {
     phone?: string;
     role: string;
     profile_photo_url?: string;
+  } | null;
+}
+
+interface FleetCompany {
+  id: string;
+  owner_user_id: string;
+  name: string;
+  status: string;
+  contact_email?: string | null;
+  contact_phone?: string | null;
+  created_at: string;
+  vehicle_count: number;
+  pending_vehicle_count: number;
+  profiles: {
+    id: string;
+    full_name: string;
+    email?: string;
+    phone?: string;
+    role: string;
+    profile_photo_url?: string;
+    approval_status?: string;
   } | null;
 }
 
@@ -542,13 +564,21 @@ export default function AdminDashboard() {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [userDialogOpen, setUserDialogOpen] = useState(false);
   const [userSearch, setUserSearch] = useState("");
-  const [userRoleFilter, setUserRoleFilter] = useState<"all" | "customer" | "driver" | "supplier">("all");
+  const [userRoleFilter, setUserRoleFilter] = useState<"all" | "customer" | "driver" | "supplier" | "company">("all");
   const [driverKycSearch, setDriverKycSearch] = useState("");
   const [supplierKycSearch, setSupplierKycSearch] = useState("");
   const [complianceSearch, setComplianceSearch] = useState("");
   const [selectedComplianceEntity, setSelectedComplianceEntity] = useState<{ type: "driver" | "supplier"; id: string } | null>(null);
   const [complianceDialogOpen, setComplianceDialogOpen] = useState(false);
-  type AdminTab = "activity" | "users" | "driver-kyc" | "supplier-kyc" | "compliance-review" | "settings";
+  type AdminTab =
+    | "activity"
+    | "users"
+    | "customers"
+    | "companies"
+    | "driver-kyc"
+    | "supplier-kyc"
+    | "compliance-review"
+    | "settings";
   const [activeTab, setActiveTab] = useState<AdminTab>("activity");
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -576,6 +606,11 @@ export default function AdminDashboard() {
     enabled: !!profile && profile.role === "admin", // Only fetch if admin is logged in
   });
 
+  const { data: allCompanies = [], isLoading: companiesLoading } = useQuery<FleetCompany[]>({
+    queryKey: ["/api/admin/companies"],
+    enabled: !!profile && profile.role === "admin",
+  });
+
   // Fetch pending compliance reviews
   const { data: pendingCompliance } = useQuery<any>({
     queryKey: ["/api/admin/compliance/pending"],
@@ -600,18 +635,27 @@ export default function AdminDashboard() {
     retry: false, // Don't retry on errors
   });
 
-  const adminNotifications = notifications.filter(
-    (n) => n.type === "admin_kyc_submitted" || n.type === "admin_document_uploaded",
-  );
+  const adminInboxTypes = new Set([
+    "admin_kyc_submitted",
+    "admin_document_uploaded",
+    "admin_vehicle_review_required",
+    "system_alert",
+  ]);
+
+  const adminNotifications = notifications.filter((n) => adminInboxTypes.has(n.type));
 
   // Handler for admin notification clicks
   const handleAdminNotificationClick = async (notification: any) => {
     try {
       let userId: string | null = null;
 
-      if (notification.type === "admin_kyc_submitted") {
-        // For KYC submissions, userId is directly in the data
+      if (
+        notification.type === "admin_kyc_submitted" ||
+        notification.type === "system_alert"
+      ) {
         userId = notification.data?.userId;
+      } else if (notification.type === "admin_vehicle_review_required") {
+        userId = notification.data?.userId ?? null;
       } else if (notification.type === "admin_document_uploaded") {
         // For document uploads, userId should now be in the data (after backend update)
         userId = notification.data?.userId;
@@ -667,7 +711,8 @@ export default function AdminDashboard() {
       message.type === "kyc_submitted" ||
       message.type === "kyc_approved" ||
       message.type === "kyc_rejected" ||
-      message.type === "compliance_document_uploaded"
+      message.type === "compliance_document_uploaded" ||
+      message.type === "notification"
     ) {
       console.log("[AdminDashboard] Invalidating compliance queues due to:", message.type);
       queryClient.invalidateQueries({ queryKey: ["/api/admin/kyc/pending"] });
@@ -682,6 +727,7 @@ export default function AdminDashboard() {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/customers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/drivers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/suppliers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/companies"] });
     }
   });
 
@@ -774,7 +820,8 @@ export default function AdminDashboard() {
   const driverKYC = pendingKYC?.drivers?.map(driver => ({
     id: driver.id,
     userId: driver.user_id,
-    applicantName: driver.profiles?.full_name || "Unknown Driver",
+    applicantName:
+      driver.profiles?.full_name || driver.profiles?.fullName || "Unknown Driver",
     applicantType: "driver" as const,
     documentType: driver.vehicle_registration || "Driver Application",
     submittedDate: new Date(driver.created_at).toLocaleString(),
@@ -807,7 +854,15 @@ export default function AdminDashboard() {
     rejectSupplierMutation.mutate(id);
   };
 
-  const handleView = (userId: string, type: string) => {
+  const handleView = (userId: string, _type?: string) => {
+    if (!userId) {
+      toast({
+        title: "Cannot open user",
+        description: "This account has no linked user id.",
+        variant: "destructive",
+      });
+      return;
+    }
     setSelectedUserId(userId);
     setUserDialogOpen(true);
   };
@@ -827,6 +882,18 @@ export default function AdminDashboard() {
     }
   });
   
+  allCompanies
+    ?.filter((c) => c.profiles?.role === "company")
+    .forEach((company) => {
+      const key = company.owner_user_id;
+      if (!key || usersMap.has(key)) return;
+      usersMap.set(key, {
+        ...company,
+        user_id: key,
+        userRole: "company" as const,
+      });
+    });
+
   // Add suppliers (only those with role === "supplier")
   allSuppliers?.filter(supplier => supplier.profiles?.role === "supplier").forEach(supplier => {
     const key = supplier.owner_id;
@@ -850,7 +917,7 @@ export default function AdminDashboard() {
   
   // Remove ghost/legacy rows that have no visible identity fields.
   const allUsers = Array.from(usersMap.values()).filter((u) =>
-    Boolean(u?.profiles?.full_name || u?.profiles?.email || u?.company_name || u?.name)
+    Boolean(u?.profiles?.full_name || u?.profiles?.email || u?.company_name || u?.name || u?.userRole === "company")
   );
 
   // Filter users based on search and role filter
@@ -883,6 +950,14 @@ export default function AdminDashboard() {
         user.profiles?.email?.toLowerCase().includes(searchLower) ||
         user.profiles?.phone?.toLowerCase().includes(searchLower)
       );
+    } else if (user.userRole === "company") {
+      return (
+        user.name?.toLowerCase().includes(searchLower) ||
+        user.profiles?.full_name?.toLowerCase().includes(searchLower) ||
+        user.profiles?.email?.toLowerCase().includes(searchLower) ||
+        user.contact_email?.toLowerCase().includes(searchLower) ||
+        user.profiles?.phone?.toLowerCase().includes(searchLower)
+      );
     }
     return false;
   });
@@ -907,7 +982,87 @@ export default function AdminDashboard() {
     supplier.applicantName.toLowerCase().includes(supplierKycSearch.toLowerCase())
   );
 
-  if (isLoading || customersLoading || driversLoading || suppliersLoading) {
+  const matchesComplianceQuery = (query: string, ...fields: (string | null | undefined)[]) => {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return fields.some((f) => (f ?? "").toLowerCase().includes(q));
+  };
+
+  const filteredComplianceDrivers =
+    pendingCompliance?.drivers?.filter((d: any) =>
+      matchesComplianceQuery(
+        complianceSearch,
+        d.display_name,
+        d.profiles?.full_name,
+        d.profiles?.fullName,
+        d.profiles?.email,
+        d.profiles?.phone,
+        d.id,
+      ),
+    ) ?? [];
+
+  const filteredComplianceSuppliers =
+    pendingCompliance?.suppliers?.filter((s: any) =>
+      matchesComplianceQuery(
+        complianceSearch,
+        s.display_name,
+        s.name,
+        s.profiles?.full_name,
+        s.profiles?.fullName,
+        s.profiles?.email,
+        s.registered_name,
+      ),
+    ) ?? [];
+
+  const filteredComplianceFleetVehicles =
+    pendingCompliance?.fleetVehicles?.filter((v: any) =>
+      matchesComplianceQuery(
+        complianceSearch,
+        v.display_name,
+        v.company_name,
+        v.registration_number,
+        v.profiles?.full_name,
+        v.profiles?.fullName,
+        v.make,
+        v.model,
+      ),
+    ) ?? [];
+
+  const compliancePendingTotal =
+    (pendingCompliance?.drivers?.length || 0) +
+    (pendingCompliance?.suppliers?.length || 0) +
+    (pendingCompliance?.fleetVehicles?.length || 0);
+
+  const complianceVisibleTotal =
+    filteredComplianceDrivers.length +
+    filteredComplianceSuppliers.length +
+    filteredComplianceFleetVehicles.length;
+
+  const customerUsers = allUsers.filter((u) => u.userRole === "customer");
+  const companyUsers = allUsers.filter((u) => u.userRole === "company");
+
+  const filteredCustomerTabUsers = customerUsers.filter((user) => {
+    const q = userSearch.toLowerCase();
+    return (
+      user.profiles?.full_name?.toLowerCase().includes(q) ||
+      user.company_name?.toLowerCase().includes(q) ||
+      user.profiles?.email?.toLowerCase().includes(q) ||
+      user.profiles?.phone?.toLowerCase().includes(q)
+    );
+  });
+
+  const filteredCompanyTabUsers = companyUsers.filter((user) => {
+    const q = userSearch.toLowerCase();
+    return (
+      user.name?.toLowerCase().includes(q) ||
+      user.profiles?.full_name?.toLowerCase().includes(q) ||
+      user.profiles?.email?.toLowerCase().includes(q) ||
+      user.contact_email?.toLowerCase().includes(q) ||
+      user.profiles?.phone?.toLowerCase().includes(q)
+    );
+  });
+
+  if (isLoading || customersLoading || driversLoading || suppliersLoading || companiesLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
@@ -921,9 +1076,15 @@ export default function AdminDashboard() {
   const navItems: { value: AdminTab; label: string; icon: typeof Activity }[] = [
     { value: "activity", label: "Activity", icon: Activity },
     { value: "users", label: `Users (${allUsers.length})`, icon: Users },
+    { value: "customers", label: `Customers (${customerUsers.length})`, icon: UserCircle },
+    { value: "companies", label: `Fleet companies (${companyUsers.length})`, icon: Landmark },
     { value: "driver-kyc", label: `Driver KYC (${driverKYC.length})`, icon: Truck },
     { value: "supplier-kyc", label: `Supplier KYC (${supplierKYC.length})`, icon: Building2 },
-    { value: "compliance-review", label: `Compliance Review (${pendingCompliance ? (pendingCompliance.drivers?.length || 0) + (pendingCompliance.suppliers?.length || 0) : 0})`, icon: Shield },
+    {
+      value: "compliance-review",
+      label: `Compliance Review (${compliancePendingTotal})`,
+      icon: Shield,
+    },
     { value: "settings", label: "Settings", icon: SettingsIcon },
   ];
 
@@ -1006,8 +1167,8 @@ export default function AdminDashboard() {
           />
           <StatsCard
             title="Total Pending"
-            value={driverKYC.length + supplierKYC.length}
-            description="All KYC/KYB reviews"
+            value={compliancePendingTotal}
+            description="Drivers, suppliers & fleet vehicles"
             icon={UserCheck}
           />
         </div>
@@ -1232,8 +1393,8 @@ export default function AdminDashboard() {
               </div>
               <div className="flex items-center gap-2">
                 <Filter className="h-4 w-4 text-muted-foreground" />
-                <Select value={userRoleFilter} onValueChange={(value: "all" | "customer" | "driver" | "supplier") => setUserRoleFilter(value)}>
-                  <SelectTrigger className="w-[180px]">
+                <Select value={userRoleFilter} onValueChange={(value: "all" | "customer" | "driver" | "supplier" | "company") => setUserRoleFilter(value)}>
+                  <SelectTrigger className="w-[200px]">
                     <SelectValue placeholder="Filter by role" />
                   </SelectTrigger>
                   <SelectContent>
@@ -1241,6 +1402,7 @@ export default function AdminDashboard() {
                     <SelectItem value="customer">Customers</SelectItem>
                     <SelectItem value="driver">Drivers</SelectItem>
                     <SelectItem value="supplier">Suppliers</SelectItem>
+                    <SelectItem value="company">Fleet companies</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -1310,11 +1472,111 @@ export default function AdminDashboard() {
                         onView={() => handleView(user.owner_id, "supplier")}
                       />
                     );
+                  } else if (user.userRole === "company") {
+                    return (
+                      <FleetCompanyCard
+                        key={user.id}
+                        id={user.id}
+                        companyName={user.name}
+                        ownerName={user.profiles?.full_name || "—"}
+                        email={user.profiles?.email || user.contact_email}
+                        phone={user.profiles?.phone || user.contact_phone}
+                        status={user.status || "active"}
+                        vehicleCount={user.vehicle_count ?? 0}
+                        pendingVehicleCount={user.pending_vehicle_count ?? 0}
+                        registeredDate={new Date(user.created_at).toLocaleDateString()}
+                        profilePhotoUrl={user.profiles?.profile_photo_url}
+                        onView={() => handleView(user.owner_user_id, "company")}
+                      />
+                    );
                   }
                   return null;
                 })}
               </div>
             )}
+            </div>
+          )}
+
+          {activeTab === "customers" && (
+            <div className="space-y-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search customers by name, email, or company..."
+                  className="pl-10"
+                  value={userSearch}
+                  onChange={(e) => setUserSearch(e.target.value)}
+                />
+              </div>
+              {customerUsers.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  <p>No customers registered yet</p>
+                </div>
+              ) : filteredCustomerTabUsers.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  <p>No customers match your search</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {filteredCustomerTabUsers.map((user) => (
+                    <CustomerCard
+                      key={user.id}
+                      id={user.id}
+                      name={user.profiles?.full_name || "N/A"}
+                      companyName={user.company_name}
+                      email={user.profiles?.email}
+                      vatNumber={user.vat_number}
+                      phone={user.profiles?.phone}
+                      registeredDate={new Date(user.created_at).toLocaleDateString()}
+                      profilePhotoUrl={user.profiles?.profile_photo_url}
+                      onView={() => handleView(user.user_id, "customer")}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === "companies" && (
+            <div className="space-y-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search fleet companies by name, email, or owner..."
+                  className="pl-10"
+                  value={userSearch}
+                  onChange={(e) => setUserSearch(e.target.value)}
+                />
+              </div>
+              {companyUsers.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  <p>No fleet companies registered yet</p>
+                  <p className="text-sm mt-2">Companies appear here when someone signs up with the fleet company role.</p>
+                </div>
+              ) : filteredCompanyTabUsers.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  <p>No companies match your search</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {filteredCompanyTabUsers.map((user) => (
+                    <FleetCompanyCard
+                      key={user.id}
+                      id={user.id}
+                      companyName={user.name}
+                      ownerName={user.profiles?.full_name || "—"}
+                      email={user.profiles?.email || user.contact_email}
+                      phone={user.profiles?.phone || user.contact_phone}
+                      status={user.status || "active"}
+                      vehicleCount={user.vehicle_count ?? 0}
+                      pendingVehicleCount={user.pending_vehicle_count ?? 0}
+                      registeredDate={new Date(user.created_at).toLocaleDateString()}
+                      profilePhotoUrl={user.profiles?.profile_photo_url}
+                      onView={() => handleView(user.owner_user_id, "company")}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -1402,18 +1664,24 @@ export default function AdminDashboard() {
               />
             </div>
 
+            {compliancePendingTotal > 0 && complianceVisibleTotal === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <p>No items match your search</p>
+              </div>
+            ) : null}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Pending Drivers */}
-              {pendingCompliance?.drivers
-                ?.filter((d: any) => 
-                  d.profiles?.full_name?.toLowerCase().includes(complianceSearch.toLowerCase())
-                )
-                .map((driver: any) => (
+              {filteredComplianceDrivers.map((driver: any) => (
                   <Card key={driver.id} className="relative">
                     <CardHeader>
                       <div className="flex items-start justify-between">
                         <div>
-                          <CardTitle className="text-lg">{driver.profiles?.full_name || "Unknown"}</CardTitle>
+                          <CardTitle className="text-lg">
+                            {driver.display_name ||
+                              driver.profiles?.full_name ||
+                              driver.profiles?.fullName ||
+                              "Unknown driver"}
+                          </CardTitle>
                           <CardDescription>Driver Compliance Review</CardDescription>
                         </div>
                         <Badge variant="secondary">
@@ -1471,18 +1739,19 @@ export default function AdminDashboard() {
                   </Card>
                 ))}
 
-              {/* Pending Suppliers */}
-              {pendingCompliance?.suppliers
-                ?.filter((s: any) => 
-                  s.name?.toLowerCase().includes(complianceSearch.toLowerCase()) ||
-                  s.profiles?.full_name?.toLowerCase().includes(complianceSearch.toLowerCase())
-                )
-                .map((supplier: any) => (
+              {filteredComplianceSuppliers.map((supplier: any) => (
                   <Card key={supplier.id} className="relative">
                     <CardHeader>
                       <div className="flex items-start justify-between">
                         <div>
-                          <CardTitle className="text-lg">{supplier.name || supplier.profiles?.full_name || "Unknown"}</CardTitle>
+                          <CardTitle className="text-lg">
+                            {supplier.display_name ||
+                              supplier.name ||
+                              supplier.registered_name ||
+                              supplier.profiles?.full_name ||
+                              supplier.profiles?.fullName ||
+                              "Unknown supplier"}
+                          </CardTitle>
                           <CardDescription>Supplier Compliance Review</CardDescription>
                         </div>
                         <Badge variant="secondary">
@@ -1539,10 +1808,79 @@ export default function AdminDashboard() {
                     </CardContent>
                   </Card>
                 ))}
+
+              {filteredComplianceFleetVehicles.map((vehicle: any) => (
+                  <Card key={vehicle.id} className="relative">
+                    <CardHeader>
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <CardTitle className="text-lg">
+                            {vehicle.registration_number || "Fleet vehicle"}
+                          </CardTitle>
+                          <CardDescription>
+                            {vehicle.company_name} — fleet vehicle review
+                          </CardDescription>
+                        </div>
+                        <Badge variant="secondary">
+                          {(vehicle.vehicle_status || "pending_compliance").replace(/_/g, " ")}
+                        </Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="text-sm space-y-1">
+                        <p>
+                          <span className="text-muted-foreground">Company owner:</span>{" "}
+                          {vehicle.profiles?.full_name ||
+                            vehicle.profiles?.fullName ||
+                            "—"}
+                        </p>
+                        <p>
+                          <span className="text-muted-foreground">Vehicle:</span>{" "}
+                          {[vehicle.make, vehicle.model].filter(Boolean).join(" ") || "—"}
+                          {vehicle.capacity_litres ? ` · ${vehicle.capacity_litres}L` : ""}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            if (vehicle.owner_user_id) {
+                              handleView(vehicle.owner_user_id, "company");
+                            }
+                          }}
+                        >
+                          <Eye className="h-4 w-4 mr-2" />
+                          View company
+                        </Button>
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={async () => {
+                            try {
+                              await apiRequest("POST", `/api/admin/vehicles/${vehicle.id}/approve`);
+                              queryClient.invalidateQueries({ queryKey: ["/api/admin/compliance/pending"] });
+                              queryClient.invalidateQueries({ queryKey: ["/api/admin/companies"] });
+                              toast({ title: "Approved", description: "Fleet vehicle approved." });
+                            } catch (error: any) {
+                              toast({
+                                title: "Error",
+                                description: error.message || "Failed to approve vehicle",
+                                variant: "destructive",
+                              });
+                            }
+                          }}
+                        >
+                          <CheckCircle2 className="h-4 w-4 mr-2" />
+                          Approve vehicle
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
             </div>
 
-            {(!pendingCompliance || 
-              ((pendingCompliance.drivers?.length || 0) + (pendingCompliance.suppliers?.length || 0) === 0)) && (
+            {compliancePendingTotal === 0 && (
               <div className="text-center py-12 text-muted-foreground">
                 <Shield className="h-12 w-12 mx-auto mb-3 opacity-50" />
                 <p>No pending compliance reviews</p>
@@ -1570,7 +1908,11 @@ export default function AdminDashboard() {
       <UserDetailsDialogEnhanced
         userId={selectedUserId}
         open={userDialogOpen}
-        onOpenChange={setUserDialogOpen}
+        onOpenChange={(open) => {
+          setUserDialogOpen(open);
+          if (!open) setSelectedUserId(null);
+        }}
+        onNavigateToUser={(id) => setSelectedUserId(id)}
       />
 
       {/* Compliance Review Dialog */}

@@ -5,19 +5,10 @@ import fs from "fs/promises";
 import path from "path";
 import type { Response } from "express";
 import jwt from "jsonwebtoken";
+import { extensionToMime, setFileResponseHeaders } from "./file-response-utils";
 import { objectPathToAbsolute } from "./local-object-storage";
 
 const SECRET = process.env.JWT_ACCESS_SECRET || "dev_access_secret_change_me";
-
-const MIME: Record<string, string> = {
-  ".pdf": "application/pdf",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".png": "image/png",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".txt": "text/plain",
-};
 
 export function normalizeToObjectPath(raw: string): string {
   const s = String(raw ?? "").trim();
@@ -50,12 +41,21 @@ export function readObjectViewToken(token: string | undefined): string | null {
   }
 }
 
-export async function streamLocalObjectToResponse(res: Response, objectPath: string): Promise<void> {
+export async function streamLocalObjectToResponse(
+  res: Response,
+  objectPath: string,
+  opts?: { filename?: string; mimeType?: string; inline?: boolean },
+): Promise<void> {
   const abs = objectPathToAbsolute(objectPath);
   const buf = await fs.readFile(abs);
   const ext = path.extname(abs).toLowerCase();
-  res.setHeader("Content-Type", MIME[ext] || "application/octet-stream");
-  res.setHeader("Content-Length", String(buf.length));
-  res.setHeader("Cache-Control", "private, no-store");
+  const mimeType = opts?.mimeType || extensionToMime(ext) || "application/octet-stream";
+  setFileResponseHeaders(res, {
+    filename: opts?.filename,
+    mimeType,
+    inline: opts?.inline ?? true,
+    size: buf.length,
+    cacheControl: "private, no-store",
+  });
   res.send(buf);
 }
