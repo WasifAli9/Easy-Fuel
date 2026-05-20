@@ -19,6 +19,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
 import type { Vehicle } from "@shared/schema";
 import { DriverFleetCompanySettings } from "@/components/DriverFleetCompanySettings";
+import { DriverActiveVehicleSelector } from "@/components/DriverActiveVehicleSelector";
 import { NativeFormDatePicker, dateValueToYmd } from "@/components/FormDatePicker";
 
 export function DriverVehicleManager() {
@@ -36,7 +37,7 @@ export function DriverVehicleManager() {
   });
 
   const { data: membership } = useQuery<{
-    mode: "independent" | "company";
+    canUseCompanyFleet?: boolean;
     companyId: string | null;
     companyName: string | null;
     isDisabledByCompany: boolean;
@@ -45,10 +46,7 @@ export function DriverVehicleManager() {
     retry: false,
   });
 
-  const linkedToCompany =
-    membership?.mode === "company" &&
-    !!membership?.companyId &&
-    !membership?.isDisabledByCompany;
+  const linkedToCompany = membership?.canUseCompanyFleet === true;
 
   const { data: availableCompanyVehicles = [], isLoading: availablePoolLoading } = useQuery<Vehicle[]>({
     queryKey: ["/api/driver/company-fleet/available-vehicles"],
@@ -347,6 +345,7 @@ export function DriverVehicleManager() {
 
   return (
     <>
+      <DriverActiveVehicleSelector />
       <DriverFleetCompanySettings />
       {isLoading ? (
         <Card>

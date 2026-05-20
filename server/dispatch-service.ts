@@ -1,4 +1,4 @@
-import { db } from "./db";
+import { db, pool } from "./db";
 import { calculateDistance, milesToKm } from "./utils/distance";
 import { websocketService } from "./websocket";
 import { offerNotifications } from "./notification-helpers";
@@ -233,6 +233,57 @@ export async function createDispatchOffers({
     }
     if (driversWithSub.length === 0) {
       console.log(`[createDispatchOffers] Order ${orderId}: No drivers left after company disable filter`);
+      return 0;
+    }
+
+    // Require active vehicle selected and valid for independent vs fleet context
+    const driverIdsForActive = driversWithSub.map((d: any) => d.id);
+    const activeRows = await pool.query(
+      `SELECT d.id AS driver_id, d.active_vehicle_id,
+              v.capacity_litres AS vehicle_capacity_litres, v.company_id AS vehicle_company_id,
+              v.vehicle_status,
+              COALESCE(m.membership_status::text, 'none') AS membership_status,
+              COALESCE(m.work_independent, true) AS work_independent,
+              m.company_id AS mem_company_id
+       FROM drivers d
+       LEFT JOIN vehicles v ON v.id = d.active_vehicle_id
+       LEFT JOIN driver_company_memberships m ON m.driver_id = d.id
+       WHERE d.id = ANY($1::uuid[])`,
+      [driverIdsForActive],
+    );
+    const activeByDriver = new Map(activeRows.rows.map((r: any) => [r.driver_id, r]));
+    const beforeActive = driversWithSub.length;
+    driversWithSub = driversWithSub.filter((driver: any) => {
+      const a = activeByDriver.get(driver.id);
+      if (!a?.active_vehicle_id) {
+        console.log(`[createDispatchOffers] Driver ${driver.id} filtered: no active vehicle`);
+        return false;
+      }
+      if (a.vehicle_status && a.vehicle_status !== "active") {
+        console.log(`[createDispatchOffers] Driver ${driver.id} filtered: active vehicle not active`);
+        return false;
+      }
+      if (a.vehicle_company_id) {
+        if (a.membership_status !== "approved" || a.vehicle_company_id !== a.mem_company_id) {
+          console.log(`[createDispatchOffers] Driver ${driver.id} filtered: company vehicle without approved membership`);
+          return false;
+        }
+      } else if (!a.work_independent) {
+        console.log(`[createDispatchOffers] Driver ${driver.id} filtered: personal vehicle but independent work off`);
+        return false;
+      }
+      if (a.vehicle_capacity_litres) {
+        driver.vehicle_capacity_litres = Number(a.vehicle_capacity_litres);
+      }
+      return true;
+    });
+    if (beforeActive > driversWithSub.length) {
+      console.log(
+        `[createDispatchOffers] Order ${orderId}: Excluded ${beforeActive - driversWithSub.length} driver(s) without valid active vehicle`,
+      );
+    }
+    if (driversWithSub.length === 0) {
+      console.log(`[createDispatchOffers] Order ${orderId}: No drivers left after active vehicle filter`);
       return 0;
     }
 

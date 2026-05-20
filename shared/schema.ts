@@ -84,6 +84,12 @@ export const documentTypeEnum = pgEnum("document_type", [
 ]);
 export const driverTypeEnum = pgEnum("driver_type", ["individual", "company_driver"]);
 export const driverStatusEnum = pgEnum("driver_status", ["pending_compliance", "active", "suspended", "rejected"]);
+export const fleetMembershipStatusEnum = pgEnum("fleet_membership_status", [
+  "none",
+  "pending",
+  "approved",
+  "rejected",
+]);
 export const idTypeEnum = pgEnum("id_type", ["SA_ID", "Passport"]);
 export const vehicleStatusEnum = pgEnum("vehicle_status", ["pending_compliance", "active", "suspended", "rejected"]);
 export const supplierStatusEnum = pgEnum("supplier_status", ["pending_compliance", "active", "suspended", "rejected"]);
@@ -174,6 +180,11 @@ export const notificationTypeEnum = pgEnum("notification_type", [
   "supplier_payment_received",
   "supplier_signature_required",
   "supplier_order_completed",
+
+  // Fleet company membership
+  "fleet_join_application",
+  "fleet_join_approved",
+  "fleet_join_rejected",
 
   // Admin / compliance inbox
   "admin_document_uploaded",
@@ -441,6 +452,7 @@ export const drivers = pgTable("drivers", {
   verifiedWithCipc: boolean("verified_with_cipc").notNull().default(false),
   vehicleRegistration: text("vehicle_registration"),
   vehicleCapacityLitres: integer("vehicle_capacity_litres"),
+  activeVehicleId: uuid("active_vehicle_id").references(() => vehicles.id, { onDelete: "set null" }),
   insuranceDocUrl: text("insurance_doc_url"),
   premiumStatus: text("premium_status").default("inactive"),
   subscriptionTier: text("subscription_tier"), // starter | professional | premium, synced from active driver_subscriptions
@@ -492,6 +504,12 @@ export const driverCompanyMemberships = pgTable("driver_company_memberships", {
   id: uuid("id").primaryKey().defaultRandom(),
   driverId: uuid("driver_id").notNull().references(() => drivers.id, { onDelete: "cascade" }).unique(),
   companyId: uuid("company_id").references(() => companies.id, { onDelete: "set null" }),
+  membershipStatus: fleetMembershipStatusEnum("membership_status").notNull().default("none"),
+  workIndependent: boolean("work_independent").notNull().default(true),
+  appliedAt: timestamp("applied_at"),
+  reviewedAt: timestamp("reviewed_at"),
+  reviewedBy: uuid("reviewed_by").references(() => profiles.id, { onDelete: "set null" }),
+  rejectionReason: text("rejection_reason"),
   isDisabledByCompany: boolean("is_disabled_by_company").notNull().default(false),
   disabledReason: text("disabled_reason"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -683,6 +701,8 @@ export const orders = pgTable("orders", {
   selectedDepotId: uuid("selected_depot_id").references(() => depots.id),
   state: orderStateEnum("state").notNull().default("created"),
   assignedDriverId: uuid("assigned_driver_id").references(() => drivers.id),
+  fleetCompanyId: uuid("fleet_company_id").references(() => companies.id, { onDelete: "set null" }),
+  vehicleId: uuid("vehicle_id").references(() => vehicles.id, { onDelete: "set null" }),
   confirmedDeliveryTime: timestamp("confirmed_delivery_time"),
   paidAt: timestamp("paid_at"),
   deliveredAt: timestamp("delivered_at"),

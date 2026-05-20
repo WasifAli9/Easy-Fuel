@@ -603,6 +603,104 @@ function adminReviewPortalUrl(): string {
   return `${base}/admin`;
 }
 
+function companyDashboardUrl(): string {
+  const base = (process.env.PUBLIC_APP_URL || "").trim().replace(/\/+$/, "");
+  if (!base) return "";
+  return `${base}/company`;
+}
+
+export interface FleetJoinApplicationEmailParams {
+  companyEmail: string;
+  companyName: string;
+  driverName: string;
+  driverPhone?: string | null;
+  driverEmail?: string | null;
+  driverAddress: string;
+  driverLicenseNumber?: string | null;
+}
+
+/**
+ * Email the fleet company when a driver applies to join.
+ */
+export async function sendFleetJoinApplicationEmail(params: FleetJoinApplicationEmailParams): Promise<void> {
+  try {
+    const resolved = resolveResend();
+    if (!resolved) {
+      console.warn("RESEND_API_KEY not set; skipping fleet join application email");
+      return;
+    }
+
+    const portalUrl = companyDashboardUrl();
+    const ctaBlock = portalUrl
+      ? `<p style="margin:24px 0;"><a class="button" href="${escapeHtml(portalUrl)}">Review application</a></p>
+         <p style="font-size:14px;color:#64748b;">Open your company dashboard → Applications tab to approve or reject.</p>`
+      : "<p><strong>Sign in to your Easy Fuel company dashboard</strong> and open the Applications tab to review this request.</p>";
+
+    const detailRows = [
+      { label: "Name", value: params.driverName },
+      { label: "Address", value: params.driverAddress.replace(/\n/g, ", ") },
+      {
+        label: "Driver's licence number",
+        value: params.driverLicenseNumber?.trim() || "Not provided",
+      },
+      { label: "Phone", value: params.driverPhone?.trim() || "Not provided" },
+      { label: "Email", value: params.driverEmail?.trim() || "Not provided" },
+    ];
+
+    const detailHtml = detailRows
+      .map(
+        (r) =>
+          `<div class="info-row"><span class="label">${escapeHtml(r.label)}:</span><span>${escapeHtml(r.value)}</span></div>`,
+      )
+      .join("");
+
+    const { client, fromEmail } = resolved;
+    const { error } = await client.emails.send({
+      from: fromEmail,
+      to: [params.companyEmail],
+      subject: `[Easy Fuel] New driver application — ${params.driverName}`,
+      html: `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <style>
+              body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background: linear-gradient(135deg, #1fbfb8 0%, #0e6763 100%); color: #fff; padding: 28px 20px; border-radius: 8px 8px 0 0; text-align: center; }
+              .content { background: #fff; padding: 28px; border: 1px solid #e2e8f0; border-top: none; }
+              .info-row { margin: 12px 0; padding: 10px 12px; background: #f8fafc; border-radius: 6px; }
+              .label { font-weight: 600; color: #0e6763; display: inline-block; min-width: 160px; vertical-align: top; }
+              .footer { background: #f1f5f9; padding: 16px; border-radius: 0 0 8px 8px; text-align: center; font-size: 13px; color: #64748b; }
+              .button { display: inline-block; background: #0e6763; color: #fff !important; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1 style="margin:0;font-size:22px;">New driver application</h1>
+              <p style="margin:10px 0 0;font-size:15px;opacity:.95;">${escapeHtml(params.companyName)}</p>
+            </div>
+            <div class="content">
+              <p>Hello,</p>
+              <p><strong>${escapeHtml(params.driverName)}</strong> has applied to join your fleet on Easy Fuel. Please review their details below.</p>
+              ${detailHtml}
+              ${ctaBlock}
+              <p style="margin-top:20px;font-size:14px;color:#64748b;">This is an automated message from Easy Fuel ZA.</p>
+            </div>
+            <div class="footer"><strong>Easy Fuel ZA</strong> — Fleet notifications</div>
+          </body>
+        </html>
+      `,
+    });
+
+    if (error) {
+      console.error("[sendFleetJoinApplicationEmail] Resend error:", error);
+    }
+  } catch (e) {
+    console.error("[sendFleetJoinApplicationEmail]", e);
+  }
+}
+
 export type AdminComplianceEmailKind = "kyc_submitted" | "document_uploaded" | "vehicle_pending";
 
 export interface AdminComplianceReviewEmailParams {

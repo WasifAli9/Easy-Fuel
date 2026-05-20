@@ -536,11 +536,29 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
     const serviceFee = Number(order.serviceFeeCents) || 0;
     const totalCents = fuelCostCents + deliveryFeeCents + serviceFee;
 
+    const { pool } = await import("./db");
+    const activeRes = await pool.query(
+      `SELECT d.active_vehicle_id, v.company_id AS fleet_company_id
+       FROM drivers d
+       LEFT JOIN vehicles v ON v.id = d.active_vehicle_id
+       WHERE d.id = $1 LIMIT 1`,
+      [offer.driverId],
+    );
+    const activeVehicleId = activeRes.rows[0]?.active_vehicle_id;
+    if (!activeVehicleId) {
+      return res.status(400).json({
+        error: "This driver is not available for jobs (no active vehicle selected). Choose another offer.",
+      });
+    }
+    const fleetCompanyId = activeRes.rows[0]?.fleet_company_id ?? null;
+
     const updatedOrderRows = await db
       .update(orders)
       .set({
         state: "assigned",
         assignedDriverId: offer.driverId,
+        vehicleId: activeVehicleId,
+        fleetCompanyId: fleetCompanyId,
         confirmedDeliveryTime: offer.proposedDeliveryTime,
         fuelPriceCents: fuelPricePerLiterCents,
         deliveryFeeCents: deliveryFeeCents,

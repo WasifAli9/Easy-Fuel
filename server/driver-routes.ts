@@ -21,6 +21,19 @@ import { getOpenDispatchOfferExpiry, notifyCustomersDriverPricingChanged } from 
 import { z } from "zod";
 import dotenv from "dotenv";
 import { normalizeSignatureForStorage, uploadUrlToObjectPath } from "./local-object-storage";
+import {
+  buildMembershipApiResponse,
+  canUseCompanyFleet,
+  ensureMembershipRow,
+  getActiveVehicleForDriver,
+  getCompanyNotifyEmail,
+  getCompanyOwnerUserId,
+  getDriverFleetApplicationEmailDetails,
+  getDriverUserId,
+  getMembershipForDriver,
+  releaseCompanyVehiclesForDriver,
+  validateVehicleForActiveJob,
+} from "./fleet-membership-service";
 dotenv.config();
 
 const router = Router();
@@ -1899,20 +1912,15 @@ router.get("/company-fleet/available-vehicles", async (req, res) => {
     if (dErr) throw dErr;
     if (!driver) return res.status(404).json({ error: "Driver profile not found" });
 
-    const { data: mem, error: mErr } = await drizzleAdmin
-      .from("driver_company_memberships")
-      .select("company_id, is_disabled_by_company")
-      .eq("driver_id", driver.id)
-      .maybeSingle();
-    if (mErr) throw mErr;
-    if (!mem?.company_id || mem.is_disabled_by_company) {
+    const mem = await getMembershipForDriver(driver.id);
+    if (!canUseCompanyFleet(mem)) {
       return res.json([]);
     }
 
     const { data: pool, error: pErr } = await drizzleAdmin
       .from("vehicles")
       .select("*")
-      .eq("company_id", mem.company_id)
+      .eq("company_id", mem!.company_id)
       .is("driver_id", null)
       .order("registration_number", { ascending: true });
     if (pErr) throw pErr;
@@ -1939,17 +1947,13 @@ router.post("/vehicles/:vehicleId/claim-company-vehicle", async (req, res) => {
     if (dErr) throw dErr;
     if (!driver) return res.status(404).json({ error: "Driver profile not found" });
 
-    const { data: mem, error: mErr } = await drizzleAdmin
-      .from("driver_company_memberships")
-      .select("company_id, is_disabled_by_company")
-      .eq("driver_id", driver.id)
-      .maybeSingle();
-    if (mErr) throw mErr;
-    if (!mem?.company_id) {
-      return res.status(403).json({ error: "You are not linked to a fleet company" });
-    }
-    if (mem.is_disabled_by_company) {
-      return res.status(403).json({ error: "Your fleet company has disabled your access" });
+    const mem = await getMembershipForDriver(driver.id);
+    if (!canUseCompanyFleet(mem)) {
+      return res.status(403).json({
+        error: mem?.membership_status === "pending"
+          ? "Your fleet company application is still pending approval"
+          : "You must be approved by a fleet company to claim fleet vehicles",
+      });
     }
 
     const { data: vehicle, error: vErr } = await drizzleAdmin
@@ -1961,7 +1965,7 @@ router.post("/vehicles/:vehicleId/claim-company-vehicle", async (req, res) => {
     if (!vehicle?.company_id) {
       return res.status(400).json({ error: "Not a company fleet vehicle" });
     }
-    if (vehicle.company_id !== mem.company_id) {
+    if (vehicle.company_id !== mem!.company_id) {
       return res.status(403).json({ error: "This vehicle belongs to another company" });
     }
     if (vehicle.driver_id != null) {
@@ -5329,7 +5333,7 @@ router.get("/vehicles/:vehicleId/compliance/status", async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-// GET /api/driver/company-membership — current fleet company link (if any)
+// GET /api/driver/company-membership — fleet preferences + application status
 router.get("/company-membership", async (req, res) => {
   const user = (req as any).user;
   try {
@@ -5340,119 +5344,223 @@ router.get("/company-membership", async (req, res) => {
       .maybeSingle();
     if (dErr) return res.status(500).json({ error: dErr.message });
     if (!driver) return res.status(404).json({ error: "Driver not found" });
-
-    const { data: row, error: mErr } = await drizzleAdmin
-      .from("driver_company_memberships")
-      .select("company_id, is_disabled_by_company, disabled_reason, updated_at")
-      .eq("driver_id", driver.id)
-      .maybeSingle();
-    if (mErr) return res.status(500).json({ error: mErr.message });
-
-    if (!row || !row.company_id) {
-      return res.json({
-        mode: "independent" as const,
-        companyId: null,
-        companyName: null,
-        isDisabledByCompany: false,
-        disabledReason: null,
-        updatedAt: row?.updated_at ?? null,
-      });
-    }
-
-    const { data: comp } = await drizzleAdmin
-      .from("companies")
-      .select("id, name")
-      .eq("id", row.company_id)
-      .maybeSingle();
-
-    return res.json({
-      mode: "company" as const,
-      companyId: row.company_id,
-      companyName: comp?.name ?? null,
-      isDisabledByCompany: row.is_disabled_by_company,
-      disabledReason: row.disabled_reason,
-      updatedAt: row.updated_at,
-    });
+    return res.json(await buildMembershipApiResponse(driver.id));
   } catch (e: any) {
     console.error("GET /driver/company-membership:", e);
     res.status(500).json({ error: e.message });
   }
 });
 
-const companyMembershipPutSchema = z.object({
-  companyId: z.string().uuid().nullable(),
+const workIndependentSchema = z.object({
+  workIndependent: z.boolean(),
 });
 
-// PUT /api/driver/company-membership — work independently or under one company
-router.put("/company-membership", async (req, res) => {
+router.put("/company-membership/preferences", async (req, res) => {
   const user = (req as any).user;
-  const parsed = companyMembershipPutSchema.safeParse(req.body);
+  const parsed = workIndependentSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
   }
-
   try {
-    const { data: driver, error: dErr } = await drizzleAdmin
-      .from("drivers")
-      .select("id")
-      .eq("user_id", user.id)
-      .maybeSingle();
-    if (dErr) return res.status(500).json({ error: dErr.message });
+    const { data: driver } = await drizzleAdmin.from("drivers").select("id").eq("user_id", user.id).maybeSingle();
+    if (!driver) return res.status(404).json({ error: "Driver not found" });
+    await ensureMembershipRow(driver.id);
+    const now = new Date();
+    if (!parsed.data.workIndependent) {
+      const active = await getActiveVehicleForDriver(driver.id);
+      if (active && !active.company_id) {
+        await pool.query(`UPDATE drivers SET active_vehicle_id = NULL, updated_at = $2 WHERE id = $1`, [
+          driver.id,
+          now,
+        ]);
+      }
+    }
+    await pool.query(
+      `UPDATE driver_company_memberships SET work_independent = $2, updated_at = $3 WHERE driver_id = $1`,
+      [driver.id, parsed.data.workIndependent, now],
+    );
+    return res.json(await buildMembershipApiResponse(driver.id));
+  } catch (e: any) {
+    console.error("PUT /driver/company-membership/preferences:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+const applyCompanySchema = z.object({
+  companyId: z.string().uuid(),
+});
+
+router.post("/company-membership/apply", async (req, res) => {
+  const user = (req as any).user;
+  const parsed = applyCompanySchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
+  }
+  try {
+    const { data: driver } = await drizzleAdmin.from("drivers").select("id").eq("user_id", user.id).maybeSingle();
     if (!driver) return res.status(404).json({ error: "Driver not found" });
 
-    const { companyId } = parsed.data;
-    const now = new Date();
-
-    if (companyId === null) {
-      // Switching to independent mode: release any company fleet vehicles currently assigned to this driver.
-      await pool.query(
-        `UPDATE vehicles
-         SET driver_id = NULL, updated_at = $2
-         WHERE driver_id = $1
-           AND company_id IS NOT NULL`,
-        [driver.id, now]
-      );
-
-      await pool.query(
-        `INSERT INTO driver_company_memberships
-           (driver_id, company_id, is_disabled_by_company, disabled_reason, updated_at)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (driver_id)
-         DO UPDATE SET
-           company_id = EXCLUDED.company_id,
-           is_disabled_by_company = EXCLUDED.is_disabled_by_company,
-           disabled_reason = EXCLUDED.disabled_reason,
-           updated_at = EXCLUDED.updated_at`,
-        [driver.id, null, false, null, now]
-      );
-      return res.json({ ok: true, mode: "independent" });
-    }
-
-    const { data: comp, error: cErr } = await drizzleAdmin
-      .from("companies")
-      .select("id, status")
-      .eq("id", companyId)
-      .maybeSingle();
-    if (cErr) return res.status(500).json({ error: cErr.message });
+    const compRes = await pool.query(`SELECT id, name, status, owner_user_id FROM companies WHERE id = $1 LIMIT 1`, [
+      parsed.data.companyId,
+    ]);
+    const comp = compRes.rows[0];
     if (!comp || comp.status !== "active") {
       return res.status(400).json({ error: "Company not found or not active" });
     }
 
+    const existing = await getMembershipForDriver(driver.id);
+    if (existing?.membership_status === "approved" && existing.company_id === parsed.data.companyId) {
+      return res.status(400).json({ error: "You are already approved for this company" });
+    }
+    if (existing?.membership_status === "pending" && existing.company_id) {
+      return res.status(400).json({ error: "You already have a pending application. Cancel it first to apply elsewhere." });
+    }
+
+    await ensureMembershipRow(driver.id);
     await pool.query(
-      `INSERT INTO driver_company_memberships
-         (driver_id, company_id, is_disabled_by_company, disabled_reason, updated_at)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (driver_id)
-       DO UPDATE SET
-         company_id = EXCLUDED.company_id,
-         is_disabled_by_company = EXCLUDED.is_disabled_by_company,
-         disabled_reason = EXCLUDED.disabled_reason,
-         updated_at = EXCLUDED.updated_at`,
-      [driver.id, companyId, false, null, now]
+      `UPDATE driver_company_memberships
+       SET company_id = $2, membership_status = 'pending', applied_at = NOW(),
+           reviewed_at = NULL, reviewed_by = NULL, rejection_reason = NULL,
+           is_disabled_by_company = false, disabled_reason = NULL, updated_at = NOW()
+       WHERE driver_id = $1`,
+      [driver.id, parsed.data.companyId],
     );
-    return res.json({ ok: true, mode: "company", companyId });
+
+    const driverDetails = await getDriverFleetApplicationEmailDetails(driver.id);
+    const driverName = driverDetails?.fullName || "Driver";
+    const { notificationService } = await import("./notification-service");
+    await notificationService.notifyFleetJoinApplication(
+      comp.owner_user_id,
+      driver.id,
+      comp.name,
+      driverName,
+    );
+
+    const companyEmail = await getCompanyNotifyEmail(parsed.data.companyId);
+    if (companyEmail && driverDetails) {
+      const { sendFleetJoinApplicationEmail } = await import("./email-service");
+      void sendFleetJoinApplicationEmail({
+        companyEmail,
+        companyName: comp.name,
+        driverName: driverDetails.fullName,
+        driverPhone: driverDetails.phone,
+        driverEmail: driverDetails.email,
+        driverAddress: driverDetails.address,
+        driverLicenseNumber: driverDetails.licenseNumber,
+      }).catch((err) => console.error("[fleet-apply] email failed:", err));
+    } else if (!companyEmail) {
+      console.warn("[fleet-apply] No company email for fleet application notification", parsed.data.companyId);
+    }
+
+    return res.json(await buildMembershipApiResponse(driver.id));
   } catch (e: any) {
-    console.error("PUT /driver/company-membership:", e);
+    console.error("POST /driver/company-membership/apply:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete("/company-membership/apply", async (req, res) => {
+  const user = (req as any).user;
+  try {
+    const { data: driver } = await drizzleAdmin.from("drivers").select("id").eq("user_id", user.id).maybeSingle();
+    if (!driver) return res.status(404).json({ error: "Driver not found" });
+    const mem = await getMembershipForDriver(driver.id);
+    if (mem?.membership_status !== "pending") {
+      return res.status(400).json({ error: "No pending application to cancel" });
+    }
+    await pool.query(
+      `UPDATE driver_company_memberships
+       SET company_id = NULL, membership_status = 'none', applied_at = NULL, updated_at = NOW()
+       WHERE driver_id = $1`,
+      [driver.id],
+    );
+    return res.json(await buildMembershipApiResponse(driver.id));
+  } catch (e: any) {
+    console.error("DELETE /driver/company-membership/apply:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/company-membership/leave", async (req, res) => {
+  const user = (req as any).user;
+  try {
+    const { data: driver } = await drizzleAdmin.from("drivers").select("id").eq("user_id", user.id).maybeSingle();
+    if (!driver) return res.status(404).json({ error: "Driver not found" });
+    const mem = await getMembershipForDriver(driver.id);
+    if (mem?.membership_status !== "approved" || !mem.company_id) {
+      return res.status(400).json({ error: "You are not an approved member of a fleet company" });
+    }
+    await releaseCompanyVehiclesForDriver(driver.id);
+    await pool.query(
+      `UPDATE driver_company_memberships
+       SET company_id = NULL, membership_status = 'none', applied_at = NULL, reviewed_at = NULL,
+           reviewed_by = NULL, rejection_reason = NULL, is_disabled_by_company = false, disabled_reason = NULL,
+           updated_at = NOW()
+       WHERE driver_id = $1`,
+      [driver.id],
+    );
+    return res.json(await buildMembershipApiResponse(driver.id));
+  } catch (e: any) {
+    console.error("POST /driver/company-membership/leave:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Deprecated: use apply + preferences endpoints
+router.put("/company-membership", async (_req, res) => {
+  return res.status(400).json({
+    error: "Direct company linking is disabled. Use POST /company-membership/apply and PUT /company-membership/preferences.",
+  });
+});
+
+const activeVehicleSchema = z.object({
+  vehicleId: z.string().uuid().nullable(),
+});
+
+router.get("/active-vehicle", async (req, res) => {
+  const user = (req as any).user;
+  try {
+    const { data: driver } = await drizzleAdmin.from("drivers").select("id").eq("user_id", user.id).maybeSingle();
+    if (!driver) return res.status(404).json({ error: "Driver not found" });
+    const vehicle = await getActiveVehicleForDriver(driver.id);
+    if (!vehicle) return res.json({ vehicleId: null, vehicle: null });
+    return res.json({
+      vehicleId: vehicle.id,
+      vehicle: vehicleToCamelCase(vehicle),
+    });
+  } catch (e: any) {
+    console.error("GET /driver/active-vehicle:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.put("/active-vehicle", async (req, res) => {
+  const user = (req as any).user;
+  const parsed = activeVehicleSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
+  }
+  try {
+    const { data: driver } = await drizzleAdmin.from("drivers").select("id").eq("user_id", user.id).maybeSingle();
+    if (!driver) return res.status(404).json({ error: "Driver not found" });
+    const now = new Date();
+    if (parsed.data.vehicleId === null) {
+      await pool.query(`UPDATE drivers SET active_vehicle_id = NULL, updated_at = $2 WHERE id = $1`, [driver.id, now]);
+      return res.json({ vehicleId: null, vehicle: null });
+    }
+    const check = await validateVehicleForActiveJob(driver.id, parsed.data.vehicleId);
+    if (!check.ok) return res.status(400).json({ error: check.error });
+    await pool.query(`UPDATE drivers SET active_vehicle_id = $2, updated_at = $3 WHERE id = $1`, [
+      driver.id,
+      parsed.data.vehicleId,
+      now,
+    ]);
+    return res.json({
+      vehicleId: parsed.data.vehicleId,
+      vehicle: vehicleToCamelCase(check.vehicle),
+    });
+  } catch (e: any) {
+    console.error("PUT /driver/active-vehicle:", e);
     res.status(500).json({ error: e.message });
   }
 });

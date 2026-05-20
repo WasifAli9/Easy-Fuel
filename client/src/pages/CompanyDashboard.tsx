@@ -64,7 +64,16 @@ import {
   YAxis,
 } from "recharts";
 
-type CompanyTab = "overview" | "drivers" | "vehicles" | "analytics";
+type CompanyTab = "overview" | "applications" | "drivers" | "vehicles" | "analytics";
+
+interface DriverApplicationRow {
+  driverId: string;
+  fullName: string | null;
+  phone: string | null;
+  status: string;
+  complianceStatus: string;
+  appliedAt: string | null;
+}
 
 interface CompanyVehicleRow {
   id: string;
@@ -120,6 +129,11 @@ export default function CompanyDashboard() {
 
   const { data: drivers = [], isLoading: driversLoading } = useQuery<CompanyDriverRow[]>({
     queryKey: ["/api/company/drivers"],
+    enabled: companyQueryEnabled,
+  });
+
+  const { data: applications = [], isLoading: applicationsLoading } = useQuery<DriverApplicationRow[]>({
+    queryKey: ["/api/company/driver-applications"],
     enabled: companyQueryEnabled,
   });
 
@@ -303,6 +317,30 @@ export default function CompanyDashboard() {
     onError: (e: any) => toast({ title: "Error", description: e?.message || "Failed", variant: "destructive" }),
   });
 
+  const approveApplicationMutation = useMutation({
+    mutationFn: async (driverId: string) => {
+      await apiRequest("POST", `/api/company/driver-applications/${driverId}/approve`, {});
+    },
+    onSuccess: () => {
+      toast({ title: "Driver approved" });
+      qc.invalidateQueries({ queryKey: ["/api/company/driver-applications"] });
+      qc.invalidateQueries({ queryKey: ["/api/company/drivers"] });
+      qc.invalidateQueries({ queryKey: ["/api/company/overview"] });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e?.message, variant: "destructive" }),
+  });
+
+  const rejectApplicationMutation = useMutation({
+    mutationFn: async ({ driverId, reason }: { driverId: string; reason?: string }) => {
+      await apiRequest("POST", `/api/company/driver-applications/${driverId}/reject`, { reason });
+    },
+    onSuccess: () => {
+      toast({ title: "Application rejected" });
+      qc.invalidateQueries({ queryKey: ["/api/company/driver-applications"] });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e?.message, variant: "destructive" }),
+  });
+
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <AppHeader showMenu onMenuClick={() => setSidebarOpen(true)} />
@@ -317,6 +355,14 @@ export default function CompanyDashboard() {
                 onClick={() => setTab("overview")}
               >
                 Overview
+              </DashboardNavButton>
+              <DashboardNavButton
+                active={tab === "applications"}
+                icon={UserCheck}
+                onClick={() => setTab("applications")}
+              >
+                Applications
+                {applications.length > 0 ? ` (${applications.length})` : ""}
               </DashboardNavButton>
               <DashboardNavButton active={tab === "drivers"} icon={Users} onClick={() => setTab("drivers")}>
                 Drivers
@@ -352,6 +398,17 @@ export default function CompanyDashboard() {
                     }}
                   >
                     Overview
+                  </DashboardNavButton>
+                  <DashboardNavButton
+                    active={tab === "applications"}
+                    icon={UserCheck}
+                    onClick={() => {
+                      setTab("applications");
+                      setSidebarOpen(false);
+                    }}
+                  >
+                    Applications
+                    {applications.length > 0 ? ` (${applications.length})` : ""}
                   </DashboardNavButton>
                   <DashboardNavButton
                     active={tab === "drivers"}
@@ -420,6 +477,12 @@ export default function CompanyDashboard() {
                   Overview
                 </TabsTrigger>
                 <TabsTrigger
+                  value="applications"
+                  className="rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-sm flex-1 min-w-[5.5rem]"
+                >
+                  Applications{applications.length > 0 ? ` (${applications.length})` : ""}
+                </TabsTrigger>
+                <TabsTrigger
                   value="drivers"
                   className="rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-sm flex-1 min-w-[5.5rem]"
                 >
@@ -477,17 +540,83 @@ export default function CompanyDashboard() {
             </Card>
           </TabsContent>
 
+          <TabsContent value="applications" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Driver applications</CardTitle>
+                <CardDescription>Review drivers who applied to join your fleet. Approve before they can claim company vehicles.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {applicationsLoading ? (
+                  <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
+                ) : applications.length === 0 ? (
+                  <p className="text-muted-foreground text-center py-8">No pending applications.</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Compliance</TableHead>
+                        <TableHead>Applied</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {applications.map((a) => (
+                        <TableRow key={a.driverId}>
+                          <TableCell>
+                            <div className="font-medium">{a.fullName || "—"}</div>
+                            <div className="text-xs text-muted-foreground">{a.phone || a.driverId.slice(0, 8)}</div>
+                          </TableCell>
+                          <TableCell>{a.complianceStatus}</TableCell>
+                          <TableCell>
+                            {a.appliedAt ? new Date(a.appliedAt).toLocaleString() : "—"}
+                          </TableCell>
+                          <TableCell className="text-right space-x-2">
+                            <Button
+                              size="sm"
+                              disabled={approveApplicationMutation.isPending}
+                              onClick={() => approveApplicationMutation.mutate(a.driverId)}
+                            >
+                              Approve
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={rejectApplicationMutation.isPending}
+                              onClick={() =>
+                                rejectApplicationMutation.mutate({
+                                  driverId: a.driverId,
+                                  reason: "Not accepted at this time",
+                                })
+                              }
+                            >
+                              Reject
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
           <TabsContent value="drivers" className="space-y-6">
             <Card>
               <CardHeader>
                 <CardTitle>Drivers</CardTitle>
-                <CardDescription>Enable or disable drivers for your fleet context. Disabling stops platform dispatch while they remain linked to you.</CardDescription>
+                <CardDescription>Approved drivers in your fleet. Disabling stops platform dispatch on company vehicles.</CardDescription>
               </CardHeader>
               <CardContent>
                 {driversLoading ? (
                   <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
                 ) : drivers.length === 0 ? (
-                  <p className="text-muted-foreground text-center py-8">No drivers have joined your company yet. Drivers can link from their profile.</p>
+                  <p className="text-muted-foreground text-center py-8">
+                    No approved drivers yet. Drivers apply from their vehicle settings; review applications in the
+                    Applications tab.
+                  </p>
                 ) : (
                   <Table>
                     <TableHeader>

@@ -4,7 +4,9 @@ import { vehicleToCamelCase, syncDriverVehicleCapacityLitres } from "./vehicle-u
 import { websocketService } from "./websocket";
 import { db } from "./db";
 import { companies, driverCompanyMemberships, drivers, orders, profiles, vehicles } from "@shared/schema";
-import { and, desc, eq, gte, inArray, isNotNull } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { pool } from "./db";
+import { getDriverUserId, releaseCompanyVehiclesForDriver } from "./fleet-membership-service";
 
 const router = Router();
 
@@ -74,12 +76,13 @@ async function requireCompany(req: any, res: any, next: any) {
 router.use(requireCompany);
 
 async function driverLinkedToCompany(driverId: string, companyId: string): Promise<boolean> {
-  const data = await db
-    .select({ id: driverCompanyMemberships.id })
-    .from(driverCompanyMemberships)
-    .where(and(eq(driverCompanyMemberships.companyId, companyId), eq(driverCompanyMemberships.driverId, driverId)))
-    .limit(1);
-  return !!data;
+  const r = await pool.query(
+    `SELECT id FROM driver_company_memberships
+     WHERE driver_id = $1 AND company_id = $2 AND membership_status = 'approved'
+     LIMIT 1`,
+    [driverId, companyId],
+  );
+  return !!r.rows[0];
 }
 
 /** Same driver universe as GET /drivers: memberships, legacy drivers.company_id, and assignees on company vehicles. */
@@ -454,16 +457,14 @@ router.get("/overview", async (req, res) => {
 router.get("/drivers", async (req, res) => {
   const companyId = (req as any).companyId as string;
   try {
-    const memberships = await db
-      .select({
-        driver_id: driverCompanyMemberships.driverId,
-        is_disabled_by_company: driverCompanyMemberships.isDisabledByCompany,
-        disabled_reason: driverCompanyMemberships.disabledReason,
-        updated_at: driverCompanyMemberships.updatedAt,
-      })
-      .from(driverCompanyMemberships)
-      .where(eq(driverCompanyMemberships.companyId, companyId));
-    const membershipRows = (memberships || []).filter((r: any) => r.driver_id);
+    const memRes = await pool.query(
+      `SELECT driver_id, is_disabled_by_company, disabled_reason, updated_at,
+              membership_status::text AS membership_status
+       FROM driver_company_memberships
+       WHERE company_id = $1 AND membership_status = 'approved'`,
+      [companyId],
+    );
+    const membershipRows = memRes.rows || [];
 
     // Backward compatibility: some environments still link drivers via drivers.company_id.
     // Merge those into the company driver list when no membership row exists yet.
@@ -577,22 +578,16 @@ router.post("/drivers/:driverId/disable", async (req, res) => {
   const parsed = disableBody.safeParse(req.body || {});
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const memRows = await db
-    .select({ id: driverCompanyMemberships.id })
-    .from(driverCompanyMemberships)
-    .where(and(eq(driverCompanyMemberships.companyId, companyId), eq(driverCompanyMemberships.driverId, driverId)))
-    .limit(1);
-  const mem = memRows[0];
-  if (!mem) return res.status(404).json({ error: "Driver is not linked to your company" });
+  if (!(await driverLinkedToCompany(driverId, companyId))) {
+    return res.status(404).json({ error: "Driver is not an approved member of your company" });
+  }
 
-  await db
-    .update(driverCompanyMemberships)
-    .set({
-      isDisabledByCompany: true,
-      disabledReason: parsed.data.reason ?? null,
-      updatedAt: new Date(),
-    })
-    .where(eq(driverCompanyMemberships.id, mem.id));
+  await pool.query(
+    `UPDATE driver_company_memberships
+     SET is_disabled_by_company = true, disabled_reason = $3, updated_at = $4
+     WHERE driver_id = $1 AND company_id = $2`,
+    [driverId, companyId, parsed.data.reason ?? null, new Date()],
+  );
   res.json({ ok: true });
 });
 
@@ -600,36 +595,139 @@ router.post("/drivers/:driverId/enable", async (req, res) => {
   const companyId = (req as any).companyId as string;
   const driverId = req.params.driverId;
 
-  const memRows = await db
-    .select({ id: driverCompanyMemberships.id })
-    .from(driverCompanyMemberships)
-    .where(and(eq(driverCompanyMemberships.companyId, companyId), eq(driverCompanyMemberships.driverId, driverId)))
-    .limit(1);
-  const mem = memRows[0];
-  if (!mem) return res.status(404).json({ error: "Driver is not linked to your company" });
+  if (!(await driverLinkedToCompany(driverId, companyId))) {
+    return res.status(404).json({ error: "Driver is not an approved member of your company" });
+  }
 
-  await db
-    .update(driverCompanyMemberships)
-    .set({
-      isDisabledByCompany: false,
-      disabledReason: null,
-      updatedAt: new Date(),
-    })
-    .where(eq(driverCompanyMemberships.id, mem.id));
+  await pool.query(
+    `UPDATE driver_company_memberships
+     SET is_disabled_by_company = false, disabled_reason = NULL, updated_at = $3
+     WHERE driver_id = $1 AND company_id = $2`,
+    [driverId, companyId, new Date()],
+  );
   res.json({ ok: true });
+});
+
+router.get("/driver-applications", async (req, res) => {
+  const companyId = (req as any).companyId as string;
+  try {
+    const rows = await pool.query(
+      `SELECT m.driver_id, m.applied_at, d.user_id, d.status, d.compliance_status
+       FROM driver_company_memberships m
+       JOIN drivers d ON d.id = m.driver_id
+       WHERE m.company_id = $1 AND m.membership_status = 'pending'
+       ORDER BY m.applied_at DESC NULLS LAST`,
+      [companyId],
+    );
+    const userIds = rows.rows.map((r: any) => r.user_id).filter(Boolean);
+    let profilesMap = new Map<string, any>();
+    if (userIds.length) {
+      const pRows = await db
+        .select({ id: profiles.id, fullName: profiles.fullName, phone: profiles.phone })
+        .from(profiles)
+        .where(inArray(profiles.id, userIds));
+      profilesMap = new Map(pRows.map((p) => [p.id, p]));
+    }
+    res.json(
+      rows.rows.map((r: any) => {
+        const prof = profilesMap.get(r.user_id);
+        return {
+          driverId: r.driver_id,
+          userId: r.user_id,
+          fullName: prof?.fullName ?? null,
+          phone: prof?.phone ?? null,
+          status: r.status,
+          complianceStatus: r.compliance_status,
+          appliedAt: r.applied_at,
+        };
+      }),
+    );
+  } catch (e: any) {
+    console.error("GET /company/driver-applications:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+const rejectApplicationBody = z.object({
+  reason: z.string().max(500).optional(),
+});
+
+router.post("/driver-applications/:driverId/approve", async (req, res) => {
+  const companyId = (req as any).companyId as string;
+  const company = (req as any).companyRecord;
+  const driverId = req.params.driverId;
+  const user = (req as any).user;
+  try {
+    const check = await pool.query(
+      `SELECT id FROM driver_company_memberships
+       WHERE driver_id = $1 AND company_id = $2 AND membership_status = 'pending'`,
+      [driverId, companyId],
+    );
+    if (!check.rows[0]) return res.status(404).json({ error: "No pending application found" });
+    await pool.query(
+      `UPDATE driver_company_memberships
+       SET membership_status = 'approved', reviewed_at = NOW(), reviewed_by = $3, rejection_reason = NULL, updated_at = NOW()
+       WHERE driver_id = $1 AND company_id = $2`,
+      [driverId, companyId, user.id],
+    );
+    const driverUserId = await getDriverUserId(driverId);
+    if (driverUserId) {
+      const { notificationService } = await import("./notification-service");
+      await notificationService.notifyFleetJoinApproved(driverUserId, company.name, companyId);
+      websocketService.sendToUser(driverUserId, { type: "fleet_join_approved", payload: { companyId } });
+    }
+    res.json({ ok: true });
+  } catch (e: any) {
+    console.error("POST approve application:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/driver-applications/:driverId/reject", async (req, res) => {
+  const companyId = (req as any).companyId as string;
+  const company = (req as any).companyRecord;
+  const driverId = req.params.driverId;
+  const user = (req as any).user;
+  const parsed = rejectApplicationBody.safeParse(req.body || {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  try {
+    const check = await pool.query(
+      `SELECT id FROM driver_company_memberships
+       WHERE driver_id = $1 AND company_id = $2 AND membership_status = 'pending'`,
+      [driverId, companyId],
+    );
+    if (!check.rows[0]) return res.status(404).json({ error: "No pending application found" });
+    await pool.query(
+      `UPDATE driver_company_memberships
+       SET membership_status = 'rejected', company_id = NULL, reviewed_at = NOW(), reviewed_by = $3,
+           rejection_reason = $4, updated_at = NOW()
+       WHERE driver_id = $1 AND company_id = $2`,
+      [driverId, companyId, user.id, parsed.data.reason ?? null],
+    );
+    const driverUserId = await getDriverUserId(driverId);
+    if (driverUserId) {
+      const { notificationService } = await import("./notification-service");
+      await notificationService.notifyFleetJoinRejected(
+        driverUserId,
+        company.name,
+        parsed.data.reason,
+      );
+    }
+    res.json({ ok: true });
+  } catch (e: any) {
+    console.error("POST reject application:", e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 router.get("/drivers/:driverId/orders", async (req, res) => {
   const companyId = (req as any).companyId as string;
   const driverId = req.params.driverId;
 
-  const memRows = await db
-    .select({ id: driverCompanyMemberships.id })
-    .from(driverCompanyMemberships)
-    .where(and(eq(driverCompanyMemberships.companyId, companyId), eq(driverCompanyMemberships.driverId, driverId)))
-    .limit(1);
-  const mem = memRows[0];
-  if (!mem) return res.status(404).json({ error: "Driver is not linked to your company" });
+  if (!(await driverLinkedToCompany(driverId, companyId))) {
+    return res.status(404).json({ error: "Driver is not an approved member of your company" });
+  }
 
   const orderRows = await db
     .select({
@@ -640,9 +738,16 @@ router.get("/drivers/:driverId/orders", async (req, res) => {
       created_at: orders.createdAt,
       delivered_at: orders.deliveredAt,
       paid_at: orders.paidAt,
+      fleet_company_id: orders.fleetCompanyId,
+      vehicle_id: orders.vehicleId,
     })
     .from(orders)
-    .where(eq(orders.assignedDriverId, driverId))
+    .where(
+      and(
+        eq(orders.assignedDriverId, driverId),
+        or(eq(orders.fleetCompanyId, companyId), isNull(orders.fleetCompanyId)),
+      ),
+    )
     .orderBy(desc(orders.createdAt))
     .limit(100);
   res.json(orderRows || []);

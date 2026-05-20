@@ -63,6 +63,9 @@ export type NotificationType =
   | "supplier_payment_received"
   | "supplier_signature_required"
   | "supplier_order_completed"
+  | "fleet_join_application"
+  | "fleet_join_approved"
+  | "fleet_join_rejected"
   // Admin notifications
   | "admin_document_uploaded"
   | "admin_kyc_submitted"
@@ -819,6 +822,45 @@ class NotificationService {
       message: `Order for ${litres}L of ${fuelType} from ${depotName} has been completed by ${driverName}. Receipt is ready.`,
       data: { orderId, depotName, fuelType, litres, driverName },
       priority: "high",
+    });
+  }
+
+  async notifyFleetJoinApplication(
+    companyOwnerUserId: string,
+    driverId: string,
+    companyName: string,
+    driverName: string,
+  ) {
+    return this.createAndSend({
+      userId: companyOwnerUserId,
+      type: "fleet_join_application",
+      title: "Driver application",
+      message: `${driverName} applied to join ${companyName}. Review and approve or reject in your company dashboard.`,
+      data: { driverId, companyName, driverName },
+      priority: "high",
+      requireInteraction: true,
+    });
+  }
+
+  async notifyFleetJoinApproved(driverUserId: string, companyName: string, companyId: string) {
+    return this.createAndSend({
+      userId: driverUserId,
+      type: "fleet_join_approved",
+      title: "Fleet application approved",
+      message: `You have been approved to work with ${companyName}. You can now claim company vehicles.`,
+      data: { companyId, companyName },
+      priority: "high",
+    });
+  }
+
+  async notifyFleetJoinRejected(driverUserId: string, companyName: string, reason?: string) {
+    return this.createAndSend({
+      userId: driverUserId,
+      type: "fleet_join_rejected",
+      title: "Fleet application declined",
+      message: `Your application to join ${companyName} was declined${reason ? `: ${reason}` : "."}`,
+      data: { companyName, reason },
+      priority: "medium",
     });
   }
 

@@ -9,8 +9,8 @@ import {
   Chip,
   Menu,
   Portal,
+  Checkbox,
   ProgressBar,
-  RadioButton,
   Text,
   TextInput,
 } from "react-native-paper";
@@ -76,11 +76,15 @@ type VehicleForm = {
 };
 
 type CompanyMembership = {
-  mode: "independent" | "company";
+  workIndependent: boolean;
+  membershipStatus: "none" | "pending" | "approved" | "rejected";
   companyId: string | null;
   companyName: string | null;
   isDisabledByCompany: boolean;
   disabledReason: string | null;
+  rejectionReason: string | null;
+  canUseCompanyFleet: boolean;
+  mode?: "independent" | "company";
 };
 
 type PublicCompany = {
@@ -119,7 +123,8 @@ export function DriverVehiclesScreen() {
   const [uploadingDocType, setUploadingDocType] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [form, setForm] = useState<VehicleForm>(emptyForm);
-  const [workMode, setWorkMode] = useState<"independent" | "company">("independent");
+  const [workIndependent, setWorkIndependent] = useState(true);
+  const [joinFleet, setJoinFleet] = useState(false);
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
   const [companyMenuVisible, setCompanyMenuVisible] = useState(false);
   const queryClient = useQueryClient();
@@ -132,14 +137,21 @@ export function DriverVehiclesScreen() {
 
   const companiesQuery = useQuery({
     queryKey: ["/api/companies/public-list"],
-    enabled: workMode === "company",
+    enabled: joinFleet,
     queryFn: async () => (await apiClient.get<PublicCompany[]>("/api/companies/public-list")).data ?? [],
   });
 
   const linkedToCompany = useMemo(() => {
     const m = membershipQuery.data;
-    return m?.mode === "company" && !!m?.companyId && !m?.isDisabledByCompany;
+    return !!m?.canUseCompanyFleet && !m?.isDisabledByCompany;
   }, [membershipQuery.data]);
+
+  const activeVehicleQuery = useQuery({
+    queryKey: ["/api/driver/active-vehicle"],
+    queryFn: async () =>
+      (await apiClient.get<{ vehicleId: string | null; vehicle: Vehicle | null }>("/api/driver/active-vehicle")).data,
+    refetchInterval: 10_000,
+  });
 
   const availablePoolQuery = useQuery({
     queryKey: ["/api/driver/company-fleet/available-vehicles"],
@@ -181,33 +193,86 @@ export function DriverVehiclesScreen() {
 
   useEffect(() => {
     if (!membershipQuery.data) return;
-    if (membershipQuery.data.mode === "company") {
-      setWorkMode("company");
-      setSelectedCompanyId(membershipQuery.data.companyId || "");
-    } else {
-      setWorkMode("independent");
-      setSelectedCompanyId("");
-    }
+    const m = membershipQuery.data;
+    setWorkIndependent(m.workIndependent ?? true);
+    setJoinFleet(
+      m.membershipStatus === "pending" || m.membershipStatus === "approved" || !!m.companyId,
+    );
+    setSelectedCompanyId(m.companyId || "");
   }, [membershipQuery.data]);
 
-  const saveMembershipMutation = useMutation({
+  const invalidateFleetQueries = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/company-membership"] }),
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles"] }),
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/company-fleet/available-vehicles"] }),
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/active-vehicle"] }),
+    ]);
+  };
+
+  const preferencesMutation = useMutation({
+    mutationFn: async (value: boolean) => {
+      await apiClient.put("/api/driver/company-membership/preferences", { workIndependent: value });
+    },
+    onSuccess: invalidateFleetQueries,
+    onError: (e: unknown) => {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error || (e as Error).message;
+      Alert.alert("Error", msg || "Could not save preferences.");
+    },
+  });
+
+  const applyMutation = useMutation({
     mutationFn: async () => {
-      const companyId = workMode === "company" ? selectedCompanyId || null : null;
-      if (workMode === "company" && !companyId) {
-        throw new Error("Select a fleet company.");
-      }
-      await apiClient.put("/api/driver/company-membership", { companyId });
+      if (!selectedCompanyId) throw new Error("Select a fleet company.");
+      await apiClient.post("/api/driver/company-membership/apply", { companyId: selectedCompanyId });
     },
     onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["/api/driver/company-membership"] }),
-        queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles"] }),
-        queryClient.invalidateQueries({ queryKey: ["/api/driver/company-fleet/available-vehicles"] }),
-      ]);
+      await invalidateFleetQueries();
+      Alert.alert("Application sent", "The company will review your request.");
     },
     onError: (e: unknown) => {
-      const msg = (e as Error).message || "Could not save fleet settings.";
-      Alert.alert("Error", msg);
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error || (e as Error).message;
+      Alert.alert("Error", msg || "Could not apply.");
+    },
+  });
+
+  const cancelApplyMutation = useMutation({
+    mutationFn: async () => {
+      await apiClient.delete("/api/driver/company-membership/apply");
+    },
+    onSuccess: async () => {
+      await invalidateFleetQueries();
+      Alert.alert("Cancelled", "Application withdrawn.");
+    },
+    onError: (e: unknown) => {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error || (e as Error).message;
+      Alert.alert("Error", msg || "Could not cancel.");
+    },
+  });
+
+  const leaveMutation = useMutation({
+    mutationFn: async () => {
+      await apiClient.post("/api/driver/company-membership/leave");
+    },
+    onSuccess: async () => {
+      setJoinFleet(false);
+      await invalidateFleetQueries();
+      Alert.alert("Left company", "Company vehicles have been released.");
+    },
+    onError: (e: unknown) => {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error || (e as Error).message;
+      Alert.alert("Error", msg || "Could not leave company.");
+    },
+  });
+
+  const setActiveVehicleMutation = useMutation({
+    mutationFn: async (vehicleId: string) => {
+      await apiClient.put("/api/driver/active-vehicle", { vehicleId });
+    },
+    onSuccess: invalidateFleetQueries,
+    onError: (e: unknown) => {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error || (e as Error).message;
+      Alert.alert("Error", msg || "Could not set active vehicle.");
     },
   });
 
@@ -353,6 +418,8 @@ export function DriverVehiclesScreen() {
   }, [selectedVehicle?.id, queryClient]);
 
   const vehicles = useMemo(() => vehiclesQuery.data ?? [], [vehiclesQuery.data]);
+  const activeVehicleId = activeVehicleQuery.data?.vehicleId ?? null;
+  const membershipStatus = membershipQuery.data?.membershipStatus ?? "none";
 
   const addVehicleInputCommon = {
     mode: "outlined" as const,
@@ -465,90 +532,199 @@ export function DriverVehiclesScreen() {
           <Card.Content>
             <Text variant="headlineSmall">Fleet company</Text>
             <Text style={styles.subtitle}>
-              Work independently or link your account to one fleet company.
+              Work independently and apply to a fleet company. The company must approve before you can use their
+              vehicles.
             </Text>
 
             {membershipQuery.data?.isDisabledByCompany ? (
               <Banner visible icon="alert-circle">
                 {membershipQuery.data.disabledReason ||
-                  "You are disabled by your fleet company. Switch to independent to continue receiving jobs."}
+                  "You are disabled by your fleet company. Use a personal vehicle for independent jobs if enabled."}
               </Banner>
             ) : null}
 
-            <RadioButton.Group onValueChange={(v) => setWorkMode(v as "independent" | "company")} value={workMode}>
-              <View style={styles.modeCard}>
-                <View style={styles.modeRow}>
-                  <RadioButton value="independent" />
-                  <View style={{ flex: 1 }}>
-                    <Text variant="titleSmall">Work independently</Text>
-                    <Text style={styles.meta}>Take platform jobs without a fleet company link.</Text>
-                  </View>
+            <View style={styles.modeCard}>
+              <View style={styles.modeRow}>
+                <Checkbox
+                  status={workIndependent ? "checked" : "unchecked"}
+                  onPress={() => {
+                    const next = !workIndependent;
+                    setWorkIndependent(next);
+                    preferencesMutation.mutate(next);
+                  }}
+                  disabled={preferencesMutation.isPending}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text variant="titleSmall">Work independently</Text>
+                  <Text style={styles.meta}>
+                    Receive customer offers when your active vehicle is your personal vehicle.
+                  </Text>
                 </View>
               </View>
+            </View>
 
-              <View style={styles.modeCard}>
-                <View style={styles.modeRow}>
-                  <RadioButton value="company" />
-                  <View style={{ flex: 1 }}>
-                    <Text variant="titleSmall">Work under a fleet company</Text>
+            <View style={styles.modeCard}>
+              <View style={styles.modeRow}>
+                <Checkbox
+                  status={joinFleet ? "checked" : "unchecked"}
+                  onPress={() => setJoinFleet((v) => !v)}
+                  disabled={membershipStatus === "approved"}
+                />
+                <View style={{ flex: 1 }}>
+                  <View style={styles.fleetTitleRow}>
+                    <Text variant="titleSmall">Join a fleet company</Text>
+                    {membershipStatus === "pending" ? (
+                      <Chip compact>Pending</Chip>
+                    ) : membershipStatus === "approved" ? (
+                      <Chip compact style={styles.approvedChip}>
+                        Approved
+                      </Chip>
+                    ) : membershipStatus === "rejected" ? (
+                      <Chip compact style={styles.rejectedChip}>
+                        Rejected
+                      </Chip>
+                    ) : null}
+                  </View>
+                  <Text style={styles.meta}>
+                    After approval, claim company vehicles. Jobs in a company vehicle count as company orders.
+                  </Text>
+                  {membershipStatus === "approved" && membershipQuery.data?.companyName ? (
                     <Text style={styles.meta}>
-                      Link your account to one company. They can view your deliveries and control fleet access.
+                      Linked to: <Text style={styles.linkedCompany}>{membershipQuery.data.companyName}</Text>
                     </Text>
-                  </View>
+                  ) : null}
+                  {membershipStatus === "rejected" && membershipQuery.data?.rejectionReason ? (
+                    <Text style={styles.rejectionText}>{membershipQuery.data.rejectionReason}</Text>
+                  ) : null}
                 </View>
               </View>
-            </RadioButton.Group>
 
-            {workMode === "company" ? (
-              <View style={styles.companyPickerWrap}>
-                <Text variant="labelLarge" style={styles.fieldLabel}>
-                  Company
-                </Text>
-                {companiesQuery.isLoading ? (
-                  <ActivityIndicator style={styles.companyLoading} />
-                ) : (
-                  <Menu
-                    visible={companyMenuVisible}
-                    onDismiss={() => setCompanyMenuVisible(false)}
-                    anchor={
-                      <Button
-                        mode="outlined"
-                        onPress={() => setCompanyMenuVisible(true)}
-                        style={styles.companyDropdownBtn}
-                        contentStyle={styles.companyDropdownContent}
-                      >
-                        {selectedCompanyLabel}
-                      </Button>
-                    }
+              {joinFleet && membershipStatus !== "approved" ? (
+                <View style={styles.companyPickerWrap}>
+                  <Text variant="labelLarge" style={styles.fieldLabel}>
+                    Company
+                  </Text>
+                  {companiesQuery.isLoading ? (
+                    <ActivityIndicator style={styles.companyLoading} />
+                  ) : (
+                    <Menu
+                      visible={companyMenuVisible}
+                      onDismiss={() => setCompanyMenuVisible(false)}
+                      anchor={
+                        <Button
+                          mode="outlined"
+                          onPress={() => setCompanyMenuVisible(true)}
+                          style={styles.companyDropdownBtn}
+                          contentStyle={styles.companyDropdownContent}
+                          disabled={membershipStatus === "pending"}
+                        >
+                          {selectedCompanyLabel}
+                        </Button>
+                      }
+                    >
+                      {(companiesQuery.data ?? []).map((company) => (
+                        <Menu.Item
+                          key={company.id}
+                          title={company.name}
+                          onPress={() => {
+                            setSelectedCompanyId(company.id);
+                            setCompanyMenuVisible(false);
+                          }}
+                        />
+                      ))}
+                    </Menu>
+                  )}
+                  {!companiesQuery.isLoading && (companiesQuery.data ?? []).length === 0 ? (
+                    <Text style={styles.meta}>No companies available.</Text>
+                  ) : null}
+                </View>
+              ) : null}
+
+              <View style={styles.fleetActions}>
+                {(membershipStatus === "none" || membershipStatus === "rejected") && joinFleet ? (
+                  <Button
+                    mode="contained"
+                    buttonColor={theme.colors.primary}
+                    textColor={theme.colors.onPrimary}
+                    onPress={() => applyMutation.mutate()}
+                    loading={applyMutation.isPending}
+                    disabled={!selectedCompanyId || applyMutation.isPending}
                   >
-                    {(companiesQuery.data ?? []).map((company) => (
-                      <Menu.Item
-                        key={company.id}
-                        title={company.name}
-                        onPress={() => {
-                          setSelectedCompanyId(company.id);
-                          setCompanyMenuVisible(false);
-                        }}
-                      />
-                    ))}
-                  </Menu>
-                )}
-                {!companiesQuery.isLoading && (companiesQuery.data ?? []).length === 0 ? (
-                  <Text style={styles.meta}>No companies available.</Text>
+                    Apply to company
+                  </Button>
+                ) : null}
+                {membershipStatus === "pending" ? (
+                  <Button
+                    mode="outlined"
+                    onPress={() => cancelApplyMutation.mutate()}
+                    loading={cancelApplyMutation.isPending}
+                  >
+                    Cancel application
+                  </Button>
+                ) : null}
+                {membershipStatus === "approved" ? (
+                  <Button mode="outlined" onPress={() => leaveMutation.mutate()} loading={leaveMutation.isPending}>
+                    Leave company
+                  </Button>
                 ) : null}
               </View>
-            ) : null}
+            </View>
+          </Card.Content>
+        </Card>
 
-            <Button
-              mode="contained"
-              buttonColor={theme.colors.primary}
-              textColor={theme.colors.onPrimary}
-              style={styles.mt12}
-              onPress={() => saveMembershipMutation.mutate()}
-              loading={saveMembershipMutation.isPending}
-            >
-              Save fleet settings
-            </Button>
+        <Card mode="contained" style={[styles.headerCard, styles.activeVehicleCard]}>
+          <Card.Content>
+            <Text variant="headlineSmall">Vehicle for customer jobs</Text>
+            <Text style={styles.subtitle}>
+              Select which vehicle you use before appearing in customer offers. Company vehicles attribute jobs to your
+              fleet; personal vehicles are independent.
+            </Text>
+            {!activeVehicleId && !activeVehicleQuery.isLoading ? (
+              <Banner visible icon="alert">
+                No active vehicle selected. You will not receive new customer offers until you choose one below.
+              </Banner>
+            ) : null}
+            {activeVehicleQuery.isLoading || vehiclesQuery.isLoading ? (
+              <ActivityIndicator style={styles.companyLoading} />
+            ) : vehicles.length === 0 ? (
+              <Text style={styles.meta}>Add a personal vehicle or claim a company vehicle first.</Text>
+            ) : (
+              vehicles.map((item) => {
+                const isActive = activeVehicleId === item.id;
+                return (
+                  <Card key={`active-${item.id}`} mode="outlined" style={styles.activeVehicleRow}>
+                    <Card.Content>
+                      <View style={styles.vehicleTitleRow}>
+                        <Text variant="titleMedium">{item.registrationNumber || "Vehicle"}</Text>
+                        {item.companyId ? (
+                          <Chip compact style={styles.companyFleetChip}>
+                            Company
+                          </Chip>
+                        ) : (
+                          <Chip compact>Personal</Chip>
+                        )}
+                        {isActive ? (
+                          <Chip compact style={styles.approvedChip}>
+                            Active
+                          </Chip>
+                        ) : null}
+                      </View>
+                      <Button
+                        mode={isActive ? "outlined" : "contained"}
+                        buttonColor={isActive ? undefined : theme.colors.primary}
+                        textColor={isActive ? undefined : theme.colors.onPrimary}
+                        style={styles.poolClaimBtn}
+                        disabled={isActive || setActiveVehicleMutation.isPending}
+                        loading={setActiveVehicleMutation.isPending}
+                        onPress={() => setActiveVehicleMutation.mutate(item.id)}
+                      >
+                        {isActive ? "In use for jobs" : "Use for jobs"}
+                      </Button>
+                    </Card.Content>
+                  </Card>
+                );
+              })
+            )}
           </Card.Content>
         </Card>
 
@@ -883,6 +1059,40 @@ const getStyles = (theme: typeof lightTheme) => {
     alignItems: "flex-start",
     paddingHorizontal: 8,
     paddingVertical: 8,
+  },
+  fleetTitleRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 8,
+  },
+  fleetActions: {
+    marginTop: 10,
+    paddingHorizontal: 8,
+    paddingBottom: 8,
+    gap: 8,
+  },
+  approvedChip: {
+    backgroundColor: theme.colors.primaryContainer,
+  },
+  rejectedChip: {
+    backgroundColor: theme.colors.errorContainer,
+  },
+  linkedCompany: {
+    fontWeight: "600",
+    color: theme.colors.onSurface,
+  },
+  rejectionText: {
+    marginTop: 4,
+    color: theme.colors.error,
+  },
+  activeVehicleCard: {
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+  },
+  activeVehicleRow: {
+    marginTop: 8,
+    backgroundColor: theme.colors.surface,
   },
   companyPickerWrap: {
     marginTop: 6,
