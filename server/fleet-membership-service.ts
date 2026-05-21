@@ -156,8 +156,10 @@ export async function validateVehicleForActiveJob(driverId: string, vehicleId: s
   if (vehicle.driver_id !== driverId) {
     return { ok: false as const, error: "Vehicle is not assigned to you" };
   }
-  if (vehicle.vehicle_status && vehicle.vehicle_status !== "active") {
-    return { ok: false as const, error: "Vehicle is not active for jobs" };
+  const { evaluateVehicleJobEligibility } = await import("./compliance-service");
+  const jobEligibility = await evaluateVehicleJobEligibility(vehicleId);
+  if (!jobEligibility.eligible) {
+    return { ok: false as const, error: jobEligibility.error || "Vehicle is not active for jobs" };
   }
   if (vehicle.company_id) {
     if (!canUseCompanyFleet(mem)) {

@@ -29,10 +29,24 @@ export function DriverActiveVehicleSelector() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/driver/active-vehicle"] });
-      toast({ title: "Active vehicle updated", description: "Customer offers use this vehicle for capacity and job type." });
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles"] });
+      toast({
+        title: "Active vehicle updated",
+        description: "Customer offers now use this vehicle.",
+      });
     },
     onError: (e: any) => {
-      toast({ title: "Error", description: e?.message || "Could not update", variant: "destructive" });
+      let description = e?.message || "Could not update";
+      try {
+        const jsonStart = description.indexOf("{");
+        if (jsonStart >= 0) {
+          const parsed = JSON.parse(description.slice(jsonStart));
+          if (parsed.error) description = parsed.error;
+        }
+      } catch {
+        /* keep message */
+      }
+      toast({ title: "Cannot use this vehicle", description, variant: "destructive" });
     },
   });
 
@@ -47,8 +61,8 @@ export function DriverActiveVehicleSelector() {
           Vehicle for customer jobs
         </CardTitle>
         <CardDescription>
-          Select which vehicle you are using before you appear in customer offers. Company vehicles count jobs toward
-          your fleet; personal vehicles are independent.
+          Choose which vehicle you use for customer offers. Personal vehicles need compliance documents approved (or
+          admin vehicle approval) before they can be selected.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -73,6 +87,8 @@ export function DriverActiveVehicleSelector() {
             {eligible.map((v) => {
               const isActive = activeId === v.id;
               const isCompany = !!(v as any).companyId;
+              const vehicleStatus = (v as Vehicle & { vehicleStatus?: string }).vehicleStatus;
+              const statusPending = vehicleStatus && vehicleStatus !== "active";
               return (
                 <li
                   key={v.id}
@@ -95,16 +111,27 @@ export function DriverActiveVehicleSelector() {
                           <CheckCircle2 className="h-3 w-3" /> Active for jobs
                         </Badge>
                       )}
+                      {statusPending && !isActive && (
+                        <Badge variant="secondary" className="capitalize">
+                          {(vehicleStatus || "pending").replace(/_/g, " ")}
+                        </Badge>
+                      )}
                     </div>
+                    {statusPending && !isActive && (
+                      <p className="text-xs text-muted-foreground mt-2 max-w-md">
+                        Open <strong>My Vehicles</strong> → <strong>Manage Compliance</strong> to upload documents.
+                        Once approved, tap <strong>Use for jobs</strong> again.
+                      </p>
+                    )}
                   </div>
                   <Button
                     type="button"
                     size="sm"
                     variant={isActive ? "secondary" : "default"}
-                    disabled={setActiveMutation.isPending || isActive}
-                    onClick={() => setActiveMutation.mutate(v.id)}
+                    disabled={setActiveMutation.isPending}
+                    onClick={() => !isActive && setActiveMutation.mutate(v.id)}
                   >
-                    {isActive ? "In use" : "Use for jobs"}
+                    {isActive ? "Active for jobs" : "Use for jobs"}
                   </Button>
                 </li>
               );

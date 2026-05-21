@@ -40,13 +40,21 @@ export interface ComplianceStatus {
 /**
  * Required documents for vehicles
  */
-const VEHICLE_REQUIRED_DOCUMENTS = [
+const VEHICLE_BASE_REQUIRED_DOCUMENTS = [
   "vehicle_registration",
   "roadworthy_certificate",
   "insurance_certificate",
-  "dg_vehicle_permit", // If transporting fuel
-  "letter_of_authority", // If vehicle not in driver's name
 ];
+
+function vehicleRequiredDocTypes(vehicle: {
+  dg_vehicle_permit_required?: boolean | null;
+  loa_required?: boolean | null;
+}) {
+  const required = [...VEHICLE_BASE_REQUIRED_DOCUMENTS];
+  if (vehicle.dg_vehicle_permit_required) required.push("dg_vehicle_permit");
+  if (vehicle.loa_required) required.push("letter_of_authority");
+  return required;
+}
 
 /**
  * Get driver compliance status and checklist
@@ -231,13 +239,7 @@ export async function getVehicleComplianceStatus(vehicleId: string): Promise<Com
       .from(documents)
       .where(and(eq(documents.ownerType, "vehicle"), eq(documents.ownerId, vehicleId)));
 
-    const requiredDocs = [...VEHICLE_REQUIRED_DOCUMENTS];
-    if (vehicle.dg_vehicle_permit_required) {
-      // Already included
-    }
-    if (vehicle.loa_required) {
-      // Already included
-    }
+    const requiredDocs = vehicleRequiredDocTypes(vehicle);
 
     const uploaded = (vehicleDocuments || []).map(d => d.doc_type);
     const approved = (vehicleDocuments || []).filter(d => d.verification_status === "verified" || d.verification_status === "approved" || d.document_status === "approved").map(d => d.doc_type);
@@ -278,6 +280,87 @@ export async function getVehicleComplianceStatus(vehicleId: string): Promise<Com
     console.error("Error getting vehicle compliance status:", error);
     throw error;
   }
+}
+
+/**
+ * Whether a vehicle may be set as the driver's active job vehicle.
+ * Auto-activates pending_compliance vehicles when all required docs are approved.
+ */
+export async function evaluateVehicleJobEligibility(vehicleId: string): Promise<{
+  eligible: boolean;
+  error?: string;
+}> {
+  const vehicleRows = await db
+    .select({
+      vehicleStatus: vehicles.vehicleStatus,
+      dgVehiclePermitRequired: vehicles.dgVehiclePermitRequired,
+      loaRequired: vehicles.loaRequired,
+    })
+    .from(vehicles)
+    .where(eq(vehicles.id, vehicleId))
+    .limit(1);
+  const vehicle = vehicleRows[0];
+  if (!vehicle) return { eligible: false, error: "Vehicle not found" };
+
+  const status = vehicle.vehicleStatus;
+  if (status === "rejected") {
+    return { eligible: false, error: "This vehicle was rejected. Re-upload documents or contact support." };
+  }
+  if (status === "suspended") {
+    return { eligible: false, error: "This vehicle is suspended and cannot be used for jobs." };
+  }
+  if (status === "active") {
+    return { eligible: true };
+  }
+
+  const compliance = await getVehicleComplianceStatus(vehicleId);
+  const { checklist } = compliance;
+
+  if (checklist.rejected.length > 0) {
+    return {
+      eligible: false,
+      error: "One or more vehicle documents were rejected. Fix them under vehicle compliance.",
+    };
+  }
+  if (checklist.missing.length > 0) {
+    return {
+      eligible: false,
+      error: `Upload required vehicle documents first (${checklist.missing.join(", ").replace(/_/g, " ")}).`,
+    };
+  }
+  if (checklist.pending.length > 0) {
+    return {
+      eligible: false,
+      error: "Vehicle documents are awaiting admin review. You can use this vehicle for jobs once they are approved.",
+    };
+  }
+
+  const required = vehicleRequiredDocTypes({
+    dg_vehicle_permit_required: vehicle.dgVehiclePermitRequired,
+    loa_required: vehicle.loaRequired,
+  });
+  const allApproved = required.every((doc) => checklist.approved.includes(doc));
+  if (!allApproved) {
+    return {
+      eligible: false,
+      error: "Complete vehicle compliance (all required documents approved) before using for jobs.",
+    };
+  }
+
+  await db
+    .update(vehicles)
+    .set({ vehicleStatus: "active", updatedAt: new Date() })
+    .where(and(eq(vehicles.id, vehicleId), eq(vehicles.vehicleStatus, "pending_compliance")));
+
+  return { eligible: true };
+}
+
+/**
+ * After a vehicle document is approved, promote vehicle to active when fully compliant.
+ */
+export async function tryAutoActivateVehicleAfterDocumentApproval(vehicleId: string): Promise<void> {
+  const result = await evaluateVehicleJobEligibility(vehicleId);
+  if (!result.eligible) return;
 }
 
 /**

@@ -2870,6 +2870,11 @@ router.post("/compliance/documents/:id/approve", async (req, res) => {
           document.doc_type || "document"
         );
       }
+
+      if (document.owner_type === "vehicle" && document.owner_id) {
+        const { tryAutoActivateVehicleAfterDocumentApproval } = await import("./compliance-service");
+        await tryAutoActivateVehicleAfterDocumentApproval(document.owner_id);
+      }
     }
 
     res.json({ success: true, message: "Document approved" });
