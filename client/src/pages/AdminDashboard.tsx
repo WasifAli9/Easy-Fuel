@@ -703,31 +703,53 @@ export default function AdminDashboard() {
     }
   };
 
-  // Listen for real-time updates via WebSocket
+  const invalidateAdminUserLists = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/customers"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/drivers"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/suppliers"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/companies"] });
+  };
+
+  const invalidateAdminComplianceQueues = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/kyc/pending"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/compliance/pending"] });
+  };
+
+  const invalidateAdminNotifications = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
+  };
+
+  // Live refresh when drivers register, add vehicles, submit KYC, etc.
   useWebSocket((message) => {
-    console.log("[AdminDashboard] WebSocket message received:", message.type, message);
-    
-    if (
-      message.type === "kyc_submitted" ||
-      message.type === "kyc_approved" ||
-      message.type === "kyc_rejected" ||
-      message.type === "compliance_document_uploaded" ||
-      message.type === "notification"
-    ) {
-      console.log("[AdminDashboard] Invalidating compliance queues due to:", message.type);
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/kyc/pending"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/compliance/pending"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
+    const eventType = message.type;
+    const payloadType = message.payload?.type as string | undefined;
+
+    if (eventType === "notification") {
+      invalidateAdminComplianceQueues();
+      invalidateAdminUserLists();
+      invalidateAdminNotifications();
+      return;
     }
-    
-    if (message.type === "user_created" || message.type === "user_updated" || message.type === "kyc_approved" || message.type === "kyc_rejected") {
-      // Refresh user lists when users are created/updated or KYC status changes
-      console.log("[AdminDashboard] Invalidating user lists due to:", message.type);
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/customers"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/drivers"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/suppliers"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/companies"] });
+
+    if (eventType === "user_created" || eventType === "user_updated") {
+      invalidateAdminUserLists();
+      invalidateAdminNotifications();
+      return;
+    }
+
+    if (
+      eventType === "kyc_submitted" ||
+      eventType === "kyc_approved" ||
+      eventType === "kyc_rejected" ||
+      eventType === "compliance_document_uploaded" ||
+      eventType === "vehicle_created" ||
+      eventType === "admin_vehicle_review_required" ||
+      payloadType === "admin_vehicle_review_required"
+    ) {
+      invalidateAdminComplianceQueues();
+      invalidateAdminUserLists();
+      invalidateAdminNotifications();
     }
   });
 

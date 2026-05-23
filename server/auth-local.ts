@@ -156,6 +156,7 @@ export async function registerLocalUser(input: {
         userId,
         fullName: input.fullName,
         role,
+        email,
       });
     } catch (e) {
       console.error("[registerLocalUser] admin notify:", e);

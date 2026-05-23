@@ -83,6 +83,7 @@ export async function registerSessionUser(input: {
         userId,
         fullName: input.fullName,
         role,
+        email,
       });
     } catch (e) {
       console.error("[registerSessionUser] admin notify:", e);

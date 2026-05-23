@@ -957,6 +957,17 @@ class NotificationService {
       requireInteraction: true,
     });
     try {
+      const { broadcastAdminVehicleReviewRequired } = await import("./admin-notify");
+      await broadcastAdminVehicleReviewRequired({
+        vehicleId: params.vehicleId,
+        registrationNumber: params.registrationNumber,
+        submittedByUserId: params.submittedByUserId,
+        scope: params.scope,
+      });
+    } catch (e) {
+      console.error("[notifyAdminsVehicleReviewRequired] broadcast:", e);
+    }
+    try {
       await sendAdminComplianceReviewEmail({
         kind: "vehicle_pending",
         applicantName: params.submitterName,

@@ -19,11 +19,59 @@ export async function getProfileDisplayName(userId: string): Promise<string> {
   return row?.full_name || row?.email || "User";
 }
 
+/** Push live updates to every connected admin dashboard (no page reload). */
+export async function broadcastAdminUserCreated(params: {
+  userId: string;
+  fullName: string;
+  role: string;
+  email?: string;
+}) {
+  try {
+    const { websocketService } = await import("./websocket");
+    websocketService.broadcastToRole("admin", {
+      type: "user_created",
+      payload: {
+        userId: params.userId,
+        fullName: params.fullName,
+        role: params.role,
+        email: params.email,
+      },
+    });
+  } catch (e) {
+    console.error("[broadcastAdminUserCreated]", e);
+  }
+}
+
+export async function broadcastAdminVehicleReviewRequired(params: {
+  vehicleId: string;
+  registrationNumber: string;
+  submittedByUserId: string;
+  scope: "driver" | "company";
+}) {
+  try {
+    const { websocketService } = await import("./websocket");
+    websocketService.broadcastToRole("admin", {
+      type: "admin_vehicle_review_required",
+      payload: params,
+    });
+  } catch (e) {
+    console.error("[broadcastAdminVehicleReviewRequired]", e);
+  }
+}
+
 export async function notifyAdminsUserRegistered(params: {
   userId: string;
   fullName: string;
   role: string;
+  email?: string;
 }) {
+  await broadcastAdminUserCreated({
+    userId: params.userId,
+    fullName: params.fullName,
+    role: params.role,
+    email: params.email,
+  });
+
   const adminIds = await getAdminUserIds();
   if (!adminIds.length) {
     console.warn("[notifyAdminsUserRegistered] No admin profiles found — skipping alert");

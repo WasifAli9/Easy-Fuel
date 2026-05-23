@@ -28,6 +28,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { cn, formatCurrency } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
+import { useWebSocket } from "@/hooks/useWebSocket";
 import {
   DashboardSidebarAside,
   DashboardSidebarInner,
@@ -175,6 +176,35 @@ export default function CompanyDashboard() {
     }
     return best;
   }, [deliveryChartSeries]);
+
+  const invalidateCompanyFleetData = () => {
+    qc.invalidateQueries({ queryKey: ["/api/company/driver-applications"] });
+    qc.invalidateQueries({ queryKey: ["/api/company/overview"] });
+    qc.invalidateQueries({ queryKey: ["/api/company/drivers"] });
+    qc.invalidateQueries({ queryKey: ["/api/company/vehicles"] });
+    qc.invalidateQueries({ queryKey: ["/api/notifications"] });
+    qc.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
+  };
+
+  useWebSocket((message) => {
+    const eventType = message.type;
+    const payloadType = message.payload?.type as string | undefined;
+
+    if (
+      eventType === "fleet_join_application" ||
+      eventType === "fleet_join_application_cancelled" ||
+      payloadType === "fleet_join_application" ||
+      payloadType === "fleet_join_application_cancelled" ||
+      payloadType === "fleet_join_approved" ||
+      payloadType === "fleet_join_rejected"
+    ) {
+      invalidateCompanyFleetData();
+    }
+
+    if (eventType === "notification" && payloadType?.startsWith("fleet_join")) {
+      invalidateCompanyFleetData();
+    }
+  });
 
   const { data: fleetVehicles = [], isLoading: vehiclesLoading } = useQuery<CompanyVehicleRow[]>({
     queryKey: ["/api/company/vehicles"],

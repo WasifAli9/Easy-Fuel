@@ -219,16 +219,13 @@ router.post("/vehicles", async (req, res) => {
       if (adminUserIds.length > 0 && authUser?.id) {
         const { notificationService } = await import("./notification-service");
         const submitterName = await getProfileDisplayName(authUser.id);
-        await notificationService.notifyAdminsVehicleReviewRequired(
-          adminUserIds,
-          {
-            vehicleId: String((vehicle as any).id),
-            registrationNumber: String((vehicle as any).registrationNumber ?? b.registration_number),
-            submittedByUserId: authUser.id,
-            submitterName,
-            scope: "company",
-          },
-        );
+        await notificationService.notifyAdminsVehicleReviewRequired(adminUserIds, {
+          vehicleId: String((vehicle as any).id),
+          registrationNumber: String((vehicle as any).registrationNumber ?? b.registration_number),
+          submittedByUserId: authUser.id,
+          submitterName,
+          scope: "company",
+        });
       }
     } catch (e) {
       console.error("[company/vehicles] admin notify:", e);

@@ -2155,9 +2155,10 @@ router.post("/vehicles", async (req, res) => {
       const { getAdminUserIds, getProfileDisplayName } = await import("./admin-notify");
       const adminUserIds = await getAdminUserIds();
       if (adminUserIds.length && vehicle?.id) {
+        const registration = String(vehicle.registration_number || registrationNumber);
         await notificationService.notifyAdminsVehicleReviewRequired(adminUserIds, {
           vehicleId: vehicle.id,
-          registrationNumber: String(vehicle.registration_number || registrationNumber),
+          registrationNumber: registration,
           submittedByUserId: user.id,
           submitterName: await getProfileDisplayName(user.id),
           scope: "driver",
@@ -5405,6 +5406,20 @@ router.post("/company-membership/apply", async (req, res) => {
       driverName,
     );
 
+    try {
+      websocketService.sendToUser(comp.owner_user_id, {
+        type: "fleet_join_application",
+        payload: {
+          driverId: driver.id,
+          driverName,
+          companyName: comp.name,
+          companyId: parsed.data.companyId,
+        },
+      });
+    } catch (wsErr) {
+      console.error("[fleet-apply] websocket:", wsErr);
+    }
+
     const companyEmail = await getCompanyNotifyEmail(parsed.data.companyId);
     if (companyEmail && driverDetails) {
       const { sendFleetJoinApplicationEmail } = await import("./email-service");
@@ -5437,12 +5452,30 @@ router.delete("/company-membership/apply", async (req, res) => {
     if (mem?.membership_status !== "pending") {
       return res.status(400).json({ error: "No pending application to cancel" });
     }
+    const companyId = mem.company_id;
     await pool.query(
       `UPDATE driver_company_memberships
        SET company_id = NULL, membership_status = 'none', applied_at = NULL, updated_at = NOW()
        WHERE driver_id = $1`,
       [driver.id],
     );
+    if (companyId) {
+      const compRes = await pool.query(
+        `SELECT owner_user_id::text FROM companies WHERE id = $1 LIMIT 1`,
+        [companyId],
+      );
+      const ownerUserId = compRes.rows[0]?.owner_user_id;
+      if (ownerUserId) {
+        try {
+          websocketService.sendToUser(ownerUserId, {
+            type: "fleet_join_application_cancelled",
+            payload: { driverId: driver.id, companyId },
+          });
+        } catch (wsErr) {
+          console.error("[fleet-apply-cancel] websocket:", wsErr);
+        }
+      }
+    }
     return res.json(await buildMembershipApiResponse(driver.id));
   } catch (e: any) {
     console.error("DELETE /driver/company-membership/apply:", e);
