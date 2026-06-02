@@ -387,7 +387,7 @@ export function DriverDepotOrderPaymentDialog({
                 <div className="flex-1">
                   <Label htmlFor="online_payment" className="flex items-center gap-2 cursor-pointer">
                     <CreditCard className="h-4 w-4" />
-                    <span className="font-semibold">Online Payment (Card/Instant EFT)</span>
+                    <span className="font-semibold">Online Payment — OZOW (Card / Instant EFT)</span>
                   </Label>
                   <p className="text-sm text-muted-foreground mt-1">
                     Pay securely using your card or instant EFT. Payment is processed immediately.
@@ -395,7 +395,7 @@ export function DriverDepotOrderPaymentDialog({
                   {paymentMethod === "online_payment" && (
                     <div className="mt-3 p-3 bg-yellow-50 dark:bg-yellow-950/20 rounded border">
                       <p className="text-sm text-yellow-800 dark:text-yellow-200">
-                        Payment gateway integration required. This will redirect you to a secure payment page.
+                        You will be redirected to OZOW to pay securely by card or instant EFT at your bank.
                       </p>
                     </div>
                   )}

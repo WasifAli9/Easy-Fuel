@@ -621,7 +621,7 @@ export const paymentMethods = pgTable("payment_methods", {
   cardBrand: text("card_brand"), // e.g., "Visa", "Mastercard"
   cardExpiryMonth: text("card_expiry_month"),
   cardExpiryYear: text("card_expiry_year"),
-  paymentGatewayToken: text("payment_gateway_token"), // Stripe/PayFast token
+  paymentGatewayToken: text("payment_gateway_token"), // OZOW / payment provider token
   
   isDefault: boolean("is_default").notNull().default(false),
   isActive: boolean("is_active").notNull().default(true),

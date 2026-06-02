@@ -301,7 +301,7 @@ export default function Auth() {
               <div>
                 <h3 className="font-semibold text-lg mb-1 text-slate-50">Secure Payments</h3>
                 <p className="text-slate-100/85 text-sm">
-                  Safe and secure payment processing with PayFast integration and instant confirmations.
+                  Safe and secure payment processing with OZOW (Pay by Bank) and instant confirmations.
                 </p>
               </div>
             </div>

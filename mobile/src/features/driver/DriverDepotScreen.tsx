@@ -642,7 +642,7 @@ export function DriverDepotScreen() {
                 </View>
                 <View style={styles.radioRow}>
                   <RadioButton value="online_payment" />
-                  <Text>Online Payment</Text>
+                  <Text>Online Payment (OZOW — card / instant EFT)</Text>
                 </View>
                 <View style={styles.radioRow}>
                   <RadioButton value="pay_outside_app" />
@@ -650,6 +650,12 @@ export function DriverDepotScreen() {
                 </View>
               </RadioButton.Group>
             </View>
+
+            {paymentMethod === "online_payment" ? (
+              <Text style={styles.meta}>
+                You will be redirected to OZOW to pay securely by card or instant EFT at your bank.
+              </Text>
+            ) : null}
 
             {paymentMethod === "bank_transfer" ? (
               <View style={styles.bankProofWrap}>
