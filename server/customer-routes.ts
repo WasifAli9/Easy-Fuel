@@ -205,12 +205,16 @@ router.get("/orders/:id", async (req, res) => {
       return res.status(404).json({ error: "Order not found" });
     }
 
-    // If driver is assigned, fetch driver details
-    if (order.assigned_driver_id) {
+    // If driver is assigned, fetch driver details (Drizzle camelCase + legacy snake_case)
+    const assignedDriverId =
+      (order as { assignedDriverId?: string | null; assigned_driver_id?: string | null })
+        .assignedDriverId ??
+      (order as { assigned_driver_id?: string | null }).assigned_driver_id;
+    if (assignedDriverId) {
       const driverRows = await db
         .select({ userId: drivers.userId })
         .from(drivers)
-        .where(eq(drivers.id, order.assigned_driver_id))
+        .where(eq(drivers.id, assignedDriverId))
         .limit(1);
 
       const driver = driverRows[0];
@@ -1934,7 +1938,7 @@ router.get("/orders/:orderId/driver-location", async (req, res) => {
     let lastUpdate: string | null = null;
     let locationSource: "realtime" | "last_known" | "default" = "default";
 
-    if (["en_route", "picked_up"].includes(order.state)) {
+    if (["assigned", "en_route", "picked_up"].includes(order.state)) {
       // Priority 1: Get the most recent location from driver_locations table for this specific order
       // Prioritize locations from the last 5 minutes to ensure we get fresh GPS data
       const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();

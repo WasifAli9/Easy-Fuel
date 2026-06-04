@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
-import { FlatList, Modal, StyleSheet, View } from "react-native";
+import { FlatList, Modal, ScrollView, StyleSheet, View } from "react-native";
+import { IconMetaRow, SectionTitleRow } from "@/components/IconMetaRow";
 import { ModalSafeArea } from "@/components/ModalSafeArea";
+import { ModalScreenHeader } from "@/components/ModalScreenHeader";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, Switch, Text, TextInput } from "react-native-paper";
 import { Button } from "@/design/paper-button";
@@ -141,12 +143,14 @@ export function CustomerAddressesScreen() {
           <Card mode="outlined" style={styles.card}>
             <Card.Content>
               <Text variant="titleSmall">{item.label || "Address"}</Text>
-              <Text style={styles.meta}>
+              <IconMetaRow icon="map-marker-outline" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.onSurfaceVariant}>
                 {[item.address_street, item.address_city, item.address_province, item.address_postal_code].filter(Boolean).join(", ")}
-              </Text>
+              </IconMetaRow>
               {item.is_default ? <Text style={styles.badge}>Default</Text> : null}
               <View style={styles.row}>
                 <Button
+                  compact
+                  icon="pencil-outline"
                   onPress={() => {
                     setEditing(item);
                     setModalOpen(true);
@@ -154,7 +158,7 @@ export function CustomerAddressesScreen() {
                 >
                   Edit
                 </Button>
-                <Button textColor={theme.colors.error} onPress={() => deleteMutation.mutate(item.id)}>
+                <Button compact icon="delete-outline" textColor={theme.colors.error} onPress={() => deleteMutation.mutate(item.id)}>
                   Delete
                 </Button>
               </View>
@@ -165,11 +169,16 @@ export function CustomerAddressesScreen() {
 
       <Modal visible={modalOpen} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setModalOpen(false)}>
         <ModalSafeArea style={styles.modal}>
-          <View style={styles.modalHeader}>
-            <Text variant="titleLarge">{editing ? "Edit address" : "New address"}</Text>
-            <Button onPress={() => setModalOpen(false)}>Close</Button>
-          </View>
-          <View style={styles.modalBody}>
+          <ModalScreenHeader
+            title={editing ? "Edit address" : "New address"}
+            onClose={() => setModalOpen(false)}
+          />
+          <ScrollView
+            style={styles.modalBodyScroll}
+            contentContainerStyle={styles.modalBody}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+          >
             <TextInput mode="outlined" label="Label" value={label} onChangeText={setLabel} style={styles.input} />
             <TextInput mode="outlined" label="Street" value={street} onChangeText={setStreet} style={styles.input} />
             <TextInput mode="outlined" label="City" value={city} onChangeText={setCity} style={styles.input} />
@@ -190,7 +199,7 @@ export function CustomerAddressesScreen() {
               Save
             </Button>
             {saveMutation.isError ? <Text style={styles.error}>{(saveMutation.error as Error).message}</Text> : null}
-          </View>
+          </ScrollView>
         </ModalSafeArea>
       </Modal>
     </View>
@@ -210,18 +219,8 @@ const getStyles = (theme: typeof lightTheme) => {
     row: { flexDirection: "row", gap: 8, marginTop: 8 },
     muted: { ...p.empty },
     modal: { flex: 1, backgroundColor: theme.colors.background },
-    modalHeader: {
-      flexDirection: "row",
-      justifyContent: "space-between",
-      alignItems: "center",
-      padding: 14,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: theme.colors.outline,
-      backgroundColor: theme.colors.surface,
-      borderLeftWidth: 3,
-      borderLeftColor: theme.colors.primary,
-    },
-    modalBody: { padding: 16, gap: 8 },
+    modalBodyScroll: { flex: 1, minHeight: 0 },
+    modalBody: { padding: 16, paddingBottom: 28, gap: 8 },
     input: p.input,
     switchRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginVertical: 8 },
     error: p.errorText,

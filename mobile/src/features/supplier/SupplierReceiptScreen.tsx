@@ -18,13 +18,7 @@ type InvoiceRow = {
   completedAt?: string;
 };
 
-function formatZarFromCents(totalCents: number) {
-  return new Intl.NumberFormat("en-ZA", {
-    style: "currency",
-    currency: "ZAR",
-    minimumFractionDigits: 2,
-  }).format(totalCents / 100);
-}
+import { formatMoneyFromCents } from "@/lib/format-currency";
 
 /**
  * Same data and PDF endpoint as web `SupplierInvoicesTab` + `/api/supplier/invoices/:id/pdf?download=1`.
@@ -89,7 +83,7 @@ export function SupplierReceiptScreen() {
                     </Text>
                   </View>
                   <View style={styles.rowRight}>
-                    <Text style={styles.amount}>{formatZarFromCents(inv.totalCents ?? 0)}</Text>
+                    <Text style={styles.amount}>{formatMoneyFromCents(inv.totalCents ?? 0)}</Text>
                     <Button
                       mode="text"
                       compact

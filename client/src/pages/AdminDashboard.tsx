@@ -27,7 +27,7 @@ import { useNotifications } from "@/hooks/useNotifications";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatDistanceToNow } from "date-fns";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
-import { cn } from "@/lib/utils";
+import { cn, formatCurrency, formatDocumentType, formatSnakeCaseLabel } from "@/lib/utils";
 import { ComplianceReviewDocuments } from "@/components/admin/ComplianceReviewDocuments";
 
 interface PendingKYC {
@@ -354,7 +354,7 @@ function DeliveryFeeSettings() {
                   For a 10km delivery:
                 </p>
                 <p className="text-2xl font-bold text-blue-900 dark:text-blue-100 mt-2">
-                  R{settings?.price_per_km_cents ? ((settings.price_per_km_cents / 100) * 10).toFixed(2) : "0.00"}
+                  {settings?.price_per_km_cents ? formatCurrency((settings.price_per_km_cents / 100) * 10) : "R 0.00"}
                 </p>
               </CardContent>
             </Card>
@@ -1844,7 +1844,7 @@ export default function AdminDashboard() {
                           </CardDescription>
                         </div>
                         <Badge variant="secondary">
-                          {(vehicle.vehicle_status || "pending_compliance").replace(/_/g, " ")}
+                          {formatSnakeCaseLabel(vehicle.vehicle_status || "pending_compliance", "Pending Compliance")}
                         </Badge>
                       </div>
                     </CardHeader>
@@ -2067,7 +2067,7 @@ export default function AdminDashboard() {
                                 ) : (
                                   <FileText className="h-5 w-5 text-muted-foreground" />
                                 )}
-                                <span className="font-medium">{docType.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}</span>
+                                <span className="font-medium">{formatDocumentType(docType)}</span>
                               </div>
                               <Badge 
                                 variant={

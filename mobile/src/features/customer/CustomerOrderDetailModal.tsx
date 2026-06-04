@@ -10,6 +10,12 @@ import { useUiThemeStore } from "@/store/ui-theme-store";
 import { OrderChatPanel } from "@/features/chat/OrderChatPanel";
 import { formatCustomerOrderAddress } from "@/features/customer/customerOrderUtils";
 import { ModalSafeArea } from "@/components/ModalSafeArea";
+import { ModalScreenHeader } from "@/components/ModalScreenHeader";
+import { useModalLayout } from "@/components/modal-layout";
+import { DeliverySignatureDisplay } from "@/components/DeliverySignatureDisplay";
+import { OrderDriverLocationMap } from "@/components/OrderDriverLocationMap";
+import { formatMoneyAmount, formatMoneyFromCents } from "@/lib/format-currency";
+import { formatOfferState, formatOrderState } from "@/lib/format-labels";
 
 type Offer = {
   id: string;
@@ -55,6 +61,7 @@ export function CustomerOrderDetailModal({
   const mode = useUiThemeStore((s) => s.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
   const styles = getStyles(theme);
+  const { chatMaxHeight, footerPaddingBottom } = useModalLayout();
   const queryClient = useQueryClient();
 
   const orderQuery = useQuery({
@@ -111,6 +118,19 @@ export function CustomerOrderDetailModal({
       }
     | undefined;
 
+  const orderRecord = order as Record<string, unknown> | undefined;
+  const assignedDriverId =
+    (orderRecord?.assigned_driver_id ?? orderRecord?.assignedDriverId) as string | undefined;
+  const dropLatRaw = orderRecord?.drop_lat ?? orderRecord?.dropLat;
+  const dropLngRaw = orderRecord?.drop_lng ?? orderRecord?.dropLng;
+  const dropLat = dropLatRaw != null ? Number(dropLatRaw) : NaN;
+  const dropLng = dropLngRaw != null ? Number(dropLngRaw) : NaN;
+  const showTrackingMap =
+    Boolean(assignedDriverId) &&
+    ["assigned", "en_route", "picked_up"].includes(String(order?.state ?? "")) &&
+    Number.isFinite(dropLat) &&
+    Number.isFinite(dropLng);
+
   const sortedOffers = [...(offersQuery.data ?? [])].sort((a, b) => {
     const aDistance = a.estimatedPricing?.distanceKm;
     const bDistance = b.estimatedPricing?.distanceKm;
@@ -123,17 +143,19 @@ export function CustomerOrderDetailModal({
   });
 
   return (
-    <Modal visible={visible && !!orderId} animationType="slide" onRequestClose={onDismiss}>
+    <Modal
+      visible={visible && !!orderId}
+      animationType="slide"
+      presentationStyle="fullScreen"
+      onRequestClose={onDismiss}
+    >
       <ModalSafeArea style={[styles.modalSafe, { backgroundColor: theme.colors.background }]}>
         <KeyboardAvoidingView
           style={styles.flexFill}
           behavior={Platform.OS === "ios" ? "padding" : "height"}
           keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
         >
-          <View style={styles.header}>
-            <Text variant="titleLarge">Order details</Text>
-            <Button onPress={onDismiss}>Close</Button>
-          </View>
+          <ModalScreenHeader title="Order details" onClose={onDismiss} />
           {orderQuery.isLoading ? (
             <View style={styles.center}>
               <ActivityIndicator />
@@ -165,14 +187,21 @@ export function CustomerOrderDetailModal({
                   <Chip>{order.state ?? ""}</Chip>
                 </View>
                 <Text style={styles.meta}>
-                  {order.litres != null ? `${order.litres} L` : ""} · R {((order.total_cents ?? 0) / 100).toFixed(2)}
+                  {order.litres != null ? `${order.litres} L` : ""} · {formatMoneyFromCents(order.total_cents ?? 0)}
                 </Text>
                 <Text style={styles.meta}>{formatCustomerOrderAddress(order as any)}</Text>
                 <Text style={styles.meta}>
                   {order.created_at ? new Date(order.created_at).toLocaleString("en-ZA") : ""}
                 </Text>
+                {order.state === "delivered" ? (
+                  <DeliverySignatureDisplay order={order as Record<string, unknown>} />
+                ) : null}
               </Card.Content>
             </Card>
+
+            {showTrackingMap && orderId ? (
+              <OrderDriverLocationMap orderId={orderId} deliveryLat={dropLat} deliveryLng={dropLng} />
+            ) : null}
 
             <View style={styles.offersHeaderRow}>
               <Text variant="titleSmall" style={styles.sectionTitle}>
@@ -199,7 +228,7 @@ export function CustomerOrderDetailModal({
                     <Text variant="titleSmall">{offer.driver?.profile?.fullName ?? "Driver"}</Text>
                     <Text style={styles.meta}>
                       {offer.estimatedPricing?.total != null
-                        ? `Est. total R ${offer.estimatedPricing.total.toFixed(2)}`
+                        ? `Est. total ${formatMoneyAmount(offer.estimatedPricing.total)}`
                         : "Quote pending"}
                     </Text>
                     <Text style={styles.meta}>
@@ -208,7 +237,7 @@ export function CustomerOrderDetailModal({
                         ? `${offer.estimatedPricing.distanceKm.toFixed(1)} km away`
                         : "Not available"}
                     </Text>
-                    <Text style={styles.meta}>Status: {offer.state ?? ""}</Text>
+                    <Text style={styles.meta}>Status: {formatOfferState(offer.state)}</Text>
                     {offer.state === "pending_customer" || offer.state === "offered" ? (
                       <Button
                         mode="contained"
@@ -231,11 +260,13 @@ export function CustomerOrderDetailModal({
 
             <Divider style={styles.divider} />
               </ScrollView>
-              <View style={styles.chatDock}>
-                <Text variant="titleSmall" style={styles.sectionTitle}>
-                  Messages
-                </Text>
-                <OrderChatPanel orderId={orderId!} viewerRole="customer" orderDetailLayout />
+              <View style={[styles.chatDock, { paddingBottom: footerPaddingBottom }]}>
+                <OrderChatPanel
+                  orderId={orderId!}
+                  viewerRole="customer"
+                  orderDetailLayout
+                  maxChatHeight={chatMaxHeight}
+                />
               </View>
             </View>
           )}
@@ -258,18 +289,7 @@ const getStyles = (theme: typeof lightTheme) => {
       paddingTop: 6,
       backgroundColor: theme.colors.surface,
     },
-    header: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      padding: 14,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: theme.colors.outline,
-      backgroundColor: theme.colors.surface,
-      borderLeftWidth: 3,
-      borderLeftColor: theme.colors.primary,
-    },
-    bodyScroll: { flex: 1 },
+    bodyScroll: { flex: 1, minHeight: 0 },
     scroll: { padding: 14, paddingBottom: 16, gap: 10 },
     offersHeaderRow: {
       flexDirection: "row" as const,

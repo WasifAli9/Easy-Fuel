@@ -7,6 +7,7 @@ import { getFuelPortalTokens } from "@/design/fuel-portal-tokens";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { SupplierDepotOrdersPanel } from "@/features/supplier/SupplierDepotOrdersPanel";
+import { formatMoneyFromCents } from "@/lib/format-currency";
 
 type DepotOrder = {
   id: string;
@@ -88,7 +89,7 @@ export function SupplierDashboardScreen() {
           </View>
           <View style={styles.statCol}>
             <Text style={styles.statLabel}>{"Today's revenue"}</Text>
-            <Text style={styles.statValue}>R {(todayRevenueCents / 100).toLocaleString("en-ZA", { minimumFractionDigits: 0 })}</Text>
+            <Text style={styles.statValue}>{formatMoneyFromCents(todayRevenueCents, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</Text>
           </View>
         </View>
       </View>

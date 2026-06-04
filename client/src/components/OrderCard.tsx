@@ -5,6 +5,7 @@ import { FuelTypeIcon } from "./FuelTypeIcon";
 import { DriverLocationIndicator } from "./DriverLocationIndicator";
 import { MapPin, Calendar, Banknote, Eye } from "lucide-react";
 import { useCurrency } from "@/hooks/use-currency";
+import { formatCurrency } from "@/lib/utils";
 
 interface OrderCardProps {
   id: string;
@@ -27,7 +28,7 @@ export function OrderCard({
   status,
   onView
 }: OrderCardProps) {
-  const { currencySymbol } = useCurrency();
+  const { currency } = useCurrency();
   
   return (
     <Card className="hover-elevate overflow-hidden border-l-4 border-l-primary" data-testid={`card-order-${id}`}>
@@ -64,7 +65,7 @@ export function OrderCard({
           ) : (
             <div className="flex items-center gap-2">
               <Banknote className="h-4 w-4 text-muted-foreground" />
-              <span className="font-semibold" data-testid={`text-amount-${id}`}>{currencySymbol} {totalAmount.toFixed(2)}</span>
+              <span className="font-semibold" data-testid={`text-amount-${id}`}>{formatCurrency(totalAmount, currency)}</span>
             </div>
           )}
           <Button 

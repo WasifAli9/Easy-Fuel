@@ -16,12 +16,16 @@ import {
 } from "react-native-paper";
 import { Button } from "@/design/paper-button";
 import { apiClient } from "@/services/api/client";
-import { openStoredDocument, putFileToUploadUrl } from "@/lib/files";
+import { openStoredDocument, putFileToUploadUrl, readUploadObjectPath } from "@/lib/files";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
+import { readableType } from "@/design/typography";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { IconMetaRow, SectionTitleRow } from "@/components/IconMetaRow";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { ModalSafeArea } from "@/components/ModalSafeArea";
+import { ModalScreenHeader } from "@/components/ModalScreenHeader";
 
 type Vehicle = {
   id: string;
@@ -116,8 +120,9 @@ const emptyForm: VehicleForm = {
 export function DriverVehiclesScreen() {
   const mode = useUiThemeStore((state) => state.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
-  const insets = useSafeAreaInsets();
   const styles = getStyles(theme);
+  const insets = useSafeAreaInsets();
+  const scrollBottomPad = Math.max(insets.bottom, 12) + 72;
   const [showAdd, setShowAdd] = useState(false);
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [uploadingDocType, setUploadingDocType] = useState<string | null>(null);
@@ -183,13 +188,31 @@ export function DriverVehiclesScreen() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["/api/driver/vehicles"] }),
         queryClient.invalidateQueries({ queryKey: ["/api/driver/company-fleet/available-vehicles"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/driver/active-vehicle"] }),
       ]);
+      Alert.alert("Released to fleet", "This company vehicle is back in the pool for other drivers.");
     },
     onError: (e: unknown) => {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error || (e as Error).message;
       Alert.alert("Could not release vehicle", msg || "Try again or contact your fleet manager.");
     },
   });
+
+  const confirmReleaseCompanyVehicle = (vehicle: Vehicle) => {
+    const label = vehicle.registrationNumber || "this company vehicle";
+    Alert.alert(
+      "Release to fleet pool?",
+      `Return ${label} to your fleet company pool? You can claim it again later from Available company vehicles.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Release",
+          style: "destructive",
+          onPress: () => releaseCompanyVehicleMutation.mutate(vehicle.id),
+        },
+      ],
+    );
+  };
 
   useEffect(() => {
     if (!membershipQuery.data) return;
@@ -365,12 +388,12 @@ export function DriverVehiclesScreen() {
         throw new Error("File upload failed.");
       }
 
+      const storedRelativePath = await readUploadObjectPath(uploadResponse, uploadMeta.uploadURL);
       const aclResponse = await apiClient.put("/api/documents", {
-        documentURL: uploadMeta.uploadURL,
+        documentURL: storedRelativePath,
       });
       const objectPath =
-        (aclResponse.data as { objectPath?: string }).objectPath ||
-        (uploadMeta as { objectPath?: string }).objectPath;
+        (aclResponse.data as { objectPath?: string }).objectPath || storedRelativePath;
       if (!objectPath) {
         throw new Error("Could not secure uploaded document.");
       }
@@ -418,6 +441,16 @@ export function DriverVehiclesScreen() {
   }, [selectedVehicle?.id, queryClient]);
 
   const vehicles = useMemo(() => vehiclesQuery.data ?? [], [vehiclesQuery.data]);
+  const isCompanyVehicle = (v: Vehicle) =>
+    !!(v.companyId ?? (v as Vehicle & { company_id?: string | null }).company_id);
+  const assignedCompanyVehicles = useMemo(
+    () => vehicles.filter(isCompanyVehicle),
+    [vehicles],
+  );
+  const personalVehicles = useMemo(
+    () => vehicles.filter((v) => !isCompanyVehicle(v)),
+    [vehicles],
+  );
   const activeVehicleId = activeVehicleQuery.data?.vehicleId ?? null;
   const membershipStatus = membershipQuery.data?.membershipStatus ?? "none";
 
@@ -433,17 +466,23 @@ export function DriverVehiclesScreen() {
   if (selectedVehicle) {
     return (
       <View style={styles.container}>
-        <Card mode="contained" style={styles.headerCard}>
-          <Card.Content style={styles.complianceHeaderRow}>
-            <View>
-              <Text variant="headlineSmall">Vehicle Compliance</Text>
-              <Text style={styles.subtitle}>{selectedVehicle.registrationNumber || "Selected vehicle"}</Text>
-            </View>
-            <Button onPress={() => setSelectedVehicle(null)}>Back</Button>
-          </Card.Content>
-        </Card>
+        <ScrollView
+          style={styles.scrollFill}
+          contentContainerStyle={[styles.complianceScrollContent, { paddingBottom: scrollBottomPad }]}
+          showsVerticalScrollIndicator
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+        >
+          <Card mode="contained" style={styles.headerCard}>
+            <Card.Content style={styles.complianceHeaderRow}>
+              <View style={styles.complianceHeaderText}>
+                <Text variant="headlineSmall">Vehicle Compliance</Text>
+                <Text style={styles.subtitle}>{selectedVehicle.registrationNumber || "Selected vehicle"}</Text>
+              </View>
+              <Button onPress={() => setSelectedVehicle(null)}>Back</Button>
+            </Card.Content>
+          </Card>
 
-        <ScrollView contentContainerStyle={styles.list}>
           <Text style={styles.subtitle}>Upload and manage compliance documents.</Text>
 
           {uploadError ? (
@@ -527,14 +566,23 @@ export function DriverVehiclesScreen() {
 
   return (
     <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.pageContent}>
+      <ScrollView
+        style={styles.scrollFill}
+        contentContainerStyle={[styles.pageContent, { paddingBottom: scrollBottomPad }]}
+        showsVerticalScrollIndicator
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      >
         <Card mode="contained" style={styles.headerCard}>
           <Card.Content>
-            <Text variant="headlineSmall">Fleet company</Text>
-            <Text style={styles.subtitle}>
-              Work independently and apply to a fleet company. The company must approve before you can use their
-              vehicles.
-            </Text>
+            <SectionTitleRow
+              icon="office-building-outline"
+              title="Fleet company"
+              subtitle="Work independently or join a fleet. Approval is required before using company vehicles."
+              iconBg={mode === "dark" ? "rgba(13, 148, 136, 0.18)" : "rgba(13, 148, 136, 0.14)"}
+              iconColor={theme.colors.primary}
+              subtitleColor={theme.colors.onSurfaceVariant}
+            />
 
             {membershipQuery.data?.isDisabledByCompany ? (
               <Banner visible icon="alert-circle">
@@ -644,13 +692,15 @@ export function DriverVehiclesScreen() {
                 {(membershipStatus === "none" || membershipStatus === "rejected") && joinFleet ? (
                   <Button
                     mode="contained"
+                    compact
+                    icon="send"
                     buttonColor={theme.colors.primary}
                     textColor={theme.colors.onPrimary}
                     onPress={() => applyMutation.mutate()}
                     loading={applyMutation.isPending}
                     disabled={!selectedCompanyId || applyMutation.isPending}
                   >
-                    Apply to company
+                    Apply
                   </Button>
                 ) : null}
                 {membershipStatus === "pending" ? (
@@ -674,11 +724,14 @@ export function DriverVehiclesScreen() {
 
         <Card mode="contained" style={[styles.headerCard, styles.activeVehicleCard]}>
           <Card.Content>
-            <Text variant="headlineSmall">Vehicle for customer jobs</Text>
-            <Text style={styles.subtitle}>
-              Select which vehicle you use before appearing in customer offers. Company vehicles attribute jobs to your
-              fleet; personal vehicles are independent.
-            </Text>
+            <SectionTitleRow
+              icon="steering"
+              title="Vehicle for jobs"
+              subtitle="Choose the vehicle used for customer offers. Company vs personal affects how jobs are attributed."
+              iconBg={mode === "dark" ? "rgba(13, 148, 136, 0.18)" : "rgba(13, 148, 136, 0.14)"}
+              iconColor={theme.colors.primary}
+              subtitleColor={theme.colors.onSurfaceVariant}
+            />
             {!activeVehicleId && !activeVehicleQuery.isLoading ? (
               <Banner visible icon="alert">
                 No active vehicle selected. You will not receive new customer offers until you choose one below.
@@ -695,13 +748,20 @@ export function DriverVehiclesScreen() {
                   <Card key={`active-${item.id}`} mode="outlined" style={styles.activeVehicleRow}>
                     <Card.Content>
                       <View style={styles.vehicleTitleRow}>
-                        <Text variant="titleMedium">{item.registrationNumber || "Vehicle"}</Text>
+                        <MaterialCommunityIcons
+                          name={isCompanyVehicle(item) ? "car-key" : "car-outline"}
+                          size={20}
+                          color={theme.colors.primary}
+                        />
+                        <Text variant="titleMedium" style={styles.vehicleTitleFlex}>
+                          {item.registrationNumber || "Vehicle"}
+                        </Text>
                         {item.companyId ? (
-                          <Chip compact style={styles.companyFleetChip}>
+                          <Chip compact icon="office-building" style={styles.companyFleetChip}>
                             Company
                           </Chip>
                         ) : (
-                          <Chip compact>Personal</Chip>
+                          <Chip compact icon="account">Personal</Chip>
                         )}
                         {isActive ? (
                           <Chip compact style={styles.approvedChip}>
@@ -711,6 +771,8 @@ export function DriverVehiclesScreen() {
                       </View>
                       <Button
                         mode={isActive ? "outlined" : "contained"}
+                        compact
+                        icon={isActive ? "check-circle" : "play-circle-outline"}
                         buttonColor={isActive ? undefined : theme.colors.primary}
                         textColor={isActive ? undefined : theme.colors.onPrimary}
                         style={styles.poolClaimBtn}
@@ -718,8 +780,22 @@ export function DriverVehiclesScreen() {
                         loading={setActiveVehicleMutation.isPending}
                         onPress={() => setActiveVehicleMutation.mutate(item.id)}
                       >
-                        {isActive ? "In use for jobs" : "Use for jobs"}
+                        {isActive ? "Active" : "Use for jobs"}
                       </Button>
+                      {isCompanyVehicle(item) ? (
+                        <Button
+                          mode="outlined"
+                          compact
+                          icon="export"
+                          textColor={theme.colors.error}
+                          style={styles.releaseFleetBtn}
+                          onPress={() => confirmReleaseCompanyVehicle(item)}
+                          loading={releaseCompanyVehicleMutation.isPending}
+                          disabled={releaseCompanyVehicleMutation.isPending}
+                        >
+                          Release to pool
+                        </Button>
+                      ) : null}
                     </Card.Content>
                   </Card>
                 );
@@ -728,15 +804,77 @@ export function DriverVehiclesScreen() {
           </Card.Content>
         </Card>
 
+        {linkedToCompany && assignedCompanyVehicles.length > 0 ? (
+          <Card mode="contained" style={[styles.headerCard, styles.assignedFleetCard]}>
+            <Card.Content>
+              <SectionTitleRow
+                icon="car-multiple"
+                title="Your company vehicles"
+                subtitle={`Assigned from ${membershipQuery.data?.companyName ?? "your fleet"}. Release to return to the pool.`}
+                iconBg={mode === "dark" ? "rgba(13, 148, 136, 0.18)" : "rgba(13, 148, 136, 0.14)"}
+                iconColor={theme.colors.primary}
+                subtitleColor={theme.colors.onSurfaceVariant}
+              />
+              <View style={styles.poolList}>
+                {assignedCompanyVehicles.map((item) => (
+                  <Card key={`assigned-${item.id}`} mode="outlined" style={styles.poolVehicleCard}>
+                    <Card.Content>
+                      <View style={styles.vehicleTitleRow}>
+                        <Text variant="titleMedium">{item.registrationNumber || "Fleet vehicle"}</Text>
+                        <Chip compact style={styles.companyFleetChip}>
+                          Company fleet
+                        </Chip>
+                      </View>
+                      <IconMetaRow icon="car-info" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.onSurfaceVariant}>
+                        {[item.make, item.model, item.year].filter(Boolean).join(" ") || "Fleet vehicle"}
+                        {item.capacityLitres != null ? ` · ${Number(item.capacityLitres).toLocaleString()} L` : ""}
+                      </IconMetaRow>
+                      <Button
+                        mode="outlined"
+                        compact
+                        icon="export"
+                        textColor={theme.colors.error}
+                        style={styles.releaseFleetBtn}
+                        onPress={() => confirmReleaseCompanyVehicle(item)}
+                        loading={releaseCompanyVehicleMutation.isPending}
+                        disabled={releaseCompanyVehicleMutation.isPending}
+                      >
+                        Release to pool
+                      </Button>
+                      <Button
+                        mode="contained"
+                        compact
+                        icon="file-document-check-outline"
+                        buttonColor={theme.colors.primary}
+                        textColor={theme.colors.onPrimary}
+                        style={styles.poolClaimBtn}
+                        onPress={() => openCompliance(item)}
+                      >
+                        Compliance
+                      </Button>
+                    </Card.Content>
+                  </Card>
+                ))}
+              </View>
+            </Card.Content>
+          </Card>
+        ) : null}
+
         {linkedToCompany ? (
           <Card mode="contained" style={[styles.headerCard, styles.poolCard]}>
             <Card.Content>
-              <Text variant="headlineSmall">Available company vehicles</Text>
-              <Text style={styles.subtitle}>
-                {membershipQuery.data?.companyName
-                  ? `Unassigned vehicles from ${membershipQuery.data.companyName}. Choosing one assigns it to you and releases any other company vehicle you had selected.`
-                  : "Unassigned vehicles from your fleet company. Select one to use for deliveries."}
-              </Text>
+              <SectionTitleRow
+                icon="garage-open"
+                title="Available company vehicles"
+                subtitle={
+                  membershipQuery.data?.companyName
+                    ? `Unassigned pool from ${membershipQuery.data.companyName}. Claiming one releases your other company vehicle.`
+                    : "Unassigned fleet vehicles you can claim."
+                }
+                iconBg={mode === "dark" ? "rgba(13, 148, 136, 0.18)" : "rgba(13, 148, 136, 0.14)"}
+                iconColor={theme.colors.primary}
+                subtitleColor={theme.colors.onSurfaceVariant}
+              />
               {availablePoolQuery.isLoading ? (
                 <View style={styles.center}>
                   <ActivityIndicator />
@@ -751,13 +889,20 @@ export function DriverVehiclesScreen() {
                   {(availablePoolQuery.data ?? []).map((v) => (
                     <Card key={v.id} mode="outlined" style={styles.poolVehicleCard}>
                       <Card.Content>
-                        <Text variant="titleMedium">{v.registrationNumber || "Fleet vehicle"}</Text>
-                        <Text style={styles.meta}>
+                        <View style={styles.vehicleTitleRow}>
+                          <MaterialCommunityIcons name="car-outline" size={20} color={theme.colors.primary} />
+                          <Text variant="titleMedium" style={styles.vehicleTitleFlex}>
+                            {v.registrationNumber || "Fleet vehicle"}
+                          </Text>
+                        </View>
+                        <IconMetaRow icon="gauge" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.onSurfaceVariant}>
                           {[v.make, v.model, v.year].filter(Boolean).join(" ") || "Fleet vehicle"}
                           {v.capacityLitres != null ? ` · ${Number(v.capacityLitres).toLocaleString()} L` : ""}
-                        </Text>
+                        </IconMetaRow>
                         <Button
                           mode="contained"
+                          compact
+                          icon="car-key"
                           buttonColor={theme.colors.primary}
                           textColor={theme.colors.onPrimary}
                           style={styles.poolClaimBtn}
@@ -765,7 +910,7 @@ export function DriverVehiclesScreen() {
                           loading={claimCompanyVehicleMutation.isPending}
                           disabled={claimCompanyVehicleMutation.isPending}
                         >
-                          Use this vehicle
+                          Claim vehicle
                         </Button>
                       </Card.Content>
                     </Card>
@@ -778,15 +923,20 @@ export function DriverVehiclesScreen() {
 
         <Card mode="contained" style={styles.headerCard}>
           <Card.Content>
-            <Text variant="headlineSmall">My Vehicles</Text>
-            <Text style={styles.subtitle}>
-              View and manage your delivery vehicles.
-              {linkedToCompany
-                ? " Company pool vehicles appear above until you select one — then they show here."
-                : ""}
-            </Text>
-            <Button mode="contained" style={styles.addBtn} onPress={() => setShowAdd(true)}>
-              Add Vehicle
+            <SectionTitleRow
+              icon="car-outline"
+              title="My vehicles"
+              subtitle={
+                linkedToCompany
+                  ? "Personal vehicles only. Company fleet is listed above."
+                  : "Your personal delivery vehicles."
+              }
+              iconBg={mode === "dark" ? "rgba(13, 148, 136, 0.18)" : "rgba(13, 148, 136, 0.14)"}
+              iconColor={theme.colors.primary}
+              subtitleColor={theme.colors.onSurfaceVariant}
+            />
+            <Button mode="contained" compact icon="plus" style={styles.addBtn} onPress={() => setShowAdd(true)}>
+              Add vehicle
             </Button>
           </Card.Content>
         </Card>
@@ -799,24 +949,29 @@ export function DriverVehiclesScreen() {
           <View style={styles.center}>
             <Text>Could not load vehicles.</Text>
           </View>
-        ) : vehicles.length === 0 ? (
-          <Text style={styles.empty}>No vehicles yet. Add your first vehicle.</Text>
+        ) : personalVehicles.length === 0 ? (
+          <Text style={styles.empty}>
+            {linkedToCompany && assignedCompanyVehicles.length > 0
+              ? "No personal vehicles yet. Add one below or use a company vehicle from above."
+              : "No vehicles yet. Add your first vehicle."}
+          </Text>
         ) : (
-          vehicles.map((item) => (
+          personalVehicles.map((item) => (
             <Card key={item.id} mode="outlined" style={styles.vehicleCard}>
               <Card.Content>
                 <View style={styles.vehicleTitleRow}>
-                  <Text variant="titleMedium">{item.registrationNumber || "Unnamed vehicle"}</Text>
-                  {item.companyId ? (
-                    <Chip compact style={styles.companyFleetChip} textStyle={styles.companyFleetChipText}>
-                      Company fleet
-                    </Chip>
-                  ) : null}
+                  <MaterialCommunityIcons name="car-outline" size={20} color={theme.colors.primary} />
+                  <Text variant="titleMedium" style={styles.vehicleTitleFlex}>
+                    {item.registrationNumber || "Unnamed vehicle"}
+                  </Text>
+                  <Chip compact icon="account">Personal</Chip>
                 </View>
-                <Text style={styles.meta}>
-                  {[item.make, item.model, item.year].filter(Boolean).join(" ") || "Vehicle details not set"}
-                </Text>
-                <Text style={styles.meta}>Capacity: {item.capacityLitres ?? 0} L</Text>
+                <IconMetaRow icon="car-info" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.onSurfaceVariant}>
+                  {[item.make, item.model, item.year].filter(Boolean).join(" ") || "Details not set"}
+                </IconMetaRow>
+                <IconMetaRow icon="gauge" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.onSurfaceVariant}>
+                  {item.capacityLitres ?? 0} L capacity
+                </IconMetaRow>
                 {item.fuelTypes?.length ? (
                   <View style={styles.chipsWrap}>
                     {item.fuelTypes.map((type) => (
@@ -826,26 +981,20 @@ export function DriverVehiclesScreen() {
                     ))}
                   </View>
                 ) : null}
-                <Text style={styles.meta}>Compliance: {item.complianceStatus || "pending"}</Text>
+                <IconMetaRow icon="shield-check-outline" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.onSurfaceVariant}>
+                  Compliance: {item.complianceStatus || "pending"}
+                </IconMetaRow>
                 <View style={styles.vehicleActions}>
-                  {item.companyId ? (
-                    <Button
-                      mode="outlined"
-                      onPress={() => releaseCompanyVehicleMutation.mutate(item.id)}
-                      loading={releaseCompanyVehicleMutation.isPending}
-                      disabled={releaseCompanyVehicleMutation.isPending}
-                    >
-                      Release to pool
-                    </Button>
-                  ) : null}
                   <Button
                     mode="contained"
+                    compact
+                    icon="file-document-check-outline"
                     style={styles.complianceBtn}
                     buttonColor={theme.colors.primary}
                     textColor={theme.colors.onPrimary}
                     onPress={() => openCompliance(item)}
                   >
-                    Manage Compliance
+                    Compliance
                   </Button>
                 </View>
               </Card.Content>
@@ -867,14 +1016,7 @@ export function DriverVehiclesScreen() {
             behavior={Platform.OS === "ios" ? "padding" : "height"}
           >
             <View style={styles.addVehicleModalContainer}>
-              <View style={styles.addVehicleModalHeader}>
-                <Text variant="titleLarge" style={styles.addVehicleModalTitle}>
-                  Add Vehicle
-                </Text>
-                <Button mode="text" onPress={() => setShowAdd(false)} textColor={theme.colors.primary}>
-                  Close
-                </Button>
-              </View>
+              <ModalScreenHeader title="Add Vehicle" onClose={() => setShowAdd(false)} />
               <ScrollView
                 keyboardShouldPersistTaps="handled"
                 keyboardDismissMode="on-drag"
@@ -948,12 +1090,7 @@ export function DriverVehiclesScreen() {
                   </Card.Content>
                 </Card>
               </ScrollView>
-              <View
-                style={[
-                  styles.addVehicleModalFooter,
-                  { paddingBottom: Math.max(insets.bottom, 14) },
-                ]}
-              >
+              <View style={styles.addVehicleModalFooter}>
                 <Button mode="outlined" onPress={() => setShowAdd(false)} style={styles.addVehicleFooterBtn}>
                   Cancel
                 </Button>
@@ -991,6 +1128,7 @@ const getStyles = (theme: typeof lightTheme) => {
     marginBottom: 10,
   },
   subtitle: {
+    ...readableType.subtitle,
     marginTop: 6,
     color: theme.colors.onSurfaceVariant,
   },
@@ -1002,13 +1140,19 @@ const getStyles = (theme: typeof lightTheme) => {
     marginTop: 12,
   },
   center: p.center,
-  list: {
+  scrollFill: {
+    flex: 1,
+  },
+  complianceScrollContent: {
     gap: 10,
-    paddingBottom: 20,
+  },
+  complianceHeaderText: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 8,
   },
   pageContent: {
     gap: 10,
-    paddingBottom: 20,
   },
   empty: {
     ...p.empty,
@@ -1016,6 +1160,7 @@ const getStyles = (theme: typeof lightTheme) => {
   },
   vehicleCard: p.listCard,
   meta: {
+    ...readableType.meta,
     marginTop: 4,
     color: theme.colors.onSurfaceVariant,
   },
@@ -1039,6 +1184,10 @@ const getStyles = (theme: typeof lightTheme) => {
     flexWrap: "wrap",
     alignItems: "center",
     gap: 8,
+  },
+  vehicleTitleFlex: {
+    flex: 1,
+    minWidth: 120,
   },
   companyFleetChip: {
     backgroundColor: theme.colors.primaryContainer,
@@ -1124,6 +1273,15 @@ const getStyles = (theme: typeof lightTheme) => {
   poolClaimBtn: {
     marginTop: 10,
     alignSelf: "stretch",
+  },
+  assignedFleetCard: {
+    borderWidth: 1,
+    borderColor: theme.colors.outline,
+  },
+  releaseFleetBtn: {
+    marginTop: 10,
+    alignSelf: "stretch",
+    borderColor: theme.colors.error,
   },
   input: p.input,
   complianceSummary: p.sectionCard,

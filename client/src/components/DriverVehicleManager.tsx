@@ -591,15 +591,20 @@ export function DriverVehicleManager() {
 
       {/* Add/Edit Vehicle Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden p-0">
+          <DialogHeader className="shrink-0 space-y-1.5 border-b px-6 py-4">
             <DialogTitle>{editingVehicle ? "Edit Vehicle" : "Add Vehicle"}</DialogTitle>
             <DialogDescription>
               Enter your vehicle details and compliance information
             </DialogDescription>
           </DialogHeader>
-          
-          <form key={editingVehicle?.id ?? "new"} onSubmit={handleSubmit} className="space-y-4">
+
+          <form
+            key={editingVehicle?.id ?? "new"}
+            onSubmit={handleSubmit}
+            className="flex min-h-0 flex-1 flex-col"
+          >
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-6 py-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
                 <Label htmlFor="registration_number">Registration Number *</Label>
@@ -920,8 +925,9 @@ export function DriverVehicleManager() {
                 )}
               </div>
             </div>
+            </div>
 
-            <DialogFooter>
+            <DialogFooter className="shrink-0 border-t px-6 py-4">
               <Button
                 type="button"
                 variant="outline"
@@ -981,14 +987,15 @@ export function DriverVehicleManager() {
           }
         }}
       >
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden p-0 sm:max-w-3xl">
+          <DialogHeader className="shrink-0 space-y-1.5 border-b px-6 py-4">
             <DialogTitle>Vehicle Compliance Management</DialogTitle>
             <DialogDescription>
               Upload compliance documents and manage vehicle compliance status
             </DialogDescription>
           </DialogHeader>
-          
+
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-4">
           {vehicleComplianceStatus && (
             <div className="space-y-4">
               <div className="p-4 border rounded-lg space-y-2">
@@ -1107,8 +1114,9 @@ export function DriverVehicleManager() {
               })}
             </div>
           </div>
+          </div>
 
-          <DialogFooter>
+          <DialogFooter className="shrink-0 border-t px-6 py-4">
             <Button
               variant="outline"
               onClick={() => {

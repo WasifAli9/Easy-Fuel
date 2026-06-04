@@ -10,6 +10,8 @@ import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { filterOutOldCustomerOrders, formatCustomerOrderAddress } from "@/features/customer/customerOrderUtils";
+import { formatMoneyFromCents } from "@/lib/format-currency";
+import { formatOrderState } from "@/lib/format-labels";
 import { CustomerCreateOrderModal } from "@/features/customer/CustomerCreateOrderModal";
 import { CustomerOrderDetailModal } from "@/features/customer/CustomerOrderDetailModal";
 import { useNotificationDeepLinkStore } from "@/store/notification-deep-link-store";
@@ -138,12 +140,13 @@ export function CustomerDashboardScreen() {
               <View style={styles.orderHeader}>
                 <Text variant="titleSmall">{item.fuel_types?.label ?? "Fuel"}</Text>
                 <Chip compact style={styles.statusChip}>
-                  {formatOrderStatus(item.state ?? item.order_status)}
+                  {formatOrderState(item.state ?? item.order_status)}
                 </Chip>
               </View>
               <Text style={styles.meta}>{formatCustomerOrderAddress(item)}</Text>
               <Text style={styles.meta}>
-                {item.litres != null ? `${item.litres} L · ` : ""}R {((item.total_cents ?? 0) / 100).toFixed(2)}
+                {item.litres != null ? `${item.litres} L · ` : ""}
+                {formatMoneyFromCents(item.total_cents ?? 0)}
               </Text>
               <Button
                 mode="contained-tonal"
@@ -170,14 +173,6 @@ export function CustomerDashboardScreen() {
       <CustomerOrderDetailModal orderId={detailId} visible={detailOpen} onDismiss={() => setDetailOpen(false)} />
     </ScrollView>
   );
-}
-
-function formatOrderStatus(state?: string) {
-  if (!state) return "Pending";
-  return state
-    .split("_")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
 }
 
 const getStyles = (theme: typeof lightTheme) => {

@@ -12,7 +12,7 @@ import { Wallet, TrendingUp, CheckCircle, User, MapPin, Phone, DollarSign, Packa
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useCurrency } from "@/hooks/use-currency";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, formatMoneyAmount } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useLocation, Link } from "wouter";
 import { CompleteDeliveryDialog } from "@/components/CompleteDeliveryDialog";
+import { DeliverySignatureProof } from "@/components/DeliverySignatureProof";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -997,7 +998,11 @@ export default function DriverDashboard() {
                             tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
                             axisLine={false}
                             tickLine={false}
-                            tickFormatter={(v) => (v >= 1000 ? `R ${(v / 1000).toFixed(0)}k` : `R ${v}`)}
+                            tickFormatter={(v) =>
+                              v >= 1000
+                                ? `${formatMoneyAmount(v / 1000, { currencyCode: currency, minimumFractionDigits: 0, maximumFractionDigits: 0 })}k`
+                                : formatMoneyAmount(v, { currencyCode: currency, minimumFractionDigits: 0, maximumFractionDigits: 0 })
+                            }
                           />
                           <Tooltip
                             contentStyle={{
@@ -1624,6 +1629,7 @@ export default function DriverDashboard() {
                             <p className="font-medium text-xs sm:text-sm">{deliveryAddress}</p>
                           </div>
                         </div>
+                        <DeliverySignatureProof order={order} />
                       </CardContent>
                     </Card>
                   );

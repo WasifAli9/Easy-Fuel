@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { FlatList, Modal, StyleSheet, View } from "react-native";
+import { FlatList, Modal, ScrollView, StyleSheet, View } from "react-native";
 import { ModalSafeArea } from "@/components/ModalSafeArea";
+import { ModalScreenHeader } from "@/components/ModalScreenHeader";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActivityIndicator, Card, Switch, Text, TextInput } from "react-native-paper";
 import { Button } from "@/design/paper-button";
@@ -134,11 +135,12 @@ export function SupplierDepotsScreen() {
 
       <Modal visible={modalOpen} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setModalOpen(false)}>
         <ModalSafeArea style={styles.modal}>
-          <View style={styles.modalHeader}>
-            <Text variant="titleLarge">New depot</Text>
-            <Button onPress={() => setModalOpen(false)}>Close</Button>
-          </View>
-          <View style={styles.modalBody}>
+          <ModalScreenHeader title="New depot" onClose={() => setModalOpen(false)} />
+          <ScrollView
+            style={styles.modalBodyScroll}
+            contentContainerStyle={styles.modalBody}
+            keyboardShouldPersistTaps="handled"
+          >
             <TextInput mode="outlined" label="Name" value={name} onChangeText={setName} style={styles.input} />
             <TextInput mode="outlined" label="Latitude" value={lat} onChangeText={setLat} keyboardType="numeric" style={styles.input} />
             <TextInput mode="outlined" label="Longitude" value={lng} onChangeText={setLng} keyboardType="numeric" style={styles.input} />
@@ -160,7 +162,7 @@ export function SupplierDepotsScreen() {
               Create depot
             </Button>
             {createMutation.isError ? <Text style={styles.error}>{(createMutation.error as Error).message}</Text> : null}
-          </View>
+          </ScrollView>
         </ModalSafeArea>
       </Modal>
     </View>
@@ -187,18 +189,8 @@ const getStyles = (theme: typeof lightTheme) => {
     },
     muted: { ...p.empty },
     modal: { flex: 1, backgroundColor: theme.colors.background },
-    modalHeader: {
-      flexDirection: "row",
-      justifyContent: "space-between",
-      alignItems: "center",
-      padding: 14,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: theme.colors.outline,
-      backgroundColor: theme.colors.surface,
-      borderLeftWidth: 3,
-      borderLeftColor: theme.colors.primary,
-    },
-    modalBody: { padding: 16, gap: 8 },
+    modalBodyScroll: { flex: 1, minHeight: 0 },
+    modalBody: { padding: 16, paddingBottom: 28, gap: 8 },
     input: p.input,
     switchRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
     error: p.errorText,

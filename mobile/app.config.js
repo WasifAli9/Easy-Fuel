@@ -8,6 +8,7 @@ const defaultProductionApi = "https://portal.easyfuel.ai";
 
 export default {
   expo: {
+    /** Classic App.tsx entry — do not use `src/app` (Expo Router would hijack the project). */
     name: "Easy Fuel",
     slug: "easy-fuel-mobile",
     version: "1.0.1",
@@ -35,7 +36,7 @@ export default {
           "Easy Fuel uses your location to support delivery tracking while you use the app.",
         NSCameraUsageDescription: "Easy Fuel may use the camera to capture documents or signatures when required.",
         NSPhotoLibraryUsageDescription:
-          "Easy Fuel may access photos when you upload compliance or vehicle documents.",
+          "Easy Fuel accesses your photo library so you can choose a profile picture and upload images.",
         NSFaceIDUsageDescription: "Easy Fuel uses Face ID for quick sign-in.",
       },
     },
@@ -84,6 +85,13 @@ export default {
           color: "#0D9488",
           defaultChannel: "default",
           sounds: [],
+        },
+      ],
+      [
+        "expo-image-picker",
+        {
+          photosPermission:
+            "Easy Fuel accesses your photo library so you can choose a profile picture and upload images.",
         },
       ],
       "@react-native-community/datetimepicker",

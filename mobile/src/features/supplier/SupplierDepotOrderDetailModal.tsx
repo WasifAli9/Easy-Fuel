@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Alert, Modal, ScrollView, StyleSheet, View } from "react-native";
 import { ModalSafeArea } from "@/components/ModalSafeArea";
+import { ModalScreenHeader } from "@/components/ModalScreenHeader";
+import { formatMoneyFromCents } from "@/lib/format-currency";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Text, TextInput } from "react-native-paper";
 import { Button } from "@/design/paper-button";
@@ -117,10 +119,7 @@ export function SupplierDepotOrderDetailModal({ order, visible, onDismiss }: Sup
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onDismiss}>
       <ModalSafeArea style={styles.safe}>
-        <View style={styles.header}>
-          <Text variant="titleLarge">Order #{order.id.slice(0, 8)}</Text>
-          <Button onPress={onDismiss}>Close</Button>
-        </View>
+        <ModalScreenHeader title={`Order #${order.id.slice(0, 8)}`} onClose={onDismiss} />
         <ScrollView contentContainerStyle={styles.body}>
           <View style={styles.statusRow}>
             <Text style={styles.statusLabel}>Status</Text>
@@ -142,7 +141,7 @@ export function SupplierDepotOrderDetailModal({ order, visible, onDismiss }: Sup
           <View style={styles.volumeRow}>
             <MaterialCommunityIcons name={fuelIconName(fuelLabel)} size={18} color={theme.colors.onSurfaceVariant} />
             <Text style={styles.volumeText}>
-              {order.litres ?? 0} L · R {((order.total_price_cents ?? 0) / 100).toLocaleString("en-ZA", { minimumFractionDigits: 2 })}
+              {order.litres ?? 0} L · {formatMoneyFromCents(order.total_price_cents ?? 0)}
             </Text>
           </View>
           {order.created_at ? (
@@ -303,7 +302,7 @@ const getStyles = (theme: typeof lightTheme) => {
       backgroundColor: theme.colors.surfaceVariant,
     },
     statusLabel: { fontWeight: "700", color: theme.colors.onSurfaceVariant },
-    statusValue: { fontWeight: "800", color: theme.colors.primary, textTransform: "capitalize" },
+    statusValue: { fontWeight: "800", color: theme.colors.primary },
     row: { fontSize: 15, color: theme.colors.onSurface },
     label: { fontWeight: "700", color: theme.colors.onSurfaceVariant },
     volumeRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 },

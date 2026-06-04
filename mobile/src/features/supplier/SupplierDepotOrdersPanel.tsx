@@ -1,12 +1,14 @@
 import { ReactNode, useMemo, useState } from "react";
 import { Alert, FlatList, Modal, Pressable, StyleSheet, View } from "react-native";
 import { ModalSafeArea } from "@/components/ModalSafeArea";
+import { ModalScreenHeader } from "@/components/ModalScreenHeader";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActivityIndicator, Card, Text, TextInput } from "react-native-paper";
 import { Button } from "@/design/paper-button";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { apiClient } from "@/services/api/client";
 import { openStoredDocument } from "@/lib/files";
+import { formatMoneyFromCents } from "@/lib/format-currency";
 import { getFuelPortalTokens } from "@/design/fuel-portal-tokens";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
@@ -152,7 +154,7 @@ export function SupplierDepotOrdersPanel({ listHeader, listChrome = "default" }:
               <Text style={styles.volumeText}>{item.litres ?? 0} L</Text>
               <Text style={styles.dot}>·</Text>
               <Text style={[styles.priceText, { color: t.accentPositiveStrong }]}>
-                R {((item.total_price_cents ?? 0) / 100).toLocaleString("en-ZA", { minimumFractionDigits: 2 })}
+                {formatMoneyFromCents(item.total_price_cents ?? 0)}
               </Text>
             </View>
             <Text style={styles.tapHint}>Tap to manage order</Text>
@@ -319,10 +321,7 @@ export function SupplierDepotOrdersPanel({ listHeader, listChrome = "default" }:
 
       <Modal visible={!!receiptOrder} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setReceiptOrder(null)}>
         <ModalSafeArea style={styles.receiptModal}>
-          <View style={styles.receiptHeader}>
-            <Text variant="titleLarge">Receipt</Text>
-            <Button onPress={() => setReceiptOrder(null)}>Close</Button>
-          </View>
+          <ModalScreenHeader title="Receipt" onClose={() => setReceiptOrder(null)} />
           {receiptOrder ? (
             <View style={styles.receiptBody}>
               <Text style={styles.meta}>Order #{receiptOrder.id.slice(0, 8).toUpperCase()}</Text>
@@ -333,7 +332,7 @@ export function SupplierDepotOrdersPanel({ listHeader, listChrome = "default" }:
                 Driver: {getDriverDisplayName(receiptOrder)} · {receiptOrder.litres ?? 0} L
               </Text>
               <Text style={styles.metaStrong}>
-                Total R {((receiptOrder.total_price_cents ?? 0) / 100).toFixed(2)}
+                Total {formatMoneyFromCents(receiptOrder.total_price_cents ?? 0)}
               </Text>
               <Text style={styles.meta}>
                 {receiptOrder.created_at ? `Created ${new Date(receiptOrder.created_at).toLocaleString("en-ZA")}` : ""}

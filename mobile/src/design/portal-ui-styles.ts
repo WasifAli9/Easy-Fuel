@@ -1,5 +1,6 @@
 import { StyleSheet } from "react-native";
 import { getFuelPortalTokens } from "@/design/fuel-portal-tokens";
+import { readableType } from "@/design/typography";
 import { buttonBorderRadius, type lightTheme } from "@/design/theme";
 
 export type PortalTheme = typeof lightTheme;
@@ -45,8 +46,8 @@ export function getPortalUiStyleDefs(theme: PortalTheme) {
       justifyContent: "center" as const,
     },
     heroTextCol: { flex: 1, marginLeft: 14 },
-    heroTitle: { fontWeight: "700" as const, color: theme.colors.onSurface },
-    heroSubtitle: { marginTop: 6, color: theme.colors.onSurfaceVariant, lineHeight: 22 },
+    heroTitle: { ...readableType.title, color: theme.colors.onSurface },
+    heroSubtitle: { ...readableType.subtitle, marginTop: 6, color: theme.colors.onSurfaceVariant },
 
     brandRow: { marginBottom: 6, flexDirection: "row" as const, justifyContent: "flex-end" as const },
     brandPill: {
@@ -61,21 +62,17 @@ export function getPortalUiStyleDefs(theme: PortalTheme) {
       paddingVertical: 4,
     },
     brandPillText: {
-      fontSize: 12,
-      fontWeight: "700" as const,
+      ...readableType.caption,
       color: theme.colors.primary,
     },
 
     sectionKicker: {
+      ...readableType.kicker,
       color: theme.colors.primary,
-      fontWeight: "700" as const,
-      fontSize: 11,
-      letterSpacing: 0.8,
-      textTransform: "uppercase" as const,
       marginBottom: 4,
     },
-    blockTitle: { marginTop: 4, fontWeight: "700" as const, color: theme.colors.onSurface },
-    blockHint: { color: theme.colors.onSurfaceVariant, lineHeight: 20, marginBottom: 4 },
+    blockTitle: { ...readableType.bodyBold, marginTop: 4, color: theme.colors.onSurface },
+    blockHint: { ...readableType.meta, color: theme.colors.onSurfaceVariant, marginBottom: 4 },
 
     sectionCard: {
       borderRadius: fp.cardRadius,
@@ -92,10 +89,10 @@ export function getPortalUiStyleDefs(theme: PortalTheme) {
       ...fp.shadowCard,
     },
 
-    subtitle: { marginTop: 4, color: theme.colors.onSurfaceVariant },
-    meta: { marginTop: 4, color: theme.colors.onSurfaceVariant },
-    metaStrong: { marginTop: 2, marginBottom: 2, color: theme.colors.onSurface, fontWeight: "600" as const },
-    muted: { color: theme.colors.onSurfaceVariant },
+    subtitle: { ...readableType.subtitle, marginTop: 4, color: theme.colors.onSurfaceVariant },
+    meta: { ...readableType.meta, marginTop: 4, color: theme.colors.onSurfaceVariant },
+    metaStrong: { ...readableType.bodyBold, marginTop: 2, marginBottom: 2, color: theme.colors.onSurface },
+    muted: { ...readableType.meta, color: theme.colors.onSurfaceVariant },
 
     input: { marginTop: 8, backgroundColor: theme.colors.surface },
     row: { flexDirection: "row" as const, gap: 8, marginTop: 10, flexWrap: "wrap" as const },
@@ -130,6 +127,7 @@ export function getPortalUiStyleDefs(theme: PortalTheme) {
     statLabelRecent: { color: isDark ? "#A5B4FC" : "#4338CA", fontWeight: "700" as const },
 
     empty: {
+      ...readableType.body,
       textAlign: "center" as const,
       marginTop: 24,
       color: theme.colors.onSurfaceVariant,
@@ -147,7 +145,7 @@ export function getPortalUiStyleDefs(theme: PortalTheme) {
       alignItems: "center" as const,
     },
 
-    errorText: { marginTop: 8, color: theme.colors.error },
+    errorText: { ...readableType.bodyBold, marginTop: 8, color: theme.colors.error },
     planDetailBox: {
       marginTop: 10,
       padding: 12,
@@ -167,7 +165,7 @@ export function getPortalUiStyleDefs(theme: PortalTheme) {
       backgroundColor: theme.colors.surface,
       borderColor: theme.colors.outline,
     },
-    itemSubtitle: { marginTop: 4, color: theme.colors.onSurfaceVariant },
+    itemSubtitle: { ...readableType.meta, marginTop: 4, color: theme.colors.onSurfaceVariant },
     centerWrap: { alignItems: "center" as const, justifyContent: "center" as const, paddingVertical: 32 },
     errorCard: {
       borderRadius: fp.cardRadius,

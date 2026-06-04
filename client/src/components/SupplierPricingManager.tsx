@@ -11,6 +11,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Fuel, History, Loader2, MapPin } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useCurrency } from "@/hooks/use-currency";
+import { formatCurrency } from "@/lib/utils";
 
 interface PricingTier {
   id: string;
@@ -53,6 +55,7 @@ export function SupplierPricingManager() {
   const [editingPrices, setEditingPrices] = useState<Record<string, string>>({});
   const [editingAvailableLitres, setEditingAvailableLitres] = useState<Record<string, string>>({});
   const [editingNotes, setEditingNotes] = useState<Record<string, string>>({});
+  const { currency } = useCurrency();
 
   // Fetch depots
   const { data: depots, isLoading: depotsLoading } = useQuery<Depot[]>({
@@ -185,9 +188,6 @@ export function SupplierPricingManager() {
     return "";
   };
 
-  const formatCurrency = (cents: number) => {
-    return `R ${(cents / 100).toFixed(2)}`;
-  };
 
   const formatDate = (dateStr: string) => {
     return new Date(dateStr).toLocaleString("en-ZA", {
@@ -272,7 +272,7 @@ export function SupplierPricingManager() {
                       {fuelType.pricing && !editingPrices[fuelType.id] && (
                         <div className="text-right">
                           <p className="text-2xl font-bold">
-                            {formatCurrency(fuelType.pricing.price_cents)}
+                            {formatCurrency(fuelType.pricing.price_cents / 100, currency)}
                           </p>
                           <p className="text-xs text-muted-foreground">per litre</p>
                           <p className="text-sm font-medium mt-1">
@@ -401,13 +401,13 @@ export function SupplierPricingManager() {
                           {item.old_price_cents !== null && (
                             <>
                               <span className="text-sm text-muted-foreground line-through">
-                                {formatCurrency(item.old_price_cents)}
+                                {formatCurrency(item.old_price_cents / 100, currency)}
                               </span>
                               <span className="text-sm text-muted-foreground">→</span>
                             </>
                           )}
                           <span className="font-medium">
-                            {formatCurrency(item.new_price_cents)}
+                            {formatCurrency(item.new_price_cents / 100, currency)}
                           </span>
                         </div>
                       </div>

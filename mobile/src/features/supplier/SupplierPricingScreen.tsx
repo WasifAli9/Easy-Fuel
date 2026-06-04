@@ -8,6 +8,7 @@ import { Button } from "@/design/paper-button";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { apiClient } from "@/services/api/client";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
+import { formatMoneyFromCents } from "@/lib/format-currency";
 import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 
@@ -350,7 +351,7 @@ export function SupplierPricingScreen() {
                             <View style={styles.tierTopRow}>
                               <View>
                                 <Text style={styles.tierPrice}>
-                                  R {(tier.price_cents / 100).toFixed(2)}
+                                  {formatMoneyFromCents(tier.price_cents)}
                                   <Text style={styles.tierPriceSuffix}> / L</Text>
                                 </Text>
                                 <Text style={styles.tierMeta}>

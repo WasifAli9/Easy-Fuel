@@ -6,6 +6,7 @@ import { insertDepotSchema } from "../shared/schema";
 import { getSupplierComplianceStatus, canSupplierAccessPlatform } from "./compliance-service";
 import { z } from "zod";
 import { normalizeSignatureForStorage } from "./local-object-storage";
+import { formatMoneyAmount } from "@shared/format-currency";
 import PDFDocument from "pdfkit";
 
 type FilterOp = "eq" | "neq" | "in" | "gte" | "lte" | "gt" | "lt";
@@ -2077,8 +2078,7 @@ router.get("/invoices/:id/pdf", requireSupplier, async (req, res) => {
 
     const orderShortId = String(order.id).slice(0, 8).toUpperCase();
     const filename = `EasyFuel-Receipt-${orderShortId}.pdf`;
-    const formatZar = (value: number) =>
-      `R ${new Intl.NumberFormat("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}`;
+    const formatZar = (value: number) => formatMoneyAmount(value, { currencyCode: "ZAR" });
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `${shouldDownload ? "attachment" : "inline"}; filename="${filename}"`);

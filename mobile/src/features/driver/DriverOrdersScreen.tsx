@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { FlatList, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActivityIndicator, Card, Chip, SegmentedButtons, Text, TextInput } from "react-native-paper";
 import { Button } from "@/design/paper-button";
@@ -13,8 +13,14 @@ import { useNotificationDeepLinkStore } from "@/store/notification-deep-link-sto
 import { OrderChatPanel } from "@/features/chat/OrderChatPanel";
 import { formatCustomerOrderAddress } from "@/features/customer/customerOrderUtils";
 import { ModalSafeArea } from "@/components/ModalSafeArea";
-import Signature from "react-native-signature-canvas";
+import { ModalScreenHeader } from "@/components/ModalScreenHeader";
+import { useModalLayout } from "@/components/modal-layout";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { IconMetaRow } from "@/components/IconMetaRow";
+import { DeliverySignatureDisplay } from "@/components/DeliverySignatureDisplay";
+import { SignatureCapturePad, type SignatureCapturePadRef } from "@/components/SignatureCapturePad";
+import { formatMoneyFromCents } from "@/lib/format-currency";
+import { formatOrderIdShort, formatOrderState } from "@/lib/format-labels";
 
 type DriverOrder = {
   id: string;
@@ -34,12 +40,11 @@ type DriverOrder = {
     company_name?: string;
     profiles?: { full_name?: string; phone?: string };
   };
+  delivery_signature_data?: string | null;
+  delivery_signature_name?: string | null;
+  delivery_signed_at?: string | null;
+  delivered_at?: string | null;
 };
-
-function formatAmount(cents?: number) {
-  const value = Number(cents ?? 0) / 100;
-  return `R ${value.toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
 
 function deliveryAddressLine(order: DriverOrder) {
   return formatCustomerOrderAddress(order);
@@ -49,12 +54,8 @@ function customerName(order: DriverOrder) {
   return order.customers?.profiles?.full_name || order.customers?.company_name || "Customer";
 }
 
-function stateLabel(state: string) {
-  return state.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
-}
-
 function orderDetailShortId(id: string) {
-  return id.slice(0, 8);
+  return formatOrderIdShort(id);
 }
 
 export function DriverOrdersScreen() {
@@ -63,6 +64,7 @@ export function DriverOrdersScreen() {
   const isDark = mode === "dark";
   const t = getFuelPortalTokens(theme, isDark);
   const styles = getStyles(theme);
+  const { chatMaxHeight, footerPaddingBottom } = useModalLayout();
   const [segment, setSegment] = useState<"assigned" | "history">("assigned");
   const [selectedOrder, setSelectedOrder] = useState<DriverOrder | null>(null);
   const [chatVisible, setChatVisible] = useState(false);
@@ -71,7 +73,8 @@ export function DriverOrdersScreen() {
   const [hasDrawnSignature, setHasDrawnSignature] = useState(false);
   const [pendingCompleteOrderId, setPendingCompleteOrderId] = useState<string | null>(null);
   const [signaturePadKey, setSignaturePadKey] = useState(0);
-  const signatureRef = useRef<any>(null);
+  const [signatureScrollLocked, setSignatureScrollLocked] = useState(false);
+  const signatureRef = useRef<SignatureCapturePadRef>(null);
   const orderModalScrollRef = useRef<ScrollView>(null);
   const queryClient = useQueryClient();
   const setHideDriverHeader = useUiOverlayStore((state) => state.setHideDriverHeader);
@@ -80,6 +83,15 @@ export function DriverOrdersScreen() {
     setHideDriverHeader(!!selectedOrder);
     return () => setHideDriverHeader(false);
   }, [selectedOrder, setHideDriverHeader]);
+
+  useEffect(() => {
+    if (!selectedOrder || selectedOrder.state !== "picked_up") {
+      setSignatureScrollLocked(false);
+    }
+    if (selectedOrder?.state === "delivered") {
+      setChatVisible(false);
+    }
+  }, [selectedOrder?.id, selectedOrder?.state]);
 
   const consumeDeepLink = useNotificationDeepLinkStore((s) => s.consume);
 
@@ -178,11 +190,17 @@ export function DriverOrdersScreen() {
           </View>
           <View style={styles.statsRowHero}>
             <View style={styles.statCol}>
-              <Text style={styles.statLabel}>Active orders</Text>
+              <View style={styles.statLabelRow}>
+                <MaterialCommunityIcons name="truck-delivery-outline" size={16} color={t.badgeActiveText} />
+                <Text style={styles.statLabel}>Active</Text>
+              </View>
               <Text style={styles.statValue}>{assignedCount}</Text>
             </View>
             <View style={styles.statCol}>
-              <Text style={styles.statLabel}>Completed</Text>
+              <View style={styles.statLabelRow}>
+                <MaterialCommunityIcons name="check-circle-outline" size={16} color={t.badgeActiveText} />
+                <Text style={styles.statLabel}>Done</Text>
+              </View>
               <Text style={styles.statValue}>{completedCount}</Text>
             </View>
           </View>
@@ -196,8 +214,8 @@ export function DriverOrdersScreen() {
             onValueChange={(val) => setSegment(val as "assigned" | "history")}
             style={styles.segment}
             buttons={[
-              { value: "assigned", label: "Active Orders" },
-              { value: "history", label: "Completed" },
+              { value: "assigned", label: "Active", icon: "truck-delivery-outline" },
+              { value: "history", label: "Done", icon: "history" },
             ]}
           />
           <Text style={styles.headerSubtitle}>Open orders, update status, and chat with customers.</Text>
@@ -222,17 +240,32 @@ export function DriverOrdersScreen() {
             <Card mode="outlined" style={styles.orderCard}>
               <Card.Content>
                 <View style={styles.rowBetween}>
-                  <Text variant="titleMedium">
-                    {(item.fuel_types?.label || "Fuel")} - {item.litres ?? 0}L
-                  </Text>
-                  <Chip compact>{stateLabel(item.state)}</Chip>
+                  <View style={styles.orderTitleRow}>
+                    <MaterialCommunityIcons name="fuel" size={20} color={theme.colors.primary} />
+                    <Text variant="titleMedium" style={styles.orderTitleText}>
+                      {(item.fuel_types?.label || "Fuel")} · {item.litres ?? 0}L
+                    </Text>
+                  </View>
+                  <Chip compact icon={item.state === "delivered" ? "check" : "progress-clock"}>
+                    {formatOrderState(item.state)}
+                  </Chip>
                 </View>
-                <Text style={styles.orderMeta}>Order #{item.id.slice(-8)}</Text>
-                <Text style={styles.orderMeta}>Customer: {customerName(item)}</Text>
-                <Text style={styles.orderMeta}>Address: {deliveryAddressLine(item)}</Text>
-                <Text style={styles.orderAmount}>{formatAmount(item.total_cents)}</Text>
+                <IconMetaRow icon="identifier" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.onSurfaceVariant}>
+                  #{item.id.slice(-8)}
+                </IconMetaRow>
+                <IconMetaRow icon="account-outline" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.onSurfaceVariant}>
+                  {customerName(item)}
+                </IconMetaRow>
+                <IconMetaRow icon="map-marker-outline" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.onSurfaceVariant}>
+                  {deliveryAddressLine(item)}
+                </IconMetaRow>
+                <IconMetaRow icon="cash" color={theme.colors.onSurface} iconColor={theme.colors.primary} style={styles.orderAmountRow}>
+                  {formatMoneyFromCents(item.total_cents ?? 0)}
+                </IconMetaRow>
                 <Button
                   mode="contained"
+                  compact
+                  icon="clipboard-text-outline"
                   style={styles.openButton}
                   buttonColor={theme.colors.primary}
                   textColor={theme.colors.onPrimary}
@@ -245,7 +278,7 @@ export function DriverOrdersScreen() {
                     setSignaturePadKey((k) => k + 1);
                   }}
                 >
-                  Open Order
+                  Open
                 </Button>
               </Card.Content>
             </Card>
@@ -262,20 +295,16 @@ export function DriverOrdersScreen() {
         <ModalSafeArea style={styles.modalContainer}>
           {selectedOrder ? (
             <>
-              <View style={[styles.modalHeader, { paddingTop: 12 }]}>
-                <Text style={styles.modalTitle}>Order Details</Text>
-                <Pressable
-                  onPress={() => setSelectedOrder(null)}
-                  style={styles.modalCloseHit}
-                  accessibilityRole="button"
-                  accessibilityLabel="Close"
-                >
-                  <MaterialCommunityIcons name="close" size={26} color={theme.colors.onSurface} />
-                </Pressable>
-              </View>
+              <ModalScreenHeader title="Order Details" onClose={() => setSelectedOrder(null)} />
               <KeyboardAvoidingView
                 style={styles.modalKeyboardWrap}
-                behavior={Platform.OS === "ios" ? "padding" : "height"}
+                behavior={
+                  selectedOrder.state === "picked_up"
+                    ? undefined
+                    : Platform.OS === "ios"
+                      ? "padding"
+                      : "height"
+                }
                 keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
               >
                 <View style={styles.modalBodySplit}>
@@ -284,14 +313,15 @@ export function DriverOrdersScreen() {
                     style={styles.modalScroll}
                     contentContainerStyle={styles.modalScrollContent}
                     keyboardShouldPersistTaps="handled"
-                    keyboardDismissMode="on-drag"
-                    automaticallyAdjustKeyboardInsets
+                    keyboardDismissMode={selectedOrder.state === "picked_up" ? "none" : "on-drag"}
+                    automaticallyAdjustKeyboardInsets={selectedOrder.state !== "picked_up"}
+                    scrollEnabled={!signatureScrollLocked}
                     showsVerticalScrollIndicator={false}
                   >
                 <View style={[styles.statusPill, { backgroundColor: theme.colors.primaryContainer }]}>
                   <View style={[styles.statusDot, { backgroundColor: theme.colors.primary }]} />
                   <Text style={[styles.statusPillText, { color: theme.colors.primary }]}>
-                    {selectedOrder.state.replace(/_/g, " ").toUpperCase()}
+                    {formatOrderState(selectedOrder.state)}
                   </Text>
                 </View>
 
@@ -304,7 +334,7 @@ export function DriverOrdersScreen() {
                     <View style={[styles.infoCol, styles.infoColRight]}>
                       <Text style={styles.fieldCaps}>Amount</Text>
                       <Text style={[styles.amountText, { color: theme.colors.primary }]}>
-                        {formatAmount(selectedOrder.total_cents)}
+                        {formatMoneyFromCents(selectedOrder.total_cents ?? 0)}
                       </Text>
                     </View>
                   </View>
@@ -353,6 +383,10 @@ export function DriverOrdersScreen() {
                   </View>
                 </View>
 
+                {selectedOrder.state === "delivered" ? (
+                  <DeliverySignatureDisplay order={selectedOrder} />
+                ) : null}
+
                 <View style={styles.modalActions}>
                   {selectedOrder.state === "assigned" ? (
                     <Button
@@ -380,8 +414,25 @@ export function DriverOrdersScreen() {
                       Mark Picked Up
                     </Button>
                   ) : null}
+                </View>
+
+                {selectedOrder.state !== "delivered" ? (
+                  <Button
+                    mode="outlined"
+                    style={styles.secondaryFullBtn}
+                    textColor={theme.colors.onSurface}
+                    theme={{ colors: { outline: theme.colors.outline } }}
+                    onPress={() => setChatVisible((prev) => !prev)}
+                  >
+                    {chatVisible ? "Hide Chat" : "Open Chat"}
+                  </Button>
+                ) : null}
+
+                  </ScrollView>
+
                   {selectedOrder.state === "picked_up" ? (
-                    <>
+                    <View style={styles.signatureDock}>
+                      <Text style={styles.signatureDockTitle}>Customer sign-off</Text>
                       <TextInput
                         mode="outlined"
                         label="Signature Name"
@@ -390,28 +441,20 @@ export function DriverOrdersScreen() {
                         style={styles.signatureInput}
                       />
                       <Text style={styles.signatureLabel}>Customer Signature *</Text>
-                      <View style={styles.signatureCanvas}>
-                        <Signature
-                          key={`sig-pad-${signaturePadKey}`}
-                          ref={signatureRef}
-                          onOK={(sig) => setSignatureData(sig)}
-                          onEmpty={() => setSignatureData(null)}
-                          onClear={() => {
-                            setSignatureData(null);
-                            setHasDrawnSignature(false);
-                          }}
-                          onEnd={() => setHasDrawnSignature(true)}
-                          webStyle={`
-                            .m-signature-pad { box-shadow: none; border: none; }
-                            .m-signature-pad--footer { display: none; margin: 0; }
-                            body, html { width: 100%; height: 100%; }
-                            canvas { border: none; }
-                          `}
-                          autoClear={false}
-                          imageType="image/png"
-                          descriptionText=""
-                        />
-                      </View>
+                      <SignatureCapturePad
+                        ref={signatureRef}
+                        padKey={signaturePadKey}
+                        style={[styles.signatureCanvas, { borderColor: theme.colors.primary }]}
+                        onOK={(sig) => setSignatureData(sig)}
+                        onEmpty={() => setSignatureData(null)}
+                        onClear={() => {
+                          setSignatureData(null);
+                          setHasDrawnSignature(false);
+                        }}
+                        onEnd={() => setHasDrawnSignature(true)}
+                        onDrawingStart={() => setSignatureScrollLocked(true)}
+                        onDrawingEnd={() => setSignatureScrollLocked(false)}
+                      />
                       <Button
                         mode="outlined"
                         style={styles.secondaryFullBtn}
@@ -420,6 +463,7 @@ export function DriverOrdersScreen() {
                           setHasDrawnSignature(false);
                           setPendingCompleteOrderId(null);
                           setSignaturePadKey((k) => k + 1);
+                          setSignatureScrollLocked(false);
                         }}
                       >
                         Clear Signature
@@ -433,31 +477,24 @@ export function DriverOrdersScreen() {
                         onPress={() => {
                           if (!selectedOrder?.id) return;
                           setPendingCompleteOrderId(selectedOrder.id);
-                          signatureRef.current?.readSignature?.();
+                          signatureRef.current?.readSignature();
                         }}
                         loading={statusMutation.isPending}
                         disabled={statusMutation.isPending || !hasDrawnSignature}
                       >
                         Complete Delivery
                       </Button>
-                    </>
+                    </View>
                   ) : null}
-                </View>
 
-                <Button
-                  mode="outlined"
-                  style={styles.secondaryFullBtn}
-                  textColor={theme.colors.onSurface}
-                  theme={{ colors: { outline: theme.colors.outline } }}
-                  onPress={() => setChatVisible((prev) => !prev)}
-                >
-                  {chatVisible ? "Hide Chat" : "Open Chat"}
-                </Button>
-
-                  </ScrollView>
-                  {chatVisible ? (
-                    <View style={styles.modalChatDock}>
-                      <OrderChatPanel orderId={selectedOrder.id} viewerRole="driver" orderDetailLayout />
+                  {chatVisible && selectedOrder.state !== "delivered" ? (
+                    <View style={[styles.modalChatDock, { paddingBottom: footerPaddingBottom }]}>
+                      <OrderChatPanel
+                        orderId={selectedOrder.id}
+                        viewerRole="driver"
+                        orderDetailLayout
+                        maxChatHeight={chatMaxHeight}
+                      />
                     </View>
                   ) : null}
                 </View>
@@ -554,6 +591,11 @@ const getStyles = (theme: typeof lightTheme) => {
   statCol: {
     flex: 1,
   },
+  statLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
   statLabel: {
     color: t.heroMuted,
     fontSize: 11,
@@ -591,6 +633,19 @@ const getStyles = (theme: typeof lightTheme) => {
   },
   orderCard: p.listCard,
   rowBetween: p.rowBetween,
+  orderTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flex: 1,
+    minWidth: 0,
+  },
+  orderTitleText: {
+    flex: 1,
+  },
+  orderAmountRow: {
+    marginTop: 6,
+  },
   orderMeta: {
     marginTop: 6,
     color: theme.colors.onSurfaceVariant,
@@ -623,36 +678,29 @@ const getStyles = (theme: typeof lightTheme) => {
     fontSize: 12,
     fontWeight: "600",
   },
+  signatureDock: {
+    flexShrink: 0,
+    paddingHorizontal: 18,
+    paddingTop: 12,
+    paddingBottom: 14,
+    gap: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.outline,
+    backgroundColor: theme.colors.surface,
+  },
+  signatureDockTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: theme.colors.onSurface,
+  },
   signatureCanvas: {
-    height: 180,
     borderWidth: 1,
     borderRadius: 12,
-    borderColor: theme.colors.primary,
     backgroundColor: "#FFFFFF",
-    position: "relative",
-    overflow: "hidden",
   },
   modalContainer: {
     flex: 1,
     backgroundColor: theme.colors.surface,
-  },
-  modalHeader: {
-    paddingHorizontal: 18,
-    paddingBottom: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: theme.colors.surface,
-  },
-  modalTitle: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: theme.colors.onSurface,
-    letterSpacing: -0.3,
-  },
-  modalCloseHit: {
-    padding: 8,
-    marginRight: -4,
   },
   modalKeyboardWrap: {
     flex: 1,

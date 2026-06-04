@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Image, Pressable, StyleSheet, View } from "react-native";
+import { ThemeModeToggle } from "@/components/ThemeModeToggle";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Text } from "react-native-paper";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -85,26 +86,29 @@ export function FuelPortalHeader({ onOpenMenu }: FuelPortalHeaderProps) {
         <EasyFuelLogo size={40} borderRadius={10} />
         <Text style={[styles.wordmark, { color: t.brandText }]}>Easy Fuel</Text>
       </Pressable>
-      <Pressable
-        onPress={onOpenMenu}
-        style={[
-          styles.avatar,
-          { borderColor: t.borderSubtle, backgroundColor: isDark ? theme.colors.surfaceVariant : theme.colors.primaryContainer },
-        ]}
-        accessibilityRole="button"
-        accessibilityLabel="Account and menu"
-      >
-        {avatarUri && !avatarLoadFailed ? (
-          <Image
-            source={{ uri: avatarUri }}
-            style={styles.avatarImage}
-            resizeMode="cover"
-            onError={() => setAvatarLoadFailed(true)}
-          />
-        ) : (
-          <MaterialCommunityIcons name="account" size={26} color={t.brandText} />
-        )}
-      </Pressable>
+      <View style={styles.rightCluster}>
+        <ThemeModeToggle />
+        <Pressable
+          onPress={onOpenMenu}
+          style={[
+            styles.avatar,
+            { borderColor: t.borderSubtle, backgroundColor: isDark ? theme.colors.surfaceVariant : theme.colors.primaryContainer },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel="Account and menu"
+        >
+          {avatarUri && !avatarLoadFailed ? (
+            <Image
+              source={{ uri: avatarUri }}
+              style={styles.avatarImage}
+              resizeMode="cover"
+              onError={() => setAvatarLoadFailed(true)}
+            />
+          ) : (
+            <MaterialCommunityIcons name="account" size={26} color={t.brandText} />
+          )}
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -128,6 +132,11 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: "800",
     letterSpacing: -0.3,
+  },
+  rightCluster: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
   },
   avatar: {
     width: 44,

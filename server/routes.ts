@@ -256,7 +256,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const { parseObjectFileQuery } = await import("./file-response-utils");
       const fileQuery = parseObjectFileQuery(req);
-      await streamLocalObjectToResponse(res, objectPath, fileQuery);
+      try {
+        const abs = objectPathToAbsolute(objectPath);
+        await fs.access(abs);
+        await streamLocalObjectToResponse(res, objectPath, fileQuery);
+        return;
+      } catch {
+        const objectFile = await objectStorageService.getObjectEntityFile(objectPath);
+        await objectStorageService.downloadObject(objectFile, res, 3600, fileQuery);
+      }
     } catch (e) {
       console.error("[api/objects/view]", e);
       return res.status(404).json({ error: "File not found" });
@@ -321,16 +329,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "objectPath is required" });
       }
       const objectPath = normalizeToObjectPath(String(raw));
+      let fileReady = false;
       try {
         await fs.access(objectPathToAbsolute(objectPath));
+        fileReady = true;
       } catch {
+        try {
+          await objectStorageService.getObjectEntityFile(objectPath);
+          fileReady = true;
+        } catch {
+          /* not on disk or in object storage */
+        }
+      }
+      if (!fileReady) {
         return res.status(404).json({ error: "File not found" });
       }
+      const { buildDocumentFilename, sanitizeDownloadFilename } = await import("./file-response-utils");
       const host = req.get("host") || "localhost";
       const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol || "http";
       const base = `${proto}://${host}`;
       const token = signObjectViewToken(objectPath);
-      const signedUrl = `${base}/api/objects/view?token=${encodeURIComponent(token)}`;
+      const params = new URLSearchParams({ token });
+      const mimeType =
+        typeof req.body?.mimeType === "string"
+          ? req.body.mimeType.split(";")[0].trim()
+          : typeof req.body?.mime === "string"
+            ? req.body.mime.split(";")[0].trim()
+            : undefined;
+      const filenameRaw =
+        typeof req.body?.filename === "string"
+          ? req.body.filename
+          : typeof req.body?.title === "string"
+            ? buildDocumentFilename(req.body.title, mimeType || "application/pdf")
+            : undefined;
+      const filename = sanitizeDownloadFilename(filenameRaw);
+      if (filename) params.set("filename", filename);
+      if (mimeType) params.set("mime", mimeType);
+      if (req.body?.download === true || req.body?.download === "true" || req.body?.download === "1") {
+        params.set("download", "true");
+      }
+      const signedUrl = `${base}/api/objects/view?${params.toString()}`;
       res.json({ signedUrl });
     } catch (error: any) {
       console.error("Error generating presigned URL:", error);

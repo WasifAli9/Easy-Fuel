@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import { formatSnakeCaseLabel } from "@/lib/utils";
 import { CheckCircle2, Clock, XCircle, AlertCircle, Truck, MapPin } from "lucide-react";
 
 type StatusType = 
@@ -115,7 +116,7 @@ export function StatusBadge({ status, showIcon = true }: StatusBadgeProps) {
     return (
       <Badge variant="outline" className="inline-flex items-center gap-1.5 bg-gray-100 text-gray-800 dark:bg-gray-950 dark:text-gray-200 border-gray-200 dark:border-gray-900" data-testid={`badge-status-${status}`}>
         <AlertCircle className="h-3 w-3" />
-        <span>{status}</span>
+        <span>{formatSnakeCaseLabel(status, status)}</span>
       </Badge>
     );
   }

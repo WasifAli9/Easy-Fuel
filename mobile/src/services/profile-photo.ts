@@ -1,4 +1,4 @@
-import * as DocumentPicker from "expo-document-picker";
+import * as ImagePicker from "expo-image-picker";
 import { apiClient } from "@/services/api/client";
 import { putFileToUploadUrl, resolveApiUrl } from "@/lib/files";
 import { appConfig } from "@/services/config";
@@ -10,6 +10,8 @@ const PROFILE_PUT_BY_ROLE: Record<ProfilePhotoRole, string> = {
   driver: "/api/driver/profile",
   supplier: "/api/supplier/profile",
 };
+
+const MAX_PROFILE_PHOTO_BYTES = 5 * 1024 * 1024;
 
 function extractObjectPathFromUpload(
   uploadURL: string,
@@ -43,29 +45,44 @@ function extractObjectPathFromUpload(
   return null;
 }
 
-/** Upload image and persist profile photo (same flow as web portal). */
-export async function pickAndUploadProfilePhoto(role: ProfilePhotoRole): Promise<string> {
-  const picked = await DocumentPicker.getDocumentAsync({
-    type: ["image/*"],
-    multiple: false,
-    copyToCacheDirectory: true,
+async function pickProfileImageFromLibrary() {
+  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!permission.granted) {
+    throw new Error("Photo library access is required to choose a profile picture.");
+  }
+
+  const picked = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ["images"],
+    allowsEditing: true,
+    aspect: [1, 1],
+    quality: 0.85,
+    allowsMultipleSelection: false,
   });
+
   if (picked.canceled || !picked.assets?.length) {
     throw new Error("cancelled");
   }
 
-  const file = picked.assets[0];
+  const asset = picked.assets[0];
+  if (asset.fileSize != null && asset.fileSize > MAX_PROFILE_PHOTO_BYTES) {
+    throw new Error("Image must be 5 MB or smaller.");
+  }
+
+  return asset;
+}
+
+/** Pick from the device photo library, upload, and persist profile photo (same flow as web portal). */
+export async function pickAndUploadProfilePhoto(role: ProfilePhotoRole): Promise<string> {
+  const file = await pickProfileImageFromLibrary();
+
   const uploadMeta = (await apiClient.post("/api/objects/upload")).data as {
     uploadURL: string;
     objectPath?: string;
   };
 
+  const mimeType = file.mimeType || "image/jpeg";
   const blob = await (await fetch(file.uri)).blob();
-  const uploaded = await putFileToUploadUrl(
-    uploadMeta.uploadURL,
-    blob,
-    file.mimeType || "image/jpeg",
-  );
+  const uploaded = await putFileToUploadUrl(uploadMeta.uploadURL, blob, mimeType);
   if (!uploaded.ok) {
     throw new Error("Could not upload image.");
   }

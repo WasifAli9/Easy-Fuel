@@ -23,6 +23,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { MapPin, Package, Loader2, ShoppingCart, XCircle, CreditCard, FileSignature, CheckCircle, Receipt } from "lucide-react";
+import { formatDepotOrderStatus } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/utils";
 import { useCurrency } from "@/hooks/use-currency";
@@ -289,29 +290,15 @@ export function DriverDepotsView({ defaultTab = "orders" }: DriverDepotsViewProp
       cancelled: "destructive",
     };
     
-    let displayStatus = status;
-    if (status === "pending_payment") {
-      if (paymentStatus === "paid" && order.payment_method === "bank_transfer") {
-        displayStatus = "Waiting Payment Confirmation";
-      } else if (paymentStatus === "payment_failed") {
-        displayStatus = "Payment Failed";
-      } else {
-        displayStatus = "Awaiting Payment";
-      }
-    } else if (status === "paid") {
-      displayStatus = "Awaiting Signatures";
-    } else if (status === "ready_for_pickup") {
-      displayStatus = "Ready for Pickup";
-    } else if (status === "awaiting_signature") {
-      displayStatus = "Awaiting Driver Signature";
-    } else if (status === "released") {
-      // Legacy status - should not be used anymore, but keep for backward compatibility
-      displayStatus = "Awaiting Driver Signature";
-    }
-    
+    const label = formatDepotOrderStatus({
+      status,
+      payment_status: paymentStatus,
+      payment_method: order.payment_method ?? order.paymentMethod,
+    });
+
     return (
       <Badge variant={variants[status] || "secondary"}>
-        {displayStatus.replace(/_/g, " ").split(" ").map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(" ")}
+        {label}
       </Badge>
     );
   };

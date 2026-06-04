@@ -19,7 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { User, Lock, Upload, FileText, AlertTriangle, CheckCircle2, XCircle, Shield, Building, MapPin, Loader2, Menu, Calendar as CalendarIcon } from "lucide-react";
-import { normalizeFilePath, normalizeProfilePhotoUrl, cn } from "@/lib/utils";
+import { documentObjectUrl, normalizeProfilePhotoUrl, cn } from "@/lib/utils";
 import { normalizeDocuments } from "@/lib/document-normalize";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
@@ -641,6 +641,22 @@ export default function DriverProfile() {
     }
   };
 
+  const openComplianceDocument = (doc: { file_path: string; title?: string; mime_type?: string | null }) => {
+    const fileUrl = documentObjectUrl(doc.file_path, {
+      title: doc.title,
+      mime_type: doc.mime_type ?? "application/pdf",
+    });
+    if (fileUrl) {
+      window.open(fileUrl, "_blank");
+      return;
+    }
+    toast({
+      title: "Error",
+      description: "Document file path is missing or invalid",
+      variant: "destructive",
+    });
+  };
+
   const handleDocumentUpload = async (
     docType: string,
     title: string,
@@ -649,6 +665,15 @@ export default function DriverProfile() {
     if (!result.successful || result.successful.length === 0) return;
     
     const uploadedFile = result.successful[0];
+    const uploadedMime = String(uploadedFile.type || "").toLowerCase().split(";")[0].trim();
+    if (uploadedMime !== "application/pdf") {
+      toast({
+        title: "PDF only",
+        description: "Compliance documents must be uploaded as PDF files.",
+        variant: "destructive",
+      });
+      return;
+    }
     const documentURL = extractUploadObjectPath(uploadedFile);
     if (!documentURL) {
       toast({
@@ -668,7 +693,7 @@ export default function DriverProfile() {
         title: title || uploadedFile.name,
         file_path: objectPath,
         file_size: uploadedFile.size,
-        mime_type: uploadedFile.type,
+        mime_type: "application/pdf",
       });
       
       queryClient.invalidateQueries({ queryKey: ["/api/driver/documents"] });
@@ -1312,18 +1337,7 @@ export default function DriverProfile() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => {
-                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
-                                    if (normalizedPath) {
-                                      window.open(normalizedPath, "_blank");
-                                    } else {
-                                      toast({
-                                        title: "Error",
-                                        description: "Document file path is missing or invalid",
-                                        variant: "destructive",
-                                      });
-                                    }
-                                  }}
+                                  onClick={() => openComplianceDocument(existingDoc)}
                                 >
                                   View Document
                                 </Button>
@@ -1334,7 +1348,7 @@ export default function DriverProfile() {
                                     complianceForm.watch("id_type") === "SA_ID" ? "South African ID" : "Passport",
                                     result
                                   )}
-                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  allowedFileTypes={["application/pdf"]}
                                   maxFileSize={10485760}
                                   buttonVariant="outline"
                                   buttonSize="sm"
@@ -1351,7 +1365,7 @@ export default function DriverProfile() {
                                 complianceForm.watch("id_type") === "SA_ID" ? "South African ID" : "Passport",
                                 result
                               )}
-                              allowedFileTypes={["application/pdf", "image/*"]}
+                              allowedFileTypes={["application/pdf"]}
                               maxFileSize={10485760}
                               buttonVariant="default"
                             >
@@ -1508,25 +1522,14 @@ export default function DriverProfile() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => {
-                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
-                                    if (normalizedPath) {
-                                      window.open(normalizedPath, "_blank");
-                                    } else {
-                                      toast({
-                                        title: "Error",
-                                        description: "Document file path is missing or invalid",
-                                        variant: "destructive",
-                                      });
-                                    }
-                                  }}
+                                  onClick={() => openComplianceDocument(existingDoc)}
                                 >
                                   View Document
                                 </Button>
                                 <ObjectUploader
                                   onGetUploadParameters={getUploadURL}
                                   onComplete={(result) => handleDocumentUpload("drivers_license", "Driver's License", result)}
-                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  allowedFileTypes={["application/pdf"]}
                                   maxFileSize={10485760}
                                   buttonVariant="outline"
                                   buttonSize="sm"
@@ -1539,7 +1542,7 @@ export default function DriverProfile() {
                             <ObjectUploader
                               onGetUploadParameters={getUploadURL}
                               onComplete={(result) => handleDocumentUpload("drivers_license", "Driver's License", result)}
-                              allowedFileTypes={["application/pdf", "image/*"]}
+                              allowedFileTypes={["application/pdf"]}
                               maxFileSize={10485760}
                               buttonVariant="default"
                             >
@@ -1641,25 +1644,14 @@ export default function DriverProfile() {
                                     <Button
                                       variant="outline"
                                       size="sm"
-                                      onClick={() => {
-                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
-                                    if (normalizedPath) {
-                                      window.open(normalizedPath, "_blank");
-                                    } else {
-                                      toast({
-                                        title: "Error",
-                                        description: "Document file path is missing or invalid",
-                                        variant: "destructive",
-                                      });
-                                    }
-                                  }}
+                                      onClick={() => openComplianceDocument(existingDoc)}
                                     >
                                       View Document
                                     </Button>
                                     <ObjectUploader
                                       onGetUploadParameters={getUploadURL}
                                       onComplete={(result) => handleDocumentUpload("prdp", "Professional Driving Permit (PrDP-D)", result)}
-                                      allowedFileTypes={["application/pdf", "image/*"]}
+                                      allowedFileTypes={["application/pdf"]}
                                       maxFileSize={10485760}
                                       buttonVariant="outline"
                                       buttonSize="sm"
@@ -1672,7 +1664,7 @@ export default function DriverProfile() {
                                 <ObjectUploader
                                   onGetUploadParameters={getUploadURL}
                                   onComplete={(result) => handleDocumentUpload("prdp", "Professional Driving Permit (PrDP-D)", result)}
-                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  allowedFileTypes={["application/pdf"]}
                                   maxFileSize={10485760}
                                   buttonVariant="default"
                                 >
@@ -1775,25 +1767,14 @@ export default function DriverProfile() {
                                     <Button
                                       variant="outline"
                                       size="sm"
-                                      onClick={() => {
-                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
-                                    if (normalizedPath) {
-                                      window.open(normalizedPath, "_blank");
-                                    } else {
-                                      toast({
-                                        title: "Error",
-                                        description: "Document file path is missing or invalid",
-                                        variant: "destructive",
-                                      });
-                                    }
-                                  }}
+                                      onClick={() => openComplianceDocument(existingDoc)}
                                     >
                                       View Document
                                     </Button>
                                     <ObjectUploader
                                       onGetUploadParameters={getUploadURL}
                                       onComplete={(result) => handleDocumentUpload("dangerous_goods_training", "Dangerous Goods Training Certificate", result)}
-                                      allowedFileTypes={["application/pdf", "image/*"]}
+                                      allowedFileTypes={["application/pdf"]}
                                       maxFileSize={10485760}
                                       buttonVariant="outline"
                                       buttonSize="sm"
@@ -1806,7 +1787,7 @@ export default function DriverProfile() {
                                 <ObjectUploader
                                   onGetUploadParameters={getUploadURL}
                                   onComplete={(result) => handleDocumentUpload("dangerous_goods_training", "Dangerous Goods Training Certificate", result)}
-                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  allowedFileTypes={["application/pdf"]}
                                   maxFileSize={10485760}
                                   buttonVariant="default"
                                 >
@@ -1886,25 +1867,14 @@ export default function DriverProfile() {
                                     <Button
                                       variant="outline"
                                       size="sm"
-                                      onClick={() => {
-                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
-                                    if (normalizedPath) {
-                                      window.open(normalizedPath, "_blank");
-                                    } else {
-                                      toast({
-                                        title: "Error",
-                                        description: "Document file path is missing or invalid",
-                                        variant: "destructive",
-                                      });
-                                    }
-                                  }}
+                                      onClick={() => openComplianceDocument(existingDoc)}
                                     >
                                       View Document
                                     </Button>
                                     <ObjectUploader
                                       onGetUploadParameters={getUploadURL}
                                       onComplete={(result) => handleDocumentUpload("criminal_check", "Criminal Clearance", result)}
-                                      allowedFileTypes={["application/pdf", "image/*"]}
+                                      allowedFileTypes={["application/pdf"]}
                                       maxFileSize={10485760}
                                       buttonVariant="outline"
                                       buttonSize="sm"
@@ -1917,7 +1887,7 @@ export default function DriverProfile() {
                                 <ObjectUploader
                                   onGetUploadParameters={getUploadURL}
                                   onComplete={(result) => handleDocumentUpload("criminal_check", "Criminal Clearance", result)}
-                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  allowedFileTypes={["application/pdf"]}
                                   maxFileSize={10485760}
                                   buttonVariant="default"
                                 >
@@ -2022,25 +1992,14 @@ export default function DriverProfile() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => {
-                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
-                                    if (normalizedPath) {
-                                      window.open(normalizedPath, "_blank");
-                                    } else {
-                                      toast({
-                                        title: "Error",
-                                        description: "Document file path is missing or invalid",
-                                        variant: "destructive",
-                                      });
-                                    }
-                                  }}
+                                  onClick={() => openComplianceDocument(existingDoc)}
                                 >
                                   View Document
                                 </Button>
                                 <ObjectUploader
                                   onGetUploadParameters={getUploadURL}
                                   onComplete={(result) => handleDocumentUpload("banking_proof", "Banking Proof", result)}
-                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  allowedFileTypes={["application/pdf"]}
                                   maxFileSize={10485760}
                                   buttonVariant="outline"
                                   buttonSize="sm"
@@ -2053,7 +2012,7 @@ export default function DriverProfile() {
                             <ObjectUploader
                               onGetUploadParameters={getUploadURL}
                               onComplete={(result) => handleDocumentUpload("banking_proof", "Banking Proof", result)}
-                              allowedFileTypes={["application/pdf", "image/*"]}
+                              allowedFileTypes={["application/pdf"]}
                               maxFileSize={10485760}
                               buttonVariant="default"
                             >

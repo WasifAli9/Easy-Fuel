@@ -1,5 +1,6 @@
 import { getFuelPortalTokens } from "@/design/fuel-portal-tokens";
 import { lightTheme } from "@/design/theme";
+import { formatDepotOrderStatus } from "@/lib/format-labels";
 
 export type SupplierDepotOrder = {
   id: string;
@@ -32,26 +33,7 @@ export function fuelIconName(label: string) {
 }
 
 export function formatOrderStatusLabel(order: SupplierDepotOrder) {
-  const status = order.status;
-  const paymentStatus = order.payment_status;
-
-  if (status === "pending_payment") {
-    if (paymentStatus === "paid" && order.payment_method === "bank_transfer") {
-      return "Waiting payment confirmation";
-    }
-    if (paymentStatus === "payment_failed") {
-      return "Payment failed";
-    }
-    return "Awaiting payment";
-  }
-  if (status === "paid") return "Awaiting signatures";
-  if (status === "ready_for_pickup") return "Ready for pickup";
-  if (status === "awaiting_signature" || status === "released") return "Awaiting driver signature";
-  if (status === "completed") return "Completed";
-  if (status === "pending") return "Pending";
-  if (status === "rejected") return "Rejected";
-  if (status === "cancelled") return "Cancelled";
-  return status.replace(/_/g, " ");
+  return formatDepotOrderStatus(order);
 }
 
 export function statusBadgeStyle(

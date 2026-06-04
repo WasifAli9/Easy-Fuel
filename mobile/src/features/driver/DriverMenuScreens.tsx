@@ -11,7 +11,7 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import DateTimePicker, { DateTimePickerAndroid, type DateTimePickerEvent } from "@react-native-community/datetimepicker";
+import { DateTimePickerAndroid } from "@react-native-community/datetimepicker";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as DocumentPicker from "expo-document-picker";
@@ -29,9 +29,11 @@ import {
   TextInput,
 } from "react-native-paper";
 import { Button } from "@/design/paper-button";
+import { IosDatePickerSheet } from "@/components/IosDatePickerSheet";
 import { ProfilePhotoPicker } from "@/components/ProfilePhotoPicker";
 import { apiClient } from "@/services/api/client";
-import { openStoredDocument, putFileToUploadUrl } from "@/lib/files";
+import { openStoredDocument, putFileToUploadUrl, readUploadObjectPath } from "@/lib/files";
+import { formatMoneyFromCents } from "@/lib/format-currency";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { useAuth } from "@/contexts/AuthContext";
@@ -125,6 +127,7 @@ type DriverDocument = {
   doc_type: string;
   title?: string;
   file_path?: string;
+  mime_type?: string | null;
   verification_status?: string;
   created_at?: string;
 };
@@ -377,6 +380,7 @@ export function DriverKycDocumentsScreen() {
   const [branchCode, setBranchCode] = useState("");
   const [idTypeMenuOpen, setIdTypeMenuOpen] = useState(false);
   const [iosDateKey, setIosDateKey] = useState<KycDateKey | null>(null);
+  const [iosPickerDraft, setIosPickerDraft] = useState(() => new Date());
 
   const profileQuery = useQuery({
     queryKey: ["/api/driver/profile"],
@@ -554,28 +558,36 @@ export function DriverKycDocumentsScreen() {
     setUploadingType(docType);
     try {
       const picked = await DocumentPicker.getDocumentAsync({
-        type: ["image/*", "application/pdf"],
+        type: "application/pdf",
         multiple: false,
         copyToCacheDirectory: true,
       });
       if (picked.canceled || !picked.assets?.length) return;
       const file = picked.assets[0];
+      const mime = (file.mimeType || "").toLowerCase().split(";")[0].trim();
+      const name = (file.name || "").toLowerCase();
+      if (mime !== "application/pdf" && !name.endsWith(".pdf")) {
+        Alert.alert("PDF only", "Please upload a PDF document for KYC verification.");
+        return;
+      }
       const uploadMeta = (await apiClient.post("/api/objects/upload")).data as { uploadURL: string; objectPath?: string };
       const blob = await (await fetch(file.uri)).blob();
       const uploaded = await putFileToUploadUrl(
         uploadMeta.uploadURL,
         blob,
-        file.mimeType || "application/octet-stream",
+        "application/pdf",
       );
       if (!uploaded.ok) throw new Error("Upload failed");
-      const aclRes = await apiClient.put("/api/documents", { documentURL: uploadMeta.uploadURL });
-      const objectPath = (aclRes.data as { objectPath?: string }).objectPath || uploadMeta.objectPath;
+      const storedRelativePath = await readUploadObjectPath(uploaded, uploadMeta.uploadURL);
+      const aclRes = await apiClient.put("/api/documents", { documentURL: storedRelativePath });
+      const objectPath =
+        (aclRes.data as { objectPath?: string }).objectPath || storedRelativePath;
       if (!objectPath) throw new Error("Could not resolve uploaded file path");
       await apiClient.post("/api/driver/documents", {
         doc_type: docType,
         title,
         file_path: objectPath,
-        mime_type: file.mimeType || null,
+        mime_type: "application/pdf",
         file_size: file.size || null,
       });
       await queryClient.invalidateQueries({ queryKey: ["/api/driver/documents"] });
@@ -587,11 +599,18 @@ export function DriverKycDocumentsScreen() {
     }
   };
 
-  const openDoc = async (filePath?: string) => {
+  const openDoc = async (doc?: DriverDocument) => {
     try {
-      await openStoredDocument(filePath);
-    } catch {
-      Alert.alert("Could not open document", "Check your connection and try again.");
+      await openStoredDocument(doc?.file_path, {
+        title: doc?.title,
+        mime_type: doc?.mime_type ?? "application/pdf",
+      });
+    } catch (e) {
+      const msg =
+        (e as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+        (e as Error)?.message ||
+        "Check your connection and try again.";
+      Alert.alert("Could not open document", msg);
     }
   };
 
@@ -671,16 +690,35 @@ export function DriverKycDocumentsScreen() {
       });
       return;
     }
+    setIosPickerDraft(base);
     setIosDateKey(key);
   };
 
-  const onIosKycDateChange = (event: DateTimePickerEvent, date?: Date) => {
-    const key = iosDateKey;
-    if (Platform.OS === "ios") {
-      setIosDateKey(null);
+  const confirmIosKycDate = () => {
+    if (!iosDateKey) return;
+    setKycYmd(iosDateKey, formatLocalDateToYmd(iosPickerDraft));
+    setIosDateKey(null);
+  };
+
+  const cancelIosKycDate = () => setIosDateKey(null);
+
+  const iosKycDatePickerTitle = (key: KycDateKey): string => {
+    switch (key) {
+      case "licenseIssue":
+        return "License issue date";
+      case "licenseExpiry":
+        return "License expiry date";
+      case "prdpIssue":
+        return "PrDP issue date";
+      case "prdpExpiry":
+        return "PrDP expiry date";
+      case "dgIssue":
+        return "Training issue date";
+      case "dgExpiry":
+        return "Training expiry date";
+      case "criminal":
+        return "Criminal check date";
     }
-    if (event.type === "dismissed" || !date || !key) return;
-    setKycYmd(key, formatLocalDateToYmd(date));
   };
 
   const kycDateRow = (key: KycDateKey, label: string) => {
@@ -748,6 +786,7 @@ export function DriverKycDocumentsScreen() {
   );
 
   return (
+    <>
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.kycScrollContent}
@@ -1104,7 +1143,7 @@ export function DriverKycDocumentsScreen() {
         Documents to upload
       </Text>
       <Text variant="bodySmall" style={styles.kycBlockHint}>
-        PDF or image (JPG/PNG). Tap upload to attach a file from your device.
+        PDF only. Tap upload to attach a PDF from your device.
       </Text>
 
       {KYC_REQUIRED_DOC_TYPES.map((def) => {
@@ -1148,7 +1187,8 @@ export function DriverKycDocumentsScreen() {
                 <Button
                   mode="outlined"
                   compact
-                  onPress={() => openDoc(uploaded?.file_path)}
+                  icon="eye-outline"
+                  onPress={() => uploaded && openDoc(uploaded)}
                   disabled={!uploaded?.file_path}
                   style={[styles.kycDocButton, styles.kycDocButtonHalf]}
                   contentStyle={styles.kycDocButtonContent}
@@ -1159,6 +1199,7 @@ export function DriverKycDocumentsScreen() {
                 <Button
                   mode="contained"
                   compact
+                  icon={uploaded ? "file-replace" : "file-upload-outline"}
                   buttonColor={theme.colors.primary}
                   textColor={theme.colors.onPrimary}
                   loading={uploadingType === def.docType}
@@ -1235,15 +1276,16 @@ export function DriverKycDocumentsScreen() {
           </Card>
         );
       })()}
-      {Platform.OS === "ios" && iosDateKey ? (
-        <DateTimePicker
-          value={parseYmdToLocalDate(getKycYmd(iosDateKey))}
-          mode="date"
-          display="spinner"
-          onChange={onIosKycDateChange}
-        />
-      ) : null}
     </ScrollView>
+    <IosDatePickerSheet
+      visible={Platform.OS === "ios" && iosDateKey != null}
+      value={iosPickerDraft}
+      title={iosDateKey ? iosKycDatePickerTitle(iosDateKey) : undefined}
+      onChange={setIosPickerDraft}
+      onCancel={cancelIosKycDate}
+      onConfirm={confirmIosKycDate}
+    />
+    </>
   );
 }
 
@@ -1395,7 +1437,7 @@ export function DriverPricingMenuScreen() {
                   </View>
                   <View style={styles.rightAligned}>
                     <Text variant="titleLarge" style={styles.priceValue}>
-                      R {(item.priceCents / 100).toFixed(2)}
+                      {formatMoneyFromCents(item.priceCents)}
                     </Text>
                     <Text style={styles.meta}>per liter</Text>
                   </View>
@@ -1450,6 +1492,7 @@ export function DriverPricingMenuScreen() {
               styles.historySheet,
               {
                 maxHeight: windowHeight * 0.88,
+                paddingTop: Math.max(insets.top, 12),
                 paddingBottom: Math.max(insets.bottom, 12),
               },
             ]}
@@ -1492,8 +1535,8 @@ export function DriverPricingMenuScreen() {
                       </Text>
                       <Text variant="titleMedium" style={styles.historyPrice}>
                         {entry.old_price_cents != null
-                          ? `R ${(entry.old_price_cents / 100).toFixed(2)} → R ${((entry.new_price_cents ?? 0) / 100).toFixed(2)}`
-                          : `R ${((entry.new_price_cents ?? 0) / 100).toFixed(2)}`}
+                          ? `${formatMoneyFromCents(entry.old_price_cents)} → ${formatMoneyFromCents(entry.new_price_cents ?? 0)}`
+                          : formatMoneyFromCents(entry.new_price_cents ?? 0)}
                       </Text>
                       {entry.notes ? (
                         <Text style={[styles.historyMeta, styles.historyNotes]} numberOfLines={4}>

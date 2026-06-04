@@ -105,7 +105,7 @@ export function ProfilePhotoPicker({ role, photoUrl, queryKeysToInvalidate = [] 
       <View style={styles.actions}>
         <Button
           mode="outlined"
-          icon="camera-outline"
+          icon="image-outline"
           onPress={() => uploadMutation.mutate()}
           loading={uploadMutation.isPending}
           disabled={uploadMutation.isPending}

@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { formatSnakeCaseLabel } from "@/lib/utils";
 import { Truck, Loader2, CheckCircle2 } from "lucide-react";
 import type { Vehicle } from "@shared/schema";
 
@@ -46,7 +47,12 @@ export function DriverActiveVehicleSelector() {
       } catch {
         /* keep message */
       }
-      toast({ title: "Cannot use this vehicle", description, variant: "destructive" });
+      toast({
+        title: "Vehicle pending verification",
+        description:
+          description ||
+          "This vehicle is waiting for compliance review. Upload required documents and use it once approved.",
+      });
     },
   });
 
@@ -89,6 +95,7 @@ export function DriverActiveVehicleSelector() {
               const isCompany = !!(v as any).companyId;
               const vehicleStatus = (v as Vehicle & { vehicleStatus?: string }).vehicleStatus;
               const statusPending = vehicleStatus && vehicleStatus !== "active";
+              const canUseForJobs = !statusPending;
               return (
                 <li
                   key={v.id}
@@ -112,8 +119,8 @@ export function DriverActiveVehicleSelector() {
                         </Badge>
                       )}
                       {statusPending && !isActive && (
-                        <Badge variant="secondary" className="capitalize">
-                          {(vehicleStatus || "pending").replace(/_/g, " ")}
+                        <Badge variant="secondary">
+                          {formatSnakeCaseLabel(vehicleStatus || "pending", "Pending")}
                         </Badge>
                       )}
                     </div>
@@ -127,11 +134,11 @@ export function DriverActiveVehicleSelector() {
                   <Button
                     type="button"
                     size="sm"
-                    variant={isActive ? "secondary" : "default"}
-                    disabled={setActiveMutation.isPending}
-                    onClick={() => !isActive && setActiveMutation.mutate(v.id)}
+                    variant={isActive ? "secondary" : canUseForJobs ? "default" : "outline"}
+                    disabled={setActiveMutation.isPending || (!isActive && !canUseForJobs)}
+                    onClick={() => !isActive && canUseForJobs && setActiveMutation.mutate(v.id)}
                   >
-                    {isActive ? "Active for jobs" : "Use for jobs"}
+                    {isActive ? "Active for jobs" : canUseForJobs ? "Use for jobs" : "Pending verification"}
                   </Button>
                 </li>
               );

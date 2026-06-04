@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { documentObjectUrl } from "@/lib/utils";
+import { documentObjectUrl, formatDocumentType } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, Eye, FileText, Loader2, XCircle } from "lucide-react";
@@ -17,22 +17,8 @@ type ReviewDocument = {
   document_rejection_reason?: string | null;
 };
 
-const DOC_LABELS: Record<string, string> = {
-  za_id: "South African ID",
-  passport: "Passport",
-  drivers_license: "Driver's License",
-  prdp: "PrDP",
-  banking_proof: "Banking Proof",
-  criminal_check: "Criminal Clearance",
-  proof_of_address: "Proof of Address",
-  dangerous_goods_training: "Dangerous Goods Training",
-  cipc_certificate: "CIPC Certificate",
-  vat_certificate: "VAT Certificate",
-  tax_clearance: "Tax Clearance",
-};
-
 function docLabel(docType: string) {
-  return DOC_LABELS[docType] || docType.replace(/_/g, " ");
+  return formatDocumentType(docType);
 }
 
 function isAwaitingReview(status: string) {
@@ -148,7 +134,7 @@ export function ComplianceReviewDocuments({
               onClick={() => {
                 const url = documentObjectUrl(doc.file_path, {
                   title: doc.title,
-                  mime_type: doc.mime_type,
+                  mime_type: doc.mime_type ?? "application/pdf",
                 });
                 if (url) window.open(url, "_blank");
                 else

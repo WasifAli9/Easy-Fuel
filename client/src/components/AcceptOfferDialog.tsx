@@ -24,6 +24,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Calendar, Coins, Calculator } from "lucide-react";
 import { useCurrency } from "@/hooks/use-currency";
+import { formatCurrency } from "@/lib/utils";
 import { useEffect, useMemo } from "react";
 
 const acceptOfferSchema = z.object({
@@ -70,7 +71,7 @@ export function AcceptOfferDialog({
   onOpenChange,
 }: AcceptOfferDialogProps) {
   const { toast } = useToast();
-  const { currencySymbol } = useCurrency();
+  const { currency, currencySymbol } = useCurrency();
 
   // Set default time to 2 hours from now
   const defaultTime = new Date(Date.now() + 2 * 60 * 60 * 1000)
@@ -254,7 +255,7 @@ export function AcceptOfferDialog({
                 <div className="space-y-1 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Fuel Cost:</span>
-                    <span>{currencySymbol} {((fuelPricePerLiter / 100) * parseFloat(order.litres || 0)).toFixed(2)}</span>
+                    <span>{formatCurrency((fuelPricePerLiter / 100) * parseFloat(order.litres || 0), currency)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Delivery Fee (estimated):</span>
@@ -262,7 +263,7 @@ export function AcceptOfferDialog({
                   </div>
                   <div className="flex justify-between pt-2 border-t font-medium">
                     <span>Total (estimated):</span>
-                    <span>{currencySymbol} {totalPrice.toFixed(2)} + delivery</span>
+                    <span>{formatCurrency(totalPrice, currency)} + delivery</span>
                   </div>
                   <p className="text-xs text-muted-foreground mt-2">
                     Final total will be calculated when customer accepts: (Fuel Price × Litres) + (Price per Km × Distance)

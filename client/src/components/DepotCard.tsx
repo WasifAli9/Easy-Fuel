@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { MapPin, Clock, Edit, Trash2, Fuel } from "lucide-react";
 import { useCurrency } from "@/hooks/use-currency";
+import { formatCurrency } from "@/lib/utils";
 
 interface FuelPriceTier {
   id: string;
@@ -39,7 +40,7 @@ export function DepotCard({
   onEdit,
   onDelete
 }: DepotCardProps) {
-  const { currencySymbol } = useCurrency();
+  const { currency } = useCurrency();
 
   return (
     <Card className="hover-elevate" data-testid={`card-depot-${id}`}>
@@ -149,7 +150,7 @@ export function DepotCard({
                         >
                           <span className="text-muted-foreground font-medium">{getTierRange(tier, index)}:</span>
                           <span className="font-semibold text-foreground">
-                            {currencySymbol}{tier.pricePerLitre.toFixed(2)}/L
+                            {formatCurrency(tier.pricePerLitre, currency)}/L
                           </span>
                         </div>
                       ))}
@@ -161,7 +162,7 @@ export function DepotCard({
                 return (
                   <div key={fuelType} className="flex items-center justify-between text-sm pb-2 border-b last:border-b-0" data-testid={`price-${fuelType}-${id}`}>
                     <span className="text-muted-foreground">{fuelType}</span>
-                    <span className="font-semibold">{currencySymbol} {prices[0].pricePerLitre.toFixed(2)}/L</span>
+                    <span className="font-semibold">{formatCurrency(prices[0].pricePerLitre, currency)}/L</span>
                   </div>
                 );
               }

@@ -8,7 +8,9 @@ import { apiClient } from "@/services/api/client";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
+import { getIosDatePickerNativeProps, iosDatePickerStyle, iosDatePickerWrapStyle } from "@/components/ios-date-picker-props";
 import { ModalSafeArea } from "@/components/ModalSafeArea";
+import { ModalScreenHeader } from "@/components/ModalScreenHeader";
 
 type FuelType = { id: string; label: string; code?: string };
 type Address = {
@@ -159,10 +161,7 @@ export function CustomerCreateOrderModal({
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onDismiss} presentationStyle="fullScreen">
       <ModalSafeArea style={[styles.sheet, { backgroundColor: theme.colors.background }]}>
-        <View style={styles.header}>
-          <Text variant="titleLarge">New order</Text>
-          <Button onPress={onDismiss}>Close</Button>
-        </View>
+        <ModalScreenHeader title="New order" onClose={onDismiss} />
         {fuelTypesQuery.isLoading || addressesQuery.isLoading ? (
           <View style={styles.center}>
             <ActivityIndicator />
@@ -260,13 +259,16 @@ export function CustomerCreateOrderModal({
               {deliveryDateTime ? deliveryDateTime.toLocaleString("en-ZA") : "Select delivery date & time"}
             </Button>
             {Platform.OS === "ios" && showDateTimePicker ? (
-              <DateTimePicker
-                value={deliveryDateTime ?? new Date()}
-                mode="datetime"
-                display="spinner"
-                minimumDate={new Date()}
-                onChange={handleDateChange}
-              />
+              <View style={iosDatePickerWrapStyle(theme)}>
+                <DateTimePicker
+                  value={deliveryDateTime ?? new Date()}
+                  mode="datetime"
+                  minimumDate={new Date()}
+                  onChange={handleDateChange}
+                  style={iosDatePickerStyle()}
+                  {...getIosDatePickerNativeProps(mode)}
+                />
+              </View>
             ) : null}
             <TextInput
               mode="outlined"

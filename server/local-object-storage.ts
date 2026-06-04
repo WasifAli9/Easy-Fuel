@@ -72,7 +72,8 @@ export function uploadUrlToObjectPath(uploadUrl: string) {
     return `/objects/${rel}`;
   }
 
-  const storagePrefix = "/api/storage/upload/local/";
+  // /api/storage/upload/<bucket>/<path> — bucket must stay in the stored relative path (e.g. local/uploads/id).
+  const storagePrefix = "/api/storage/upload/";
   if (candidate.startsWith(storagePrefix)) {
     const rel = sanitizeRelativePath(candidate.slice(storagePrefix.length));
     return `/objects/${rel}`;

@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, Image, Modal, Platform, ScrollView, StyleSheet, View } from "react-native";
+import { IconMetaRow, SectionTitleRow } from "@/components/IconMetaRow";
+import { getIosDatePickerNativeProps, iosDatePickerStyle, iosDatePickerWrapStyle } from "@/components/ios-date-picker-props";
 import { ModalSafeArea } from "@/components/ModalSafeArea";
+import { ModalScreenHeader } from "@/components/ModalScreenHeader";
+import { useModalLayout } from "@/components/modal-layout";
+import { readableType } from "@/design/typography";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as DocumentPicker from "expo-document-picker";
 import DateTimePicker, { DateTimePickerAndroid, DateTimePickerEvent } from "@react-native-community/datetimepicker";
@@ -17,11 +22,12 @@ import {
 } from "react-native-paper";
 import { Button } from "@/design/paper-button";
 import { apiClient } from "@/services/api/client";
-import { putFileToUploadUrl } from "@/lib/files";
+import { putFileToUploadUrl, readUploadObjectPath } from "@/lib/files";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { buttonBorderRadius, darkTheme, lightTheme, paperMd3ControlRoundness } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
-import Signature from "react-native-signature-canvas";
+import { SignatureCapturePad, type SignatureCapturePadRef } from "@/components/SignatureCapturePad";
+import { formatMoneyFromCents } from "@/lib/format-currency";
 import { appConfig } from "@/services/config";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
@@ -102,6 +108,8 @@ export function DriverDepotScreen() {
   const mode = useUiThemeStore((state) => state.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
   const styles = getStyles(theme);
+  const { footerPaddingBottom, windowHeight } = useModalLayout();
+  const signaturePadHeight = Math.min(340, Math.max(220, Math.round(windowHeight * 0.32)));
   const [segment, setSegment] = useState<"orders" | "depots">("orders");
   const [selectedDepot, setSelectedDepot] = useState<Depot | null>(null);
   const [litres, setLitres] = useState("");
@@ -120,7 +128,7 @@ export function DriverDepotScreen() {
   const [hasDrawnSignature, setHasDrawnSignature] = useState(false);
   const [pendingSignatureSubmit, setPendingSignatureSubmit] = useState(false);
   const [signaturePadKey, setSignaturePadKey] = useState(0);
-  const signatureRef = useRef<any>(null);
+  const signatureRef = useRef<SignatureCapturePadRef>(null);
   const [selectedOrderForReceipt, setSelectedOrderForReceipt] = useState<DepotOrder | null>(null);
   const [createOrderError, setCreateOrderError] = useState<string>("");
   const [downloadingReceipt, setDownloadingReceipt] = useState(false);
@@ -210,12 +218,12 @@ export function DriverDepotScreen() {
       });
     },
     onSuccess: async () => {
-      setSelectedOrderForSignature(null);
-      setSignatureData("");
-      setHasDrawnSignature(false);
-      setPendingSignatureSubmit(false);
+      closeSignatureModal();
       setSignaturePadKey((k) => k + 1);
       await queryClient.invalidateQueries({ queryKey: ["/api/driver/depot-orders"] });
+    },
+    onError: () => {
+      setPendingSignatureSubmit(false);
     },
   });
 
@@ -225,6 +233,13 @@ export function DriverDepotScreen() {
       submitSignatureMutation.mutate();
     }
   }, [pendingSignatureSubmit, signatureData, submitSignatureMutation]);
+
+  const closeSignatureModal = () => {
+    setSelectedOrderForSignature(null);
+    setSignatureData("");
+    setHasDrawnSignature(false);
+    setPendingSignatureSubmit(false);
+  };
 
   const handleUploadProof = async () => {
     setPaymentError("");
@@ -249,11 +264,10 @@ export function DriverDepotScreen() {
       );
       if (!uploaded.ok) throw new Error("Upload failed.");
 
-      const aclRes = await apiClient.put("/api/documents", { documentURL: uploadMeta.uploadURL });
+      const storedRelativePath = await readUploadObjectPath(uploaded, uploadMeta.uploadURL);
+      const aclRes = await apiClient.put("/api/documents", { documentURL: storedRelativePath });
       const path =
-        (aclRes.data as { objectPath?: string }).objectPath ||
-        uploadMeta.objectPath ||
-        "";
+        (aclRes.data as { objectPath?: string }).objectPath || storedRelativePath;
       if (!path) throw new Error("Could not resolve uploaded file path.");
       setPaymentProofUrl(path);
     } catch (error) {
@@ -311,7 +325,7 @@ export function DriverDepotScreen() {
       const completedAt = selectedOrderForReceipt.completed_at
         ? new Date(selectedOrderForReceipt.completed_at).toLocaleString("en-ZA")
         : "-";
-      const total = ((selectedOrderForReceipt.total_price_cents || 0) / 100).toFixed(2);
+      const total = formatMoneyFromCents(selectedOrderForReceipt.total_price_cents || 0);
       const sigUri = toImageUri(selectedOrderForReceipt.delivery_signature_url);
 
       const html = `
@@ -325,7 +339,7 @@ export function DriverDepotScreen() {
             <p><strong>Fuel:</strong> ${fuelLabel}</p>
             <p><strong>Litres:</strong> ${selectedOrderForReceipt.litres || "-"}</p>
             <p><strong>Completed:</strong> ${completedAt}</p>
-            <p style="font-size:18px;"><strong>Total Amount:</strong> R ${total}</p>
+            <p style="font-size:18px;"><strong>Total Amount:</strong> ${total}</p>
             ${sigUri ? `<p><strong>Driver Receipt Signature:</strong></p><img src="${sigUri}" style="max-width: 100%; height: 120px; object-fit: contain; border:1px solid #d1d5db; border-radius:6px;" />` : ""}
           </body>
         </html>
@@ -389,16 +403,22 @@ export function DriverDepotScreen() {
     <View style={styles.container}>
       <Card mode="contained" style={styles.headerCard}>
         <Card.Content>
-          <Text variant="headlineSmall">Depot</Text>
-          <Text style={styles.subtitle}>My depot orders and available depots.</Text>
+          <SectionTitleRow
+            icon="warehouse"
+            title="Depot"
+            subtitle="My depot orders and nearby fuel depots."
+            iconBg={mode === "dark" ? "rgba(13, 148, 136, 0.18)" : "rgba(13, 148, 136, 0.14)"}
+            iconColor={theme.colors.primary}
+            subtitleColor={theme.colors.onSurfaceVariant}
+          />
           <SegmentedButtons
             theme={{ roundness: paperMd3ControlRoundness }}
             style={styles.segment}
             value={segment}
             onValueChange={(value) => setSegment(value as "orders" | "depots")}
             buttons={[
-              { value: "orders", label: "My Depot Orders" },
-              { value: "depots", label: "Available Depots" },
+              { value: "orders", label: "My orders", icon: "clipboard-list-outline" },
+              { value: "depots", label: "Depots", icon: "map-marker-radius" },
             ]}
           />
         </Card.Content>
@@ -420,21 +440,34 @@ export function DriverDepotScreen() {
                 <Card.Content>
                   <View style={styles.rowBetween}>
                     <Text variant="titleMedium">{item.depots?.name || "Depot"}</Text>
-                    <Chip compact>{item.status.replace(/_/g, " ")}</Chip>
+                    <Chip compact icon="information-outline">{item.status.replace(/_/g, " ")}</Chip>
                   </View>
-                  <Text style={styles.meta}>{item.fuel_types?.label || item.fuelTypes?.label || "Fuel"}</Text>
-                  <Text style={styles.meta}>Litres: {item.litres}</Text>
-                  <Text style={styles.meta}>Date: {item.pickup_date ? new Date(item.pickup_date).toLocaleDateString("en-ZA") : "-"}</Text>
-                  <Text style={styles.amount}>R {(Number(item.total_price_cents || 0) / 100).toFixed(2)}</Text>
+                  <IconMetaRow icon="fuel" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.primary}>
+                    {item.fuel_types?.label || item.fuelTypes?.label || "Fuel"} · {item.litres} L
+                  </IconMetaRow>
+                  <IconMetaRow icon="calendar-outline" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.onSurfaceVariant}>
+                    {item.pickup_date ? new Date(item.pickup_date).toLocaleDateString("en-ZA") : "No date"}
+                  </IconMetaRow>
+                  <IconMetaRow icon="cash" color={theme.colors.onSurface} iconColor={theme.colors.primary}>
+                    {formatMoneyFromCents(Number(item.total_price_cents || 0))}
+                  </IconMetaRow>
                   <View style={styles.actionRow}>
                     {item.status === "pending" ? (
-                      <Button mode="outlined" onPress={() => cancelOrderMutation.mutate(item.id)} loading={cancelOrderMutation.isPending}>
+                      <Button
+                        mode="outlined"
+                        compact
+                        icon="close-circle-outline"
+                        onPress={() => cancelOrderMutation.mutate(item.id)}
+                        loading={cancelOrderMutation.isPending}
+                      >
                         Cancel
                       </Button>
                     ) : null}
                     {item.status === "pending_payment" ? (
                       <Button
                         mode="contained"
+                        compact
+                        icon="credit-card-outline"
                         buttonColor={theme.colors.primary}
                         textColor={theme.colors.onPrimary}
                         onPress={() => {
@@ -444,12 +477,14 @@ export function DriverDepotScreen() {
                           setPaymentError("");
                         }}
                       >
-                        Pay Now
+                        Pay
                       </Button>
                     ) : null}
                     {(item.status === "awaiting_signature" || item.status === "released") ? (
                       <Button
                         mode="contained"
+                        compact
+                        icon="draw"
                         buttonColor={theme.colors.primary}
                         textColor={theme.colors.onPrimary}
                         onPress={() => {
@@ -458,11 +493,11 @@ export function DriverDepotScreen() {
                           setSignaturePadKey((k) => k + 1);
                         }}
                       >
-                        Sign Receipt
+                        Sign
                       </Button>
                     ) : null}
                     {item.status === "completed" ? (
-                      <Button mode="outlined" onPress={() => setSelectedOrderForReceipt(item)}>
+                      <Button mode="outlined" compact icon="receipt" onPress={() => setSelectedOrderForReceipt(item)}>
                         Receipt
                       </Button>
                     ) : null}
@@ -488,10 +523,12 @@ export function DriverDepotScreen() {
             <Card mode="outlined" style={styles.itemCard}>
               <Card.Content>
                 <Text variant="titleMedium">{item.name || "Depot"}</Text>
-                <Text style={styles.meta}>
+                <IconMetaRow icon="map-marker-outline" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.onSurfaceVariant}>
                   {[item.address_city, item.address_province].filter(Boolean).join(", ") || "Location unavailable"}
-                </Text>
-                <Text style={styles.meta}>{depotDistanceCaption(item)}</Text>
+                </IconMetaRow>
+                <IconMetaRow icon="map-marker-distance" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.primary}>
+                  {depotDistanceCaption(item)}
+                </IconMetaRow>
                 {fuelRows.length > 0 ? (
                   <View style={styles.fuelStockBlock}>
                     {fuelRows.map((row) => (
@@ -508,6 +545,8 @@ export function DriverDepotScreen() {
                 )}
                 <Button
                   mode="contained"
+                  compact
+                  icon="gas-station"
                   style={styles.orderBtn}
                   buttonColor={theme.colors.primary}
                   textColor={theme.colors.onPrimary}
@@ -519,7 +558,7 @@ export function DriverDepotScreen() {
                     setPickupDate(new Date(Date.now() + 60 * 60 * 1000).toISOString());
                   }}
                 >
-                  Order From Depot
+                  Order fuel
                 </Button>
               </Card.Content>
             </Card>
@@ -531,10 +570,7 @@ export function DriverDepotScreen() {
       <Portal>
         <Modal visible={!!selectedDepot} onRequestClose={() => setSelectedDepot(null)} animationType="slide" presentationStyle="fullScreen">
           <ModalSafeArea style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <Text variant="titleLarge">Place Depot Order</Text>
-              <Button onPress={() => setSelectedDepot(null)}>Close</Button>
-            </View>
+            <ModalScreenHeader title="Place Depot Order" onClose={() => setSelectedDepot(null)} />
             <ScrollView contentContainerStyle={styles.modalScroll}>
               <Card mode="outlined" style={styles.modalCard}>
                 <Card.Content>
@@ -579,13 +615,16 @@ export function DriverDepotScreen() {
                     {pickupDate ? pickupDateValue.toLocaleString("en-ZA") : "Select pickup date and time"}
                   </Button>
                   {Platform.OS === "ios" && showPickupPicker ? (
-                    <DateTimePicker
-                      value={pickupDateValue}
-                      mode="datetime"
-                      display="spinner"
-                      minimumDate={new Date()}
-                      onChange={handlePickupDateChange}
-                    />
+                    <View style={iosDatePickerWrapStyle(theme)}>
+                      <DateTimePicker
+                        value={pickupDateValue}
+                        mode="datetime"
+                        minimumDate={new Date()}
+                        onChange={handlePickupDateChange}
+                        style={iosDatePickerStyle()}
+                        {...getIosDatePickerNativeProps(mode)}
+                      />
+                    </View>
                   ) : null}
 
                   {selectedFuelAvailableStock !== null ? (
@@ -599,7 +638,7 @@ export function DriverDepotScreen() {
                         .sort((a, b) => Number(a.min_litres ?? a.minLitres ?? 0) - Number(b.min_litres ?? b.minLitres ?? 0))
                         .map((p) => (
                           <Text key={`${selectedDepot?.id}-${p.fuel_type_id ?? p.fuelTypeId}-${p.min_litres ?? p.minLitres}-${p.price_cents ?? p.priceCents}`} style={styles.meta}>
-                            {selectedFuelLabel || p.fuel_types?.label || p.fuelTypes?.label || "Fuel"}: R {((p.price_cents ?? p.priceCents ?? 0) / 100).toFixed(2)} / L
+                            {selectedFuelLabel || p.fuel_types?.label || p.fuelTypes?.label || "Fuel"}: {formatMoneyFromCents(p.price_cents ?? p.priceCents ?? 0)} / L
                             {"  "}
                             (min {p.min_litres ?? p.minLitres ?? 0}L, stock {p.available_litres ?? p.availableLitres ?? 0}L)
                           </Text>
@@ -630,7 +669,7 @@ export function DriverDepotScreen() {
             <Text style={styles.meta}>Fuel: {selectedOrderForPayment?.fuel_types?.label || "-"}</Text>
             <Text style={styles.meta}>Litres: {selectedOrderForPayment?.litres || "-"}</Text>
             <Text style={styles.amount}>
-              Total: R {((selectedOrderForPayment?.total_price_cents || 0) / 100).toFixed(2)}
+              Total: {formatMoneyFromCents(selectedOrderForPayment?.total_price_cents || 0)}
             </Text>
 
             <View style={styles.paymentOptions}>
@@ -687,67 +726,102 @@ export function DriverDepotScreen() {
           </Dialog.Actions>
         </Dialog>
 
-        <Dialog
-          visible={!!selectedOrderForSignature}
-          onDismiss={() => setSelectedOrderForSignature(null)}
-          style={styles.dialog}
-        >
-          <Dialog.Title>Sign Receipt</Dialog.Title>
-          <Dialog.Content>
-            <Text style={styles.meta}>Please sign to confirm fuel receipt.</Text>
-            <View style={styles.signatureCanvas}>
-              <Signature
-                key={`depot-signature-${signaturePadKey}`}
-                ref={signatureRef}
-                onOK={(sig) => setSignatureData(sig)}
-                onEmpty={() => setSignatureData("")}
-                onClear={() => {
-                  setSignatureData("");
-                  setHasDrawnSignature(false);
-                }}
-                onEnd={() => setHasDrawnSignature(true)}
-                webStyle={`
-                  .m-signature-pad { box-shadow: none; border: none; }
-                  .m-signature-pad--footer { display: none; margin: 0; }
-                  body, html { width: 100%; height: 100%; }
-                  canvas { border: none; }
-                `}
-                autoClear={false}
-                imageType="image/png"
-                descriptionText=""
-              />
-            </View>
-            {submitSignatureMutation.isError ? (
-              <Text style={styles.errorText}>{(submitSignatureMutation.error as Error)?.message || "Failed to submit signature."}</Text>
+      </Portal>
+
+      <Modal
+        visible={!!selectedOrderForSignature}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={closeSignatureModal}
+      >
+        <ModalSafeArea style={styles.signatureModalRoot}>
+          <ModalScreenHeader title="Sign receipt" onClose={closeSignatureModal} />
+          <View style={styles.signatureModalBody}>
+            {selectedOrderForSignature ? (
+              <Card mode="outlined" style={styles.signatureOrderCard}>
+                <Card.Content>
+                  <Text variant="titleSmall" style={styles.signatureOrderTitle}>
+                    {selectedOrderForSignature.depots?.name ?? "Depot order"}
+                  </Text>
+                  <Text style={styles.meta}>
+                    {(selectedOrderForSignature.fuel_types?.label ||
+                      selectedOrderForSignature.fuelTypes?.label ||
+                      "Fuel")}{" "}
+                    · {selectedOrderForSignature.litres} L ·{" "}
+                    {formatMoneyFromCents(Number(selectedOrderForSignature.total_price_cents || 0))}
+                  </Text>
+                </Card.Content>
+              </Card>
             ) : null}
-          </Dialog.Content>
-          <Dialog.Actions>
-            <Button
-              onPress={() => {
+            <Text style={styles.signatureHint}>
+              Sign in the box below to confirm you received the fuel from the supplier.
+            </Text>
+            <Text style={styles.signatureLabel}>Your signature *</Text>
+            <SignatureCapturePad
+              ref={signatureRef}
+              padKey={`depot-signature-${signaturePadKey}`}
+              height={signaturePadHeight}
+              style={[styles.signatureCanvas, { borderColor: theme.colors.outline }]}
+              onOK={(sig) => setSignatureData(sig)}
+              onEmpty={() => setSignatureData("")}
+              onClear={() => {
                 setSignatureData("");
                 setHasDrawnSignature(false);
-                setPendingSignatureSubmit(false);
-                setSignaturePadKey((k) => k + 1);
               }}
-            >
-              Clear
-            </Button>
-            <Button onPress={() => setSelectedOrderForSignature(null)}>Cancel</Button>
+              onEnd={() => setHasDrawnSignature(true)}
+            />
+            {submitSignatureMutation.isError ? (
+              <Text style={styles.errorText}>
+                {(submitSignatureMutation.error as Error)?.message || "Failed to submit signature."}
+              </Text>
+            ) : null}
+          </View>
+          <View style={[styles.signatureModalFooter, { paddingBottom: footerPaddingBottom }]}>
             <Button
               mode="contained"
+              buttonColor={theme.colors.primary}
+              textColor={theme.colors.onPrimary}
+              style={styles.signaturePrimaryBtn}
+              contentStyle={styles.signaturePrimaryBtnInner}
               onPress={() => {
                 setPendingSignatureSubmit(true);
-                signatureRef.current?.readSignature?.();
+                signatureRef.current?.readSignature();
               }}
               loading={submitSignatureMutation.isPending}
               disabled={submitSignatureMutation.isPending || !hasDrawnSignature}
             >
-              Submit
+              Submit signature
             </Button>
-          </Dialog.Actions>
-        </Dialog>
-
-      </Portal>
+            <View style={styles.signatureSecondaryRow}>
+              <Button
+                mode="outlined"
+                style={styles.signatureSecondaryBtn}
+                textColor={theme.colors.onSurface}
+                theme={{ colors: { outline: theme.colors.outline } }}
+                onPress={() => {
+                  setSignatureData("");
+                  setHasDrawnSignature(false);
+                  setPendingSignatureSubmit(false);
+                  setSignaturePadKey((k) => k + 1);
+                }}
+                disabled={submitSignatureMutation.isPending}
+              >
+                Clear
+              </Button>
+              <Button
+                mode="outlined"
+                style={styles.signatureSecondaryBtn}
+                textColor={theme.colors.onSurface}
+                theme={{ colors: { outline: theme.colors.outline } }}
+                onPress={closeSignatureModal}
+                disabled={submitSignatureMutation.isPending}
+              >
+                Cancel
+              </Button>
+            </View>
+          </View>
+        </ModalSafeArea>
+      </Modal>
 
       <Modal
         visible={!!selectedOrderForReceipt}
@@ -756,14 +830,11 @@ export function DriverDepotScreen() {
         presentationStyle="fullScreen"
       >
         <ModalSafeArea style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <Text variant="titleLarge">Depot Order Receipt</Text>
-            <View style={styles.receiptHeaderActions}>
-              <Button onPress={handleDownloadReceipt} loading={downloadingReceipt} disabled={downloadingReceipt}>
-                Download
-              </Button>
-              <Button onPress={() => setSelectedOrderForReceipt(null)}>Close</Button>
-            </View>
+          <ModalScreenHeader title="Depot Order Receipt" onClose={() => setSelectedOrderForReceipt(null)} />
+          <View style={styles.receiptHeaderActions}>
+            <Button onPress={handleDownloadReceipt} loading={downloadingReceipt} disabled={downloadingReceipt}>
+              Download
+            </Button>
           </View>
           <ScrollView contentContainerStyle={styles.receiptScroll}>
             <View style={styles.receiptCard}>
@@ -802,7 +873,7 @@ export function DriverDepotScreen() {
               <View style={styles.receiptTotalWrap}>
                 <Text style={styles.receiptTotalLabel}>Total Amount</Text>
                 <Text style={styles.receiptTotalValue}>
-                  R {((selectedOrderForReceipt?.total_price_cents || 0) / 100).toFixed(2)}
+                  {formatMoneyFromCents(selectedOrderForReceipt?.total_price_cents || 0)}
                 </Text>
               </View>
 
@@ -912,14 +983,62 @@ const getStyles = (theme: typeof lightTheme) => {
   },
   input: p.input,
   stockText: { marginTop: 8, color: theme.colors.primary, fontWeight: "700" },
+  signatureModalRoot: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+  },
+  signatureModalBody: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    minHeight: 0,
+  },
+  signatureOrderCard: {
+    marginBottom: 12,
+    backgroundColor: theme.colors.surface,
+  },
+  signatureOrderTitle: {
+    fontWeight: "700",
+    color: theme.colors.onSurface,
+  },
+  signatureHint: {
+    ...readableType.body,
+    color: theme.colors.onSurfaceVariant,
+    marginBottom: 12,
+  },
+  signatureLabel: {
+    ...readableType.label,
+    color: theme.colors.onSurface,
+    marginBottom: 8,
+  },
   signatureCanvas: {
-    height: 180,
+    width: "100%",
     borderWidth: 1,
     borderRadius: 12,
-    borderColor: theme.colors.primary,
     backgroundColor: "#FFFFFF",
     overflow: "hidden",
-    marginTop: 8,
+  },
+  signatureModalFooter: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    gap: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.outline,
+    backgroundColor: theme.colors.surface,
+  },
+  signaturePrimaryBtn: {
+    borderRadius: buttonBorderRadius,
+  },
+  signaturePrimaryBtnInner: {
+    paddingVertical: 6,
+  },
+  signatureSecondaryRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  signatureSecondaryBtn: {
+    flex: 1,
+    borderRadius: buttonBorderRadius,
   },
   receiptSignature: {
     width: "100%",

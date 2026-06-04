@@ -9,14 +9,7 @@ import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { useAuth } from "@/contexts/AuthContext";
-
-function toTitleCase(value: string) {
-  return value
-    .replace(/_/g, " ")
-    .split(" ")
-    .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : part))
-    .join(" ");
-}
+import { formatSnakeCaseLabel } from "@/lib/format-labels";
 
 function asStringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -158,7 +151,7 @@ export function SupplierProfileScreen() {
                     : styles.badgeMuted,
               ]}
             >
-              <Text style={styles.badgeText}>Status: {toTitleCase(String(overallStatus))}</Text>
+              <Text style={styles.badgeText}>Status: {formatSnakeCaseLabel(String(overallStatus))}</Text>
             </View>
             <View style={[styles.badge, canAccessPlatform ? styles.badgeSuccess : styles.badgeMuted]}>
               <Text style={styles.badgeText}>{canAccessPlatform ? "Platform access: Yes" : "Platform access: No"}</Text>
@@ -188,7 +181,7 @@ export function SupplierProfileScreen() {
                         : "Not uploaded";
                 return (
                   <View key={doc} style={styles.listRow}>
-                    <Text style={styles.listTitle}>{toTitleCase(doc)}</Text>
+                    <Text style={styles.listTitle}>{formatSnakeCaseLabel(doc)}</Text>
                     <Text style={styles.listStatus}>{state}</Text>
                   </View>
                 );

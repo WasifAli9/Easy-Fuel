@@ -6,6 +6,7 @@ import { Button } from "@/design/paper-button";
 import { apiClient } from "@/services/api/client";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
+import { readableType } from "@/design/typography";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 
 export type ChatViewerRole = "driver" | "customer";
@@ -58,18 +59,21 @@ export function OrderChatPanel({
   orderId,
   viewerRole,
   orderDetailLayout,
+  maxChatHeight,
   onMessageInputFocus,
 }: {
   orderId: string;
   viewerRole: ChatViewerRole;
   /** Styling aligned with order-detail sheet (messages header, bubbles, send control). */
   orderDetailLayout?: boolean;
+  /** Caps message list height on order-detail modals (scales with screen). */
+  maxChatHeight?: number;
   /** Parent ScrollView can scroll to end so the composer stays above the keyboard. */
   onMessageInputFocus?: () => void;
 }) {
   const mode = useUiThemeStore((state) => state.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
-  const styles = getStyles(theme, !!orderDetailLayout);
+  const styles = getStyles(theme, !!orderDetailLayout, maxChatHeight);
   const [messageText, setMessageText] = useState("");
   const queryClient = useQueryClient();
 
@@ -246,8 +250,10 @@ export function OrderChatPanel({
   );
 }
 
-const getStyles = (theme: typeof lightTheme, orderDetailLayout: boolean) => {
+const getStyles = (theme: typeof lightTheme, orderDetailLayout: boolean, maxChatHeight?: number) => {
   const p = getPortalUiStyleDefs(theme);
+  const chatListMax = orderDetailLayout ? (maxChatHeight ?? 320) : undefined;
+  const chatListMin = orderDetailLayout ? Math.min(160, Math.max(120, chatListMax ?? 160)) : 120;
   return StyleSheet.create({
     chatWrap: {
       gap: orderDetailLayout ? 12 : 8,
@@ -288,8 +294,8 @@ const getStyles = (theme: typeof lightTheme, orderDetailLayout: boolean) => {
     chatList: {
       flex: orderDetailLayout ? undefined : 1,
       flexGrow: orderDetailLayout ? 0 : undefined,
-      minHeight: orderDetailLayout ? 160 : 120,
-      maxHeight: orderDetailLayout ? 320 : undefined,
+      minHeight: chatListMin,
+      maxHeight: chatListMax,
       borderRadius: orderDetailLayout ? 16 : 14,
       overflow: "hidden",
       borderWidth: 1,
@@ -319,12 +325,11 @@ const getStyles = (theme: typeof lightTheme, orderDetailLayout: boolean) => {
       alignItems: "flex-end",
     },
     messageMeta: {
-      fontSize: 13,
-      fontWeight: "600",
+      ...readableType.label,
       color: theme.colors.onSurface,
     },
     messageTime: {
-      fontSize: 12,
+      ...readableType.caption,
       fontWeight: "500",
       color: theme.colors.onSurfaceVariant,
     },
@@ -333,8 +338,7 @@ const getStyles = (theme: typeof lightTheme, orderDetailLayout: boolean) => {
       paddingVertical: 10,
       borderRadius: 14,
       maxWidth: "92%",
-      fontSize: 15,
-      lineHeight: 20,
+      ...readableType.body,
       overflow: "hidden",
     },
     messageBubblePeer: {

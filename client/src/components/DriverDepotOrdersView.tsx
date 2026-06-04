@@ -23,11 +23,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Package, CheckCircle, XCircle, CreditCard, FileSignature, Eye, Fuel, FileText, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { formatCurrency } from "@/lib/utils";
+import {
+  formatCurrency,
+  formatDepotOrderStatus,
+  formatPaymentMethod,
+  normalizeFilePath,
+} from "@/lib/utils";
 import { useCurrency } from "@/hooks/use-currency";
 import { SignaturePad } from "@/components/SignaturePad";
 import { DriverDepotOrderReceipt } from "@/components/DriverDepotOrderReceipt";
-import { normalizeFilePath } from "@/lib/utils";
 
 interface DriverDepotOrdersViewProps {
   statusFilter?: string[] | null;
@@ -273,29 +277,15 @@ export function DriverDepotOrdersView({ statusFilter }: DriverDepotOrdersViewPro
       cancelled: "destructive",
     };
     
-    let displayStatus = status;
-    if (status === "pending_payment") {
-      if (paymentStatus === "paid" && order.payment_method === "bank_transfer") {
-        displayStatus = "Waiting Payment Confirmation";
-      } else if (paymentStatus === "payment_failed") {
-        displayStatus = "Payment Failed";
-      } else {
-        displayStatus = "Awaiting Payment";
-      }
-    } else if (status === "paid") {
-      displayStatus = "Awaiting Signatures";
-    } else if (status === "ready_for_pickup") {
-      displayStatus = "Ready for Pickup";
-    } else if (status === "awaiting_signature") {
-      displayStatus = "Awaiting Driver Signature";
-    } else if (status === "released") {
-      // Legacy status - should not be used anymore, but keep for backward compatibility
-      displayStatus = "Awaiting Driver Signature";
-    }
-    
+    const label = formatDepotOrderStatus({
+      status,
+      payment_status: paymentStatus,
+      payment_method: order.payment_method,
+    });
+
     return (
       <Badge variant={variants[status] || "secondary"}>
-        {displayStatus.replace(/_/g, " ").split(" ").map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(" ")}
+        {label}
       </Badge>
     );
   };
@@ -557,7 +547,7 @@ export function DriverDepotOrdersView({ statusFilter }: DriverDepotOrdersViewPro
                 )}
                 <div className="bg-muted/50 rounded-lg p-3 space-y-1 text-sm">
                   <p className="font-semibold">Order Details:</p>
-                  <p><span className="text-muted-foreground">Payment Method:</span> {selectedOrderForProof.payment_method?.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}</p>
+                  <p><span className="text-muted-foreground">Payment Method:</span> {formatPaymentMethod(selectedOrderForProof.payment_method)}</p>
                   <p><span className="text-muted-foreground">Driver:</span> {getDriverDisplayName(selectedOrderForProof)}</p>
                   <p><span className="text-muted-foreground">Amount:</span> {formatCurrency(selectedOrderForProof.total_price_cents / 100, currency)}</p>
                 </div>

@@ -2050,6 +2050,12 @@ router.post("/vehicles/:vehicleId/release-company-vehicle", async (req, res) => 
       .eq("id", vehicleId);
     if (rErr) throw rErr;
 
+    await drizzleAdmin
+      .from("drivers")
+      .update({ active_vehicle_id: null, updated_at: now })
+      .eq("id", driver.id)
+      .eq("active_vehicle_id", vehicleId);
+
     await syncDriverVehicleCapacityLitres(driver.id);
 
     websocketService.sendToUser(user.id, {
@@ -2969,6 +2975,12 @@ router.post("/documents", async (req, res) => {
       return res.status(400).json({ error: "doc_type and file_path are required" });
     }
 
+    const normalizedMime = String(mime_type || "")
+      .toLowerCase()
+      .split(";")[0]
+      .trim();
+    const isPdfMime = normalizedMime === "application/pdf";
+
     // Get driver ID
     const { data: driver, error: driverError } = await drizzleAdmin
       .from("drivers")
@@ -3018,6 +3030,12 @@ router.post("/documents", async (req, res) => {
       finalOwnerId = driver.id;
     }
 
+    if (finalOwnerType === "driver" && !isPdfMime) {
+      return res.status(400).json({
+        error: "Driver KYC documents must be PDF files (application/pdf).",
+      });
+    }
+
     // Insert document directly via PostgreSQL so writes cannot silently no-op.
     const verificationStatus = "pending";
     const insertResult = await pool.query(
@@ -3033,7 +3051,7 @@ router.post("/documents", async (req, res) => {
         title || doc_type,
         file_path,
         file_size || null,
-        mime_type || null,
+        finalOwnerType === "driver" ? "application/pdf" : mime_type || null,
         user.id,
         expiry_date || null,
         verificationStatus,

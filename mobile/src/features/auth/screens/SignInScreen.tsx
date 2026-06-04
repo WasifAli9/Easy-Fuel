@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/contexts/AuthContext";
 import { EasyFuelLogo } from "@/design/EasyFuelLogo";
 import { appTheme } from "@/design/theme";
+import { readableType } from "@/design/typography";
 import { getResolvedApiBaseUrl } from "@/services/config";
 
 function isLikelyNetworkFailure(error: unknown): boolean {
@@ -81,6 +82,7 @@ export function SignInScreen() {
 
   const scrollContent = (
     <ScrollView
+      style={styles.flex}
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="on-drag"
       showsVerticalScrollIndicator={false}
@@ -88,8 +90,8 @@ export function SignInScreen() {
       contentContainerStyle={[
         styles.scrollContent,
         {
-          paddingTop: insets.top + 48,
-          paddingBottom: Math.max(insets.bottom, 16) + 24,
+          paddingTop: Math.max(insets.top, 20),
+          paddingBottom: Math.max(insets.bottom, 24),
         },
       ]}
     >
@@ -169,6 +171,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
+    justifyContent: "center",
     paddingHorizontal: 20,
   },
   card: {
@@ -191,13 +194,15 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   subtitle: {
+    ...readableType.bodyBold,
     textAlign: "center",
     marginTop: 2,
-    fontWeight: "600",
+    color: appTheme.colors.onSurface,
   },
   description: {
+    ...readableType.meta,
     textAlign: "center",
-    color: "#6B7280",
+    color: appTheme.colors.onSurfaceVariant,
     marginTop: 6,
     marginBottom: 16,
   },

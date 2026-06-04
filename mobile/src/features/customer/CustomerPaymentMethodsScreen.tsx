@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Alert, FlatList, Modal, ScrollView, StyleSheet, View } from "react-native";
+import { Alert, FlatList, Modal, ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, SegmentedButtons, Switch, Text, TextInput } from "react-native-paper";
 import { Button } from "@/design/paper-button";
@@ -27,6 +28,8 @@ type PaymentMethod = {
 };
 
 export function CustomerPaymentMethodsScreen() {
+  const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const mode = useUiThemeStore((s) => s.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
   const styles = getStyles(theme);
@@ -194,7 +197,15 @@ export function CustomerPaymentMethodsScreen() {
 
       <Modal visible={modalOpen} animationType="slide" transparent onRequestClose={() => setModalOpen(false)}>
         <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
+          <View
+            style={[
+              styles.modalCard,
+              {
+                maxHeight: windowHeight * 0.9,
+                paddingBottom: Math.max(insets.bottom, 16),
+              },
+            ]}
+          >
             <Text variant="titleLarge" style={styles.modalTitle}>
               Add payment method
             </Text>

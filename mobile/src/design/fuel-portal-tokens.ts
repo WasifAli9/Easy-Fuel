@@ -56,8 +56,8 @@ export function fuelPortalTabBarOptions(theme: AppTheme, isDark: boolean, bottom
       paddingTop: 6,
     },
     tabBarLabelStyle: {
-      fontSize: 12,
-      fontWeight: "600" as const,
+      fontSize: 13,
+      fontWeight: "700" as const,
     },
   };
 }

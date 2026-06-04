@@ -1,6 +1,6 @@
 import { PropsWithChildren } from "react";
-import { StyleProp, StyleSheet, ViewStyle } from "react-native";
-import { SafeAreaView, type Edge } from "react-native-safe-area-context";
+import { StyleProp, StyleSheet, View, type ViewStyle } from "react-native";
+import { useSafeAreaInsets, type Edge } from "react-native-safe-area-context";
 
 type ModalSafeAreaProps = PropsWithChildren<{
   style?: StyleProp<ViewStyle>;
@@ -9,18 +9,24 @@ type ModalSafeAreaProps = PropsWithChildren<{
 }>;
 
 /**
- * Wrap full-screen modals so content does not sit under the status bar or home indicator (iOS + Android).
+ * Full-screen modal safe area using explicit inset padding.
+ * SafeAreaView inside React Native Modal is unreliable on some iOS devices (content under notch / home bar).
  */
 export function ModalSafeArea({
   children,
   style,
   edges = ["top", "right", "bottom", "left"],
 }: ModalSafeAreaProps) {
-  return (
-    <SafeAreaView style={[styles.root, style]} edges={edges}>
-      {children}
-    </SafeAreaView>
-  );
+  const insets = useSafeAreaInsets();
+
+  const paddingStyle: ViewStyle = {
+    paddingTop: edges.includes("top") ? insets.top : 0,
+    paddingBottom: edges.includes("bottom") ? insets.bottom : 0,
+    paddingLeft: edges.includes("left") ? insets.left : 0,
+    paddingRight: edges.includes("right") ? insets.right : 0,
+  };
+
+  return <View style={[styles.root, paddingStyle, style]}>{children}</View>;
 }
 
 const styles = StyleSheet.create({

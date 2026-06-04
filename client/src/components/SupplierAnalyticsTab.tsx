@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, TrendingUp, Droplets, CircleDollarSign, PackageCheck } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, formatSnakeCaseLabel } from "@/lib/utils";
 import {
   CartesianGrid,
   XAxis,
@@ -31,7 +31,7 @@ export function SupplierAnalyticsTab() {
   }
 
   const statusData = Object.entries(data.byStatus || {}).map(([status, count]) => ({
-    status: status.replace(/_/g, " "),
+    status: formatSnakeCaseLabel(status, status),
     count: Number(count || 0),
   }));
 

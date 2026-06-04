@@ -16,8 +16,12 @@ import {
   filterOutOldCustomerOrders,
   formatCustomerOrderAddress,
 } from "@/features/customer/customerOrderUtils";
+import { formatMoneyFromCents } from "@/lib/format-currency";
+import { formatOrderState } from "@/lib/format-labels";
 import { CustomerCreateOrderModal } from "@/features/customer/CustomerCreateOrderModal";
 import { CustomerOrderDetailModal } from "@/features/customer/CustomerOrderDetailModal";
+import { IconMetaRow, SectionTitleRow } from "@/components/IconMetaRow";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 type OrderRow = {
   id: string;
@@ -94,18 +98,25 @@ export function CustomerOrdersScreen() {
         <Card.Content>
           <View style={styles.headerRow}>
             <View style={styles.headerInfo}>
-              <Text variant="headlineSmall">My orders</Text>
-              <Text style={styles.subtitle}>Track and manage your fuel deliveries</Text>
+              <SectionTitleRow
+                icon="clipboard-list-outline"
+                title="My orders"
+                subtitle="Track and manage fuel deliveries"
+                iconBg={mode === "dark" ? "rgba(13, 148, 136, 0.18)" : "rgba(13, 148, 136, 0.14)"}
+                iconColor={theme.colors.primary}
+                subtitleColor={theme.colors.onSurfaceVariant}
+              />
             </View>
             <Button
               mode="contained"
+              icon="plus"
               buttonColor={theme.colors.primary}
               textColor={theme.colors.onPrimary}
               onPress={() => setCreateOpen(true)}
               style={styles.newOrderBtn}
               compact
             >
-              New order
+              New
             </Button>
           </View>
           <SegmentedButtons
@@ -114,12 +125,20 @@ export function CustomerOrdersScreen() {
             value={tab}
             onValueChange={(v) => setTab(v as CustomerOrderTab)}
             buttons={[
-              { value: "all", label: "All" },
-              { value: "active", label: "Active" },
-              { value: "completed", label: "Done" },
+              { value: "all", label: "All", icon: "format-list-bulleted" },
+              { value: "active", label: "Active", icon: "truck-delivery-outline" },
+              { value: "completed", label: "Done", icon: "check-circle-outline" },
             ]}
           />
-          <Menu visible={fuelMenuOpen} onDismiss={() => setFuelMenuOpen(false)} anchor={<Button onPress={() => setFuelMenuOpen(true)}>Fuel filter</Button>}>
+          <Menu
+            visible={fuelMenuOpen}
+            onDismiss={() => setFuelMenuOpen(false)}
+            anchor={
+              <Button compact icon="fuel" mode="outlined" onPress={() => setFuelMenuOpen(true)}>
+                Fuel
+              </Button>
+            }
+          >
             <Menu.Item
               onPress={() => {
                 setSelectedFuelTypeId(null);
@@ -159,16 +178,32 @@ export function CustomerOrdersScreen() {
             <Card mode="outlined" style={styles.card}>
               <Card.Content>
                 <View style={styles.rowBetween}>
-                  <Text variant="titleMedium">{item.fuel_types?.label ?? "Fuel"}</Text>
-                  <Chip compact>{formatOrderStatus(item.state ?? item.order_status)}</Chip>
+                  <View style={styles.orderTitleRow}>
+                    <MaterialCommunityIcons name="fuel" size={18} color={theme.colors.primary} />
+                    <Text variant="titleMedium">{item.fuel_types?.label ?? "Fuel"}</Text>
+                  </View>
+                  <Chip compact icon="information-outline">{formatOrderState(item.state ?? item.order_status)}</Chip>
                 </View>
-                <Text style={styles.meta}>{formatCustomerOrderAddress(item)}</Text>
-                <Text style={styles.meta}>
-                  {item.litres != null ? `${item.litres} L` : ""} · R {((item.total_cents ?? 0) / 100).toFixed(2)}
-                </Text>
-                <Text style={styles.meta}>{item.created_at ? new Date(item.created_at).toLocaleString("en-ZA") : ""}</Text>
-                <Button mode="contained-tonal" onPress={() => { setDetailId(item.id); setDetailOpen(true); }} style={styles.open}>
-                  View details
+                <IconMetaRow icon="map-marker-outline" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.onSurfaceVariant}>
+                  {formatCustomerOrderAddress(item)}
+                </IconMetaRow>
+                <IconMetaRow icon="gauge" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.onSurfaceVariant}>
+                  {item.litres != null ? `${item.litres} L` : "—"} · {formatMoneyFromCents(item.total_cents ?? 0)}
+                </IconMetaRow>
+                <IconMetaRow icon="clock-outline" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.onSurfaceVariant}>
+                  {item.created_at ? new Date(item.created_at).toLocaleString("en-ZA") : ""}
+                </IconMetaRow>
+                <Button
+                  mode="contained-tonal"
+                  compact
+                  icon="eye-outline"
+                  onPress={() => {
+                    setDetailId(item.id);
+                    setDetailOpen(true);
+                  }}
+                  style={styles.open}
+                >
+                  Details
                 </Button>
               </Card.Content>
             </Card>
@@ -189,14 +224,6 @@ export function CustomerOrdersScreen() {
   );
 }
 
-function formatOrderStatus(state?: string) {
-  if (!state) return "Pending";
-  return state
-    .split("_")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
-}
-
 const getStyles = (theme: typeof lightTheme) => {
   const p = getPortalUiStyleDefs(theme);
   return StyleSheet.create({
@@ -207,6 +234,7 @@ const getStyles = (theme: typeof lightTheme) => {
     newOrderBtn: { alignSelf: "flex-start", borderRadius: buttonBorderRadius },
     subtitle: p.subtitle,
     rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 8 },
+    orderTitleRow: { flexDirection: "row", alignItems: "center", gap: 8, flex: 1 },
     segment: { marginTop: 12 },
     filterHint: { marginTop: 8, color: theme.colors.primary, fontWeight: "600" },
     list: { paddingHorizontal: 12, paddingBottom: 24, gap: 10 },

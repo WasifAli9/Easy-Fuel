@@ -1,4 +1,5 @@
 import { Resend } from "resend";
+import { formatMoneyAmount } from "@shared/format-currency";
 import { pool } from "./db";
 
 function resolveResend(): { client: Resend; fromEmail: string } | null {
@@ -12,13 +13,8 @@ function resolveResend(): { client: Resend; fromEmail: string } | null {
 }
 
 function formatMoneyCents(cents: number, currencyCode: string): string {
-  const amount = cents / 100;
   const code = currencyCode?.trim() || "ZAR";
-  try {
-    return new Intl.NumberFormat("en-ZA", { style: "currency", currency: code }).format(amount);
-  } catch {
-    return `${code} ${amount.toFixed(2)}`;
-  }
+  return formatMoneyAmount(cents / 100, { currencyCode: code });
 }
 
 interface DriverAcceptanceEmailParams {

@@ -5,45 +5,36 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-// Currency mapping for African countries
-const currencyLocaleMap: Record<string, string> = {
-  'ZAR': 'en-ZA',  // South Africa - Rand
-  'USD': 'en-US',  // US Dollar
-  'EUR': 'de-DE',  // Euro (using German locale)
-  'GBP': 'en-GB',  // British Pound
-  'KES': 'sw-KE',  // Kenya - Shilling
-  'NGN': 'en-NG',  // Nigeria - Naira
-  'GHS': 'en-GH',  // Ghana - Cedi
-  'TZS': 'sw-TZ',  // Tanzania - Shilling
-  'UGX': 'en-UG',  // Uganda - Shilling
-  'EGP': 'ar-EG',  // Egypt - Pound
-  'MAD': 'ar-MA',  // Morocco - Dirham
-  'BWP': 'en-BW',  // Botswana - Pula
-  'MUR': 'en-MU',  // Mauritius - Rupee
-  'ZMW': 'en-ZM',  // Zambia - Kwacha
+import { formatMoneyAmount, formatMoneyFromCents } from "@shared/format-currency";
+import {
+  formatDepotOrderStatus,
+  formatDocumentType,
+  formatFuelTypeCode,
+  formatOfferState,
+  formatOrderIdShort,
+  formatOrderState,
+  formatPaymentMethod,
+  formatRole,
+  formatSnakeCaseLabel,
+} from "@shared/format-labels";
+
+export {
+  formatMoneyAmount,
+  formatMoneyFromCents,
+  formatDepotOrderStatus,
+  formatDocumentType,
+  formatFuelTypeCode,
+  formatOfferState,
+  formatOrderIdShort,
+  formatOrderState,
+  formatPaymentMethod,
+  formatRole,
+  formatSnakeCaseLabel,
 };
 
-export function formatCurrency(amount: number, currencyCode: string = 'ZAR'): string {
-  const locale = currencyLocaleMap[currencyCode] || 'en-ZA';
-  const formatted = new Intl.NumberFormat(locale, {
-    style: 'currency',
-    currency: currencyCode,
-    minimumFractionDigits: 2,
-  }).format(amount);
-  
-  // Replace comma decimal separator with dot for consistency
-  // This ensures all prices use dots (.) instead of commas (,) for decimals
-  // For 'en-ZA' locale, comma is used as decimal separator (e.g., "R 100,00")
-  // We replace the last comma (which is always the decimal separator) with a dot
-  const lastCommaIndex = formatted.lastIndexOf(',');
-  if (lastCommaIndex !== -1) {
-    // Check if comma is followed by 2 digits (decimal separator pattern)
-    const afterComma = formatted.substring(lastCommaIndex + 1);
-    if (/^\d{2}/.test(afterComma)) {
-      return formatted.substring(0, lastCommaIndex) + '.' + afterComma;
-    }
-  }
-  return formatted;
+/** Major-unit amount, e.g. `R 50,000.00` (comma thousands, dot decimals). */
+export function formatCurrency(amount: number, currencyCode: string = "ZAR"): string {
+  return formatMoneyAmount(amount, { currencyCode });
 }
 
 /**

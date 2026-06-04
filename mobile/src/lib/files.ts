@@ -1,7 +1,21 @@
-import { Linking } from "react-native";
+import { Linking, Platform } from "react-native";
+import { File, Paths } from "expo-file-system";
+import * as Sharing from "expo-sharing";
 import { appConfig } from "@/services/config";
 import { apiClient } from "@/services/api/client";
 import { useSessionStore } from "@/store/session-store";
+
+const MIME_TO_EXT: Record<string, string> = {
+  "application/pdf": ".pdf",
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+};
+
+export type StoredDocumentMeta = {
+  title?: string;
+  mime_type?: string | null;
+  mimeType?: string | null;
+};
 
 /**
  * Match web `client/src/lib/utils.ts` so DB paths from the web app resolve the same way on mobile.
@@ -21,8 +35,10 @@ export function normalizeFilePath(filePath: string | null | undefined): string |
       let path = url.pathname;
 
       if (path.startsWith("/api/storage/upload/")) {
-        path = path.replace("/api/storage/upload/", "");
-      } else if (path.startsWith("/api/object-storage/upload/")) {
+        const rel = path.replace("/api/storage/upload/", "");
+        return `/objects/${rel.startsWith("/") ? rel.slice(1) : rel}`;
+      }
+      if (path.startsWith("/api/object-storage/upload/")) {
         path = path.replace("/api/object-storage/upload/", "");
       }
 
@@ -38,17 +54,32 @@ export function normalizeFilePath(filePath: string | null | undefined): string |
   }
 
   if (filePath.startsWith("/api/storage/upload/")) {
-    const path = filePath.replace("/api/storage/upload/", "");
-    return `/objects/${path}`;
+    const rel = filePath.replace("/api/storage/upload/", "");
+    return `/objects/${rel.startsWith("/") ? rel.slice(1) : rel}`;
   }
 
   if (filePath.startsWith("/api/object-storage/upload/")) {
     const path = filePath.replace("/api/object-storage/upload/", "");
-    return `/objects/${path}`;
+    return `/objects/${path.startsWith("/") ? path.slice(1) : path}`;
   }
 
   const cleanPath = filePath.startsWith("/") ? filePath.slice(1) : filePath;
   return `/objects/${cleanPath}`;
+}
+
+function buildDocumentFilename(title: string | undefined, mimeType?: string | null): string {
+  const base = (title || "document").replace(/[/\\?%*:|"<>]/g, "-").trim() || "document";
+  if (/\.\w{2,5}$/i.test(base)) return base;
+  const mime = (mimeType || "application/pdf").toLowerCase().split(";")[0].trim();
+  const ext = MIME_TO_EXT[mime] || "";
+  return ext ? `${base}${ext}` : base;
+}
+
+/** Query string for `/objects/...` or presigned view URLs (filename + mime). */
+export function documentViewParams(doc?: StoredDocumentMeta): { filename: string; mimeType: string } {
+  const mimeType = (doc?.mime_type ?? doc?.mimeType ?? "application/pdf").split(";")[0].trim();
+  const filename = buildDocumentFilename(doc?.title, mimeType);
+  return { filename, mimeType };
 }
 
 export function resolveApiUrl(baseUrl: string, pathOrUrl: string): string {
@@ -58,6 +89,33 @@ export function resolveApiUrl(baseUrl: string, pathOrUrl: string): string {
   const base = baseUrl.replace(/\/$/, "");
   const path = pathOrUrl.startsWith("/") ? pathOrUrl : `/${pathOrUrl}`;
   return `${base}${path}`;
+}
+
+/** After PUT upload, prefer server-returned object path (includes storage bucket prefix). */
+export async function readUploadObjectPath(uploadResponse: Response, fallback?: string): Promise<string> {
+  try {
+    const body = (await uploadResponse.json()) as Record<string, unknown>;
+    const candidate =
+      (typeof body.objectPath === "string" && body.objectPath) ||
+      (typeof body.fullPath === "string" && body.fullPath) ||
+      (typeof body.path === "string" && body.path) ||
+      (typeof body.location === "string" && body.location) ||
+      fallback;
+    if (!candidate) {
+      throw new Error("Upload response missing object path");
+    }
+    const normalized = normalizeFilePath(candidate);
+    if (!normalized) {
+      throw new Error("Could not normalize uploaded file path");
+    }
+    return normalized.replace(/^\/objects\//, "");
+  } catch (e) {
+    if (fallback) {
+      const normalized = normalizeFilePath(fallback);
+      if (normalized) return normalized.replace(/^\/objects\//, "");
+    }
+    throw e;
+  }
 }
 
 /** PUT binary to a relative upload URL from `/api/objects/upload` (session: cookie or Bearer on RN). */
@@ -83,17 +141,104 @@ export async function putFileToUploadUrl(uploadPath: string, body: Blob, content
   return fetch(url, { method: "PUT", headers, body, credentials });
 }
 
-/**
- * Open a stored document: same rules as web (local `/objects/...` via API origin; S3 via presigned full URL).
- */
-export async function openStoredDocument(filePath: string | null | undefined): Promise<void> {
-  if (!filePath?.trim()) {
+function arrayBufferToBytes(raw: ArrayBuffer | ArrayBufferView): Uint8Array {
+  if (raw instanceof ArrayBuffer) {
+    return new Uint8Array(raw);
+  }
+  if (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView(raw)) {
+    const view = raw as ArrayBufferView;
+    return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+  }
+  throw new Error("Invalid file response from server.");
+}
+
+async function downloadObjectBytes(objectApiPath: string, doc?: StoredDocumentMeta): Promise<Uint8Array> {
+  const { filename, mimeType } = documentViewParams(doc);
+  const tryFetch = async (path: string) => {
+    const response = await apiClient.get<ArrayBuffer>(path, {
+      params: { filename, mime: mimeType },
+      responseType: "arraybuffer",
+      headers: { Accept: "application/pdf, application/octet-stream, */*" },
+    });
+    return arrayBufferToBytes(response.data as ArrayBuffer | ArrayBufferView);
+  };
+
+  try {
+    const bytes = await tryFetch(objectApiPath);
+    if (bytes.byteLength === 0) throw new Error("Document file is empty.");
+    return bytes;
+  } catch (err: unknown) {
+    const status = (err as { response?: { status?: number } })?.response?.status;
+    const legacyPrefix = "/objects/uploads/";
+    const localPrefix = "/objects/local/uploads/";
+    if (status === 404 && objectApiPath.startsWith(legacyPrefix) && !objectApiPath.startsWith(localPrefix)) {
+      const alt = objectApiPath.replace(legacyPrefix, localPrefix);
+      const bytes = await tryFetch(alt);
+      if (bytes.byteLength === 0) throw new Error("Document file is empty.");
+      return bytes;
+    }
+    throw err;
+  }
+}
+
+async function openCachedDocumentFile(filename: string, mimeType: string, bytes: Uint8Array): Promise<void> {
+  const safeName = filename.replace(/[/\\?%*:|"<>]/g, "-") || "document.pdf";
+  const file = new File(Paths.cache, safeName);
+  file.create({ overwrite: true });
+  file.write(bytes);
+
+  if (await Sharing.isAvailableAsync()) {
+    await Sharing.shareAsync(file.uri, {
+      mimeType,
+      dialogTitle: safeName,
+      UTI: mimeType === "application/pdf" ? "com.adobe.pdf" : undefined,
+    });
     return;
+  }
+
+  const canOpen = await Linking.canOpenURL(file.uri);
+  if (canOpen) {
+    await Linking.openURL(file.uri);
+    return;
+  }
+
+  throw new Error("No app available to open this document.");
+}
+
+async function openViaSignedUrl(objectPath: string, doc?: StoredDocumentMeta): Promise<void> {
+  const { filename, mimeType } = documentViewParams(doc);
+  const { data } = await apiClient.post<{ signedUrl: string }>("/api/objects/presigned-url", {
+    objectPath,
+    filename,
+    mimeType,
+  });
+  if (!data?.signedUrl) {
+    throw new Error("Could not resolve document URL");
+  }
+  const viewUrl = data.signedUrl.startsWith("http")
+    ? data.signedUrl
+    : resolveApiUrl(appConfig.apiBaseUrl, data.signedUrl);
+  const canOpen = await Linking.canOpenURL(viewUrl);
+  if (!canOpen) {
+    throw new Error("Cannot open document link on this device.");
+  }
+  await Linking.openURL(viewUrl);
+}
+
+/**
+ * Open a stored document (PDF) using an authenticated download, then the system viewer.
+ */
+export async function openStoredDocument(
+  filePath: string | null | undefined,
+  doc?: StoredDocumentMeta,
+): Promise<void> {
+  if (!filePath?.trim()) {
+    throw new Error("Document file path is missing.");
   }
 
   const normalized = normalizeFilePath(filePath);
   if (!normalized) {
-    return;
+    throw new Error("Invalid document file path.");
   }
 
   if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
@@ -101,19 +246,21 @@ export async function openStoredDocument(filePath: string | null | undefined): P
     return;
   }
 
-  if (normalized.startsWith("/objects/")) {
-    await Linking.openURL(resolveApiUrl(appConfig.apiBaseUrl, normalized));
+  const { filename, mimeType } = documentViewParams(doc);
+  const objectApiPath = normalized.startsWith("/objects/") ? normalized : `/objects/${normalized}`;
+
+  try {
+    const bytes = await downloadObjectBytes(objectApiPath, doc);
+    await openCachedDocumentFile(filename, mimeType, bytes);
     return;
+  } catch (primaryError) {
+    if (Platform.OS === "web") {
+      throw primaryError;
+    }
+    try {
+      await openViaSignedUrl(normalized, doc);
+    } catch {
+      throw primaryError;
+    }
   }
-
-  const stripped = normalized.replace(/^\/+/, "");
-  const { data } = await apiClient.post<{ signedUrl: string }>("/api/objects/presigned-url", {
-    objectPath: stripped,
-  });
-
-  if (!data?.signedUrl) {
-    throw new Error("Could not resolve document URL");
-  }
-
-  await Linking.openURL(resolveApiUrl(appConfig.apiBaseUrl, data.signedUrl));
 }

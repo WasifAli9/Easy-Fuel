@@ -40,6 +40,8 @@ import { useCurrency } from "@/hooks/use-currency";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatCurrency, normalizeProfilePhotoUrl } from "@/lib/utils";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { DeliverySignatureProof } from "@/components/DeliverySignatureProof";
+import { canShowOrderTrackingMap } from "@/lib/order-tracking";
 
 const orderEditSchema = z.object({
   fuelTypeId: z.string().min(1, "Please select a fuel type"),
@@ -646,6 +648,19 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                 </div>
               )}
 
+              {/* Live map — before chat, from assigned through picked up */}
+              {showTrackingMap && (
+                <div className="space-y-4">
+                  <DriverLocationMap
+                    orderId={order.id}
+                    deliveryLat={Number(order.drop_lat ?? order.dropLat)}
+                    deliveryLng={Number(order.drop_lng ?? order.dropLng)}
+                  />
+                </div>
+              )}
+
+              {order.state === "delivered" ? <DeliverySignatureProof order={order} /> : null}
+
               {/* Chat with driver - Show when driver is assigned until order is completed */}
               {canUseChat && (
                 <div className="space-y-4">
@@ -656,53 +671,30 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                 </div>
               )}
 
-              {/* Live GPS Tracking Map - Show when driver is en_route until delivered */}
-              {order.assigned_driver_id && ["en_route", "picked_up"].includes(order.state) && (
-                <div className="space-y-4">
-                  <DriverLocationMap
-                    orderId={order.id}
-                    deliveryLat={order.drop_lat}
-                    deliveryLng={order.drop_lng}
-                  />
-                </div>
-              )}
-              
-              {/* Debug: Show why map isn't showing (remove in production) */}
-              {process.env.NODE_ENV === 'development' && !order.assigned_driver_id && ["en_route", "picked_up"].includes(order.state) && (
-                <div className="text-xs text-muted-foreground p-2 bg-yellow-50 dark:bg-yellow-900/20 rounded">
-                  Debug: Map not showing - No assigned_driver_id. Order state: {order.state}
-                </div>
-              )}
-              {process.env.NODE_ENV === 'development' && order.assigned_driver_id && !["en_route", "picked_up"].includes(order.state) && order.state !== "delivered" && (
-                <div className="text-xs text-muted-foreground p-2 bg-yellow-50 dark:bg-yellow-900/20 rounded">
-                  Debug: Map not showing - Order state is "{order.state}" (needs "en_route" or "picked_up")
-                </div>
-              )}
-
               {/* Pricing Breakdown */}
               <div className="border-t pt-3 space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Fuel Cost</span>
                   <span data-testid="text-fuel-cost">
-                    {currencySymbol} {pricingBreakdown.fuelCost.toFixed(2)}
+                    {formatCurrency(pricingBreakdown.fuelCost, currency)}
                   </span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Delivery Fee</span>
                   <span data-testid="text-delivery-fee">
-                    {currencySymbol} {pricingBreakdown.deliveryFee.toFixed(2)}
+                    {formatCurrency(pricingBreakdown.deliveryFee, currency)}
                   </span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Service Fee</span>
                   <span data-testid="text-service-fee">
-                    {currencySymbol} {pricingBreakdown.serviceFee.toFixed(2)}
+                    {formatCurrency(pricingBreakdown.serviceFee, currency)}
                   </span>
                 </div>
                 <div className="flex justify-between font-semibold pt-2 border-t">
                   <span>Total</span>
                   <span className="text-primary" data-testid="text-total">
-                    {currencySymbol} {pricingBreakdown.total.toFixed(2)}
+                    {formatCurrency(pricingBreakdown.total, currency)}
                   </span>
                 </div>
               </div>
