@@ -178,16 +178,25 @@ export function CreateOrderDialog({ trigger, onOrderCreated }: CreateOrderDialog
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto" data-testid="dialog-create-order">
-        <DialogHeader>
-          <DialogTitle>Create New Order</DialogTitle>
-          <DialogDescription>
-            Place a new fuel delivery order. Fill in all required details below.
-          </DialogDescription>
-        </DialogHeader>
+      <DialogContent
+        className="sm:max-w-[700px] max-h-[min(90vh,90dvh)] flex flex-col overflow-hidden gap-0 p-0"
+        data-testid="dialog-create-order"
+      >
+        <div className="shrink-0 px-6 pt-6 pb-2">
+          <DialogHeader>
+            <DialogTitle>Create New Order</DialogTitle>
+            <DialogDescription>
+              Place a new fuel delivery order. Fill in all required details below.
+            </DialogDescription>
+          </DialogHeader>
+        </div>
 
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+          <form
+            onSubmit={form.handleSubmit(onSubmit)}
+            className="flex flex-col flex-1 min-h-0 space-y-6 px-6 pb-6"
+          >
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain pr-1 -mr-1">
             <Tabs defaultValue="fuel" className="w-full">
               <TabsList className="grid w-full grid-cols-4">
                 <TabsTrigger value="fuel">Fuel</TabsTrigger>
@@ -431,7 +440,10 @@ export function CreateOrderDialog({ trigger, onOrderCreated }: CreateOrderDialog
                       <FormLabel>Equipment Type</FormLabel>
                       <Select onValueChange={field.onChange} defaultValue={field.value}>
                         <FormControl>
-                          <SelectTrigger data-testid="select-equipment-type">
+                          <SelectTrigger
+                            data-testid="select-equipment-type"
+                            onFocus={(e) => e.currentTarget.scrollIntoView({ block: "center", behavior: "smooth" })}
+                          >
                             <SelectValue placeholder="Select equipment type" />
                           </SelectTrigger>
                         </FormControl>
@@ -460,6 +472,7 @@ export function CreateOrderDialog({ trigger, onOrderCreated }: CreateOrderDialog
                           placeholder="e.g. 1000"
                           {...field}
                           data-testid="input-tank-capacity"
+                          onFocus={(e) => e.target.scrollIntoView({ block: "center", behavior: "smooth" })}
                         />
                       </FormControl>
                       <FormMessage />
@@ -558,8 +571,9 @@ export function CreateOrderDialog({ trigger, onOrderCreated }: CreateOrderDialog
                 </div>
               </TabsContent>
             </Tabs>
+            </div>
 
-            <div className="flex justify-end gap-3 pt-4 border-t">
+            <div className="flex shrink-0 justify-end gap-3 pt-4 border-t">
               <Button
                 type="button"
                 variant="outline"

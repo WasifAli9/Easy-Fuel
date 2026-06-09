@@ -1,6 +1,6 @@
 import { websocketService } from "./websocket";
 import { db } from "./db";
-import { chatMessages, chatThreads, customers, drivers } from "@shared/schema";
+import { chatThreads, customers, drivers } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
 interface EnsureChatThreadParams {
@@ -84,6 +84,7 @@ function notifyParticipantsChatReady(
   }
 }
 
+/** Notifies participants that chat is read-only; message history is retained. */
 export async function cleanupChatForOrder(orderId: string) {
   try {
     const threadRows = await db
@@ -112,10 +113,7 @@ export async function cleanupChatForOrder(orderId: string) {
     const customer = customerRows[0];
     const driver = driverRows[0];
 
-    await db.delete(chatMessages).where(eq(chatMessages.threadId, thread.id));
-    await db.delete(chatThreads).where(eq(chatThreads.id, thread.id));
-
-    const payload = { orderId, threadId: thread.id };
+    const payload = { orderId, threadId: thread.id, readOnly: true };
 
     if (customer?.userId) {
       websocketService.sendToUser(customer.userId, {

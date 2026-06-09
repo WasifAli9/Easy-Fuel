@@ -1,12 +1,14 @@
-import { useEffect, useState } from "react";
-import { FlatList, Modal, ScrollView, StyleSheet, View } from "react-native";
+import { useCallback, useEffect, useState } from "react";
+import { Alert, FlatList, Modal, ScrollView, StyleSheet, View } from "react-native";
 import { IconMetaRow, SectionTitleRow } from "@/components/IconMetaRow";
 import { ModalSafeArea } from "@/components/ModalSafeArea";
 import { ModalScreenHeader } from "@/components/ModalScreenHeader";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, Switch, Text, TextInput } from "react-native-paper";
 import { Button } from "@/design/paper-button";
+import axios from "axios";
 import { apiClient } from "@/services/api/client";
+import { getCurrentLocation } from "@/services/location";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
@@ -19,6 +21,8 @@ type Address = {
   address_province?: string;
   address_postal_code?: string;
   address_country?: string;
+  lat?: number;
+  lng?: number;
   is_default?: boolean;
 };
 
@@ -31,8 +35,23 @@ function normalizeAddress(input: Address & Record<string, any>): Address {
     address_province: input.address_province ?? input.addressProvince ?? "",
     address_postal_code: input.address_postal_code ?? input.addressPostalCode ?? "",
     address_country: input.address_country ?? input.addressCountry ?? "South Africa",
+    lat: Number(input.lat ?? 0),
+    lng: Number(input.lng ?? 0),
     is_default: Boolean(input.is_default ?? input.isDefault ?? false),
   };
+}
+
+function parseCoord(value: string): number | null {
+  const n = Number(value.trim());
+  return Number.isFinite(n) ? n : null;
+}
+
+function formatSaveError(error: unknown): string {
+  if (axios.isAxiosError(error)) {
+    const serverMsg = (error.response?.data as { error?: string } | undefined)?.error;
+    if (serverMsg) return serverMsg;
+  }
+  return error instanceof Error ? error.message : "Could not save address";
 }
 
 export function CustomerAddressesScreen() {
@@ -58,6 +77,29 @@ export function CustomerAddressesScreen() {
   const [postal, setPostal] = useState("");
   const [country, setCountry] = useState("South Africa");
   const [isDefault, setIsDefault] = useState(false);
+  const [lat, setLat] = useState("");
+  const [lng, setLng] = useState("");
+  const [geoLoading, setGeoLoading] = useState(false);
+  const [geoHint, setGeoHint] = useState("");
+
+  const fillLiveCoordinates = useCallback(async () => {
+    setGeoLoading(true);
+    setGeoHint("");
+    try {
+      const coords = await getCurrentLocation();
+      if (!coords) {
+        setGeoHint("Location permission denied. Enter coordinates manually.");
+        return;
+      }
+      setLat(coords.latitude.toFixed(6));
+      setLng(coords.longitude.toFixed(6));
+      setGeoHint("Coordinates updated from your current location.");
+    } catch {
+      setGeoHint("Could not read location. Enter coordinates manually.");
+    } finally {
+      setGeoLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!editing) {
@@ -68,6 +110,9 @@ export function CustomerAddressesScreen() {
       setPostal("");
       setCountry("South Africa");
       setIsDefault(false);
+      setLat("");
+      setLng("");
+      setGeoHint("");
       return;
     }
     setLabel(editing.label ?? "");
@@ -77,10 +122,18 @@ export function CustomerAddressesScreen() {
     setPostal(editing.address_postal_code ?? "");
     setCountry(editing.address_country ?? "South Africa");
     setIsDefault(!!editing.is_default);
+    setLat(editing.lat ? String(editing.lat) : "");
+    setLng(editing.lng ? String(editing.lng) : "");
+    setGeoHint("");
   }, [editing, modalOpen]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
+      const parsedLat = parseCoord(lat);
+      const parsedLng = parseCoord(lng);
+      if (parsedLat == null || parsedLng == null) {
+        throw new Error("Latitude and longitude are required");
+      }
       const body = {
         label,
         addressStreet: street,
@@ -88,6 +141,8 @@ export function CustomerAddressesScreen() {
         addressProvince: province,
         addressPostalCode: postal,
         addressCountry: country,
+        lat: parsedLat,
+        lng: parsedLng,
         isDefault,
       };
       if (editing) {
@@ -185,6 +240,34 @@ export function CustomerAddressesScreen() {
             <TextInput mode="outlined" label="Province" value={province} onChangeText={setProvince} style={styles.input} />
             <TextInput mode="outlined" label="Postal code" value={postal} onChangeText={setPostal} style={styles.input} />
             <TextInput mode="outlined" label="Country" value={country} onChangeText={setCountry} style={styles.input} />
+            <Button
+              mode="outlined"
+              icon="crosshairs-gps"
+              loading={geoLoading}
+              onPress={() => fillLiveCoordinates()}
+              style={styles.geoButton}
+            >
+              Get live coordinates
+            </Button>
+            {geoHint ? <Text style={styles.geoHint}>{geoHint}</Text> : null}
+            <View style={styles.coordRow}>
+              <TextInput
+                mode="outlined"
+                label="Latitude"
+                value={lat}
+                onChangeText={setLat}
+                keyboardType="decimal-pad"
+                style={[styles.input, styles.coordInput]}
+              />
+              <TextInput
+                mode="outlined"
+                label="Longitude"
+                value={lng}
+                onChangeText={setLng}
+                keyboardType="decimal-pad"
+                style={[styles.input, styles.coordInput]}
+              />
+            </View>
             <View style={styles.switchRow}>
               <Text>Default delivery address</Text>
               <Switch value={isDefault} onValueChange={setIsDefault} />
@@ -198,7 +281,9 @@ export function CustomerAddressesScreen() {
             >
               Save
             </Button>
-            {saveMutation.isError ? <Text style={styles.error}>{(saveMutation.error as Error).message}</Text> : null}
+            {saveMutation.isError ? (
+              <Text style={styles.error}>{formatSaveError(saveMutation.error)}</Text>
+            ) : null}
           </ScrollView>
         </ModalSafeArea>
       </Modal>
@@ -222,6 +307,10 @@ const getStyles = (theme: typeof lightTheme) => {
     modalBodyScroll: { flex: 1, minHeight: 0 },
     modalBody: { padding: 16, paddingBottom: 28, gap: 8 },
     input: p.input,
+    geoButton: { marginTop: 4 },
+    geoHint: { color: theme.colors.onSurfaceVariant, fontSize: 13, marginTop: 2 },
+    coordRow: { flexDirection: "row", gap: 8 },
+    coordInput: { flex: 1 },
     switchRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginVertical: 8 },
     error: p.errorText,
   });

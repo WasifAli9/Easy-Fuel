@@ -84,7 +84,7 @@ export function FuelPortalHeader({ onOpenMenu }: FuelPortalHeaderProps) {
         accessibilityLabel="Open menu"
       >
         <EasyFuelLogo size={40} borderRadius={10} />
-        <Text style={[styles.wordmark, { color: t.brandText }]}>Easy Fuel</Text>
+        <Text style={[styles.wordmark, { color: t.brandText }]}>EasyFuel</Text>
       </Pressable>
       <View style={styles.rightCluster}>
         <ThemeModeToggle />

@@ -12,7 +12,7 @@ import { Wallet, TrendingUp, CheckCircle, User, MapPin, Phone, DollarSign, Packa
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useCurrency } from "@/hooks/use-currency";
-import { formatCurrency, formatMoneyAmount } from "@/lib/utils";
+import { formatCurrency, formatMoneyAmount, formatOrderState } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -844,7 +844,7 @@ export default function DriverDashboard() {
                       <ul className="space-y-2">
                         {assignedOrders.filter((o: any) => ["assigned", "en_route", "picked_up"].includes(o.state)).slice(0, 5).map((order: any) => (
                           <li key={order.id} className="flex items-center justify-between rounded-lg border p-3 text-sm">
-                            <span>Order #{order.id.slice(-8)} — {order.state.replace("_", " ")}</span>
+                            <span>Order #{order.id.slice(-8)} — {formatOrderState(order.state)}</span>
                             <Badge variant="secondary">{order.state === "assigned" ? "Start delivery" : order.state === "en_route" ? "Mark picked up" : "Complete"}</Badge>
                           </li>
                         ))}

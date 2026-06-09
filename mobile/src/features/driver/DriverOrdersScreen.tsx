@@ -88,9 +88,6 @@ export function DriverOrdersScreen() {
     if (!selectedOrder || selectedOrder.state !== "picked_up") {
       setSignatureScrollLocked(false);
     }
-    if (selectedOrder?.state === "delivered") {
-      setChatVisible(false);
-    }
   }, [selectedOrder?.id, selectedOrder?.state]);
 
   const consumeDeepLink = useNotificationDeepLinkStore((s) => s.consume);
@@ -416,17 +413,15 @@ export function DriverOrdersScreen() {
                   ) : null}
                 </View>
 
-                {selectedOrder.state !== "delivered" ? (
-                  <Button
-                    mode="outlined"
-                    style={styles.secondaryFullBtn}
-                    textColor={theme.colors.onSurface}
-                    theme={{ colors: { outline: theme.colors.outline } }}
-                    onPress={() => setChatVisible((prev) => !prev)}
-                  >
-                    {chatVisible ? "Hide Chat" : "Open Chat"}
-                  </Button>
-                ) : null}
+                <Button
+                  mode="outlined"
+                  style={styles.secondaryFullBtn}
+                  textColor={theme.colors.onSurface}
+                  theme={{ colors: { outline: theme.colors.outline } }}
+                  onPress={() => setChatVisible((prev) => !prev)}
+                >
+                  {chatVisible ? "Hide Chat" : "Open Chat"}
+                </Button>
 
                   </ScrollView>
 
@@ -487,13 +482,14 @@ export function DriverOrdersScreen() {
                     </View>
                   ) : null}
 
-                  {chatVisible && selectedOrder.state !== "delivered" ? (
+                  {chatVisible ? (
                     <View style={[styles.modalChatDock, { paddingBottom: footerPaddingBottom }]}>
                       <OrderChatPanel
                         orderId={selectedOrder.id}
                         viewerRole="driver"
                         orderDetailLayout
                         maxChatHeight={chatMaxHeight}
+                        readOnly={["delivered", "cancelled", "refunded"].includes(selectedOrder.state ?? "")}
                       />
                     </View>
                   ) : null}

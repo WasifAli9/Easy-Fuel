@@ -37,7 +37,7 @@ export function Logo({ size = "md", showText = true, variant = "default" }: Logo
         {!logoError ? (
           <img
             src={logoSrc}
-            alt="Easy Fuel Logo"
+            alt="EasyFuel logo"
             className={sizeClasses[size]}
             onError={() => setLogoError(true)}
             style={{ objectFit: "contain" }}
@@ -48,7 +48,7 @@ export function Logo({ size = "md", showText = true, variant = "default" }: Logo
       </div>
       {showText && (
         <span className={`${textSizeClasses[size]} font-bold tracking-tight ${textClass}`}>
-          Easy Fuel
+          EasyFuel
         </span>
       )}
     </div>

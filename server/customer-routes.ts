@@ -1283,6 +1283,12 @@ router.post("/delivery-addresses", async (req, res) => {
       isDefault 
     } = req.body;
 
+    const parsedLat = lat != null && lat !== "" ? Number(lat) : NaN;
+    const parsedLng = lng != null && lng !== "" ? Number(lng) : NaN;
+    if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)) {
+      return res.status(400).json({ error: "Latitude and longitude are required" });
+    }
+
     // If this is being set as default, unset other defaults
     if (isDefault) {
       await db
@@ -1302,8 +1308,8 @@ router.post("/delivery-addresses", async (req, res) => {
           addressProvince,
           addressPostalCode,
           addressCountry: addressCountry || "South Africa",
-          lat,
-          lng,
+          lat: parsedLat,
+          lng: parsedLng,
           accessInstructions,
           isDefault: isDefault || false,
         })

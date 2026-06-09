@@ -10,7 +10,7 @@ import { and, count, desc, eq, inArray, lt } from "drizzle-orm";
 const router = Router();
 router.use(requireAuth);
 
-function mapThread(record: any) {
+function mapThread(record: any, options?: { readOnly?: boolean }) {
   if (!record) return null;
   return {
     id: record.id,
@@ -19,6 +19,7 @@ function mapThread(record: any) {
     driverId: record.driverId,
     lastMessageAt: record.lastMessageAt,
     createdAt: record.createdAt,
+    readOnly: options?.readOnly ?? false,
   };
 }
 
@@ -117,9 +118,13 @@ router.get("/thread/:orderId", async (req, res) => {
 
     const existingThreadRows = await db.select().from(chatThreads).where(eq(chatThreads.orderId, orderId)).limit(1);
     const existingThread = existingThreadRows[0];
+    const orderClosed = isFinalOrderState(order.state);
 
-    if (isFinalOrderState(order.state)) {
-      return res.status(410).json({ error: "Chat not available for completed order" });
+    if (orderClosed) {
+      if (!existingThread) {
+        return res.status(404).json({ error: "No chat history for this order" });
+      }
+      return res.json(mapThread(existingThread, { readOnly: true }));
     }
 
     if (!existingThread && !order.assigned_driver_id) {
@@ -140,7 +145,7 @@ router.get("/thread/:orderId", async (req, res) => {
       threadRecord = inserted[0];
     }
 
-    res.json(mapThread(threadRecord));
+    res.json(mapThread(threadRecord, { readOnly: false }));
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -230,6 +235,18 @@ router.post("/messages", async (req, res) => {
 
     if (!thread) {
       return res.status(404).json({ error: "Thread not found" });
+    }
+
+    const orderRows = await db
+      .select({ state: orders.state })
+      .from(orders)
+      .where(eq(orders.id, thread.order_id))
+      .limit(1);
+    const orderState = orderRows[0]?.state;
+    if (isFinalOrderState(orderState)) {
+      return res.status(403).json({
+        error: "This order is closed. You can view messages but cannot send new ones.",
+      });
     }
 
     const { customer, driver } = await getThreadParticipants({ customerId: thread.customer_id, driverId: thread.driver_id });

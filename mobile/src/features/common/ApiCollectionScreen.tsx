@@ -7,6 +7,7 @@ import { apiClient } from "@/services/api/client";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
+import { formatDisplayFieldValue } from "@/lib/format-labels";
 
 type ApiCollectionScreenProps = {
   title: string;
@@ -31,11 +32,11 @@ function readByPath(value: unknown, key: string): string | undefined {
   return typeof result === "string" || typeof result === "number" ? String(result) : undefined;
 }
 
-function pickFirstMatch(item: unknown, keys: string[]): string | undefined {
+function pickFirstMatch(item: unknown, keys: string[]): { key: string; value: string } | undefined {
   for (const key of keys) {
     const value = readByPath(item, key);
     if (value) {
-      return value;
+      return { key, value };
     }
   }
   return undefined;
@@ -133,18 +134,24 @@ export function ApiCollectionScreen({
           </Card.Content>
         </Card>
       ) : (
-        items.map((item, index) => (
+        items.map((item, index) => {
+          const titleMatch = pickFirstMatch(item, itemTitleKeys);
+          const subtitleMatch = pickFirstMatch(item, itemSubtitleKeys);
+          return (
           <Card key={`${endpoint}-${index}`} mode="outlined" style={styles.itemCard}>
             <Card.Content>
               <Text variant="titleMedium">
-                {pickFirstMatch(item, itemTitleKeys) ?? `Item ${index + 1}`}
+                {titleMatch?.value ?? `Item ${index + 1}`}
               </Text>
               <Text variant="bodySmall" style={styles.itemSubtitle}>
-                {pickFirstMatch(item, itemSubtitleKeys) ?? "Tap to view details"}
+                {subtitleMatch
+                  ? formatDisplayFieldValue(subtitleMatch.key, subtitleMatch.value)
+                  : "Tap to view details"}
               </Text>
             </Card.Content>
           </Card>
-        ))
+          );
+        })
       )}
     </ScrollView>
   );

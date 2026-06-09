@@ -34,6 +34,7 @@ import { ProfilePhotoPicker } from "@/components/ProfilePhotoPicker";
 import { apiClient } from "@/services/api/client";
 import { openStoredDocument, putFileToUploadUrl, readUploadObjectPath } from "@/lib/files";
 import { formatMoneyFromCents } from "@/lib/format-currency";
+import { formatSnakeCaseLabel } from "@/lib/format-labels";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { useAuth } from "@/contexts/AuthContext";
@@ -1180,7 +1181,7 @@ export function DriverKycDocumentsScreen() {
                   )}
                 </View>
                 <Chip compact style={{ backgroundColor: chip.backgroundColor }} textStyle={{ color: chip.textColor, fontWeight: "600", fontSize: 11 }}>
-                  {statusLabel}
+                  {formatSnakeCaseLabel(statusLabel)}
                 </Chip>
               </View>
               <View style={styles.kycDocActions}>
@@ -1611,7 +1612,7 @@ export function DriverHistoryMenuScreen() {
             <Card.Content>
               <View style={styles.rowBetween}>
                 <Text variant="titleSmall">{item.title}</Text>
-                <Chip compact>{item.status}</Chip>
+                <Chip compact>{formatSnakeCaseLabel(item.status)}</Chip>
               </View>
               <Text style={styles.meta}>{item.subtitle}</Text>
               <Text style={styles.meta}>{item.date ? new Date(item.date).toLocaleString("en-ZA") : ""}</Text>

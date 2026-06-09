@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, Wallet } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, formatDisplayFieldValue } from "@/lib/utils";
 
 export function SupplierSettlementsTab() {
   const { data, isLoading, error } = useQuery<{ settlements: any[] }>({
@@ -40,8 +40,9 @@ export function SupplierSettlementsTab() {
                       {s.period_start ? new Date(s.period_start).toLocaleDateString() : ""} –{" "}
                       {s.period_end ? new Date(s.period_end).toLocaleDateString() : ""}
                     </p>
-                    <p className="text-xs text-muted-foreground capitalize">
-                      {s.settlement_type?.replace("_", "-")} • {s.status}
+                    <p className="text-xs text-muted-foreground">
+                      {formatDisplayFieldValue("settlement_type", s.settlement_type)} •{" "}
+                      {formatDisplayFieldValue("status", s.status)}
                     </p>
                   </div>
                   <p className="font-medium">{formatCurrency((s.total_cents ?? 0) / 100)}</p>

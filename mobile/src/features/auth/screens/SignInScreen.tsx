@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -11,9 +11,11 @@ import { Button, Text, TextInput } from "react-native-paper";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/contexts/AuthContext";
 import { EasyFuelLogo } from "@/design/EasyFuelLogo";
-import { appTheme } from "@/design/theme";
+import { getFuelPortalTokens } from "@/design/fuel-portal-tokens";
+import { darkTheme, lightTheme } from "@/design/theme";
 import { readableType } from "@/design/typography";
 import { getResolvedApiBaseUrl } from "@/services/config";
+import { useUiThemeStore } from "@/store/ui-theme-store";
 
 function isLikelyNetworkFailure(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
@@ -36,6 +38,67 @@ function isLikelyInvalidCredentials(error: unknown): boolean {
   );
 }
 
+function getStyles(theme: typeof lightTheme, isDark: boolean) {
+  const fp = getFuelPortalTokens(theme, isDark);
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    flex: {
+      flex: 1,
+    },
+    scrollContent: {
+      flexGrow: 1,
+      justifyContent: "center",
+      paddingHorizontal: 20,
+    },
+    card: {
+      backgroundColor: theme.colors.surface,
+      borderRadius: 20,
+      padding: 20,
+      borderWidth: isDark ? 1 : 0,
+      borderColor: theme.colors.outline,
+      ...fp.shadowCard,
+    },
+    logoWrap: {
+      alignItems: "center",
+      justifyContent: "center",
+      alignSelf: "center",
+      marginBottom: 12,
+    },
+    title: {
+      textAlign: "center",
+      color: theme.colors.onSurface,
+      fontWeight: "700",
+    },
+    subtitle: {
+      ...readableType.bodyBold,
+      textAlign: "center",
+      marginTop: 2,
+      color: theme.colors.onSurface,
+    },
+    description: {
+      ...readableType.meta,
+      textAlign: "center",
+      color: theme.colors.onSurfaceVariant,
+      marginTop: 6,
+      marginBottom: 16,
+    },
+    input: {
+      marginBottom: 10,
+      backgroundColor: theme.colors.surface,
+    },
+    button: {
+      marginTop: 6,
+      borderRadius: 14,
+    },
+    buttonContent: {
+      height: 48,
+    },
+  });
+}
+
 export function SignInScreen() {
   const { login, isLoading: authBusy } = useAuth();
   const [email, setEmail] = useState("");
@@ -43,6 +106,10 @@ export function SignInScreen() {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const insets = useSafeAreaInsets();
+  const mode = useUiThemeStore((s) => s.mode);
+  const isDark = mode === "dark";
+  const theme = isDark ? darkTheme : lightTheme;
+  const styles = useMemo(() => getStyles(theme, isDark), [theme, isDark]);
 
   async function onSubmit() {
     try {
@@ -141,6 +208,8 @@ export function SignInScreen() {
           disabled={loading || authBusy || !email.trim() || !password}
           style={styles.button}
           contentStyle={styles.buttonContent}
+          buttonColor={theme.colors.primary}
+          textColor={theme.colors.onPrimary}
         >
           Sign In
         </Button>
@@ -160,61 +229,3 @@ export function SignInScreen() {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: appTheme.colors.background,
-  },
-  flex: {
-    flex: 1,
-  },
-  scrollContent: {
-    flexGrow: 1,
-    justifyContent: "center",
-    paddingHorizontal: 20,
-  },
-  card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 20,
-    padding: 20,
-    shadowColor: "#000000",
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
-  },
-  logoWrap: {
-    alignItems: "center",
-    justifyContent: "center",
-    alignSelf: "center",
-    marginBottom: 12,
-  },
-  title: {
-    textAlign: "center",
-  },
-  subtitle: {
-    ...readableType.bodyBold,
-    textAlign: "center",
-    marginTop: 2,
-    color: appTheme.colors.onSurface,
-  },
-  description: {
-    ...readableType.meta,
-    textAlign: "center",
-    color: appTheme.colors.onSurfaceVariant,
-    marginTop: 6,
-    marginBottom: 16,
-  },
-  input: {
-    marginBottom: 10,
-    backgroundColor: "#FFFFFF",
-  },
-  button: {
-    marginTop: 6,
-    borderRadius: 14,
-  },
-  buttonContent: {
-    height: 48,
-  },
-});

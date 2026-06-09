@@ -28,6 +28,7 @@ import { buttonBorderRadius, darkTheme, lightTheme, paperMd3ControlRoundness } f
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { SignatureCapturePad, type SignatureCapturePadRef } from "@/components/SignatureCapturePad";
 import { formatMoneyFromCents } from "@/lib/format-currency";
+import { formatDepotOrderStatus } from "@/lib/format-labels";
 import { appConfig } from "@/services/config";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
@@ -440,7 +441,12 @@ export function DriverDepotScreen() {
                 <Card.Content>
                   <View style={styles.rowBetween}>
                     <Text variant="titleMedium">{item.depots?.name || "Depot"}</Text>
-                    <Chip compact icon="information-outline">{item.status.replace(/_/g, " ")}</Chip>
+                    <Chip compact icon="information-outline">
+                      {formatDepotOrderStatus({
+                        status: item.status,
+                        payment_status: item.payment_status,
+                      })}
+                    </Chip>
                   </View>
                   <IconMetaRow icon="fuel" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.primary}>
                     {item.fuel_types?.label || item.fuelTypes?.label || "Fuel"} · {item.litres} L

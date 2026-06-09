@@ -56,6 +56,11 @@ const LABEL_OVERRIDES: Record<string, string> = {
   released: "Released",
   completed: "Completed",
   waiting_payment_confirmation: "Waiting Payment Confirmation",
+  // Order priority
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  urgent: "Urgent",
   // Roles
   driver: "Driver",
   customer: "Customer",
@@ -109,6 +114,38 @@ export function formatSnakeCaseLabel(value?: string | null, fallback = "—"): s
 /** Fuel delivery order state shown to users. */
 export function formatOrderState(state?: string | null): string {
   return formatSnakeCaseLabel(state, "Pending");
+}
+
+/** Order / job priority level (low, medium, high, urgent). */
+export function formatPriorityLevel(level?: string | null): string {
+  return formatSnakeCaseLabel(level, "Medium");
+}
+
+/**
+ * Formats API field values for list/detail UI based on field name.
+ * Leaves dates and plain text unchanged.
+ */
+export function formatDisplayFieldValue(fieldKey: string, value?: string | null): string {
+  if (value == null || !String(value).trim()) return "—";
+  const raw = String(value).trim();
+  const leaf = (fieldKey.split(".").pop() ?? fieldKey).toLowerCase();
+
+  if (/_at$|_date$|^date$|scheduled_date$/.test(leaf)) return raw;
+  if (leaf === "email" || leaf.includes("email")) return raw;
+  if (/^\+?\d[\d\s-]{6,}$/.test(raw)) return raw;
+
+  if (leaf === "state" || leaf === "order_state") return formatOrderState(raw);
+  if (leaf === "priority" || leaf === "priority_level" || leaf === "prioritylevel") {
+    return formatPriorityLevel(raw);
+  }
+  if (leaf === "status" || leaf.endsWith("_status") || leaf === "compliance_status" || leaf === "kyb_status") {
+    return formatSnakeCaseLabel(raw);
+  }
+  if (leaf === "role" || leaf === "account_type") return formatRole(raw);
+  if (leaf === "payment_method" || leaf === "payment_status") return formatSnakeCaseLabel(raw);
+  if (/^[a-z][a-z0-9_]*$/.test(raw)) return formatSnakeCaseLabel(raw);
+
+  return raw;
 }
 
 /** Driver offer / dispatch offer state. */

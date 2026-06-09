@@ -8,12 +8,14 @@ export function cn(...inputs: ClassValue[]) {
 import { formatMoneyAmount, formatMoneyFromCents } from "@shared/format-currency";
 import {
   formatDepotOrderStatus,
+  formatDisplayFieldValue,
   formatDocumentType,
   formatFuelTypeCode,
   formatOfferState,
   formatOrderIdShort,
   formatOrderState,
   formatPaymentMethod,
+  formatPriorityLevel,
   formatRole,
   formatSnakeCaseLabel,
 } from "@shared/format-labels";
@@ -22,12 +24,14 @@ export {
   formatMoneyAmount,
   formatMoneyFromCents,
   formatDepotOrderStatus,
+  formatDisplayFieldValue,
   formatDocumentType,
   formatFuelTypeCode,
   formatOfferState,
   formatOrderIdShort,
   formatOrderState,
   formatPaymentMethod,
+  formatPriorityLevel,
   formatRole,
   formatSnakeCaseLabel,
 };

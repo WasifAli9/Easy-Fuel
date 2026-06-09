@@ -29,6 +29,7 @@ interface ChatThread {
   driverId: string;
   lastMessageAt: Date | null;
   createdAt: Date;
+  readOnly?: boolean;
 }
 
 interface OrderChatProps {
@@ -36,9 +37,11 @@ interface OrderChatProps {
   currentUserType: "customer" | "driver";
   /** Parent already shows a section title (e.g. driver order card "Messages"). */
   variant?: "default" | "embedded";
+  /** When true, hide composer (delivered / closed order). */
+  readOnly?: boolean;
 }
 
-export function OrderChat({ orderId, currentUserType, variant = "default" }: OrderChatProps) {
+export function OrderChat({ orderId, currentUserType, variant = "default", readOnly: readOnlyProp }: OrderChatProps) {
   const [messageText, setMessageText] = useState("");
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
@@ -54,10 +57,22 @@ export function OrderChat({ orderId, currentUserType, variant = "default" }: Ord
     data: thread,
     isLoading: threadLoading,
     isError: threadError,
-  } = useQuery<ChatThread>({
+  } = useQuery<ChatThread | null>({
     queryKey: ["/api/chat/thread", orderId],
-    refetchInterval: 10000, // Poll every 10 seconds
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/chat/thread/${orderId}`);
+      if (res.status === 404) return null;
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error || "Failed to load chat");
+      }
+      return res.json();
+    },
+    refetchInterval: 10000,
+    retry: false,
   });
+
+  const readOnly = readOnlyProp ?? thread?.readOnly === true;
 
   // Get messages for the thread
   const { data: messages = [], isLoading: messagesLoading } = useQuery<Message[]>({
@@ -242,29 +257,35 @@ export function OrderChat({ orderId, currentUserType, variant = "default" }: Ord
         </div>
 
         <div className="mt-auto shrink-0 border-t pt-4">
-          <div className="flex gap-2">
-            <Input
-              data-testid="input-chat-message"
-              placeholder="Type a message..."
-              value={messageText}
-              onChange={(e) => setMessageText(e.target.value)}
-              onKeyPress={handleKeyPress}
-              disabled={sendMessageMutation.isPending}
-              className="flex-1"
-            />
-            <Button
-              data-testid="button-send-message"
-              onClick={handleSend}
-              disabled={!messageText.trim() || sendMessageMutation.isPending}
-              size="icon"
-            >
-              {sendMessageMutation.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Send className="h-4 w-4" />
-              )}
-            </Button>
-          </div>
+          {readOnly ? (
+            <p className="text-center text-sm text-muted-foreground py-2">
+              This order is complete. You can read past messages but cannot send new ones.
+            </p>
+          ) : (
+            <div className="flex gap-2">
+              <Input
+                data-testid="input-chat-message"
+                placeholder="Type a message..."
+                value={messageText}
+                onChange={(e) => setMessageText(e.target.value)}
+                onKeyPress={handleKeyPress}
+                disabled={sendMessageMutation.isPending}
+                className="flex-1"
+              />
+              <Button
+                data-testid="button-send-message"
+                onClick={handleSend}
+                disabled={!messageText.trim() || sendMessageMutation.isPending}
+                size="icon"
+              >
+                {sendMessageMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
+          )}
         </div>
       </div>
     </div>

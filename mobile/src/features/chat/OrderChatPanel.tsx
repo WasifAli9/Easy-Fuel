@@ -11,7 +11,7 @@ import { useUiThemeStore } from "@/store/ui-theme-store";
 
 export type ChatViewerRole = "driver" | "customer";
 
-type ChatThread = { id: string };
+type ChatThread = { id: string; readOnly?: boolean };
 type ChatMessage = {
   id: string;
   senderType: "customer" | "driver";
@@ -61,6 +61,7 @@ export function OrderChatPanel({
   orderDetailLayout,
   maxChatHeight,
   onMessageInputFocus,
+  readOnly: readOnlyProp,
 }: {
   orderId: string;
   viewerRole: ChatViewerRole;
@@ -70,6 +71,8 @@ export function OrderChatPanel({
   maxChatHeight?: number;
   /** Parent ScrollView can scroll to end so the composer stays above the keyboard. */
   onMessageInputFocus?: () => void;
+  /** When true, hide composer (e.g. delivered order). Overrides thread readOnly if set. */
+  readOnly?: boolean;
 }) {
   const mode = useUiThemeStore((state) => state.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
@@ -89,7 +92,10 @@ export function OrderChatPanel({
       return null;
     },
     refetchInterval: 10_000,
+    retry: false,
   });
+
+  const readOnly = readOnlyProp ?? threadQuery.data?.readOnly === true;
 
   const messagesQuery = useQuery({
     queryKey: ["/api/chat/messages", threadQuery.data?.id],
@@ -151,7 +157,7 @@ export function OrderChatPanel({
   if (threadQuery.isError) {
     return (
       <Text style={styles.chatError}>
-        Could not load messages. Check your connection and try again.
+        Could not load chat. Check your connection and try again.
       </Text>
     );
   }
@@ -159,9 +165,11 @@ export function OrderChatPanel({
   if (!threadQuery.data?.id) {
     return (
       <Text style={styles.chatEmpty}>
-        {viewerRole === "customer"
-          ? "Messages open once a driver accepts your offer. You can still review quotes above."
-          : "No chat thread for this order yet."}
+        {readOnlyProp
+          ? "No message history was saved for this order."
+          : viewerRole === "customer"
+            ? "Messages open once a driver accepts your offer. You can still review quotes above."
+            : "No chat thread for this order yet."}
       </Text>
     );
   }
@@ -290,6 +298,12 @@ const getStyles = (theme: typeof lightTheme, orderDetailLayout: boolean, maxChat
     },
     chatError: {
       color: theme.colors.onSurfaceVariant,
+    },
+    chatReadOnlyNotice: {
+      ...p.muted,
+      textAlign: "center",
+      paddingVertical: 8,
+      paddingHorizontal: 4,
     },
     chatList: {
       flex: orderDetailLayout ? undefined : 1,

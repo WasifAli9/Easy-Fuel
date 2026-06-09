@@ -184,7 +184,7 @@ export function CustomerOrderDetailModal({
               <Card.Content>
                 <View style={styles.rowBetween}>
                   <Text variant="titleMedium">{order.fuel_types?.label ?? "Fuel"}</Text>
-                  <Chip>{order.state ?? ""}</Chip>
+                  <Chip>{formatOrderState(order.state)}</Chip>
                 </View>
                 <Text style={styles.meta}>
                   {order.litres != null ? `${order.litres} L` : ""} · {formatMoneyFromCents(order.total_cents ?? 0)}
@@ -266,6 +266,7 @@ export function CustomerOrderDetailModal({
                   viewerRole="customer"
                   orderDetailLayout
                   maxChatHeight={chatMaxHeight}
+                  readOnly={["delivered", "cancelled", "refunded"].includes(orderState ?? "")}
                 />
               </View>
             </View>

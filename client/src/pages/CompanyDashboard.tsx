@@ -26,7 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { cn, formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency, formatDisplayFieldValue, formatOrderState } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import {
@@ -716,7 +716,7 @@ export default function CompanyDashboard() {
                         <TableBody>
                           {driverOrders.map((o: any) => (
                             <TableRow key={o.id}>
-                              <TableCell>{o.state}</TableCell>
+                              <TableCell>{formatOrderState(o.state)}</TableCell>
                               <TableCell>{formatCurrency((o.total_cents || 0) / 100)}</TableCell>
                               <TableCell>{o.created_at ? new Date(o.created_at).toLocaleString() : "—"}</TableCell>
                             </TableRow>

@@ -343,11 +343,9 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
 
   const canEdit = ["created", "awaiting_payment"].includes(order.state);
   const canCancel = !["delivered", "cancelled", "picked_up", "en_route"].includes(order.state);
-  // Chat is available from when driver is assigned until order is completed (delivered)
-  const canUseChat =
-    order.assigned_driver_id &&
-    ["assigned", "en_route", "picked_up"].includes(order.state) &&
-    order.chat_enabled !== false;
+  const chatClosed = ["delivered", "cancelled", "refunded"].includes(order.state);
+  const canShowChat = !!order.assigned_driver_id && order.chat_enabled !== false;
+  const chatReadOnly = chatClosed;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -661,12 +659,13 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
 
               {order.state === "delivered" ? <DeliverySignatureProof order={order} /> : null}
 
-              {/* Chat with driver - Show when driver is assigned until order is completed */}
-              {canUseChat && (
+              {/* Chat with driver — view history after delivery; send only while active */}
+              {canShowChat && (
                 <div className="space-y-4">
                   <OrderChat
                     orderId={order.id}
                     currentUserType="customer"
+                    readOnly={chatReadOnly}
                   />
                 </div>
               )}

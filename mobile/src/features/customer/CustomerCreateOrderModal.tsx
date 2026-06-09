@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Modal, Platform, ScrollView, StyleSheet, View } from "react-native";
 import DateTimePicker, { DateTimePickerAndroid, DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -11,6 +11,7 @@ import { useUiThemeStore } from "@/store/ui-theme-store";
 import { getIosDatePickerNativeProps, iosDatePickerStyle, iosDatePickerWrapStyle } from "@/components/ios-date-picker-props";
 import { ModalSafeArea } from "@/components/ModalSafeArea";
 import { ModalScreenHeader } from "@/components/ModalScreenHeader";
+import { formatPriorityLevel } from "@/lib/format-labels";
 
 type FuelType = { id: string; label: string; code?: string };
 type Address = {
@@ -51,6 +52,13 @@ export function CustomerCreateOrderModal({
   const [tankCapacity, setTankCapacity] = useState("");
   const [paymentMethodId, setPaymentMethodId] = useState("");
   const [termsAccepted, setTermsAccepted] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
+
+  const scrollFocusedFieldIntoView = useCallback(() => {
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    });
+  }, []);
 
   const fuelTypesQuery = useQuery({
     queryKey: ["/api/fuel-types"],
@@ -254,6 +262,7 @@ export function CustomerCreateOrderModal({
               onChangeText={setLitres}
               keyboardType="decimal-pad"
               style={styles.input}
+              onFocus={scrollFocusedFieldIntoView}
             />
             <Button mode="outlined" onPress={openDateTimePicker} style={styles.input}>
               {deliveryDateTime ? deliveryDateTime.toLocaleString("en-ZA") : "Select delivery date & time"}
@@ -277,6 +286,7 @@ export function CustomerCreateOrderModal({
               onChangeText={setAccessNotes}
               multiline
               style={styles.input}
+              onFocus={scrollFocusedFieldIntoView}
             />
             <Text variant="labelLarge">Priority</Text>
             <View style={styles.chips}>
@@ -288,7 +298,7 @@ export function CustomerCreateOrderModal({
                   buttonColor={priorityLevel === p ? theme.colors.primary : undefined}
                   textColor={priorityLevel === p ? theme.colors.onPrimary : theme.colors.primary}
                 >
-                  {p}
+                  {formatPriorityLevel(p)}
                 </Button>
               ))}
             </View>
@@ -372,7 +382,9 @@ const getStyles = (theme: typeof lightTheme) => {
       borderLeftWidth: 3,
       borderLeftColor: theme.colors.primary,
     },
-    scroll: { padding: 16, paddingBottom: 40, gap: 10 },
+    keyboardAvoid: { flex: 1 },
+    scrollView: { flex: 1 },
+    scroll: { padding: 16, paddingBottom: 160, gap: 10, flexGrow: 1 },
     center: p.center,
     sectionCard: p.sectionCard,
     menuAnchor: { marginTop: 8, justifyContent: "space-between" },
