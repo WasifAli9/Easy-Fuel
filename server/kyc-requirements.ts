@@ -236,6 +236,7 @@ export function getSupplierKybMissingDocuments(
 export function getSupplierKybMissingFields(s: {
   registeredName?: string | null;
   cipcNumber?: string | null;
+  registrationNumber?: string | null;
   bankAccountName?: string | null;
   bankName?: string | null;
   accountNumber?: string | null;
@@ -243,7 +244,8 @@ export function getSupplierKybMissingFields(s: {
 }): string[] {
   const missing: string[] = [];
   if (!nonempty(s.registeredName)) missing.push("registered_name");
-  if (!nonempty(s.cipcNumber)) missing.push("cipc_number");
+  const cipc = s.cipcNumber ?? s.registrationNumber;
+  if (!nonempty(cipc)) missing.push("cipc_number");
   if (!nonempty(s.bankAccountName)) missing.push("bank_account_name");
   if (!nonempty(s.bankName)) missing.push("bank_name");
   if (!nonempty(s.accountNumber)) missing.push("account_number");

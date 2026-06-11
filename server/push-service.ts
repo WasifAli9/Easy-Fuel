@@ -27,6 +27,17 @@ export interface PushNotificationPayload {
 }
 
 class PushNotificationService {
+  private parseExpoTickets(json: unknown): Array<{ status?: string; message?: string; details?: unknown }> {
+    const root = json as { data?: unknown };
+    if (Array.isArray(root?.data)) {
+      return root.data as Array<{ status?: string; message?: string; details?: unknown }>;
+    }
+    if (root?.data && typeof root.data === "object") {
+      return [root.data as { status?: string; message?: string; details?: unknown }];
+    }
+    return [];
+  }
+
   private async sendExpoPush(token: string, payload: PushNotificationPayload): Promise<boolean> {
     try {
       const response = await fetch("https://exp.host/--/api/v2/push/send", {
@@ -34,6 +45,7 @@ class PushNotificationService {
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
+          "Accept-Encoding": "gzip, deflate",
         },
         body: JSON.stringify({
           to: token,
@@ -42,13 +54,24 @@ class PushNotificationService {
           body: payload.body,
           data: payload.data ?? {},
           channelId: "default",
-          priority: payload.requireInteraction ? "high" : "default",
+          priority: "high",
         }),
       });
-      if (!response.ok) return false;
-      const json = (await response.json()) as any;
-      return json?.data?.status === "ok" || json?.data?.[0]?.status === "ok";
-    } catch {
+      if (!response.ok) {
+        if (process.env.NODE_ENV === "development") {
+          console.warn("[push] Expo HTTP error:", response.status, token.slice(0, 28));
+        }
+        return false;
+      }
+      const json = await response.json();
+      const tickets = this.parseExpoTickets(json);
+      const ok = tickets.some((ticket) => ticket.status === "ok");
+      if (!ok) {
+        console.warn("[push] Expo ticket rejected:", token.slice(0, 28), tickets);
+      }
+      return ok;
+    } catch (error) {
+      console.warn("[push] Expo send failed:", error);
       return false;
     }
   }
@@ -59,6 +82,10 @@ class PushNotificationService {
       const webSubscriptions = await listWebPushSubscriptionsByUser(userId);
       let sentCount = 0;
       const failedSubscriptions: string[] = [];
+
+      if (expoTokens.length === 0 && webSubscriptions.length === 0) {
+        console.debug("[push] no device subscriptions for user", userId);
+      }
 
       for (const tokenRow of expoTokens) {
         const ok = await this.sendExpoPush(tokenRow.endpoint, payload);

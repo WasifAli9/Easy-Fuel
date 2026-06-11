@@ -177,6 +177,13 @@ export const offerNotifications = {
     );
   },
 
+  async onDriverOffersAvailable(customerId: string, orderId: string, offerCount: number) {
+    await notifySafely(
+      () => notificationService.notifyDriverOffersAvailable(customerId, orderId, offerCount),
+      { operation: "driver_offers_available", customerId, orderId, offerCount }
+    );
+  },
+
   /**
    * Notify driver when customer accepts their offer
    */

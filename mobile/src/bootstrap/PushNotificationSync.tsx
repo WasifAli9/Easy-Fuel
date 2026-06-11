@@ -1,5 +1,5 @@
 import { PropsWithChildren, useEffect, useRef } from "react";
-import { Platform } from "react-native";
+import { AppState, type AppStateStatus } from "react-native";
 import * as Notifications from "expo-notifications";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -7,8 +7,7 @@ import {
   navigateFromNotificationPayload,
   queueNotificationNavigation,
 } from "@/services/notification-navigation";
-import { registerForPushNotifications } from "@/services/notifications";
-import { subscribeExpoPushTokenOnServer, unsubscribeExpoPushTokenOnServer } from "@/services/push-subscribe";
+import { clearPushTokenFromServer, syncPushTokenWithServer } from "@/services/push-sync";
 
 function getNotificationData(notification: Notifications.Notification): Record<string, unknown> {
   const content = notification.request.content;
@@ -23,7 +22,7 @@ function getNotificationData(notification: Notifications.Notification): Record<s
 export function PushNotificationSync({ children }: PropsWithChildren) {
   const { user, isAuthenticated } = useAuth();
   const queryClient = useQueryClient();
-  const lastTokenRef = useRef<string | null>(null);
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
   useEffect(() => {
     if (!isAuthenticated || !user) {
@@ -33,20 +32,23 @@ export function PushNotificationSync({ children }: PropsWithChildren) {
     let cancelled = false;
 
     void (async () => {
-      const token = await registerForPushNotifications();
-      if (cancelled || !token) return;
-
-      lastTokenRef.current = token;
-      const ok = await subscribeExpoPushTokenOnServer(token);
-      if (__DEV__) {
-        console.log(ok ? "[push] Token registered with server" : "[push] Token registration failed");
-      }
+      await syncPushTokenWithServer(user.role);
+      if (cancelled) return;
     })();
+
+    const appStateSub = AppState.addEventListener("change", (nextState) => {
+      const wasBackground = appStateRef.current.match(/inactive|background/);
+      appStateRef.current = nextState;
+      if (wasBackground && nextState === "active" && isAuthenticated && user) {
+        void syncPushTokenWithServer(user.role);
+      }
+    });
 
     return () => {
       cancelled = true;
+      appStateSub.remove();
     };
-  }, [isAuthenticated, user?.id]);
+  }, [isAuthenticated, user?.id, user?.role]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -76,11 +78,7 @@ export function PushNotificationSync({ children }: PropsWithChildren) {
 
   useEffect(() => {
     if (isAuthenticated) return;
-    const token = lastTokenRef.current;
-    if (token) {
-      void unsubscribeExpoPushTokenOnServer(token);
-      lastTokenRef.current = null;
-    }
+    void clearPushTokenFromServer();
   }, [isAuthenticated]);
 
   return <>{children}</>;

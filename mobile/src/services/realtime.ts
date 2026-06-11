@@ -27,7 +27,7 @@ export function getWebSocketUrl(handshakeToken: string): string {
 
 function invalidateForMessage(
   queryClient: QueryClient,
-  role: "customer" | "driver" | "supplier" | "company" | null,
+  role: "customer" | "driver" | "supplier" | null,
   raw: unknown,
 ) {
   let msg: Record<string, unknown>;
@@ -36,10 +36,13 @@ function invalidateForMessage(
   } catch {
     return;
   }
-  const type = String(msg.type ?? (msg.payload as Record<string, unknown> | undefined)?.type ?? "");
+  const payload = (msg.payload as Record<string, unknown> | undefined) ?? undefined;
+  const type = String(msg.type ?? payload?.type ?? "");
+  const payloadType = String(payload?.type ?? "");
   const orderId =
     (msg.orderId as string) ||
-    ((msg.payload as Record<string, unknown> | undefined)?.orderId as string | undefined);
+    (payload?.orderId as string | undefined) ||
+    (payload?.order_id as string | undefined);
 
   const invalidate = (key: (string | Record<string, unknown>)[]) => {
     void queryClient.invalidateQueries({ queryKey: key });
@@ -54,7 +57,7 @@ function invalidateForMessage(
     type === "driver_offer_pricing_updated" ||
     type === "order_update"
   ) {
-    if (role === "customer" || role === "company") {
+    if (role === "customer") {
       invalidate(["/api/orders"]);
       if (orderId) invalidate(["/api/orders", orderId]);
       if (
@@ -72,11 +75,29 @@ function invalidateForMessage(
     }
   }
 
+  const supplierDepotPayloadTypes = new Set([
+    "supplier_depot_order_placed",
+    "supplier_payment_received",
+    "supplier_signature_required",
+    "supplier_order_completed",
+    "driver_depot_order_placed",
+    "driver_depot_order_confirmed",
+    "driver_depot_order_fulfilled",
+    "driver_depot_order_cancelled",
+    "driver_depot_order_accepted",
+    "driver_depot_order_rejected",
+    "driver_depot_payment_verified",
+    "driver_depot_payment_rejected",
+    "driver_depot_order_released",
+    "driver_depot_order_completed",
+  ]);
+
   if (
     type === "driver_depot_order_placed" ||
     type === "driver_depot_order_confirmed" ||
     type === "driver_depot_order_fulfilled" ||
-    type === "driver_depot_order_cancelled"
+    type === "driver_depot_order_cancelled" ||
+    supplierDepotPayloadTypes.has(payloadType)
   ) {
     if (role === "supplier") {
       invalidate(["/api/supplier/driver-depot-orders"]);
@@ -84,6 +105,16 @@ function invalidateForMessage(
     if (role === "driver") {
       invalidate(["/api/driver/depot-orders"]);
     }
+  }
+
+  if (
+    (type === "order_state_changed" || type === "order_update" || type === "notification") &&
+    role === "customer" &&
+    payloadType &&
+    !supplierDepotPayloadTypes.has(payloadType)
+  ) {
+    invalidate(["/api/orders"]);
+    if (orderId) invalidate(["/api/orders", orderId]);
   }
 
   if (type === "depot_created" || type === "depot_updated" || type === "depot_deleted" || type === "pricing_updated") {
@@ -103,6 +134,7 @@ function invalidateForMessage(
       invalidate(["/api/supplier/profile"]);
       invalidate(["/api/supplier/documents"]);
       invalidate(["/api/supplier/compliance/status"]);
+      invalidate(["/api/supplier/compliance/kyb-readiness"]);
     }
   }
 

@@ -1,4 +1,4 @@
-export type UserRole = "customer" | "driver" | "supplier" | "company";
+export type UserRole = "customer" | "driver" | "supplier";
 
 export type RootStackParamList = {
   Splash: undefined;
@@ -7,5 +7,4 @@ export type RootStackParamList = {
   CustomerRoot: undefined;
   DriverHome: undefined;
   SupplierHome: undefined;
-  CompanyHome: undefined;
 };

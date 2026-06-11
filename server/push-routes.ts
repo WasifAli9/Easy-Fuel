@@ -4,6 +4,8 @@ import {
   createPushSubscription,
   deletePushSubscription,
   findPushSubscriptionByEndpoint,
+  listExpoPushTokensByUser,
+  listWebPushSubscriptionsByUser,
 } from "./data/push-subscriptions-repo";
 
 const router = Router();
@@ -90,6 +92,21 @@ router.get("/vapid-public-key", (req, res) => {
   }
 
   res.json({ publicKey });
+});
+
+router.get("/status", async (req, res) => {
+  const user = (req as any).user;
+  try {
+    const expoTokens = await listExpoPushTokensByUser(user.id);
+    const webSubscriptions = await listWebPushSubscriptionsByUser(user.id);
+    res.json({
+      hasMobilePush: expoTokens.length > 0,
+      expoTokenCount: expoTokens.length,
+      webSubscriptionCount: webSubscriptions.length,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || "Failed to read push status" });
+  }
 });
 
 export default router;

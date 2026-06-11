@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Package, CheckCircle, XCircle, CreditCard, FileSignature, Eye, Fuel, FileText, AlertCircle } from "lucide-react";
+import { Loader2, Package, CheckCircle, XCircle, CreditCard, FileSignature, Eye, Fuel, FileCheck2, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   formatCurrency,
@@ -353,8 +353,8 @@ export function DriverDepotOrdersView({ statusFilter }: DriverDepotOrdersViewPro
                   {order.status === "pending" && (
                     <>
                       <Button
-                        variant="default"
                         size="sm"
+                        className="bg-green-600 hover:bg-green-700 text-white"
                         onClick={() => acceptOrderMutation.mutate(order.id)}
                         disabled={acceptOrderMutation.isPending}
                       >
@@ -426,14 +426,18 @@ export function DriverDepotOrdersView({ statusFilter }: DriverDepotOrdersViewPro
                   )}
                   {order.status === "completed" && (
                     <Button
-                      variant="outline"
+                      variant="ghost"
                       size="sm"
+                      className="h-8 gap-2 px-2.5 text-primary hover:bg-primary/10 hover:text-primary"
                       onClick={() => {
                         setSelectedOrderForReceipt(order);
                         setReceiptDialogOpen(true);
                       }}
+                      title="View receipt"
                     >
-                      <FileText className="h-4 w-4 mr-1 text-black" />
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10 ring-1 ring-primary/15">
+                        <FileCheck2 className="h-4 w-4" strokeWidth={2.25} />
+                      </span>
                       View Receipt
                     </Button>
                   )}

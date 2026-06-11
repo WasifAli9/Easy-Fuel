@@ -13,6 +13,10 @@ export type SupplierDepotOrder = {
   created_at?: string;
   updated_at?: string;
   completed_at?: string;
+  delivery_signature_url?: string | null;
+  deliverySignatureUrl?: string | null;
+  driver_signature_url?: string | null;
+  supplier_signature_url?: string | null;
   depots?: { name?: string };
   fuel_types?: { label?: string };
   drivers?: { profile?: { full_name?: string; fullName?: string } };

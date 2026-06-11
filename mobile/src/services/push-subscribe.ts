@@ -1,11 +1,14 @@
 import { Platform } from "react-native";
 import { apiClient } from "@/services/api/client";
 
-export async function subscribeExpoPushTokenOnServer(expoPushToken: string): Promise<boolean> {
+export async function subscribeExpoPushTokenOnServer(
+  expoPushToken: string,
+  role?: string | null,
+): Promise<boolean> {
   try {
     await apiClient.post("/api/push/subscribe", {
       expoPushToken,
-      userAgent: `easy-fuel-mobile/${Platform.OS}`,
+      userAgent: `easy-fuel-mobile/${Platform.OS}${role ? `/${role}` : ""}`,
     });
     return true;
   } catch (error) {

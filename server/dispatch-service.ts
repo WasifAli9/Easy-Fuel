@@ -543,6 +543,12 @@ async function createDriverOffersWithPricing(
       orderId,
       offerCount: added,
     });
+
+    await offerNotifications.onDriverOffersAvailable(
+      orderForCustomer.customer_user_id,
+      orderId,
+      added,
+    );
   }
 
   return added;

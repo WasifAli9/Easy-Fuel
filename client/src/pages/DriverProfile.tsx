@@ -19,7 +19,14 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { User, Lock, Upload, FileText, AlertTriangle, CheckCircle2, XCircle, Shield, Building, MapPin, Loader2, Menu, Calendar as CalendarIcon } from "lucide-react";
-import { documentObjectUrl, normalizeProfilePhotoUrl, cn } from "@/lib/utils";
+import { downloadStoredDocument } from "@/lib/download-document";
+import {
+  COMPLIANCE_DOCUMENT_MIME,
+  complianceDocumentDownloadMeta,
+  compliancePdfOnlyError,
+  isCompliancePdfUpload,
+} from "@/lib/compliance-document-upload";
+import { normalizeProfilePhotoUrl, cn } from "@/lib/utils";
 import { normalizeDocuments } from "@/lib/document-normalize";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
@@ -641,20 +648,34 @@ export default function DriverProfile() {
     }
   };
 
-  const openComplianceDocument = (doc: { file_path: string; title?: string; mime_type?: string | null }) => {
-    const fileUrl = documentObjectUrl(doc.file_path, {
-      title: doc.title,
-      mime_type: doc.mime_type ?? "application/pdf",
-    });
-    if (fileUrl) {
-      window.open(fileUrl, "_blank");
-      return;
-    }
+  const downloadComplianceDocument = async (doc: {
+    file_path: string;
+    title?: string;
+    mime_type?: string | null;
+  }) => {
     toast({
-      title: "Error",
-      description: "Document file path is missing or invalid",
-      variant: "destructive",
+      title: "Downloading",
+      description: "Please wait while the document is being downloaded.",
     });
+    try {
+      await downloadStoredDocument(
+        doc.file_path,
+        complianceDocumentDownloadMeta({
+          title: doc.title,
+          mime_type: doc.mime_type ?? COMPLIANCE_DOCUMENT_MIME,
+        }),
+      );
+      toast({
+        title: "Download complete",
+        description: "Your document has been saved to your device.",
+      });
+    } catch (error) {
+      toast({
+        title: "Download failed",
+        description: error instanceof Error ? error.message : "Could not download document",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleDocumentUpload = async (
@@ -666,10 +687,10 @@ export default function DriverProfile() {
     
     const uploadedFile = result.successful[0];
     const uploadedMime = String(uploadedFile.type || "").toLowerCase().split(";")[0].trim();
-    if (uploadedMime !== "application/pdf") {
+    if (!isCompliancePdfUpload(uploadedMime, uploadedFile.name)) {
       toast({
         title: "PDF only",
-        description: "Compliance documents must be uploaded as PDF files.",
+        description: compliancePdfOnlyError(),
         variant: "destructive",
       });
       return;
@@ -693,7 +714,7 @@ export default function DriverProfile() {
         title: title || uploadedFile.name,
         file_path: objectPath,
         file_size: uploadedFile.size,
-        mime_type: "application/pdf",
+        mime_type: COMPLIANCE_DOCUMENT_MIME,
       });
       
       queryClient.invalidateQueries({ queryKey: ["/api/driver/documents"] });
@@ -1337,9 +1358,9 @@ export default function DriverProfile() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => openComplianceDocument(existingDoc)}
+                                  onClick={() => downloadComplianceDocument(existingDoc)}
                                 >
-                                  View Document
+                                  Download
                                 </Button>
                                 <ObjectUploader
                                   onGetUploadParameters={getUploadURL}
@@ -1522,9 +1543,9 @@ export default function DriverProfile() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => openComplianceDocument(existingDoc)}
+                                  onClick={() => downloadComplianceDocument(existingDoc)}
                                 >
-                                  View Document
+                                  Download
                                 </Button>
                                 <ObjectUploader
                                   onGetUploadParameters={getUploadURL}
@@ -1644,9 +1665,9 @@ export default function DriverProfile() {
                                     <Button
                                       variant="outline"
                                       size="sm"
-                                      onClick={() => openComplianceDocument(existingDoc)}
+                                      onClick={() => downloadComplianceDocument(existingDoc)}
                                     >
-                                      View Document
+                                      Download
                                     </Button>
                                     <ObjectUploader
                                       onGetUploadParameters={getUploadURL}
@@ -1767,9 +1788,9 @@ export default function DriverProfile() {
                                     <Button
                                       variant="outline"
                                       size="sm"
-                                      onClick={() => openComplianceDocument(existingDoc)}
+                                      onClick={() => downloadComplianceDocument(existingDoc)}
                                     >
-                                      View Document
+                                      Download
                                     </Button>
                                     <ObjectUploader
                                       onGetUploadParameters={getUploadURL}
@@ -1867,9 +1888,9 @@ export default function DriverProfile() {
                                     <Button
                                       variant="outline"
                                       size="sm"
-                                      onClick={() => openComplianceDocument(existingDoc)}
+                                      onClick={() => downloadComplianceDocument(existingDoc)}
                                     >
-                                      View Document
+                                      Download
                                     </Button>
                                     <ObjectUploader
                                       onGetUploadParameters={getUploadURL}
@@ -1992,9 +2013,9 @@ export default function DriverProfile() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => openComplianceDocument(existingDoc)}
+                                  onClick={() => downloadComplianceDocument(existingDoc)}
                                 >
-                                  View Document
+                                  Download
                                 </Button>
                                 <ObjectUploader
                                   onGetUploadParameters={getUploadURL}

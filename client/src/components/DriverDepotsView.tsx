@@ -22,7 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { MapPin, Package, Loader2, ShoppingCart, XCircle, CreditCard, FileSignature, CheckCircle, Receipt } from "lucide-react";
+import { MapPin, Package, Loader2, ShoppingCart, XCircle, CreditCard, FileSignature, CheckCircle, FileCheck2 } from "lucide-react";
 import { formatDepotOrderStatus } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/utils";
@@ -454,15 +454,18 @@ export function DriverDepotsView({ defaultTab = "orders" }: DriverDepotsViewProp
                         )}
                         {(order.status ?? order.orderStatus ?? order.order_status) === "completed" && (
                           <Button
-                            variant="outline"
+                            variant="ghost"
                             size="sm"
+                            className="h-8 gap-2 px-2.5 text-primary hover:bg-primary/10 hover:text-primary"
                             onClick={() => {
                               setSelectedOrderForReceipt(order);
                               setReceiptViewDialogOpen(true);
                             }}
                             title="View receipt"
                           >
-                            <Receipt className="h-4 w-4 mr-1" />
+                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10 ring-1 ring-primary/15">
+                              <FileCheck2 className="h-4 w-4" strokeWidth={2.25} />
+                            </span>
                             Receipt
                           </Button>
                         )}

@@ -49,17 +49,4 @@ export const roleFeatureMap: Record<UserRole, MobileFeature[]> = {
     },
     { id: "location", status: "mobile-new", description: "Map pickers for depots optional enhancement." },
   ],
-  company: [
-    { id: "auth", status: "parity", description: "Sign-in and session management." },
-    {
-      id: "overview",
-      status: "mobile-redesign",
-      description: "Condense dense dashboards into card sections.",
-    },
-    { id: "fleet", status: "parity", description: "Fleet and driver operations." },
-    { id: "orders", status: "parity", description: "Order lifecycle management." },
-    { id: "chat", status: "parity", description: "Internal and order chat flows." },
-    { id: "analytics", status: "mobile-redesign", description: "Swipeable KPI cards." },
-    { id: "push_notifications", status: "mobile-new", description: "Ops alerting channel." },
-  ],
 };

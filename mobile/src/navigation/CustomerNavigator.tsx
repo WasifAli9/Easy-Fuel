@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -13,6 +13,8 @@ import { PortalSettingsScreen } from "@/features/common/PortalSettingsScreen";
 import { fuelPortalTabBarOptions } from "@/design/fuel-portal-tokens";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
+import { PortalNotificationsScreen } from "@/features/common/PortalNotificationsScreen";
+import { useNotificationDeepLinkStore } from "@/store/notification-deep-link-store";
 
 const Tab = createBottomTabNavigator();
 
@@ -20,11 +22,12 @@ const customerMenuItems: PortalMenuItem[] = [
   { key: "portal", label: "Customer Portal", icon: "home-outline" },
   { key: "addresses", label: "Saved Addresses", icon: "map-marker-outline" },
   { key: "payment-methods", label: "Payment methods", icon: "credit-card-outline" },
+  { key: "notifications", label: "Notifications", icon: "bell-outline" },
   { key: "profile", label: "Profile", icon: "account-circle-outline" },
   { key: "settings", label: "Settings", icon: "cog-outline" },
 ];
 
-type CustomerSection = "portal" | "addresses" | "payment-methods" | "profile" | "settings";
+type CustomerSection = "portal" | "addresses" | "payment-methods" | "notifications" | "profile" | "settings";
 
 function CustomerTabNavigator() {
   const insets = useSafeAreaInsets();
@@ -60,6 +63,13 @@ function CustomerTabNavigator() {
 
 export function CustomerNavigator() {
   const [section, setSection] = useState<CustomerSection>("portal");
+  const pendingDeepLink = useNotificationDeepLinkStore((s) => s.pending);
+
+  useEffect(() => {
+    if (pendingDeepLink?.orderId || pendingDeepLink?.openChat) {
+      setSection("portal");
+    }
+  }, [pendingDeepLink?.orderId, pendingDeepLink?.openChat]);
 
   const title =
     section === "settings"
@@ -68,6 +78,8 @@ export function CustomerNavigator() {
         ? "Payment methods"
         : section === "addresses"
             ? "Saved Addresses"
+            : section === "notifications"
+              ? "Notifications"
             : section === "profile"
               ? "Profile"
               : "Customer Portal";
@@ -88,6 +100,8 @@ export function CustomerNavigator() {
         <CustomerAddressesScreen />
       ) : section === "payment-methods" ? (
         <CustomerPaymentMethodsScreen />
+      ) : section === "notifications" ? (
+        <PortalNotificationsScreen role="customer" />
       ) : section === "profile" ? (
         <CustomerProfileScreen />
       ) : (

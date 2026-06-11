@@ -2,7 +2,9 @@ import { create } from "zustand";
 
 export type NotificationDeepLink = {
   orderId?: string;
+  depotOrderId?: string;
   openChat?: boolean;
+  openDepotOrders?: boolean;
   notificationId?: string;
 };
 

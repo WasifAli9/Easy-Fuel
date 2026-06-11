@@ -4,6 +4,11 @@ import { db, pool } from "./db";
 import * as sharedSchema from "../shared/schema";
 import { insertDepotSchema } from "../shared/schema";
 import { getSupplierComplianceStatus, canSupplierAccessPlatform } from "./compliance-service";
+import {
+  COMPLIANCE_DOCUMENT_MIME,
+  compliancePdfOnlyError,
+  isCompliancePdfUpload,
+} from "@shared/compliance-document-upload";
 import { z } from "zod";
 import { normalizeSignatureForStorage } from "./local-object-storage";
 import { formatMoneyAmount } from "@shared/format-currency";
@@ -1992,6 +1997,7 @@ router.get("/invoices/:id", requireSupplier, async (req, res) => {
       totalCents: (order as any).total_price_cents,
       completedAt: (order as any).completed_at,
       createdAt: (order as any).created_at,
+      deliverySignatureUrl: (order as any).delivery_signature_url ?? null,
     };
     return res.json(invoice);
   } catch (e: any) {
@@ -3086,7 +3092,11 @@ router.post("/documents", async (req, res) => {
   if (!doc_type || !file_path) {
     return res.status(400).json({ error: "doc_type and file_path are required" });
   }
-  
+
+  if (!isCompliancePdfUpload(mime_type, file_path)) {
+    return res.status(400).json({ error: compliancePdfOnlyError() });
+  }
+
   try {
     const supplierResult = await drizzleClient
       .from("suppliers")
@@ -3103,12 +3113,12 @@ router.post("/documents", async (req, res) => {
       .from("documents")
       .insert({
         owner_type: owner_type || "supplier",
-        owner_id: supplier.id,
+        owner_id: user.id,
         doc_type,
         title: title || doc_type,
         file_path,
         file_size: file_size || null,
-        mime_type: mime_type || null,
+        mime_type: COMPLIANCE_DOCUMENT_MIME,
         document_issue_date: document_issue_date || null,
         expiry_date: expiry_date || null,
         uploaded_by: user.id,
@@ -3405,6 +3415,25 @@ router.put("/compliance", async (req, res) => {
       return true;
     };
 
+    const parseComplianceDate = (value: unknown): Date | null => {
+      if (value === null || value === undefined) return null;
+      if (value instanceof Date) return isNaN(value.getTime()) ? null : value;
+      if (typeof value !== "string") return null;
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+        return new Date(`${trimmed}T00:00:00Z`);
+      }
+      const date = new Date(trimmed);
+      return isNaN(date.getTime()) ? null : date;
+    };
+
+    const setDateField = (dbColumn: string, value: unknown) => {
+      if (!shouldInclude(value)) return;
+      const parsed = parseComplianceDate(value);
+      if (parsed) updateData[dbColumn] = parsed;
+    };
+
     // Extract fields - map frontend names to database columns
     const {
       // Note: company_name maps to registered_name in database, but we'll handle it separately
@@ -3448,7 +3477,14 @@ router.put("/compliance", async (req, res) => {
     // Process each field - only include non-null, non-empty values
     // Map company_name to registered_name (database column name)
     if (shouldInclude(bodyFields.company_name)) updateData.registered_name = bodyFields.company_name;
-    if (shouldInclude(registration_number)) updateData.registration_number = registration_number;
+    if (shouldInclude(registration_number)) {
+      updateData.registration_number = registration_number;
+      updateData.cipc_number = registration_number;
+    }
+    if (shouldInclude(bodyFields.bank_account_name)) updateData.bank_account_name = bodyFields.bank_account_name;
+    if (shouldInclude(bodyFields.bank_name)) updateData.bank_name = bodyFields.bank_name;
+    if (shouldInclude(bodyFields.account_number)) updateData.account_number = bodyFields.account_number;
+    if (shouldInclude(bodyFields.branch_code)) updateData.branch_code = bodyFields.branch_code;
     if (director_names !== undefined) {
       if (director_names === "" || director_names === null) {
         // Don't include - skip updating this field
@@ -3470,14 +3506,14 @@ router.put("/compliance", async (req, res) => {
     }
     if (shouldInclude(registered_address)) updateData.registered_address = registered_address;
     if (shouldInclude(vat_number)) updateData.vat_number = vat_number;
-    if (shouldInclude(vat_certificate_expiry)) updateData.vat_certificate_expiry = vat_certificate_expiry;
+    setDateField("vat_certificate_expiry", vat_certificate_expiry);
     if (shouldInclude(tax_clearance_number)) updateData.tax_clearance_number = tax_clearance_number;
-    if (shouldInclude(tax_clearance_expiry)) updateData.tax_clearance_expiry = tax_clearance_expiry;
+    setDateField("tax_clearance_expiry", tax_clearance_expiry);
     // Map wholesale_license_number to dmre_license_number (database column name)
     if (shouldInclude(wholesale_license_number)) updateData.dmre_license_number = wholesale_license_number;
-    if (shouldInclude(wholesale_license_issue_date)) updateData.wholesale_license_issue_date = wholesale_license_issue_date;
+    setDateField("wholesale_license_issue_date", wholesale_license_issue_date);
     // Map wholesale_license_expiry_date to dmre_license_expiry (database column name)
-    if (shouldInclude(wholesale_license_expiry_date)) updateData.dmre_license_expiry = wholesale_license_expiry_date;
+    setDateField("dmre_license_expiry", wholesale_license_expiry_date);
     if (allowed_fuel_types !== undefined) {
       if (allowed_fuel_types === "" || allowed_fuel_types === null) {
         // Don't include - skip updating this field
@@ -3499,7 +3535,7 @@ router.put("/compliance", async (req, res) => {
     if (shouldInclude(site_license_number)) updateData.site_license_number = site_license_number;
     if (shouldInclude(depot_address)) updateData.depot_address = depot_address;
     if (shouldInclude(permit_number)) updateData.permit_number = permit_number;
-    if (shouldInclude(permit_expiry_date)) updateData.permit_expiry_date = permit_expiry_date;
+    setDateField("permit_expiry_date", permit_expiry_date);
     if (shouldInclude(environmental_auth_number)) updateData.environmental_auth_number = environmental_auth_number;
     if (approved_storage_capacity_litres !== undefined && approved_storage_capacity_litres !== null && approved_storage_capacity_litres !== '') {
       const parsed = typeof approved_storage_capacity_litres === 'number' ? approved_storage_capacity_litres : parseInt(approved_storage_capacity_litres);
@@ -3508,17 +3544,17 @@ router.put("/compliance", async (req, res) => {
       }
     }
     if (shouldInclude(fire_certificate_number)) updateData.fire_certificate_number = fire_certificate_number;
-    if (shouldInclude(fire_certificate_issue_date)) updateData.fire_certificate_issue_date = fire_certificate_issue_date;
-    if (shouldInclude(fire_certificate_expiry_date)) updateData.fire_certificate_expiry_date = fire_certificate_expiry_date;
+    setDateField("fire_certificate_issue_date", fire_certificate_issue_date);
+    setDateField("fire_certificate_expiry_date", fire_certificate_expiry_date);
     if (hse_file_verified !== undefined) updateData.hse_file_verified = Boolean(hse_file_verified);
-    if (shouldInclude(hse_file_last_updated)) updateData.hse_file_last_updated = hse_file_last_updated;
+    setDateField("hse_file_last_updated", hse_file_last_updated);
     if (spill_compliance_confirmed !== undefined) updateData.spill_compliance_confirmed = Boolean(spill_compliance_confirmed);
     if (shouldInclude(sabs_certificate_number)) updateData.sabs_certificate_number = sabs_certificate_number;
-    if (shouldInclude(sabs_certificate_issue_date)) updateData.sabs_certificate_issue_date = sabs_certificate_issue_date;
-    if (shouldInclude(sabs_certificate_expiry_date)) updateData.sabs_certificate_expiry_date = sabs_certificate_expiry_date;
+    setDateField("sabs_certificate_issue_date", sabs_certificate_issue_date);
+    setDateField("sabs_certificate_expiry_date", sabs_certificate_expiry_date);
     if (shouldInclude(calibration_certificate_number)) updateData.calibration_certificate_number = calibration_certificate_number;
-    if (shouldInclude(calibration_certificate_issue_date)) updateData.calibration_certificate_issue_date = calibration_certificate_issue_date;
-    if (shouldInclude(calibration_certificate_expiry_date)) updateData.calibration_certificate_expiry_date = calibration_certificate_expiry_date;
+    setDateField("calibration_certificate_issue_date", calibration_certificate_issue_date);
+    setDateField("calibration_certificate_expiry_date", calibration_certificate_expiry_date);
     if (shouldInclude(public_liability_policy_number)) updateData.public_liability_policy_number = public_liability_policy_number;
     if (shouldInclude(public_liability_insurance_provider)) updateData.public_liability_insurance_provider = public_liability_insurance_provider;
     if (public_liability_coverage_amount_rands !== undefined && public_liability_coverage_amount_rands !== null && public_liability_coverage_amount_rands !== '') {
@@ -3527,9 +3563,9 @@ router.put("/compliance", async (req, res) => {
         updateData.public_liability_coverage_amount_rands = parsed;
       }
     }
-    if (shouldInclude(public_liability_policy_expiry_date)) updateData.public_liability_policy_expiry_date = public_liability_policy_expiry_date;
+    setDateField("public_liability_policy_expiry_date", public_liability_policy_expiry_date);
     if (shouldInclude(env_insurance_number)) updateData.env_insurance_number = env_insurance_number;
-    if (shouldInclude(env_insurance_expiry_date)) updateData.env_insurance_expiry_date = env_insurance_expiry_date;
+    setDateField("env_insurance_expiry_date", env_insurance_expiry_date);
 
     // Only proceed if we have fields to update
     if (Object.keys(updateData).length === 0) {

@@ -137,7 +137,7 @@ export function SignInScreen() {
         const title =
           /server reply was missing|could not read the server response|expected json from the server/i.test(msg)
             ? "Wrong server or API version"
-            : /administrator sign-in|app role assigned/i.test(msg)
+            : /administrator sign-in|company sign-in|app role assigned/i.test(msg)
               ? "Account not allowed here"
               : "Sign in failed";
         Alert.alert(title, msg);

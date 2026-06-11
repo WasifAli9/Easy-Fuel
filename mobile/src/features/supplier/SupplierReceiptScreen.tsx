@@ -93,14 +93,16 @@ export function SupplierReceiptScreen() {
                       disabled={pdfLoadingId != null && pdfLoadingId !== inv.id}
                       onPress={async () => {
                         setPdfLoadingId(inv.id);
+                        Alert.alert("Downloading", "Please wait while the receipt is being prepared.");
                         try {
                           await downloadAndShareSupplierInvoicePdf(inv.id);
+                          Alert.alert("Download complete", "Your receipt is ready. Use the menu to save or share the PDF.");
                         } catch (e) {
                           const msg =
                             (e as { response?: { data?: { error?: string } } })?.response?.data?.error ||
                             (e as Error).message ||
                             "Could not download PDF.";
-                          Alert.alert("PDF", msg);
+                          Alert.alert("Download failed", msg);
                         } finally {
                           setPdfLoadingId(null);
                         }

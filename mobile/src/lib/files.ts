@@ -141,7 +141,7 @@ export async function putFileToUploadUrl(uploadPath: string, body: Blob, content
   return fetch(url, { method: "PUT", headers, body, credentials });
 }
 
-function arrayBufferToBytes(raw: ArrayBuffer | ArrayBufferView): Uint8Array {
+function arrayBufferToBytes(raw: unknown): Uint8Array {
   if (raw instanceof ArrayBuffer) {
     return new Uint8Array(raw);
   }
@@ -149,14 +149,25 @@ function arrayBufferToBytes(raw: ArrayBuffer | ArrayBufferView): Uint8Array {
     const view = raw as ArrayBufferView;
     return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
   }
+  if (typeof raw === "string" && raw.length > 0) {
+    throw new Error("Invalid file response from server.");
+  }
   throw new Error("Invalid file response from server.");
 }
 
-async function downloadObjectBytes(objectApiPath: string, doc?: StoredDocumentMeta): Promise<Uint8Array> {
+async function downloadObjectBytes(
+  objectApiPath: string,
+  doc?: StoredDocumentMeta,
+  opts?: { asAttachment?: boolean },
+): Promise<Uint8Array> {
   const { filename, mimeType } = documentViewParams(doc);
   const tryFetch = async (path: string) => {
     const response = await apiClient.get<ArrayBuffer>(path, {
-      params: { filename, mime: mimeType },
+      params: {
+        filename,
+        mime: mimeType,
+        ...(opts?.asAttachment ? { download: "true" } : {}),
+      },
       responseType: "arraybuffer",
       headers: { Accept: "application/pdf, application/octet-stream, */*" },
     });
@@ -181,28 +192,31 @@ async function downloadObjectBytes(objectApiPath: string, doc?: StoredDocumentMe
   }
 }
 
-async function openCachedDocumentFile(filename: string, mimeType: string, bytes: Uint8Array): Promise<void> {
+async function saveDocumentToDevice(filename: string, mimeType: string, bytes: Uint8Array): Promise<string> {
   const safeName = filename.replace(/[/\\?%*:|"<>]/g, "-") || "document.pdf";
-  const file = new File(Paths.cache, safeName);
+  const file = new File(Paths.document, safeName);
   file.create({ overwrite: true });
   file.write(bytes);
+  return file.uri;
+}
 
+async function promptSaveDownloadedFile(filename: string, mimeType: string, fileUri: string): Promise<void> {
   if (await Sharing.isAvailableAsync()) {
-    await Sharing.shareAsync(file.uri, {
+    await Sharing.shareAsync(fileUri, {
       mimeType,
-      dialogTitle: safeName,
+      dialogTitle: `Save ${filename}`,
       UTI: mimeType === "application/pdf" ? "com.adobe.pdf" : undefined,
     });
     return;
   }
 
-  const canOpen = await Linking.canOpenURL(file.uri);
+  const canOpen = await Linking.canOpenURL(fileUri);
   if (canOpen) {
-    await Linking.openURL(file.uri);
+    await Linking.openURL(fileUri);
     return;
   }
 
-  throw new Error("No app available to open this document.");
+  throw new Error("No app available to save this document.");
 }
 
 async function openViaSignedUrl(objectPath: string, doc?: StoredDocumentMeta): Promise<void> {
@@ -223,6 +237,29 @@ async function openViaSignedUrl(objectPath: string, doc?: StoredDocumentMeta): P
     throw new Error("Cannot open document link on this device.");
   }
   await Linking.openURL(viewUrl);
+}
+
+/**
+ * Download a stored document to the device, then open the system save/share sheet.
+ */
+export async function downloadStoredDocument(
+  filePath: string | null | undefined,
+  doc?: StoredDocumentMeta,
+): Promise<void> {
+  if (!filePath?.trim()) {
+    throw new Error("Document file path is missing.");
+  }
+
+  const normalized = normalizeFilePath(filePath);
+  if (!normalized) {
+    throw new Error("Invalid document file path.");
+  }
+
+  const { filename, mimeType } = documentViewParams(doc);
+  const objectApiPath = normalized.startsWith("/objects/") ? normalized : `/objects/${normalized}`;
+  const bytes = await downloadObjectBytes(objectApiPath, doc, { asAttachment: true });
+  const fileUri = await saveDocumentToDevice(filename, mimeType, bytes);
+  await promptSaveDownloadedFile(filename, mimeType, fileUri);
 }
 
 /**
@@ -251,7 +288,8 @@ export async function openStoredDocument(
 
   try {
     const bytes = await downloadObjectBytes(objectApiPath, doc);
-    await openCachedDocumentFile(filename, mimeType, bytes);
+    const fileUri = await saveDocumentToDevice(filename, mimeType, bytes);
+    await promptSaveDownloadedFile(filename, mimeType, fileUri);
     return;
   } catch (primaryError) {
     if (Platform.OS === "web") {

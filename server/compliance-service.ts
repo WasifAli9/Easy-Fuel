@@ -380,6 +380,7 @@ export async function getSupplierComplianceStatus(supplierId: string): Promise<C
         kybSubmittedAt: suppliers.kybSubmittedAt,
         registeredName: suppliers.registeredName,
         cipcNumber: suppliers.cipcNumber,
+        registrationNumber: suppliers.registrationNumber,
         bankAccountName: suppliers.bankAccountName,
         bankName: suppliers.bankName,
         accountNumber: suppliers.accountNumber,
@@ -423,6 +424,7 @@ export async function getSupplierComplianceStatus(supplierId: string): Promise<C
     const missingFields = getSupplierKybMissingFields({
       registeredName: supplier.registeredName,
       cipcNumber: supplier.cipcNumber,
+      registrationNumber: supplier.registrationNumber,
       bankAccountName: supplier.bankAccountName,
       bankName: supplier.bankName,
       accountNumber: supplier.accountNumber,

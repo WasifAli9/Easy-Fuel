@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FlatList, Image, Modal, Platform, ScrollView, StyleSheet, View } from "react-native";
+import { Alert, FlatList, Modal, Platform, ScrollView, StyleSheet, View } from "react-native";
 import { IconMetaRow, SectionTitleRow } from "@/components/IconMetaRow";
 import { getIosDatePickerNativeProps, iosDatePickerStyle, iosDatePickerWrapStyle } from "@/components/ios-date-picker-props";
 import { ModalSafeArea } from "@/components/ModalSafeArea";
@@ -13,12 +13,10 @@ import {
   ActivityIndicator,
   Card,
   Chip,
-  Dialog,
   Portal,
   SegmentedButtons,
   Text,
   TextInput,
-  RadioButton,
 } from "react-native-paper";
 import { Button } from "@/design/paper-button";
 import { apiClient } from "@/services/api/client";
@@ -29,9 +27,7 @@ import { useUiThemeStore } from "@/store/ui-theme-store";
 import { SignatureCapturePad, type SignatureCapturePadRef } from "@/components/SignatureCapturePad";
 import { formatMoneyFromCents } from "@/lib/format-currency";
 import { formatDepotOrderStatus } from "@/lib/format-labels";
-import { appConfig } from "@/services/config";
-import * as Print from "expo-print";
-import * as Sharing from "expo-sharing";
+import { DepotOrderReceiptModal } from "@/components/DepotOrderReceiptModal";
 
 type DepotPrice = {
   fuel_type_id?: string;
@@ -132,7 +128,6 @@ export function DriverDepotScreen() {
   const signatureRef = useRef<SignatureCapturePadRef>(null);
   const [selectedOrderForReceipt, setSelectedOrderForReceipt] = useState<DepotOrder | null>(null);
   const [createOrderError, setCreateOrderError] = useState<string>("");
-  const [downloadingReceipt, setDownloadingReceipt] = useState(false);
   const queryClient = useQueryClient();
 
   const ordersQuery = useQuery({
@@ -172,7 +167,13 @@ export function DriverDepotScreen() {
       setCreateOrderError("");
     },
     onError: (error) => {
-      setCreateOrderError((error as Error)?.message || "Failed to place order.");
+      const serverMsg = (error as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      const raw = (error as Error)?.message || "Failed to place order.";
+      const msg =
+        serverMsg ||
+        (raw.includes("status code 400") ? "Could not place this order. Please check your details and try again." : raw);
+      setCreateOrderError(msg);
+      Alert.alert("Cannot place order", msg);
     },
   });
 
@@ -198,10 +199,7 @@ export function DriverDepotScreen() {
       });
     },
     onSuccess: async () => {
-      setSelectedOrderForPayment(null);
-      setPaymentMethod("");
-      setPaymentProofUrl("");
-      setPaymentError("");
+      closePaymentModal();
       await queryClient.invalidateQueries({ queryKey: ["/api/driver/depot-orders"] });
     },
     onError: (error) => {
@@ -240,6 +238,13 @@ export function DriverDepotScreen() {
     setSignatureData("");
     setHasDrawnSignature(false);
     setPendingSignatureSubmit(false);
+  };
+
+  const closePaymentModal = () => {
+    setSelectedOrderForPayment(null);
+    setPaymentMethod("");
+    setPaymentProofUrl("");
+    setPaymentError("");
   };
 
   const handleUploadProof = async () => {
@@ -311,53 +316,40 @@ export function DriverDepotScreen() {
     return selectedFuelPrices.reduce((max, p) => Math.max(max, Number(p.available_litres ?? p.availableLitres ?? 0)), 0);
   }, [selectedFuelPrices]);
 
-  const toImageUri = (raw?: string) => {
-    if (!raw) return "";
-    if (raw.startsWith("data:") || raw.startsWith("http://") || raw.startsWith("https://")) return raw;
-    const normalized = raw.startsWith("/") ? raw : `/objects/${raw}`;
-    return `${appConfig.apiBaseUrl}${normalized}`;
+  const resolveApplicableStock = (litresNum: number): number | null => {
+    if (!selectedFuelPrices.length) return null;
+    const tiers = [...selectedFuelPrices].sort(
+      (a, b) => Number(b.min_litres ?? b.minLitres ?? 0) - Number(a.min_litres ?? a.minLitres ?? 0),
+    );
+    let tier = tiers[tiers.length - 1];
+    for (const t of tiers) {
+      if (litresNum >= Number(t.min_litres ?? t.minLitres ?? 0)) {
+        tier = t;
+        break;
+      }
+    }
+    const stock = Number(tier?.available_litres ?? tier?.availableLitres ?? 0);
+    return Number.isFinite(stock) ? stock : 0;
   };
 
-  const handleDownloadReceipt = async () => {
-    if (!selectedOrderForReceipt) return;
-    setDownloadingReceipt(true);
-    try {
-      const fuelLabel = selectedOrderForReceipt.fuel_types?.label || selectedOrderForReceipt.fuelTypes?.label || "-";
-      const completedAt = selectedOrderForReceipt.completed_at
-        ? new Date(selectedOrderForReceipt.completed_at).toLocaleString("en-ZA")
-        : "-";
-      const total = formatMoneyFromCents(selectedOrderForReceipt.total_price_cents || 0);
-      const sigUri = toImageUri(selectedOrderForReceipt.delivery_signature_url);
+  const stockLimitMessage = (availableLitres: number) =>
+    `Please choose an amount under the available stock (${availableLitres} L).`;
 
-      const html = `
-        <html>
-          <body style="font-family: Arial, sans-serif; padding: 20px; color: #111827;">
-            <h1 style="color:#14b8a6; margin-bottom: 4px;">Easy Fuel</h1>
-            <p style="margin-top:0; color:#6b7280;">Fuel Collection Receipt</p>
-            <hr />
-            <p><strong>Order ID:</strong> #${selectedOrderForReceipt.id.slice(-8).toUpperCase()}</p>
-            <p><strong>Depot:</strong> ${selectedOrderForReceipt.depots?.name || "-"}</p>
-            <p><strong>Fuel:</strong> ${fuelLabel}</p>
-            <p><strong>Litres:</strong> ${selectedOrderForReceipt.litres || "-"}</p>
-            <p><strong>Completed:</strong> ${completedAt}</p>
-            <p style="font-size:18px;"><strong>Total Amount:</strong> ${total}</p>
-            ${sigUri ? `<p><strong>Driver Receipt Signature:</strong></p><img src="${sigUri}" style="max-width: 100%; height: 120px; object-fit: contain; border:1px solid #d1d5db; border-radius:6px;" />` : ""}
-          </body>
-        </html>
-      `;
-
-      const { uri } = await Print.printToFileAsync({ html });
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(uri, {
-          mimeType: "application/pdf",
-          dialogTitle: "Download Receipt",
-          UTI: "com.adobe.pdf",
-        });
-      }
-    } finally {
-      setDownloadingReceipt(false);
+  const handlePlaceDepotOrder = () => {
+    setCreateOrderError("");
+    const litresNum = Number(litres);
+    if (!Number.isFinite(litresNum) || litresNum <= 0) {
+      Alert.alert("Invalid amount", "Please enter a valid number of litres.");
+      return;
     }
+    const available = resolveApplicableStock(litresNum);
+    if (available !== null && available > 0 && litresNum >= available) {
+      const msg = stockLimitMessage(available);
+      setCreateOrderError(msg);
+      Alert.alert("Amount too high", msg);
+      return;
+    }
+    createOrderMutation.mutate();
   };
 
   const handlePickupDateChange = (event: DateTimePickerEvent, date?: Date) => {
@@ -503,8 +495,8 @@ export function DriverDepotScreen() {
                       </Button>
                     ) : null}
                     {item.status === "completed" ? (
-                      <Button mode="outlined" compact icon="receipt" onPress={() => setSelectedOrderForReceipt(item)}>
-                        Receipt
+                      <Button mode="outlined" compact icon="receipt-text-outline" onPress={() => setSelectedOrderForReceipt(item)}>
+                        View receipt
                       </Button>
                     ) : null}
                   </View>
@@ -655,66 +647,117 @@ export function DriverDepotScreen() {
                 </Card.Content>
               </Card>
             </ScrollView>
-            <View style={styles.modalFooter}>
-              <Button onPress={() => setSelectedDepot(null)}>Cancel</Button>
-              <Button mode="contained" onPress={() => createOrderMutation.mutate()} loading={createOrderMutation.isPending}>
+            <View style={[styles.modalFooter, { paddingBottom: footerPaddingBottom }]}>
+              <Button onPress={() => setSelectedDepot(null)} style={styles.footerBtn}>
+                Cancel
+              </Button>
+              <Button
+                mode="contained"
+                onPress={handlePlaceDepotOrder}
+                loading={createOrderMutation.isPending}
+                style={styles.footerBtnPrimary}
+              >
                 Place Order
               </Button>
             </View>
           </ModalSafeArea>
         </Modal>
+      </Portal>
 
-        <Dialog
-          visible={!!selectedOrderForPayment}
-          onDismiss={() => setSelectedOrderForPayment(null)}
-          style={styles.dialog}
-        >
-          <Dialog.Title>Pay for Order</Dialog.Title>
-          <Dialog.Content>
-            <Text style={styles.meta}>Depot: {selectedOrderForPayment?.depots?.name || "Depot"}</Text>
-            <Text style={styles.meta}>Fuel: {selectedOrderForPayment?.fuel_types?.label || "-"}</Text>
-            <Text style={styles.meta}>Litres: {selectedOrderForPayment?.litres || "-"}</Text>
-            <Text style={styles.amount}>
-              Total: {formatMoneyFromCents(selectedOrderForPayment?.total_price_cents || 0)}
-            </Text>
-
-            <View style={styles.paymentOptions}>
-              <Text variant="labelLarge">Payment Method</Text>
-              <RadioButton.Group onValueChange={(v) => setPaymentMethod(v as any)} value={paymentMethod}>
-                <View style={styles.radioRow}>
-                  <RadioButton value="bank_transfer" />
-                  <Text>Bank Transfer (upload proof)</Text>
+      <Modal
+        visible={!!selectedOrderForPayment}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={closePaymentModal}
+      >
+        <ModalSafeArea style={styles.modalContainer}>
+          <ModalScreenHeader title="Pay for Order" onClose={closePaymentModal} />
+          <ScrollView
+            contentContainerStyle={[styles.modalScroll, { paddingBottom: footerPaddingBottom + 88 }]}
+            keyboardShouldPersistTaps="handled"
+          >
+            <Card mode="outlined" style={styles.modalCard}>
+              <Card.Content>
+                <Text variant="titleMedium">{selectedOrderForPayment?.depots?.name || "Depot"}</Text>
+                <IconMetaRow icon="gas-station-outline" color={theme.colors.onSurfaceVariant} style={styles.summaryRow}>
+                  {selectedOrderForPayment?.fuel_types?.label || selectedOrderForPayment?.fuelTypes?.label || "-"}
+                </IconMetaRow>
+                <IconMetaRow icon="water-outline" color={theme.colors.onSurfaceVariant} style={styles.summaryRow}>
+                  {selectedOrderForPayment?.litres ?? "-"} L
+                </IconMetaRow>
+                <View style={styles.paymentTotalBox}>
+                  <Text style={styles.paymentTotalLabel}>Total amount</Text>
+                  <Text style={styles.paymentTotalValue}>
+                    {formatMoneyFromCents(selectedOrderForPayment?.total_price_cents || 0)}
+                  </Text>
                 </View>
-                <View style={styles.radioRow}>
-                  <RadioButton value="online_payment" />
-                  <Text>Online Payment (OZOW — card / instant EFT)</Text>
+              </Card.Content>
+            </Card>
+
+            <Card mode="outlined" style={[styles.modalCard, styles.paymentCard]}>
+              <Card.Content>
+                <Text variant="titleSmall" style={styles.paymentSectionTitle}>
+                  Payment method
+                </Text>
+                <View style={styles.paymentMethodList}>
+                  <Button
+                    mode={paymentMethod === "bank_transfer" ? "contained" : "outlined"}
+                    icon="bank-outline"
+                    contentStyle={styles.paymentMethodBtnContent}
+                    style={styles.paymentMethodBtn}
+                    buttonColor={paymentMethod === "bank_transfer" ? theme.colors.primary : undefined}
+                    textColor={paymentMethod === "bank_transfer" ? theme.colors.onPrimary : theme.colors.onSurface}
+                    onPress={() => setPaymentMethod("bank_transfer")}
+                  >
+                    Bank transfer — upload proof
+                  </Button>
+                  <Button
+                    mode={paymentMethod === "online_payment" ? "contained" : "outlined"}
+                    icon="credit-card-outline"
+                    contentStyle={styles.paymentMethodBtnContent}
+                    style={styles.paymentMethodBtn}
+                    buttonColor={paymentMethod === "online_payment" ? theme.colors.primary : undefined}
+                    textColor={paymentMethod === "online_payment" ? theme.colors.onPrimary : theme.colors.onSurface}
+                    onPress={() => setPaymentMethod("online_payment")}
+                  >
+                    Online payment (OZOW)
+                  </Button>
+                  <Button
+                    mode={paymentMethod === "pay_outside_app" ? "contained" : "outlined"}
+                    icon="hand-coin-outline"
+                    contentStyle={styles.paymentMethodBtnContent}
+                    style={styles.paymentMethodBtn}
+                    buttonColor={paymentMethod === "pay_outside_app" ? theme.colors.primary : undefined}
+                    textColor={paymentMethod === "pay_outside_app" ? theme.colors.onPrimary : theme.colors.onSurface}
+                    onPress={() => setPaymentMethod("pay_outside_app")}
+                  >
+                    Pay outside app
+                  </Button>
                 </View>
-                <View style={styles.radioRow}>
-                  <RadioButton value="pay_outside_app" />
-                  <Text>Pay Outside App</Text>
-                </View>
-              </RadioButton.Group>
-            </View>
 
-            {paymentMethod === "online_payment" ? (
-              <Text style={styles.meta}>
-                You will be redirected to OZOW to pay securely by card or instant EFT at your bank.
-              </Text>
-            ) : null}
+                {paymentMethod === "online_payment" ? (
+                  <Text style={styles.paymentHint}>
+                    You will be redirected to OZOW to pay securely by card or instant EFT.
+                  </Text>
+                ) : null}
 
-            {paymentMethod === "bank_transfer" ? (
-              <View style={styles.bankProofWrap}>
-                <Button mode="outlined" onPress={handleUploadProof} loading={uploadingProof}>
-                  {paymentProofUrl ? "Reupload Proof" : "Upload Proof of Payment"}
-                </Button>
-                {paymentProofUrl ? <Text style={styles.meta}>Proof uploaded</Text> : null}
-              </View>
-            ) : null}
+                {paymentMethod === "bank_transfer" ? (
+                  <View style={styles.bankProofWrap}>
+                    <Button mode="outlined" icon="file-upload-outline" onPress={handleUploadProof} loading={uploadingProof}>
+                      {paymentProofUrl ? "Reupload proof" : "Upload proof of payment"}
+                    </Button>
+                    {paymentProofUrl ? <Text style={styles.paymentHintSuccess}>Proof uploaded</Text> : null}
+                  </View>
+                ) : null}
 
-            {paymentError ? <Text style={styles.errorText}>{paymentError}</Text> : null}
-          </Dialog.Content>
-          <Dialog.Actions>
-            <Button onPress={() => setSelectedOrderForPayment(null)}>Cancel</Button>
+                {paymentError ? <Text style={styles.errorText}>{paymentError}</Text> : null}
+              </Card.Content>
+            </Card>
+          </ScrollView>
+          <View style={[styles.modalFooter, { paddingBottom: footerPaddingBottom }]}>
+            <Button onPress={closePaymentModal} style={styles.footerBtn}>
+              Cancel
+            </Button>
             <Button
               mode="contained"
               buttonColor={theme.colors.primary}
@@ -726,13 +769,13 @@ export function DriverDepotScreen() {
                 !paymentMethod ||
                 (paymentMethod === "bank_transfer" && !paymentProofUrl)
               }
+              style={styles.footerBtnPrimary}
             >
-              Submit Payment
+              Submit payment
             </Button>
-          </Dialog.Actions>
-        </Dialog>
-
-      </Portal>
+          </View>
+        </ModalSafeArea>
+      </Modal>
 
       <Modal
         visible={!!selectedOrderForSignature}
@@ -829,74 +872,11 @@ export function DriverDepotScreen() {
         </ModalSafeArea>
       </Modal>
 
-      <Modal
+      <DepotOrderReceiptModal
+        order={selectedOrderForReceipt}
         visible={!!selectedOrderForReceipt}
-        onRequestClose={() => setSelectedOrderForReceipt(null)}
-        animationType="slide"
-        presentationStyle="fullScreen"
-      >
-        <ModalSafeArea style={styles.modalContainer}>
-          <ModalScreenHeader title="Depot Order Receipt" onClose={() => setSelectedOrderForReceipt(null)} />
-          <View style={styles.receiptHeaderActions}>
-            <Button onPress={handleDownloadReceipt} loading={downloadingReceipt} disabled={downloadingReceipt}>
-              Download
-            </Button>
-          </View>
-          <ScrollView contentContainerStyle={styles.receiptScroll}>
-            <View style={styles.receiptCard}>
-              <Text style={styles.receiptBrand}>Easy Fuel</Text>
-              <Text style={styles.receiptSubTitle}>Fuel Collection Receipt</Text>
-
-              <View style={styles.receiptDivider} />
-
-              <View style={styles.receiptRow}>
-                <Text style={styles.receiptLabel}>Order ID</Text>
-                <Text style={styles.receiptValue}>#{selectedOrderForReceipt?.id?.slice(-8)?.toUpperCase() || "-"}</Text>
-              </View>
-              <View style={styles.receiptRow}>
-                <Text style={styles.receiptLabel}>Depot</Text>
-                <Text style={styles.receiptValue}>{selectedOrderForReceipt?.depots?.name || "-"}</Text>
-              </View>
-              <View style={styles.receiptRow}>
-                <Text style={styles.receiptLabel}>Fuel</Text>
-                <Text style={styles.receiptValue}>
-                  {selectedOrderForReceipt?.fuel_types?.label || selectedOrderForReceipt?.fuelTypes?.label || "-"}
-                </Text>
-              </View>
-              <View style={styles.receiptRow}>
-                <Text style={styles.receiptLabel}>Litres</Text>
-                <Text style={styles.receiptValue}>{selectedOrderForReceipt?.litres || "-"}</Text>
-              </View>
-              <View style={styles.receiptRow}>
-                <Text style={styles.receiptLabel}>Completed</Text>
-                <Text style={styles.receiptValue}>
-                  {selectedOrderForReceipt?.completed_at
-                    ? new Date(selectedOrderForReceipt.completed_at).toLocaleString("en-ZA")
-                    : "-"}
-                </Text>
-              </View>
-
-              <View style={styles.receiptTotalWrap}>
-                <Text style={styles.receiptTotalLabel}>Total Amount</Text>
-                <Text style={styles.receiptTotalValue}>
-                  {formatMoneyFromCents(selectedOrderForReceipt?.total_price_cents || 0)}
-                </Text>
-              </View>
-
-              <Text style={styles.receiptSignatureTitle}>Driver Receipt Signature</Text>
-              {(selectedOrderForReceipt?.delivery_signature_url || "").length > 0 ? (
-                <Image
-                  source={{ uri: toImageUri(selectedOrderForReceipt?.delivery_signature_url) }}
-                  style={styles.receiptSignature}
-                  resizeMode="contain"
-                />
-              ) : (
-                <Text style={styles.meta}>No signature image available.</Text>
-              )}
-            </View>
-          </ScrollView>
-        </ModalSafeArea>
-      </Modal>
+        onClose={() => setSelectedOrderForReceipt(null)}
+      />
     </View>
   );
 }
@@ -939,7 +919,6 @@ const getStyles = (theme: typeof lightTheme) => {
     fontWeight: "700",
     flexShrink: 0,
   },
-  dialog: { maxHeight: "90%" },
   modalContainer: { flex: 1, backgroundColor: theme.colors.background },
   modalHeader: {
     paddingHorizontal: 14,
@@ -956,20 +935,49 @@ const getStyles = (theme: typeof lightTheme) => {
   },
   modalScroll: { padding: 14, paddingBottom: 100 },
   modalCard: p.sectionCard,
+  paymentCard: { marginTop: 12 },
+  summaryRow: { marginTop: 8 },
+  paymentTotalBox: {
+    marginTop: 14,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: theme.colors.surfaceVariant,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  paymentTotalLabel: { color: theme.colors.onSurfaceVariant, fontWeight: "600" },
+  paymentTotalValue: { fontSize: 20, fontWeight: "800", color: theme.colors.primary },
+  paymentSectionTitle: { marginBottom: 10, fontWeight: "700" },
+  paymentMethodList: { gap: 8 },
+  paymentMethodBtn: {
+    borderRadius: buttonBorderRadius,
+    justifyContent: "flex-start",
+  },
+  paymentMethodBtnContent: {
+    justifyContent: "flex-start",
+    paddingVertical: 6,
+  },
+  paymentHint: { marginTop: 12, color: theme.colors.onSurfaceVariant, lineHeight: 20 },
+  paymentHintSuccess: { marginTop: 8, color: theme.colors.primary, fontWeight: "600" },
   modalFooter: {
     position: "absolute",
     left: 0,
     right: 0,
     bottom: 0,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingTop: 10,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    borderTopWidth: 1,
+    gap: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: theme.colors.outline,
     backgroundColor: theme.colors.surface,
   },
+  footerBtn: { minWidth: 100 },
+  footerBtnPrimary: { flex: 1 },
   fieldLabel: { marginTop: 10, marginBottom: 6, color: theme.colors.onSurfaceVariant, fontWeight: "600" },
   menuAnchorContent: { justifyContent: "space-between" },
   inlineFuelPicker: {
@@ -1046,46 +1054,8 @@ const getStyles = (theme: typeof lightTheme) => {
     flex: 1,
     borderRadius: buttonBorderRadius,
   },
-  receiptSignature: {
-    width: "100%",
-    height: 120,
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: theme.colors.outline,
-    borderRadius: 8,
-    backgroundColor: "#FFFFFF",
-  },
-  receiptScroll: { padding: 14, paddingBottom: 30 },
-  receiptCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: theme.colors.outline,
-  },
-  receiptBrand: { fontSize: 22, fontWeight: "700", color: theme.colors.primary },
-  receiptSubTitle: { marginTop: 2, color: theme.colors.onSurfaceVariant },
-  receiptHeaderActions: { flexDirection: "row", alignItems: "center" },
-  receiptDivider: { height: 1, backgroundColor: theme.colors.outline, marginVertical: 10 },
-  receiptRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 8, gap: 10 },
-  receiptLabel: { color: theme.colors.onSurfaceVariant, flex: 1 },
-  receiptValue: { color: "#111827", flex: 1, textAlign: "right", fontWeight: "600" },
-  receiptTotalWrap: {
-    marginTop: 8,
-    padding: 10,
-    borderRadius: 10,
-    backgroundColor: theme.colors.surfaceVariant,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  receiptTotalLabel: { fontWeight: "700", color: theme.colors.onSurfaceVariant },
-  receiptTotalValue: { fontSize: 18, fontWeight: "800", color: theme.colors.primary },
-  receiptSignatureTitle: { marginTop: 12, marginBottom: 8, fontWeight: "700", color: theme.colors.onSurfaceVariant },
   priceHints: { marginTop: 10, gap: 2 },
-  paymentOptions: { marginTop: 12, gap: 4 },
-  radioRow: { flexDirection: "row", alignItems: "center" },
-  bankProofWrap: { marginTop: 10, gap: 6 },
+  bankProofWrap: { marginTop: 12, gap: 8 },
   errorText: p.errorText,
   });
 };

@@ -16,12 +16,11 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as DocumentPicker from "expo-document-picker";
 import * as ExpoLocation from "expo-location";
-import { navigateFromNotificationPayload } from "@/services/notification-navigation";
+import { PortalNotificationsScreen } from "@/features/common/PortalNotificationsScreen";
 import {
   ActivityIndicator,
   Card,
   Chip,
-  Divider,
   IconButton,
   Menu,
   Switch,
@@ -30,9 +29,16 @@ import {
 } from "react-native-paper";
 import { Button } from "@/design/paper-button";
 import { IosDatePickerSheet } from "@/components/IosDatePickerSheet";
+import { KycInlineDocumentRow } from "@/components/KycInlineDocumentRow";
 import { ProfilePhotoPicker } from "@/components/ProfilePhotoPicker";
 import { apiClient } from "@/services/api/client";
-import { openStoredDocument, putFileToUploadUrl, readUploadObjectPath } from "@/lib/files";
+import { downloadStoredDocument, putFileToUploadUrl, readUploadObjectPath } from "@/lib/files";
+import {
+  COMPLIANCE_DOCUMENT_MIME,
+  complianceDocumentDownloadMeta,
+  compliancePdfOnlyError,
+  isCompliancePdfUpload,
+} from "@/lib/compliance-document-upload";
 import { formatMoneyFromCents } from "@/lib/format-currency";
 import { formatSnakeCaseLabel } from "@/lib/format-labels";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
@@ -162,15 +168,6 @@ const KYC_REQUIRED_DOC_TYPES = [
   { docType: "banking_proof", aliases: ["bank_proof"], title: "Banking Proof", required: false },
   { docType: "medical_fitness", aliases: [], title: "Medical Fitness Certificate", required: false },
 ];
-
-type DriverNotification = {
-  id: string;
-  title?: string;
-  message?: string;
-  read?: boolean;
-  created_at?: string;
-  data?: Record<string, unknown> | null;
-};
 
 type DriverPricing = {
   id?: string;
@@ -350,6 +347,7 @@ export function DriverKycDocumentsScreen() {
   const styles = getStyles(theme);
   const queryClient = useQueryClient();
   const [uploadingType, setUploadingType] = useState<string | null>(null);
+  const [downloadingDocType, setDownloadingDocType] = useState<string | null>(null);
   const [idType, setIdType] = useState("");
   const [idNumber, setIdNumber] = useState("");
   const [idIssueCountry, setIdIssueCountry] = useState("");
@@ -567,8 +565,8 @@ export function DriverKycDocumentsScreen() {
       const file = picked.assets[0];
       const mime = (file.mimeType || "").toLowerCase().split(";")[0].trim();
       const name = (file.name || "").toLowerCase();
-      if (mime !== "application/pdf" && !name.endsWith(".pdf")) {
-        Alert.alert("PDF only", "Please upload a PDF document for KYC verification.");
+      if (!isCompliancePdfUpload(mime, name)) {
+        Alert.alert("PDF only", compliancePdfOnlyError());
         return;
       }
       const uploadMeta = (await apiClient.post("/api/objects/upload")).data as { uploadURL: string; objectPath?: string };
@@ -588,7 +586,7 @@ export function DriverKycDocumentsScreen() {
         doc_type: docType,
         title,
         file_path: objectPath,
-        mime_type: "application/pdf",
+        mime_type: COMPLIANCE_DOCUMENT_MIME,
         file_size: file.size || null,
       });
       await queryClient.invalidateQueries({ queryKey: ["/api/driver/documents"] });
@@ -600,18 +598,27 @@ export function DriverKycDocumentsScreen() {
     }
   };
 
-  const openDoc = async (doc?: DriverDocument) => {
+  const downloadDoc = async (doc?: DriverDocument) => {
+    if (!doc?.file_path) return;
+    setDownloadingDocType(doc.doc_type);
+    Alert.alert("Downloading", "Please wait while the document is being downloaded.");
     try {
-      await openStoredDocument(doc?.file_path, {
-        title: doc?.title,
-        mime_type: doc?.mime_type ?? "application/pdf",
-      });
+      await downloadStoredDocument(
+        doc.file_path,
+        complianceDocumentDownloadMeta({
+          title: doc.title,
+          mime_type: doc.mime_type ?? COMPLIANCE_DOCUMENT_MIME,
+        }),
+      );
+      Alert.alert("Download complete", "Your document is ready. Use the menu to save it to your device.");
     } catch (e) {
       const msg =
         (e as { response?: { data?: { error?: string } } })?.response?.data?.error ||
         (e as Error)?.message ||
         "Check your connection and try again.";
-      Alert.alert("Could not open document", msg);
+      Alert.alert("Download failed", msg);
+    } finally {
+      setDownloadingDocType(null);
     }
   };
 
@@ -740,51 +747,42 @@ export function DriverKycDocumentsScreen() {
     );
   };
 
-  const kycDocIcon = (docType: string) => {
-    const map: Record<string, string> = {
-      za_id: "card-account-details-outline",
-      passport: "passport",
-      proof_of_address: "map-marker-outline",
-      drivers_license: "card-text-outline",
-      prdp: "badge-account-horizontal-outline",
-      dangerous_goods_training: "school-outline",
-      criminal_check: "shield-search",
-      banking_proof: "bank-outline",
-      medical_fitness: "heart-pulse",
-    };
-    return map[docType] ?? "file-document-outline";
-  };
-
-  const statusChipStyle = (label: string) => {
-    if (label === "approved") {
-      return {
-        backgroundColor: isDark ? "rgba(34, 197, 94, 0.22)" : "#DCFCE7",
-        textColor: isDark ? "#86EFAC" : "#166534",
-      };
-    }
-    if (label === "rejected") {
-      return {
-        backgroundColor: isDark ? "rgba(239, 68, 68, 0.22)" : "#FEE2E2",
-        textColor: isDark ? "#FCA5A5" : "#991B1B",
-      };
-    }
-    if (label === "draft") {
-      return {
-        backgroundColor: isDark ? "rgba(148, 163, 184, 0.22)" : "#E2E8F0",
-        textColor: isDark ? "#CBD5E1" : "#475569",
-      };
-    }
-    return {
-      backgroundColor: isDark ? "rgba(251, 191, 36, 0.18)" : "#FEF3C7",
-      textColor: isDark ? "#FCD34D" : "#92400E",
-    };
-  };
-
   const kycFormCard = (children: ReactNode) => (
     <Card style={[styles.card, styles.kycFormCard]} mode="contained">
       <Card.Content style={styles.kycFormCardContent}>{children}</Card.Content>
     </Card>
   );
+
+  const isDocDownloading = (docType: string, aliases: string[] = [], uploadedType?: string) =>
+    downloadingDocType === docType ||
+    aliases.includes(downloadingDocType ?? "") ||
+    (uploadedType != null && downloadingDocType === uploadedType);
+
+  const kycDoc = (
+    docType: string,
+    title: string,
+    label?: string,
+    opts?: { aliases?: string[]; optional?: boolean },
+  ) => {
+    const aliases = opts?.aliases ?? [];
+    const uploaded = (docsQuery.data ?? []).find((d) =>
+      ([docType, ...aliases] as string[]).includes(d.doc_type),
+    );
+    return (
+      <KycInlineDocumentRow
+        label={label}
+        docType={docType}
+        title={title}
+        aliases={aliases}
+        optional={opts?.optional}
+        documents={docsQuery.data}
+        uploading={uploadingType === docType}
+        downloading={isDocDownloading(docType, aliases, uploaded?.doc_type)}
+        onUpload={uploadDoc}
+        onDownload={downloadDoc}
+      />
+    );
+  };
 
   return (
     <>
@@ -904,7 +902,7 @@ export function DriverKycDocumentsScreen() {
         Your details
       </Text>
       <Text variant="bodySmall" style={styles.kycBlockHint}>
-        Save as you go. Uploads stay in draft until you submit your KYC package at the bottom.
+        Each section includes its related fields and PDF upload — same layout as the web portal. Save drafts as you go.
       </Text>
 
       {kycFormCard(
@@ -995,6 +993,15 @@ export function DriverKycDocumentsScreen() {
               <TextInput mode="outlined" label="Passport Issue Country" value={idIssueCountry} onChangeText={setIdIssueCountry} style={styles.input} />
             ) : null}
           </View>
+          {idType === "Passport" ? (
+            kycDoc("passport", "Passport", "Passport upload")
+          ) : idType === "SA_ID" ? (
+            kycDoc("za_id", "South African ID", "SA ID upload", { aliases: ["id_document"] })
+          ) : (
+            <Text variant="bodySmall" style={styles.kycBlockHint}>
+              Select an ID type above to upload the matching document.
+            </Text>
+          )}
         </>,
       )}
 
@@ -1018,6 +1025,7 @@ export function DriverKycDocumentsScreen() {
             <TextInput mode="outlined" label="Postal Code" value={postalCode} onChangeText={setPostalCode} style={styles.input} />
             <TextInput mode="outlined" label="Country" value={country} onChangeText={setCountry} style={styles.input} />
           </View>
+          {kycDoc("proof_of_address", "Proof of Address", "Proof of address upload")}
         </>,
       )}
 
@@ -1033,6 +1041,7 @@ export function DriverKycDocumentsScreen() {
             {kycDateRow("licenseIssue", "License issue date *")}
             {kycDateRow("licenseExpiry", "License expiry date *")}
           </View>
+          {kycDoc("drivers_license", "Driver's License", "Driver's licence upload")}
         </>,
       )}
 
@@ -1054,6 +1063,7 @@ export function DriverKycDocumentsScreen() {
               {kycDateRow("prdpExpiry", "PrDP expiry date *")}
             </View>
           ) : null}
+          {prdpRequired ? kycDoc("prdp", "Professional Driving Permit (PrDP-D)", "PrDP upload", { aliases: ["prdp_document"] }) : null}
           <Button
             mode="contained"
             compact
@@ -1088,6 +1098,9 @@ export function DriverKycDocumentsScreen() {
               {kycDateRow("dgExpiry", "Training expiry date (if applicable)")}
             </View>
           ) : null}
+          {dgTrainingRequired
+            ? kycDoc("dangerous_goods_training", "Dangerous Goods Training Certificate", "Training certificate upload")
+            : null}
         </>,
       )}
 
@@ -1107,6 +1120,7 @@ export function DriverKycDocumentsScreen() {
               {kycDateRow("criminal", "Criminal check date *")}
             </View>
           ) : null}
+          {criminalCheckDone ? kycDoc("criminal_check", "Criminal Clearance", "Criminal clearance upload") : null}
         </>,
       )}
 
@@ -1122,6 +1136,8 @@ export function DriverKycDocumentsScreen() {
             <TextInput mode="outlined" label="Account Number" value={accountNumber} onChangeText={setAccountNumber} style={styles.input} />
             <TextInput mode="outlined" label="Branch Code" value={branchCode} onChangeText={setBranchCode} style={styles.input} />
           </View>
+          {kycDoc("banking_proof", "Banking Proof", "Banking proof upload", { aliases: ["bank_proof"], optional: true })}
+          {kycDoc("medical_fitness", "Medical Fitness Certificate", "Medical fitness upload", { optional: true })}
           <Button
             mode="contained"
             compact
@@ -1138,84 +1154,6 @@ export function DriverKycDocumentsScreen() {
         </>,
       )}
 
-      <Divider style={styles.kycDivider} />
-
-      <Text variant="titleMedium" style={styles.kycBlockTitle}>
-        Documents to upload
-      </Text>
-      <Text variant="bodySmall" style={styles.kycBlockHint}>
-        PDF only. Tap upload to attach a PDF from your device.
-      </Text>
-
-      {KYC_REQUIRED_DOC_TYPES.map((def) => {
-        const uploaded = (docsQuery.data ?? []).find((d) =>
-          ([def.docType, ...def.aliases] as string[]).includes(d.doc_type),
-        );
-        const normalizedStatus = (uploaded?.verification_status || "pending").toLowerCase();
-        const statusLabel =
-          normalizedStatus === "verified" || normalizedStatus === "approved"
-            ? "approved"
-            : normalizedStatus === "rejected"
-              ? "rejected"
-              : normalizedStatus === "draft"
-                ? "draft"
-                : "pending";
-        const chip = statusChipStyle(statusLabel);
-        const iconName = kycDocIcon(def.docType);
-        return (
-          <Card key={def.docType} style={[styles.card, styles.kycDocCard]} mode="outlined">
-            <Card.Content style={styles.kycDocCardContent}>
-              <View style={styles.kycDocTopRow}>
-                <View style={[styles.kycDocIconBox, { backgroundColor: isDark ? "rgba(13, 148, 136, 0.14)" : "rgba(13, 148, 136, 0.18)" }]}>
-                  <MaterialCommunityIcons name={iconName as never} size={22} color={theme.colors.primary} />
-                </View>
-                <View style={styles.kycDocTitleCol}>
-                  <Text variant="titleSmall" style={styles.kycDocTitle} numberOfLines={2}>
-                    {def.title}
-                  </Text>
-                  <Text style={styles.kycDocMeta}>{def.required ? "Required for verification" : "Optional"}</Text>
-                  {uploaded?.created_at ? (
-                    <Text style={styles.kycDocMeta}>Uploaded {new Date(uploaded.created_at).toLocaleDateString("en-ZA")}</Text>
-                  ) : (
-                    <Text style={styles.kycDocMetaMuted}>Not uploaded yet</Text>
-                  )}
-                </View>
-                <Chip compact style={{ backgroundColor: chip.backgroundColor }} textStyle={{ color: chip.textColor, fontWeight: "600", fontSize: 11 }}>
-                  {formatSnakeCaseLabel(statusLabel)}
-                </Chip>
-              </View>
-              <View style={styles.kycDocActions}>
-                <Button
-                  mode="outlined"
-                  compact
-                  icon="eye-outline"
-                  onPress={() => uploaded && openDoc(uploaded)}
-                  disabled={!uploaded?.file_path}
-                  style={[styles.kycDocButton, styles.kycDocButtonHalf]}
-                  contentStyle={styles.kycDocButtonContent}
-                  labelStyle={styles.kycDocButtonLabel}
-                >
-                  View
-                </Button>
-                <Button
-                  mode="contained"
-                  compact
-                  icon={uploaded ? "file-replace" : "file-upload-outline"}
-                  buttonColor={theme.colors.primary}
-                  textColor={theme.colors.onPrimary}
-                  loading={uploadingType === def.docType}
-                  onPress={() => uploadDoc(def.docType, def.title)}
-                  style={[styles.kycDocButton, styles.kycDocButtonHalf]}
-                  contentStyle={styles.kycDocButtonContent}
-                  labelStyle={styles.kycDocButtonLabel}
-                >
-                  {uploaded ? "Replace" : "Upload"}
-                </Button>
-              </View>
-            </Card.Content>
-          </Card>
-        );
-      })}
       {(() => {
         const r = kycReadinessQuery.data;
         const canSubmit = Boolean(r?.can_submit ?? r?.canSubmit);
@@ -1291,71 +1229,7 @@ export function DriverKycDocumentsScreen() {
 }
 
 export function DriverNotificationsMenuScreen() {
-  const { user } = useAuth();
-  const mode = useUiThemeStore((state) => state.mode);
-  const theme = mode === "dark" ? darkTheme : lightTheme;
-  const styles = getStyles(theme);
-  const queryClient = useQueryClient();
-  const notificationsQuery = useQuery({
-    queryKey: ["/api/notifications"],
-    queryFn: async () => (await apiClient.get<DriverNotification[]>("/api/notifications")).data ?? [],
-    refetchInterval: 8_000,
-  });
-  const markReadMutation = useMutation({
-    mutationFn: async (id: string) => apiClient.patch(`/api/notifications/${id}/read`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/notifications"] }),
-  });
-  return (
-    <View style={styles.container}>
-      {notificationsQuery.isLoading ? (
-        <View style={styles.center}><ActivityIndicator /></View>
-      ) : (
-        <FlatList
-          data={notificationsQuery.data ?? []}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.content}
-          ListEmptyComponent={<Text style={styles.empty}>No notifications.</Text>}
-          renderItem={({ item }) => (
-            <Pressable
-              onPress={() => {
-                if (!item.read) {
-                  markReadMutation.mutate(item.id);
-                }
-                const payload = {
-                  ...(item.data ?? {}),
-                  notificationId: item.id,
-                };
-                navigateFromNotificationPayload("driver", payload);
-              }}
-            >
-              <Card style={styles.card}>
-                <Card.Content>
-                  <Text variant="titleSmall">{item.title || "Notification"}</Text>
-                  <Text style={styles.meta}>{item.message || "-"}</Text>
-                  <View style={styles.rowBetween}>
-                    <Text style={styles.meta}>{item.created_at ? new Date(item.created_at).toLocaleString("en-ZA") : ""}</Text>
-                    {!item.read ? (
-                      <Button
-                        mode="contained"
-                        buttonColor={theme.colors.primary}
-                        textColor={theme.colors.onPrimary}
-                        onPress={() => markReadMutation.mutate(item.id)}
-                        loading={markReadMutation.isPending}
-                      >
-                        Mark read
-                      </Button>
-                    ) : (
-                      <Chip compact>Read</Chip>
-                    )}
-                  </View>
-                </Card.Content>
-              </Card>
-            </Pressable>
-          )}
-        />
-      )}
-    </View>
-  );
+  return <PortalNotificationsScreen role="driver" />;
 }
 
 export function DriverPricingMenuScreen() {
@@ -1842,31 +1716,5 @@ const getStyles = (theme: typeof lightTheme) => {
     alignItems: "center",
   },
   kycButtonLabel: { fontSize: 13, letterSpacing: 0.1, marginVertical: 0 },
-  kycDocButtonContent: {
-    paddingVertical: 0,
-    paddingHorizontal: 10,
-    minHeight: 32,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  kycDocButtonLabel: { fontSize: 12, marginVertical: 0 },
-  kycDivider: { marginVertical: 8 },
-    kycDocCard: p.listCard,
-  kycDocCardContent: { paddingVertical: 8 },
-  kycDocTopRow: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
-  kycDocIconBox: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  kycDocTitleCol: { flex: 1, minWidth: 0 },
-  kycDocTitle: { fontWeight: "600", color: theme.colors.onSurface },
-  kycDocMeta: { marginTop: 4, fontSize: 12, color: theme.colors.onSurfaceVariant },
-  kycDocMetaMuted: { marginTop: 4, fontSize: 12, color: theme.colors.outline, fontStyle: "italic" },
-  kycDocActions: { flexDirection: "row", gap: 10, marginTop: 16 },
-  kycDocButton: { borderRadius: buttonBorderRadius },
-  kycDocButtonHalf: { flex: 1 },
   });
 };

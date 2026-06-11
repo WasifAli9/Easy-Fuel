@@ -4,7 +4,6 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { SignInScreen } from "@/features/auth/screens/SignInScreen";
 import { useAuth } from "@/contexts/AuthContext";
 import { RootStackParamList, type UserRole } from "@/navigation/types";
-import { RoleTabs } from "@/navigation/RoleTabs";
 import { initializeRoleCapabilities } from "@/services/mobile-capabilities";
 import { DriverNavigator } from "@/navigation/DriverNavigator";
 import { SupplierNavigator } from "@/navigation/SupplierNavigator";
@@ -14,7 +13,11 @@ import { darkTheme, lightTheme } from "@/design/theme";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-const MOBILE_APP_ROLES: readonly UserRole[] = ["customer", "driver", "supplier", "company"];
+const MOBILE_APP_ROLES: readonly UserRole[] = ["customer", "driver", "supplier"];
+
+function isSupportedMobileRole(role: string | null | undefined): role is UserRole {
+  return !!role && (MOBILE_APP_ROLES as readonly string[]).includes(role);
+}
 
 function SplashScreen() {
   return (
@@ -31,8 +34,8 @@ export function RootNavigator() {
 
   useEffect(() => {
     const role = user?.role;
-    if (role && role !== "admin" && (MOBILE_APP_ROLES as readonly string[]).includes(role)) {
-      void initializeRoleCapabilities(role as UserRole).catch(() => {
+    if (isSupportedMobileRole(role)) {
+      void initializeRoleCapabilities(role).catch(() => {
         // Capability initialization failures should not block core app access.
       });
     }
@@ -43,17 +46,16 @@ export function RootNavigator() {
   }
 
   const role = user?.role ?? null;
+  const signedIn = !!user && isSupportedMobileRole(role);
 
   return (
     <Stack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: canvasBg } }}>
-      {!user ? (
+      {!signedIn ? (
         <Stack.Screen name="AuthSignIn" component={SignInScreen} />
       ) : role === "driver" ? (
         <Stack.Screen name="DriverHome" component={DriverNavigator} />
       ) : role === "supplier" ? (
         <Stack.Screen name="SupplierHome" component={SupplierNavigator} />
-      ) : role === "company" ? (
-        <Stack.Screen name="CompanyHome" component={RoleTabs} />
       ) : (
         <Stack.Screen name="CustomerRoot" component={CustomerNavigator} />
       )}

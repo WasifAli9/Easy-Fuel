@@ -13,6 +13,11 @@ import { normalizeFilePath, cn } from "@/lib/utils";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
 import { extractUploadObjectPath } from "@/lib/upload-object-path";
+import {
+  COMPLIANCE_DOCUMENT_MIME,
+  compliancePdfOnlyError,
+  isCompliancePdfUpload,
+} from "@/lib/compliance-document-upload";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -143,6 +148,15 @@ export function DriverVehicleManager() {
     if (!result.successful || result.successful.length === 0) return;
     
     const uploadedFile = result.successful[0];
+    const uploadedMime = String(uploadedFile.type || "").toLowerCase().split(";")[0].trim();
+    if (!isCompliancePdfUpload(uploadedMime, uploadedFile.name)) {
+      toast({
+        title: "PDF only",
+        description: compliancePdfOnlyError(),
+        variant: "destructive",
+      });
+      return;
+    }
     const documentURL = extractUploadObjectPath(uploadedFile);
     if (!documentURL) {
       toast({
@@ -164,7 +178,7 @@ export function DriverVehicleManager() {
         title: title || uploadedFile.name,
         file_path: objectPath,
         file_size: uploadedFile.size,
-        mime_type: uploadedFile.type,
+        mime_type: COMPLIANCE_DOCUMENT_MIME,
       });
       
       const newDocument = await documentResponse.json();
@@ -1087,7 +1101,7 @@ export function DriverVehicleManager() {
                           <ObjectUploader
                             onGetUploadParameters={getUploadURL}
                             onComplete={(result) => handleVehicleDocumentUpload(doc.docType, doc.title, result)}
-                            allowedFileTypes={["application/pdf", "image/*"]}
+                            allowedFileTypes={["application/pdf"]}
                             maxFileSize={10485760}
                             buttonVariant="outline"
                             buttonSize="sm"
@@ -1101,7 +1115,7 @@ export function DriverVehicleManager() {
                       <ObjectUploader
                         onGetUploadParameters={getUploadURL}
                         onComplete={(result) => handleVehicleDocumentUpload(doc.docType, doc.title, result)}
-                        allowedFileTypes={["application/pdf", "image/*"]}
+                        allowedFileTypes={["application/pdf"]}
                         maxFileSize={10485760}
                         buttonVariant="default"
                       >

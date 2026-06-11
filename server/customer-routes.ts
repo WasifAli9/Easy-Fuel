@@ -1045,13 +1045,30 @@ router.post("/orders", async (req, res) => {
       state: newOrder.state,
     });
 
+    const orderFuelTypeId = (newOrder as { fuelTypeId?: string; fuel_type_id?: string }).fuelTypeId
+      ?? (newOrder as { fuel_type_id?: string }).fuel_type_id;
+    const orderFuelLabelRow = orderFuelTypeId
+      ? (
+          await db
+            .select({ label: fuelTypes.label })
+            .from(fuelTypes)
+            .where(eq(fuelTypes.id, orderFuelTypeId))
+            .limit(1)
+        )[0]
+      : null;
+    await orderNotifications.onCreate(
+      user.id,
+      newOrder.id,
+      orderFuelLabelRow?.label || "Fuel",
+      litresNum,
+    );
+
     // No longer notifying suppliers about customer orders
     // Suppliers only interact with drivers through depot orders
 
     // Create dispatch offers for drivers IMMEDIATELY (wait for completion)
     // This ensures drivers are available when customer views the order
     try {
-      const orderFuelTypeId = (newOrder as any).fuelTypeId ?? (newOrder as any).fuel_type_id;
       if (!orderFuelTypeId) {
         console.warn(`[createDispatchOffers] Order ${newOrder.id}: missing fuel type id on created order payload`);
       }
@@ -1230,6 +1247,8 @@ router.delete("/orders/:id", async (req, res) => {
       orderId: orderId,
       state: cancelledOrder.state,
     });
+
+    await orderNotifications.onCancelled(user.id, orderId, "Cancelled by customer");
 
     res.json(cancelledOrder);
   } catch (error: any) {

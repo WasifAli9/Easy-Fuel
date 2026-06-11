@@ -38,6 +38,13 @@ import { ObjectUploader } from "@/components/ObjectUploader";
 import { getAuthHeaders } from "@/lib/auth-headers";
 import { extractUploadObjectPath } from "@/lib/upload-object-path";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { downloadStoredDocument } from "@/lib/download-document";
+import {
+  COMPLIANCE_DOCUMENT_MIME,
+  complianceDocumentDownloadMeta,
+  compliancePdfOnlyError,
+  isCompliancePdfUpload,
+} from "@/lib/compliance-document-upload";
 import { normalizeFilePath } from "@/lib/utils";
 import { normalizeDocuments } from "@/lib/document-normalize";
 import { ChevronRight } from "lucide-react";
@@ -383,6 +390,36 @@ export default function SupplierProfile() {
     },
   });
 
+  const downloadComplianceDocument = async (doc: {
+    file_path: string;
+    title?: string;
+    mime_type?: string | null;
+  }) => {
+    toast({
+      title: "Downloading",
+      description: "Please wait while the document is being downloaded.",
+    });
+    try {
+      await downloadStoredDocument(
+        doc.file_path,
+        complianceDocumentDownloadMeta({
+          title: doc.title,
+          mime_type: doc.mime_type ?? COMPLIANCE_DOCUMENT_MIME,
+        }),
+      );
+      toast({
+        title: "Download complete",
+        description: "Your document has been saved to your device.",
+      });
+    } catch (error) {
+      toast({
+        title: "Download failed",
+        description: error instanceof Error ? error.message : "Could not download document",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleDocumentUpload = async (
     docType: string,
     title: string,
@@ -391,6 +428,15 @@ export default function SupplierProfile() {
     if (!result.successful || result.successful.length === 0) return;
     
     const uploadedFile = result.successful[0];
+    const uploadedMime = String(uploadedFile.type || "").toLowerCase().split(";")[0].trim();
+    if (!isCompliancePdfUpload(uploadedMime, uploadedFile.name)) {
+      toast({
+        title: "PDF only",
+        description: compliancePdfOnlyError(),
+        variant: "destructive",
+      });
+      return;
+    }
     const documentURL = extractUploadObjectPath(uploadedFile);
     if (!documentURL) {
       toast({
@@ -411,7 +457,7 @@ export default function SupplierProfile() {
         title: title || uploadedFile.name,
         file_path: objectPath,
         file_size: uploadedFile.size,
-        mime_type: uploadedFile.type,
+        mime_type: COMPLIANCE_DOCUMENT_MIME,
       });
       
       queryClient.invalidateQueries({ queryKey: ["/api/supplier/documents"] });
@@ -1092,25 +1138,14 @@ export default function SupplierProfile() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => {
-                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
-                                    if (normalizedPath) {
-                                      window.open(normalizedPath, "_blank");
-                                    } else {
-                                      toast({
-                                        title: "Error",
-                                        description: "Document file path is missing or invalid",
-                                        variant: "destructive",
-                                      });
-                                    }
-                                  }}
+                                  onClick={() => downloadComplianceDocument(existingDoc)}
                                 >
-                                  View Document
+                                  Download
                                 </Button>
                                 <ObjectUploader
                                   onGetUploadParameters={getUploadURL}
                                   onComplete={(result) => handleDocumentUpload("cipc_certificate", "CIPC Certificate", result)}
-                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  allowedFileTypes={["application/pdf"]}
                                   maxFileSize={10485760}
                                   buttonVariant="outline"
                                   buttonSize="sm"
@@ -1123,7 +1158,7 @@ export default function SupplierProfile() {
                             <ObjectUploader
                               onGetUploadParameters={getUploadURL}
                               onComplete={(result) => handleDocumentUpload("cipc_certificate", "CIPC Certificate", result)}
-                              allowedFileTypes={["application/pdf", "image/*"]}
+                              allowedFileTypes={["application/pdf"]}
                               maxFileSize={10485760}
                               buttonVariant="default"
                             >
@@ -1171,25 +1206,14 @@ export default function SupplierProfile() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => {
-                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
-                                    if (normalizedPath) {
-                                      window.open(normalizedPath, "_blank");
-                                    } else {
-                                      toast({
-                                        title: "Error",
-                                        description: "Document file path is missing or invalid",
-                                        variant: "destructive",
-                                      });
-                                    }
-                                  }}
+                                  onClick={() => downloadComplianceDocument(existingDoc)}
                                 >
-                                  View Document
+                                  Download
                                 </Button>
                                 <ObjectUploader
                                   onGetUploadParameters={getUploadURL}
                                   onComplete={(result) => handleDocumentUpload("vat_certificate", "VAT Certificate", result)}
-                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  allowedFileTypes={["application/pdf"]}
                                   maxFileSize={10485760}
                                   buttonVariant="outline"
                                   buttonSize="sm"
@@ -1202,7 +1226,7 @@ export default function SupplierProfile() {
                             <ObjectUploader
                               onGetUploadParameters={getUploadURL}
                               onComplete={(result) => handleDocumentUpload("vat_certificate", "VAT Certificate", result)}
-                              allowedFileTypes={["application/pdf", "image/*"]}
+                              allowedFileTypes={["application/pdf"]}
                               maxFileSize={10485760}
                               buttonVariant="default"
                             >
@@ -1266,25 +1290,14 @@ export default function SupplierProfile() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => {
-                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
-                                    if (normalizedPath) {
-                                      window.open(normalizedPath, "_blank");
-                                    } else {
-                                      toast({
-                                        title: "Error",
-                                        description: "Document file path is missing or invalid",
-                                        variant: "destructive",
-                                      });
-                                    }
-                                  }}
+                                  onClick={() => downloadComplianceDocument(existingDoc)}
                                 >
-                                  View Document
+                                  Download
                                 </Button>
                                 <ObjectUploader
                                   onGetUploadParameters={getUploadURL}
                                   onComplete={(result) => handleDocumentUpload("tax_clearance", "SARS Tax Clearance Certificate", result)}
-                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  allowedFileTypes={["application/pdf"]}
                                   maxFileSize={10485760}
                                   buttonVariant="outline"
                                   buttonSize="sm"
@@ -1297,7 +1310,7 @@ export default function SupplierProfile() {
                             <ObjectUploader
                               onGetUploadParameters={getUploadURL}
                               onComplete={(result) => handleDocumentUpload("tax_clearance", "SARS Tax Clearance Certificate", result)}
-                              allowedFileTypes={["application/pdf", "image/*"]}
+                              allowedFileTypes={["application/pdf"]}
                               maxFileSize={10485760}
                               buttonVariant="default"
                             >
@@ -1413,25 +1426,14 @@ export default function SupplierProfile() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => {
-                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
-                                    if (normalizedPath) {
-                                      window.open(normalizedPath, "_blank");
-                                    } else {
-                                      toast({
-                                        title: "Error",
-                                        description: "Document file path is missing or invalid",
-                                        variant: "destructive",
-                                      });
-                                    }
-                                  }}
+                                  onClick={() => downloadComplianceDocument(existingDoc)}
                                 >
-                                  View Document
+                                  Download
                                 </Button>
                                 <ObjectUploader
                                   onGetUploadParameters={getUploadURL}
                                   onComplete={(result) => handleDocumentUpload("dmre_license", "DMRE Wholesale Fuel License", result)}
-                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  allowedFileTypes={["application/pdf"]}
                                   maxFileSize={10485760}
                                   buttonVariant="outline"
                                   buttonSize="sm"
@@ -1444,7 +1446,7 @@ export default function SupplierProfile() {
                             <ObjectUploader
                               onGetUploadParameters={getUploadURL}
                               onComplete={(result) => handleDocumentUpload("dmre_license", "DMRE Wholesale Fuel License", result)}
-                              allowedFileTypes={["application/pdf", "image/*"]}
+                              allowedFileTypes={["application/pdf"]}
                               maxFileSize={10485760}
                               buttonVariant="default"
                             >
@@ -1508,25 +1510,14 @@ export default function SupplierProfile() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => {
-                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
-                                    if (normalizedPath) {
-                                      window.open(normalizedPath, "_blank");
-                                    } else {
-                                      toast({
-                                        title: "Error",
-                                        description: "Document file path is missing or invalid",
-                                        variant: "destructive",
-                                      });
-                                    }
-                                  }}
+                                  onClick={() => downloadComplianceDocument(existingDoc)}
                                 >
-                                  View Document
+                                  Download
                                 </Button>
                                 <ObjectUploader
                                   onGetUploadParameters={getUploadURL}
                                   onComplete={(result) => handleDocumentUpload("fuel_trading_permit", "Fuel Trading Permit", result)}
-                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  allowedFileTypes={["application/pdf"]}
                                   maxFileSize={10485760}
                                   buttonVariant="outline"
                                   buttonSize="sm"
@@ -1539,7 +1530,7 @@ export default function SupplierProfile() {
                             <ObjectUploader
                               onGetUploadParameters={getUploadURL}
                               onComplete={(result) => handleDocumentUpload("fuel_trading_permit", "Fuel Trading Permit", result)}
-                              allowedFileTypes={["application/pdf", "image/*"]}
+                              allowedFileTypes={["application/pdf"]}
                               maxFileSize={10485760}
                               buttonVariant="default"
                             >
@@ -1612,25 +1603,14 @@ export default function SupplierProfile() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => {
-                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
-                                    if (normalizedPath) {
-                                      window.open(normalizedPath, "_blank");
-                                    } else {
-                                      toast({
-                                        title: "Error",
-                                        description: "Document file path is missing or invalid",
-                                        variant: "destructive",
-                                      });
-                                    }
-                                  }}
+                                  onClick={() => downloadComplianceDocument(existingDoc)}
                                 >
-                                  View Document
+                                  Download
                                 </Button>
                                 <ObjectUploader
                                   onGetUploadParameters={getUploadURL}
                                   onComplete={(result) => handleDocumentUpload("environmental_authorisation", "Environmental Authorisation", result)}
-                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  allowedFileTypes={["application/pdf"]}
                                   maxFileSize={10485760}
                                   buttonVariant="outline"
                                   buttonSize="sm"
@@ -1643,7 +1623,7 @@ export default function SupplierProfile() {
                             <ObjectUploader
                               onGetUploadParameters={getUploadURL}
                               onComplete={(result) => handleDocumentUpload("environmental_authorisation", "Environmental Authorisation", result)}
-                              allowedFileTypes={["application/pdf", "image/*"]}
+                              allowedFileTypes={["application/pdf"]}
                               maxFileSize={10485760}
                               buttonVariant="default"
                             >
@@ -1723,25 +1703,14 @@ export default function SupplierProfile() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => {
-                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
-                                    if (normalizedPath) {
-                                      window.open(normalizedPath, "_blank");
-                                    } else {
-                                      toast({
-                                        title: "Error",
-                                        description: "Document file path is missing or invalid",
-                                        variant: "destructive",
-                                      });
-                                    }
-                                  }}
+                                  onClick={() => downloadComplianceDocument(existingDoc)}
                                 >
-                                  View Document
+                                  Download
                                 </Button>
                                 <ObjectUploader
                                   onGetUploadParameters={getUploadURL}
                                   onComplete={(result) => handleDocumentUpload("fire_certificate", "Fire Department Certificate", result)}
-                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  allowedFileTypes={["application/pdf"]}
                                   maxFileSize={10485760}
                                   buttonVariant="outline"
                                   buttonSize="sm"
@@ -1754,7 +1723,7 @@ export default function SupplierProfile() {
                             <ObjectUploader
                               onGetUploadParameters={getUploadURL}
                               onComplete={(result) => handleDocumentUpload("fire_certificate", "Fire Department Certificate", result)}
-                              allowedFileTypes={["application/pdf", "image/*"]}
+                              allowedFileTypes={["application/pdf"]}
                               maxFileSize={10485760}
                               buttonVariant="default"
                             >
@@ -1847,25 +1816,14 @@ export default function SupplierProfile() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => {
-                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
-                                    if (normalizedPath) {
-                                      window.open(normalizedPath, "_blank");
-                                    } else {
-                                      toast({
-                                        title: "Error",
-                                        description: "Document file path is missing or invalid",
-                                        variant: "destructive",
-                                      });
-                                    }
-                                  }}
+                                  onClick={() => downloadComplianceDocument(existingDoc)}
                                 >
-                                  View Document
+                                  Download
                                 </Button>
                                 <ObjectUploader
                                   onGetUploadParameters={getUploadURL}
                                   onComplete={(result) => handleDocumentUpload("spill_certificate", "Spill Certificate", result)}
-                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  allowedFileTypes={["application/pdf"]}
                                   maxFileSize={10485760}
                                   buttonVariant="outline"
                                   buttonSize="sm"
@@ -1878,7 +1836,7 @@ export default function SupplierProfile() {
                             <ObjectUploader
                               onGetUploadParameters={getUploadURL}
                               onComplete={(result) => handleDocumentUpload("spill_certificate", "Spill Certificate", result)}
-                              allowedFileTypes={["application/pdf", "image/*"]}
+                              allowedFileTypes={["application/pdf"]}
                               maxFileSize={10485760}
                               buttonVariant="default"
                             >
@@ -1966,25 +1924,14 @@ export default function SupplierProfile() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => {
-                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
-                                    if (normalizedPath) {
-                                      window.open(normalizedPath, "_blank");
-                                    } else {
-                                      toast({
-                                        title: "Error",
-                                        description: "Document file path is missing or invalid",
-                                        variant: "destructive",
-                                      });
-                                    }
-                                  }}
+                                  onClick={() => downloadComplianceDocument(existingDoc)}
                                 >
-                                  View Document
+                                  Download
                                 </Button>
                                 <ObjectUploader
                                   onGetUploadParameters={getUploadURL}
                                   onComplete={(result) => handleDocumentUpload("sabs_certificate", "SABS Fuel Quality Certificate", result)}
-                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  allowedFileTypes={["application/pdf"]}
                                   maxFileSize={10485760}
                                   buttonVariant="outline"
                                   buttonSize="sm"
@@ -1997,7 +1944,7 @@ export default function SupplierProfile() {
                             <ObjectUploader
                               onGetUploadParameters={getUploadURL}
                               onComplete={(result) => handleDocumentUpload("sabs_certificate", "SABS Fuel Quality Certificate", result)}
-                              allowedFileTypes={["application/pdf", "image/*"]}
+                              allowedFileTypes={["application/pdf"]}
                               maxFileSize={10485760}
                               buttonVariant="default"
                             >
@@ -2075,25 +2022,14 @@ export default function SupplierProfile() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => {
-                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
-                                    if (normalizedPath) {
-                                      window.open(normalizedPath, "_blank");
-                                    } else {
-                                      toast({
-                                        title: "Error",
-                                        description: "Document file path is missing or invalid",
-                                        variant: "destructive",
-                                      });
-                                    }
-                                  }}
+                                  onClick={() => downloadComplianceDocument(existingDoc)}
                                 >
-                                  View Document
+                                  Download
                                 </Button>
                                 <ObjectUploader
                                   onGetUploadParameters={getUploadURL}
                                   onComplete={(result) => handleDocumentUpload("calibration_certificate", "Pump/Meter Calibration Certificate", result)}
-                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  allowedFileTypes={["application/pdf"]}
                                   maxFileSize={10485760}
                                   buttonVariant="outline"
                                   buttonSize="sm"
@@ -2106,7 +2042,7 @@ export default function SupplierProfile() {
                             <ObjectUploader
                               onGetUploadParameters={getUploadURL}
                               onComplete={(result) => handleDocumentUpload("calibration_certificate", "Pump/Meter Calibration Certificate", result)}
-                              allowedFileTypes={["application/pdf", "image/*"]}
+                              allowedFileTypes={["application/pdf"]}
                               maxFileSize={10485760}
                               buttonVariant="default"
                             >
@@ -2210,25 +2146,14 @@ export default function SupplierProfile() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => {
-                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
-                                    if (normalizedPath) {
-                                      window.open(normalizedPath, "_blank");
-                                    } else {
-                                      toast({
-                                        title: "Error",
-                                        description: "Document file path is missing or invalid",
-                                        variant: "destructive",
-                                      });
-                                    }
-                                  }}
+                                  onClick={() => downloadComplianceDocument(existingDoc)}
                                 >
-                                  View Document
+                                  Download
                                 </Button>
                                 <ObjectUploader
                                   onGetUploadParameters={getUploadURL}
                                   onComplete={(result) => handleDocumentUpload("public_liability_insurance", "Public Liability Insurance", result)}
-                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  allowedFileTypes={["application/pdf"]}
                                   maxFileSize={10485760}
                                   buttonVariant="outline"
                                   buttonSize="sm"
@@ -2241,7 +2166,7 @@ export default function SupplierProfile() {
                             <ObjectUploader
                               onGetUploadParameters={getUploadURL}
                               onComplete={(result) => handleDocumentUpload("public_liability_insurance", "Public Liability Insurance", result)}
-                              allowedFileTypes={["application/pdf", "image/*"]}
+                              allowedFileTypes={["application/pdf"]}
                               maxFileSize={10485760}
                               buttonVariant="default"
                             >
@@ -2305,25 +2230,14 @@ export default function SupplierProfile() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => {
-                                    const normalizedPath = normalizeFilePath(existingDoc.file_path);
-                                    if (normalizedPath) {
-                                      window.open(normalizedPath, "_blank");
-                                    } else {
-                                      toast({
-                                        title: "Error",
-                                        description: "Document file path is missing or invalid",
-                                        variant: "destructive",
-                                      });
-                                    }
-                                  }}
+                                  onClick={() => downloadComplianceDocument(existingDoc)}
                                 >
-                                  View Document
+                                  Download
                                 </Button>
                                 <ObjectUploader
                                   onGetUploadParameters={getUploadURL}
                                   onComplete={(result) => handleDocumentUpload("env_liability_insurance", "Environmental Liability Insurance", result)}
-                                  allowedFileTypes={["application/pdf", "image/*"]}
+                                  allowedFileTypes={["application/pdf"]}
                                   maxFileSize={10485760}
                                   buttonVariant="outline"
                                   buttonSize="sm"
@@ -2336,7 +2250,7 @@ export default function SupplierProfile() {
                             <ObjectUploader
                               onGetUploadParameters={getUploadURL}
                               onComplete={(result) => handleDocumentUpload("env_liability_insurance", "Environmental Liability Insurance", result)}
-                              allowedFileTypes={["application/pdf", "image/*"]}
+                              allowedFileTypes={["application/pdf"]}
                               maxFileSize={10485760}
                               buttonVariant="default"
                             >

@@ -4,5 +4,5 @@ import type { UserRole } from "@/navigation/types";
 export type User = {
   id: string;
   email: string;
-  role: UserRole | "admin" | null;
+  role: UserRole | "admin" | "company" | null;
 };

@@ -7,7 +7,15 @@ function toCamelCase(key: string) {
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
+  return (
+    !!value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    !(value instanceof ArrayBuffer) &&
+    !ArrayBuffer.isView(value) &&
+    !(value instanceof Blob) &&
+    !(value instanceof Date)
+  );
 }
 
 /** Mirror web portal: API payloads may use camelCase (Drizzle) or snake_case (legacy). */

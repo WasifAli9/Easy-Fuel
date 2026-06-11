@@ -14,6 +14,7 @@ export type NotificationType =
   | "order_awaiting_payment"
   | "order_paid"
   | "driver_assigned"
+  | "driver_offers_available"
   | "driver_en_route"
   | "driver_arrived"
   | "delivery_started"
@@ -431,6 +432,21 @@ class NotificationService {
       title: "Driver Offer Received",
       message: `${driverName} can deliver in ${eta} for ${currency} ${price.toFixed(2)}`,
       data: { offerId, orderId, driverName, price, currency, eta },
+      priority: "high",
+      requireInteraction: true,
+    });
+  }
+
+  async notifyDriverOffersAvailable(customerId: string, orderId: string, offerCount: number) {
+    return this.createAndSend({
+      userId: customerId,
+      type: "driver_offers_available",
+      title: "Driver Quotes Ready",
+      message:
+        offerCount === 1
+          ? "A driver submitted a quote for your order. Open the app to review."
+          : `${offerCount} drivers submitted quotes for your order. Open the app to review.`,
+      data: { orderId, offerCount },
       priority: "high",
       requireInteraction: true,
     });

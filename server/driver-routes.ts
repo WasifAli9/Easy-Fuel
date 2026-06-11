@@ -15,6 +15,11 @@ import { pushNotificationService } from "./push-service";
 import { cleanupChatForOrder, ensureChatThreadForAssignment } from "./chat-service";
 import { offerNotifications, orderNotifications } from "./notification-helpers";
 import { getDriverComplianceStatus, getVehicleComplianceStatus, canDriverAccessPlatform } from "./compliance-service";
+import {
+  COMPLIANCE_DOCUMENT_MIME,
+  compliancePdfOnlyError,
+  isCompliancePdfUpload,
+} from "@shared/compliance-document-upload";
 import { getDriverMaxRadiusMiles } from "./subscription-service";
 import { vehicleToCamelCase, syncDriverVehicleCapacityLitres } from "./vehicle-utils";
 import { getOpenDispatchOfferExpiry, notifyCustomersDriverPricingChanged } from "./dispatch-service";
@@ -2979,7 +2984,6 @@ router.post("/documents", async (req, res) => {
       .toLowerCase()
       .split(";")[0]
       .trim();
-    const isPdfMime = normalizedMime === "application/pdf";
 
     // Get driver ID
     const { data: driver, error: driverError } = await drizzleAdmin
@@ -3030,9 +3034,9 @@ router.post("/documents", async (req, res) => {
       finalOwnerId = driver.id;
     }
 
-    if (finalOwnerType === "driver" && !isPdfMime) {
+    if ((finalOwnerType === "driver" || finalOwnerType === "vehicle") && !isCompliancePdfUpload(mime_type, file_path)) {
       return res.status(400).json({
-        error: "Driver KYC documents must be PDF files (application/pdf).",
+        error: compliancePdfOnlyError(),
       });
     }
 
@@ -3051,7 +3055,9 @@ router.post("/documents", async (req, res) => {
         title || doc_type,
         file_path,
         file_size || null,
-        finalOwnerType === "driver" ? "application/pdf" : mime_type || null,
+        finalOwnerType === "driver" || finalOwnerType === "vehicle"
+          ? COMPLIANCE_DOCUMENT_MIME
+          : mime_type || null,
         user.id,
         expiry_date || null,
         verificationStatus,
@@ -3648,8 +3654,8 @@ router.post("/depot-orders", checkDriverCompliance, async (req, res) => {
       : 0;
     
     if (availableLitres > 0 && litresNum >= availableLitres) {
-      return res.status(400).json({ 
-        error: `You can only order less than ${availableLitres}L. Available stock: ${availableLitres}L` 
+      return res.status(400).json({
+        error: `Please choose an amount under the available stock (${availableLitres} L).`,
       });
     }
 

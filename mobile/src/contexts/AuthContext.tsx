@@ -12,7 +12,7 @@ import { useSessionStore } from "@/store/session-store";
 const USER_STORAGE_KEY = "easy_fuel_user_json";
 const LAST_LOGIN_EMAIL_KEY = "easy_fuel_last_login_email";
 
-const MOBILE_APP_ROLES: readonly UserRole[] = ["customer", "driver", "supplier", "company"];
+const MOBILE_APP_ROLES: readonly UserRole[] = ["customer", "driver", "supplier"];
 
 function isMobileAppRole(role: string | null | undefined): role is UserRole {
   if (!role) return false;
@@ -62,6 +62,9 @@ async function deleteStorageItem(key: string) {
 function assertPortalUser(u: User): User {
   if (u.role === "admin") {
     throw new Error("Admin accounts are not supported in the mobile app.");
+  }
+  if (u.role === "company") {
+    throw new Error("Company accounts are not supported in the mobile app.");
   }
   if (!isMobileAppRole(u.role)) {
     throw new Error("Unable to resolve account role for this user.");
@@ -200,9 +203,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (msg.includes("Admin accounts")) {
           throw new Error("Administrator sign-in is only available on the web portal, not in this app.");
         }
+        if (msg.includes("Company accounts")) {
+          throw new Error("Company sign-in is only available on the web portal, not in this app.");
+        }
         if (msg.includes("Unable to resolve account role")) {
           throw new Error(
-            "Your account has no app role assigned (customer, driver, supplier, or company). Ask an admin to set your role in the portal, then try again.",
+            "Your account has no app role assigned (customer, driver, or supplier). Ask an admin to set your role in the portal, then try again.",
           );
         }
         throw e;

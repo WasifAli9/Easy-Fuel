@@ -1,7 +1,6 @@
-import { ReactNode, useMemo, useState } from "react";
+import { ReactNode, useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, Modal, Pressable, StyleSheet, View } from "react-native";
 import { ModalSafeArea } from "@/components/ModalSafeArea";
-import { ModalScreenHeader } from "@/components/ModalScreenHeader";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActivityIndicator, Card, Text, TextInput } from "react-native-paper";
 import { Button } from "@/design/paper-button";
@@ -13,7 +12,8 @@ import { getFuelPortalTokens } from "@/design/fuel-portal-tokens";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
-import { downloadAndShareSupplierInvoicePdf } from "@/features/supplier/supplierInvoicePdf";
+import { useNotificationDeepLinkStore } from "@/store/notification-deep-link-store";
+import { DepotOrderReceiptModal } from "@/components/DepotOrderReceiptModal";
 import { SupplierDepotOrderDetailModal } from "@/features/supplier/SupplierDepotOrderDetailModal";
 import {
   formatOrderStatusLabel,
@@ -39,7 +39,6 @@ export function SupplierDepotOrdersPanel({ listHeader, listChrome = "default" }:
   const queryClient = useQueryClient();
   const [rejectReason, setRejectReason] = useState<Record<string, string>>({});
   const [receiptOrder, setReceiptOrder] = useState<SupplierDepotOrder | null>(null);
-  const [receiptPdfLoading, setReceiptPdfLoading] = useState(false);
   const [detailOrder, setDetailOrder] = useState<SupplierDepotOrder | null>(null);
   const [showAllOrders, setShowAllOrders] = useState(false);
 
@@ -93,6 +92,27 @@ export function SupplierDepotOrdersPanel({ listHeader, listChrome = "default" }:
     },
     onError: (e) => Alert.alert("Error", mutationErrorMessage(e)),
   });
+
+  const consumeDeepLink = useNotificationDeepLinkStore((s) => s.consume);
+
+  useEffect(() => {
+    const link = useNotificationDeepLinkStore.getState().pending;
+    const targetId = link?.depotOrderId ?? (link?.openDepotOrders ? link.orderId : undefined);
+    if (!targetId) return;
+    if (!ordersQuery.isSuccess) return;
+
+    const match = orders.find((o) => o.id === targetId);
+    if (!match) return;
+
+    const consumed = consumeDeepLink();
+    const consumedId = consumed?.depotOrderId ?? consumed?.orderId;
+    if (!consumedId) return;
+
+    const resolved = orders.find((o) => o.id === consumedId);
+    if (resolved) {
+      setDetailOrder(resolved);
+    }
+  }, [orders, ordersQuery.isSuccess, consumeDeepLink]);
 
   const openOrderDetail = (order: SupplierDepotOrder) => setDetailOrder(order);
 
@@ -163,14 +183,21 @@ export function SupplierDepotOrdersPanel({ listHeader, listChrome = "default" }:
               <View style={styles.actions} onStartShouldSetResponder={() => true}>
                 <Button
                   mode="contained"
-                  buttonColor={theme.colors.primary}
-                  textColor={theme.colors.onPrimary}
+                  buttonColor={t.accentPositiveStrong}
+                  textColor="#FFFFFF"
+                  style={styles.offerActionBtn}
+                  icon="check-circle-outline"
                   onPress={() => acceptMutation.mutate(item.id)}
                   loading={acceptMutation.isPending}
                 >
                   Accept
                 </Button>
                 <Button
+                  mode="contained"
+                  buttonColor={theme.colors.error}
+                  textColor={theme.colors.onError}
+                  style={styles.offerActionBtn}
+                  icon="close-circle-outline"
                   onPress={() =>
                     rejectMutation.mutate({ orderId: item.id, reason: rejectReason[item.id] || undefined })
                   }
@@ -230,34 +257,17 @@ export function SupplierDepotOrdersPanel({ listHeader, listChrome = "default" }:
               </View>
             ) : null}
             {item.status === "completed" ? (
-              <View style={styles.dualActions} onStartShouldSetResponder={() => true}>
+              <View style={styles.singleAction} onStartShouldSetResponder={() => true}>
                 <Button
                   mode="contained"
-                  buttonColor={t.brandText}
-                  textColor="#FFFFFF"
-                  icon="download-outline"
-                  style={styles.actionBtn}
+                  buttonColor={theme.colors.primary}
+                  textColor={theme.colors.onPrimary}
+                  icon="receipt-text-outline"
+                  style={styles.actionBtnFull}
                   contentStyle={styles.actionBtnContent}
-                  onPress={async () => {
-                    try {
-                      await downloadAndShareSupplierInvoicePdf(item.id);
-                    } catch (e) {
-                      Alert.alert("PDF", mutationErrorMessage(e));
-                    }
-                  }}
-                >
-                  Download PDF
-                </Button>
-                <Button
-                  mode="outlined"
-                  textColor={theme.colors.primary}
-                  theme={{ colors: { outline: theme.colors.primary } }}
-                  style={styles.actionBtn}
-                  contentStyle={styles.actionBtnContent}
-                  icon="receipt"
                   onPress={() => setReceiptOrder(item)}
                 >
-                  Receipt
+                  View receipt
                 </Button>
               </View>
             ) : null}
@@ -319,48 +329,12 @@ export function SupplierDepotOrdersPanel({ listHeader, listChrome = "default" }:
         </ModalSafeArea>
       </Modal>
 
-      <Modal visible={!!receiptOrder} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setReceiptOrder(null)}>
-        <ModalSafeArea style={styles.receiptModal}>
-          <ModalScreenHeader title="Receipt" onClose={() => setReceiptOrder(null)} />
-          {receiptOrder ? (
-            <View style={styles.receiptBody}>
-              <Text style={styles.meta}>Order #{receiptOrder.id.slice(0, 8).toUpperCase()}</Text>
-              <Text style={styles.meta}>
-                {receiptOrder.depots?.name ?? "Depot"} · {receiptOrder.fuel_types?.label ?? "Fuel"}
-              </Text>
-              <Text style={styles.meta}>
-                Driver: {getDriverDisplayName(receiptOrder)} · {receiptOrder.litres ?? 0} L
-              </Text>
-              <Text style={styles.metaStrong}>
-                Total {formatMoneyFromCents(receiptOrder.total_price_cents ?? 0)}
-              </Text>
-              <Text style={styles.meta}>
-                {receiptOrder.created_at ? `Created ${new Date(receiptOrder.created_at).toLocaleString("en-ZA")}` : ""}
-              </Text>
-              <Button
-                mode="contained"
-                buttonColor={theme.colors.primary}
-                textColor={theme.colors.onPrimary}
-                style={styles.receiptDownload}
-                loading={receiptPdfLoading}
-                onPress={async () => {
-                  if (!receiptOrder) return;
-                  setReceiptPdfLoading(true);
-                  try {
-                    await downloadAndShareSupplierInvoicePdf(receiptOrder.id);
-                  } catch (e) {
-                    Alert.alert("PDF", mutationErrorMessage(e));
-                  } finally {
-                    setReceiptPdfLoading(false);
-                  }
-                }}
-              >
-                Download PDF
-              </Button>
-            </View>
-          ) : null}
-        </ModalSafeArea>
-      </Modal>
+      <DepotOrderReceiptModal
+        order={receiptOrder}
+        visible={!!receiptOrder}
+        onClose={() => setReceiptOrder(null)}
+        driverName={receiptOrder ? getDriverDisplayName(receiptOrder) : undefined}
+      />
     </>
   );
 }
@@ -418,13 +392,13 @@ const getStyles = (theme: typeof lightTheme, t: ReturnType<typeof getFuelPortalT
     },
     meta: { marginTop: 6, color: theme.colors.onSurfaceVariant },
     actions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
-    dualActions: { flexDirection: "row", gap: 10, marginTop: 16 },
-    actionBtn: { flex: 1, borderRadius: buttonBorderRadius },
+    offerActionBtn: { flex: 1, borderRadius: buttonBorderRadius },
+    singleAction: { marginTop: 16 },
+    actionBtnFull: { borderRadius: buttonBorderRadius },
     actionBtnContent: { height: 44 },
     input: { ...p.input, marginTop: 8 },
     muted: { ...p.empty, paddingVertical: 8, paddingHorizontal: 16 },
     allOrdersModal: { flex: 1, backgroundColor: theme.colors.background },
-    receiptModal: { flex: 1, backgroundColor: theme.colors.background },
     receiptHeader: {
       flexDirection: "row",
       justifyContent: "space-between",
@@ -434,8 +408,5 @@ const getStyles = (theme: typeof lightTheme, t: ReturnType<typeof getFuelPortalT
       borderBottomColor: theme.colors.outline,
       backgroundColor: theme.colors.surface,
     },
-    receiptBody: { padding: 16, gap: 4 },
-    metaStrong: { marginTop: 8, fontWeight: "700", color: theme.colors.onSurface, fontSize: 18 },
-    receiptDownload: { marginTop: 20 },
   });
 };

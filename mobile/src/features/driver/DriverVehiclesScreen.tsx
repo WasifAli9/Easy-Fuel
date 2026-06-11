@@ -16,7 +16,13 @@ import {
 } from "react-native-paper";
 import { Button } from "@/design/paper-button";
 import { apiClient } from "@/services/api/client";
-import { openStoredDocument, putFileToUploadUrl, readUploadObjectPath } from "@/lib/files";
+import { downloadStoredDocument, putFileToUploadUrl, readUploadObjectPath } from "@/lib/files";
+import {
+  COMPLIANCE_DOCUMENT_MIME,
+  complianceDocumentDownloadMeta,
+  compliancePdfOnlyError,
+  isCompliancePdfUpload,
+} from "@/lib/compliance-document-upload";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { readableType } from "@/design/typography";
@@ -366,13 +372,19 @@ export function DriverVehiclesScreen() {
     setUploadingDocType(docType);
     try {
       const picked = await DocumentPicker.getDocumentAsync({
-        type: ["application/pdf", "image/*"],
+        type: "application/pdf",
         multiple: false,
         copyToCacheDirectory: true,
       });
       if (picked.canceled || !picked.assets?.length) return;
 
       const file = picked.assets[0];
+      const mime = (file.mimeType || "").toLowerCase().split(";")[0].trim();
+      const name = (file.name || "").toLowerCase();
+      if (!isCompliancePdfUpload(mime, name)) {
+        setUploadError(compliancePdfOnlyError());
+        return;
+      }
       const uploadMeta = (await apiClient.post("/api/objects/upload")).data as { uploadURL: string };
       if (!uploadMeta?.uploadURL) {
         throw new Error("Could not get upload URL.");
@@ -382,7 +394,7 @@ export function DriverVehiclesScreen() {
       const uploadResponse = await putFileToUploadUrl(
         uploadMeta.uploadURL,
         fileBlob,
-        file.mimeType || "application/octet-stream",
+        COMPLIANCE_DOCUMENT_MIME,
       );
       if (!uploadResponse.ok) {
         throw new Error("File upload failed.");
@@ -405,7 +417,7 @@ export function DriverVehiclesScreen() {
         title,
         file_path: objectPath,
         file_size: file.size ?? null,
-        mime_type: file.mimeType ?? null,
+        mime_type: COMPLIANCE_DOCUMENT_MIME,
       });
 
       await Promise.all([
@@ -420,12 +432,24 @@ export function DriverVehiclesScreen() {
     }
   };
 
-  const viewVehicleDocument = async (doc: VehicleDocument) => {
+  const downloadVehicleDocument = async (doc: VehicleDocument) => {
     if (!doc.file_path) return;
+    Alert.alert("Downloading", "Please wait while the document is being downloaded.");
     try {
-      await openStoredDocument(doc.file_path);
-    } catch {
-      setUploadError("Could not open document.");
+      await downloadStoredDocument(
+        doc.file_path,
+        complianceDocumentDownloadMeta({
+          title: doc.title,
+          mime_type: doc.mime_type ?? COMPLIANCE_DOCUMENT_MIME,
+        }),
+      );
+      Alert.alert("Download complete", "Your document is ready. Use the menu to save it to your device.");
+    } catch (e) {
+      const msg =
+        (e as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+        (e as Error)?.message ||
+        "Could not download document.";
+      Alert.alert("Download failed", msg);
     }
   };
 
@@ -543,9 +567,9 @@ export function DriverVehiclesScreen() {
                     <Button
                       mode="outlined"
                       disabled={!uploaded?.file_path}
-                      onPress={() => uploaded && viewVehicleDocument(uploaded)}
+                      onPress={() => uploaded && downloadVehicleDocument(uploaded)}
                     >
-                      View
+                      Download
                     </Button>
                     <Button
                       mode="contained-tonal"

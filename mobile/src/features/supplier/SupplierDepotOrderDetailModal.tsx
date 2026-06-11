@@ -9,10 +9,11 @@ import { Button } from "@/design/paper-button";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { apiClient } from "@/services/api/client";
 import { openStoredDocument } from "@/lib/files";
+import { getFuelPortalTokens } from "@/design/fuel-portal-tokens";
 import { getPortalUiStyleDefs } from "@/design/portal-ui-styles";
 import { buttonBorderRadius, darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
-import { downloadAndShareSupplierInvoicePdf } from "@/features/supplier/supplierInvoicePdf";
+import { DepotOrderReceiptModal } from "@/components/DepotOrderReceiptModal";
 import {
   formatOrderStatusLabel,
   fuelIconName,
@@ -30,10 +31,12 @@ type SupplierDepotOrderDetailModalProps = {
 export function SupplierDepotOrderDetailModal({ order, visible, onDismiss }: SupplierDepotOrderDetailModalProps) {
   const mode = useUiThemeStore((s) => s.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
+  const isDark = mode === "dark";
+  const t = getFuelPortalTokens(theme, isDark);
   const styles = getStyles(theme);
   const queryClient = useQueryClient();
   const [rejectReason, setRejectReason] = useState("");
-  const [pdfLoading, setPdfLoading] = useState(false);
+  const [receiptOpen, setReceiptOpen] = useState(false);
 
   const invalidate = async () => {
     await queryClient.invalidateQueries({ queryKey: ["/api/supplier/driver-depot-orders"] });
@@ -117,6 +120,7 @@ export function SupplierDepotOrderDetailModal({ order, visible, onDismiss }: Sup
   };
 
   return (
+    <>
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onDismiss}>
       <ModalSafeArea style={styles.safe}>
         <ModalScreenHeader title={`Order #${order.id.slice(0, 8)}`} onClose={onDismiss} />
@@ -154,16 +158,32 @@ export function SupplierDepotOrderDetailModal({ order, visible, onDismiss }: Sup
 
           {order.status === "pending" ? (
             <View style={styles.actions}>
-              <Button
-                mode="contained"
-                buttonColor={theme.colors.primary}
-                textColor={theme.colors.onPrimary}
-                onPress={() => acceptMutation.mutate(order.id)}
-                loading={acceptMutation.isPending}
-                disabled={isBusy}
-              >
-                Accept order
-              </Button>
+              <View style={styles.offerActionsRow}>
+                <Button
+                  mode="contained"
+                  buttonColor={t.accentPositiveStrong}
+                  textColor="#FFFFFF"
+                  style={styles.offerActionBtn}
+                  icon="check-circle-outline"
+                  onPress={() => acceptMutation.mutate(order.id)}
+                  loading={acceptMutation.isPending}
+                  disabled={isBusy}
+                >
+                  Accept order
+                </Button>
+                <Button
+                  mode="contained"
+                  buttonColor={theme.colors.error}
+                  textColor={theme.colors.onError}
+                  style={styles.offerActionBtn}
+                  icon="close-circle-outline"
+                  onPress={() => rejectMutation.mutate({ orderId: order.id, reason: rejectReason || undefined })}
+                  loading={rejectMutation.isPending}
+                  disabled={isBusy}
+                >
+                  Reject order
+                </Button>
+              </View>
               <TextInput
                 mode="outlined"
                 label="Reject reason (optional)"
@@ -171,13 +191,6 @@ export function SupplierDepotOrderDetailModal({ order, visible, onDismiss }: Sup
                 onChangeText={setRejectReason}
                 style={styles.input}
               />
-              <Button
-                onPress={() => rejectMutation.mutate({ orderId: order.id, reason: rejectReason || undefined })}
-                loading={rejectMutation.isPending}
-                disabled={isBusy}
-              >
-                Reject order
-              </Button>
             </View>
           ) : null}
 
@@ -244,20 +257,10 @@ export function SupplierDepotOrderDetailModal({ order, visible, onDismiss }: Sup
             <View style={styles.actions}>
               <Button
                 mode="contained"
-                icon="download-outline"
-                loading={pdfLoading}
-                onPress={async () => {
-                  setPdfLoading(true);
-                  try {
-                    await downloadAndShareSupplierInvoicePdf(order.id);
-                  } catch (e) {
-                    Alert.alert("PDF", mutationErrorMessage(e));
-                  } finally {
-                    setPdfLoading(false);
-                  }
-                }}
+                icon="receipt-text-outline"
+                onPress={() => setReceiptOpen(true)}
               >
-                Download PDF
+                View receipt
               </Button>
             </View>
           ) : null}
@@ -275,6 +278,13 @@ export function SupplierDepotOrderDetailModal({ order, visible, onDismiss }: Sup
         </ScrollView>
       </ModalSafeArea>
     </Modal>
+    <DepotOrderReceiptModal
+      order={order}
+      visible={receiptOpen}
+      onClose={() => setReceiptOpen(false)}
+      driverName={getDriverDisplayName(order)}
+    />
+    </>
   );
 }
 
@@ -310,6 +320,8 @@ const getStyles = (theme: typeof lightTheme) => {
     meta: { color: theme.colors.onSurfaceVariant, marginTop: 4 },
     actionsTitle: { marginTop: 16, marginBottom: 4, fontWeight: "800" },
     actions: { gap: 10, marginTop: 4 },
+    offerActionsRow: { flexDirection: "row", gap: 8 },
+    offerActionBtn: { flex: 1, borderRadius: buttonBorderRadius },
     input: p.input,
     hint: { color: theme.colors.onSurfaceVariant, lineHeight: 20, marginBottom: 4 },
   });

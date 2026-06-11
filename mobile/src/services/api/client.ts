@@ -29,9 +29,25 @@ function isNetworkishError(error: unknown): boolean {
   );
 }
 
+function shouldNormalizeJsonPayload(data: unknown): boolean {
+  if (data == null) return false;
+  if (typeof data !== "object") return false;
+  if (data instanceof FormData) return false;
+  if (data instanceof URLSearchParams) return false;
+  if (data instanceof Blob) return false;
+  if (data instanceof ArrayBuffer) return false;
+  if (ArrayBuffer.isView(data)) return false;
+  return true;
+}
+
 apiClient.interceptors.request.use(async (config) => {
   config.baseURL = getResolvedApiBaseUrl();
-  if (Platform.OS !== "web") {
+  const wantsBinary =
+    config.responseType === "arraybuffer" ||
+    config.responseType === "blob" ||
+    String(config.headers?.Accept ?? "").includes("application/pdf");
+
+  if (Platform.OS !== "web" && !wantsBinary) {
     config.headers.Accept = "application/json";
   }
 
@@ -54,14 +70,7 @@ apiClient.interceptors.request.use(async (config) => {
   }
 
   const data = config.data;
-  if (
-    data &&
-    typeof data === "object" &&
-    !(data instanceof FormData) &&
-    !(data instanceof URLSearchParams) &&
-    !(data instanceof Blob) &&
-    !(data instanceof ArrayBuffer)
-  ) {
+  if (shouldNormalizeJsonPayload(data)) {
     config.data = withCaseAliasesDeep(data);
   }
 
@@ -70,7 +79,7 @@ apiClient.interceptors.request.use(async (config) => {
 
 apiClient.interceptors.response.use(
   (response) => {
-    if (response.data != null && typeof response.data === "object") {
+    if (shouldNormalizeJsonPayload(response.data)) {
       response.data = withCaseAliasesDeep(response.data);
     }
     return response;
