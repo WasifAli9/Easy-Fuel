@@ -2,7 +2,9 @@ import { Router } from "express";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db, pool } from "./db";
 import { createDrizzleCompat } from "./drizzle-compat";
-import { sendDriverAcceptanceEmail, sendDeliveryCompletionEmail } from "./email-service";
+import { DRIVER_MY_JOB_STATES } from "@shared/driver-job-states";
+import { sendDriverAcceptanceEmail } from "./email-service";
+import { sendDriverAcceptanceEmail } from "./email-service";
 import {
   deliveryAddresses,
   fuelTypes,
@@ -487,16 +489,6 @@ function formatDateTimeForZA(date: string | null | undefined): string {
   });
 }
 
-const deliveryCompletionSchema = z.object({
-  signatureData: z.string().min(20, "Signature data is too short").optional(),
-  signatureName: z
-    .string()
-    .trim()
-    .max(120, "Signature name must be 120 characters or less")
-    .optional()
-    .or(z.literal("")),
-});
-
 /**
  * Helper function to send customer notification email when driver accepts order
  */
@@ -786,12 +778,12 @@ router.get("/stats", async (req, res) => {
 
     const weekStartDate = startOfWeek;
 
-    // Active jobs (assigned / en route / picked up)
+    // Active jobs (assigned through awaiting customer payment)
     const { count: activeJobsCount, error: activeError } = await drizzleAdmin
       .from("orders")
       .select("*", { count: "exact", head: true })
       .eq("assigned_driver_id", driver.id)
-      .in("state", ["assigned", "en_route", "picked_up"]);
+      .in("state", [...DRIVER_MY_JOB_STATES]);
 
     if (activeError) throw activeError;
 
@@ -1005,7 +997,7 @@ router.get("/assigned-orders", async (req, res) => {
         )
       `)
       .eq("assigned_driver_id", driver.id)
-      .in("state", ["assigned", "en_route", "picked_up"])
+      .in("state", [...DRIVER_MY_JOB_STATES])
       .order("created_at", { ascending: false });
 
     if (ordersError) throw ordersError;
@@ -1359,20 +1351,10 @@ router.post("/orders/:orderId/pickup", checkDriverCompliance, async (req, res) =
   }
 });
 
-// Complete delivery with customer signature
+// Complete delivery — marks order awaiting customer payment (no signature)
 router.post("/orders/:orderId/complete", checkDriverCompliance, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
-
-  const parseResult = deliveryCompletionSchema.safeParse(req.body);
-
-  if (!parseResult.success) {
-    const message = parseResult.error.errors[0]?.message || "Invalid request body";
-    return res.status(400).json({ error: message });
-  }
-
-  const { signatureData, signatureName } = parseResult.data;
-  const normalizedSignatureName = signatureName?.trim() ? signatureName.trim() : null;
 
   try {
     const { data: driver, error: driverError } = await drizzleAdmin
@@ -1403,11 +1385,6 @@ router.post("/orders/:orderId/complete", checkDriverCompliance, async (req, res)
       delivered_at: now,
       updated_at: now,
     };
-    if (signatureData) {
-      updatePayload.delivery_signature_data = signatureData;
-      updatePayload.delivery_signature_name = normalizedSignatureName;
-      updatePayload.delivery_signed_at = now;
-    }
 
     const { error: updateError } = await drizzleAdmin
       .from("orders")
@@ -1452,35 +1429,8 @@ router.post("/orders/:orderId/complete", checkDriverCompliance, async (req, res)
     } catch (availabilityError) {
     }
 
-    const orderShortId = updatedOrder.id.substring(0, 8).toUpperCase();
-    const deliveryAddress = formatDeliveryAddress(updatedOrder);
-    const deliveredAtFormatted = formatDateTimeForZA(updatedOrder.delivered_at || now.toISOString());
     const fuelTypeLabel = updatedOrder.fuel_types?.label || "Fuel";
     const litresDisplay = updatedOrder.litres ? String(updatedOrder.litres) : "0";
-
-    // Fetch names/emails
-    let customerProfile: any = null;
-    let driverProfile: any = null;
-
-    if (customerUserId) {
-      const { data } = await drizzleAdmin
-        .from("profiles")
-        .select("full_name")
-        .eq("id", customerUserId)
-        .maybeSingle();
-      customerProfile = data;
-    }
-
-    const { data: driverProfileData } = await drizzleAdmin
-      .from("profiles")
-      .select("full_name, phone")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    driverProfile = driverProfileData;
-
-    const customerName = customerProfile?.full_name || updatedOrder.customers?.company_name || "Customer";
-    const driverName = driverProfile?.full_name || "Driver";
 
     if (customerUserId) {
       await orderNotifications.onDeliveryComplete(
@@ -1502,68 +1452,6 @@ router.post("/orders/:orderId/complete", checkDriverCompliance, async (req, res)
       } catch (payNotifyErr) {
         console.error("[driver complete] payment notification failed:", payNotifyErr);
       }
-    }
-
-    let customerEmail = customerUserId
-      ? await getUserEmail(customerUserId)
-      : null;
-
-    if (!customerEmail) {
-      if (updatedOrder.customers?.company_name) {
-        customerEmail = `${updatedOrder.customers.company_name
-          .toLowerCase()
-          .replace(/\s+/g, ".")}@customer.easyfuel.ai`;
-      } else {
-        customerEmail = "customer@easyfuel.ai";
-      }
-    }
-
-    let driverEmail = await getUserEmail(user.id);
-
-    if (!driverEmail) {
-      driverEmail = `${driverName.toLowerCase().replace(/\s+/g, ".")}@driver.easyfuel.ai`;
-    }
-
-    const emailPromises: Promise<void>[] = [];
-
-    if (customerEmail) {
-      emailPromises.push(
-        sendDeliveryCompletionEmail({
-          toEmail: customerEmail,
-          recipientName: customerName,
-          audience: "customer",
-          orderNumber: orderShortId,
-          fuelType: fuelTypeLabel,
-          litres: litresDisplay,
-          deliveryAddress,
-          deliveredAt: deliveredAtFormatted,
-          driverName,
-          customerName,
-          signatureName: normalizedSignatureName,
-        }).catch(() => {})
-      );
-    }
-
-    if (driverEmail) {
-      emailPromises.push(
-        sendDeliveryCompletionEmail({
-          toEmail: driverEmail,
-          recipientName: driverName,
-          audience: "driver",
-          orderNumber: orderShortId,
-          fuelType: fuelTypeLabel,
-          litres: litresDisplay,
-          deliveryAddress,
-          deliveredAt: deliveredAtFormatted,
-          driverName,
-          customerName,
-          signatureName: normalizedSignatureName,
-        }).catch(() => {})
-      );
-    }
-
-    if (emailPromises.length > 0) {
-      await Promise.all(emailPromises);
     }
 
     res.json({ success: true, state: "awaiting_payment" });

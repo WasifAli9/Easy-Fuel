@@ -12,7 +12,7 @@ import { formatCustomerOrderAddress } from "@/features/customer/customerOrderUti
 import { ModalSafeArea } from "@/components/ModalSafeArea";
 import { ModalScreenHeader } from "@/components/ModalScreenHeader";
 import { useModalLayout } from "@/components/modal-layout";
-import { DeliverySignatureDisplay } from "@/components/DeliverySignatureDisplay";
+import { OrderPaymentDisplay } from "@/components/OrderPaymentDisplay";
 import { OrderDriverLocationMap } from "@/components/OrderDriverLocationMap";
 import { formatMoneyAmount, formatMoneyFromCents } from "@/lib/format-currency";
 import { formatOfferState, formatOrderState } from "@/lib/format-labels";
@@ -208,7 +208,7 @@ export function CustomerOrderDetailModal({
                   {order.created_at ? new Date(order.created_at).toLocaleString("en-ZA") : ""}
                 </Text>
                 {order.state === "delivered" ? (
-                  <DeliverySignatureDisplay order={order as Record<string, unknown>} />
+                  <OrderPaymentDisplay order={order as Record<string, unknown>} />
                 ) : null}
                 {order.state === "awaiting_payment" && !order.paid_at ? (
                   <Button

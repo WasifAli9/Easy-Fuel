@@ -387,7 +387,8 @@ interface DeliveryCompletionEmailParams {
   deliveredAt: string;
   driverName: string;
   customerName: string;
-  signatureName?: string | null;
+  paymentAmount?: string | null;
+  paidAt?: string | null;
 }
 
 /**
@@ -414,11 +415,19 @@ export async function sendDeliveryCompletionEmail(
         ? `We're happy to let you know that your fuel delivery (Order #${params.orderNumber}) has been completed successfully.`
         : `You have successfully completed delivery for Order #${params.orderNumber}.`;
 
-    const signatureBlock =
-      params.signatureName
+    const paymentBlock =
+      params.paymentAmount && params.paidAt
         ? `<div class="info-row">
-              <span class="label">Signed By:</span>
-              <span>${params.signatureName}</span>
+              <span class="label">Payment Amount:</span>
+              <span>${params.paymentAmount}</span>
+            </div>
+            <div class="info-row">
+              <span class="label">Paid At:</span>
+              <span>${params.paidAt}</span>
+            </div>
+            <div class="info-row">
+              <span class="label">Payment Method:</span>
+              <span>Ozow</span>
             </div>`
         : "";
 
@@ -529,7 +538,7 @@ export async function sendDeliveryCompletionEmail(
                 <span>${params.deliveryAddress}</span>
               </div>
 
-              ${signatureBlock}
+              ${paymentBlock}
 
               ${acknowledgement}
 

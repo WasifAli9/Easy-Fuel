@@ -18,9 +18,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { useLocation, Link } from "wouter";
-import { CompleteDeliveryDialog } from "@/components/CompleteDeliveryDialog";
-import { DeliverySignatureProof } from "@/components/DeliverySignatureProof";
+import { isDriverActionRequiredState, isDriverMyJobState } from "@shared/driver-job-states";
+import { OrderPaymentProof } from "@/components/OrderPaymentProof";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -64,8 +63,6 @@ import {
 type DriverTab = "overview" | "assigned" | "vehicles" | "pricing" | "settings" | "history" | "depot-orders" | "available-depots";
 
 export default function DriverDashboard() {
-  const [orderToComplete, setOrderToComplete] = useState<any | null>(null);
-  const [completeDialogOpen, setCompleteDialogOpen] = useState(false);
   const [locationPermissionDialogOpen, setLocationPermissionDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<DriverTab>("overview");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -275,7 +272,7 @@ export default function DriverDashboard() {
         const insurance = v.insurance_expiry || v.insuranceExpiry;
         return [license, roadworthy, insurance].some((d) => d && new Date(d) <= in7);
       }).length;
-  const actionRequiredJobsCount = assignedOrders.filter((o: any) => ["assigned", "en_route", "picked_up"].includes(o.state)).length;
+  const actionRequiredJobsCount = assignedOrders.filter((o: any) => isDriverActionRequiredState(o.state)).length;
   const actionRequiredComplianceCount = documents.filter((d) => {
     const pending = (d.verification_status === "pending" || d.verification_status === "pending_review");
     const expiring7 = d.expiry_date && new Date(d.expiry_date) <= in7 && new Date(d.expiry_date) >= now;
@@ -330,13 +327,13 @@ export default function DriverDashboard() {
       queryClient.setQueryData<any[]>(["/api/driver/assigned-orders"], (old = []) => {
         const exists = old.findIndex((o: any) => o.id === orderId);
         if (exists >= 0) {
-          if (["assigned", "en_route", "picked_up"].includes(orderData.state)) {
+          if (isDriverMyJobState(orderData.state)) {
             const updated = [...old];
             updated[exists] = orderData;
             return updated;
           }
           return old.filter((o: any) => o.id !== orderId);
-        } else if (["assigned", "en_route", "picked_up"].includes(orderData.state)) {
+        } else if (isDriverMyJobState(orderData.state)) {
           return [orderData, ...old];
         }
         return old;
@@ -439,6 +436,32 @@ export default function DriverDashboard() {
     },
   });
 
+  const completeDeliveryMutation = useMutation({
+    mutationFn: async (orderId: string) => {
+      const response = await apiRequest("POST", `/api/driver/orders/${orderId}/complete`, {});
+      return response.json();
+    },
+    onSuccess: async (_data, orderId) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/driver/assigned-orders"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/driver/completed-orders"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/driver/stats"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId] }),
+      ]);
+      toast({
+        title: "Awaiting customer payment",
+        description: "The customer has been notified to pay. This job stays here until payment is complete — you can still chat.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Could not complete delivery",
+        description: error.message || "Failed to complete delivery.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleStartDelivery = (orderId: string) => {
     startDeliveryMutation.mutate(orderId);
   };
@@ -447,9 +470,8 @@ export default function DriverDashboard() {
     pickupDeliveryMutation.mutate(orderId);
   };
 
-  const handleCompleteDelivery = (order: any) => {
-    setOrderToComplete(order);
-    setCompleteDialogOpen(true);
+  const handleCompleteDelivery = (orderId: string) => {
+    completeDeliveryMutation.mutate(orderId);
   };
 
   // No longer needed - drivers don't write offers
@@ -745,10 +767,21 @@ export default function DriverDashboard() {
                                 </Button>
                               )}
                               {order.state === "picked_up" && (
-                                <Button onClick={() => handleCompleteDelivery(order)} variant="default" className="flex items-center gap-2 bg-green-600 hover:bg-green-700" size="sm">
+                                <Button
+                                  onClick={() => handleCompleteDelivery(order.id)}
+                                  variant="default"
+                                  className="flex items-center gap-2 bg-green-600 hover:bg-green-700"
+                                  size="sm"
+                                  disabled={completeDeliveryMutation.isPending}
+                                >
                                   <CheckCircle className="h-4 w-4" />
-                                  Complete Delivery
+                                  {completeDeliveryMutation.isPending ? "Completing…" : "Complete Delivery"}
                                 </Button>
+                              )}
+                              {order.state === "awaiting_payment" && (
+                                <p className="text-sm text-muted-foreground rounded-lg border border-amber-200/80 bg-amber-50/80 px-3 py-2 dark:border-amber-900/50 dark:bg-amber-950/30">
+                                  Waiting for customer payment. Chat stays open until the order is paid.
+                                </p>
                               )}
                             </div>
                             <div className="space-y-4">
@@ -842,7 +875,7 @@ export default function DriverDashboard() {
                       <p className="text-sm text-muted-foreground">No jobs needing action.</p>
                     ) : (
                       <ul className="space-y-2">
-                        {assignedOrders.filter((o: any) => ["assigned", "en_route", "picked_up"].includes(o.state)).slice(0, 5).map((order: any) => (
+                        {assignedOrders.filter((o: any) => isDriverActionRequiredState(o.state)).slice(0, 5).map((order: any) => (
                           <li key={order.id} className="flex items-center justify-between rounded-lg border p-3 text-sm">
                             <span>Order #{order.id.slice(-8)} — {formatOrderState(order.state)}</span>
                             <Badge variant="secondary">{order.state === "assigned" ? "Start delivery" : order.state === "en_route" ? "Mark picked up" : "Complete"}</Badge>
@@ -1419,14 +1452,20 @@ export default function DriverDashboard() {
                               )}
                               {order.state === "picked_up" && (
                                 <Button
-                                  onClick={() => handleCompleteDelivery(order)}
+                                  onClick={() => handleCompleteDelivery(order.id)}
                                   variant="default"
                                   className="flex items-center gap-2 bg-green-600 hover:bg-green-700"
                                   size="sm"
+                                  disabled={completeDeliveryMutation.isPending}
                                 >
                                   <CheckCircle className="h-4 w-4" />
-                                  Complete Delivery
+                                  {completeDeliveryMutation.isPending ? "Completing…" : "Complete Delivery"}
                                 </Button>
+                              )}
+                              {order.state === "awaiting_payment" && (
+                                <p className="text-sm text-muted-foreground rounded-lg border border-amber-200/80 bg-amber-50/80 px-3 py-2 dark:border-amber-900/50 dark:bg-amber-950/30">
+                                  Waiting for customer payment. Chat stays open until the order is paid.
+                                </p>
                               )}
                             </div>
                             <div className="space-y-4">
@@ -1629,7 +1668,7 @@ export default function DriverDashboard() {
                             <p className="font-medium text-xs sm:text-sm">{deliveryAddress}</p>
                           </div>
                         </div>
-                        <DeliverySignatureProof order={order} />
+                        <OrderPaymentProof order={order} />
                       </CardContent>
                     </Card>
                   );
@@ -1643,17 +1682,6 @@ export default function DriverDashboard() {
         </div>
         </main>
       </div>
-
-        <CompleteDeliveryDialog
-          order={orderToComplete}
-          open={completeDialogOpen}
-          onOpenChange={(open) => {
-            setCompleteDialogOpen(open);
-            if (!open) {
-              setOrderToComplete(null);
-            }
-          }}
-        />
 
         {/* Location Permission Dialog */}
         <AlertDialog open={locationPermissionDialogOpen} onOpenChange={setLocationPermissionDialogOpen}>

@@ -17,7 +17,7 @@ import { ModalScreenHeader } from "@/components/ModalScreenHeader";
 import { useModalLayout } from "@/components/modal-layout";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { IconMetaRow } from "@/components/IconMetaRow";
-import { DeliverySignatureDisplay } from "@/components/DeliverySignatureDisplay";
+import { OrderPaymentDisplay } from "@/components/OrderPaymentDisplay";
 import { formatMoneyFromCents } from "@/lib/format-currency";
 import { formatOrderIdShort, formatOrderState } from "@/lib/format-labels";
 
@@ -121,7 +121,7 @@ export function DriverOrdersScreen() {
       });
 
       const nextState = (updatedOrder as any)?.state;
-      if (nextState === "awaiting_payment" || nextState === "delivered") {
+      if (nextState === "delivered") {
         setSelectedOrder(null);
         setChatVisible(false);
       }
@@ -353,7 +353,7 @@ export function DriverOrdersScreen() {
                 </View>
 
                 {selectedOrder.state === "delivered" ? (
-                  <DeliverySignatureDisplay order={selectedOrder} />
+                  <OrderPaymentDisplay order={selectedOrder} />
                 ) : null}
 
                 <View style={styles.modalActions}>
@@ -382,6 +382,7 @@ export function DriverOrdersScreen() {
                     >
                       Mark Picked Up
                     </Button>
+                  ) : null}
                   {selectedOrder.state === "picked_up" ? (
                     <Button
                       mode="contained"
@@ -392,8 +393,13 @@ export function DriverOrdersScreen() {
                       onPress={() => statusMutation.mutate({ action: "complete", orderId: selectedOrder.id })}
                       loading={statusMutation.isPending}
                     >
-                      Confirm & request payment
+                      Complete Delivery
                     </Button>
+                  ) : null}
+                  {selectedOrder.state === "awaiting_payment" ? (
+                    <Text style={styles.awaitingPaymentNote}>
+                      Waiting for customer payment. Chat stays open until the order is paid.
+                    </Text>
                   ) : null}
                 </View>
 
@@ -591,6 +597,17 @@ const getStyles = (theme: typeof lightTheme) => {
   },
   actionRow: {
     gap: 8,
+  },
+  awaitingPaymentNote: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: theme.colors.onSurfaceVariant,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.outline,
+    backgroundColor: theme.colors.surfaceVariant,
   },
   signatureInput: {
     backgroundColor: theme.colors.surface,

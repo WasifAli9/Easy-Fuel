@@ -30,6 +30,117 @@ import {
   PaymentBlockedError,
 } from "./payment-risk-service";
 
+function formatOrderDeliveryAddress(row: {
+  address_street?: string | null;
+  address_city?: string | null;
+  address_province?: string | null;
+  drop_lat?: number | null;
+  drop_lng?: number | null;
+}): string {
+  if (row.address_street || row.address_city || row.address_province) {
+    return [row.address_street, row.address_city, row.address_province].filter(Boolean).join(", ");
+  }
+  if (row.drop_lat != null && row.drop_lng != null) {
+    return `${row.drop_lat}, ${row.drop_lng}`;
+  }
+  return "Address not specified";
+}
+
+function formatDateTimeForZA(date: Date | string | null | undefined): string {
+  if (!date) return "Not specified";
+  return new Date(date).toLocaleString("en-ZA", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Africa/Johannesburg",
+  });
+}
+
+async function sendCustomerOrderPaymentReceiptEmails(
+  orderId: string,
+  paidAt: Date,
+): Promise<void> {
+  try {
+    const { sendDeliveryCompletionEmail } = await import("./email-service");
+    const res = await pool.query(
+      `SELECT o.id, o.litres, o.total_cents, o.delivered_at, o.drop_lat, o.drop_lng,
+              ft.label AS fuel_label,
+              c.company_name, c.user_id AS customer_user_id,
+              cp.full_name AS customer_name, lau_c.email AS customer_email,
+              dp.full_name AS driver_name, lau_d.email AS driver_email,
+              da.address_street, da.address_city, da.address_province
+       FROM orders o
+       LEFT JOIN fuel_types ft ON ft.id = o.fuel_type_id
+       LEFT JOIN customers c ON c.id = o.customer_id
+       LEFT JOIN profiles cp ON cp.id = c.user_id
+       LEFT JOIN local_auth_users lau_c ON lau_c.id = c.user_id
+       LEFT JOIN drivers dr ON dr.id = o.assigned_driver_id
+       LEFT JOIN profiles dp ON dp.id = dr.user_id
+       LEFT JOIN local_auth_users lau_d ON lau_d.id = dr.user_id
+       LEFT JOIN delivery_addresses da ON da.id = o.delivery_address_id
+       WHERE o.id = $1`,
+      [orderId],
+    );
+    const row = res.rows[0];
+    if (!row) return;
+
+    const orderShortId = orderId.substring(0, 8).toUpperCase();
+    const deliveryAddress = formatOrderDeliveryAddress(row);
+    const deliveredAtFormatted = formatDateTimeForZA(row.delivered_at);
+    const paidAtFormatted = formatDateTimeForZA(paidAt);
+    const paymentAmount = `R ${(Number(row.total_cents || 0) / 100).toFixed(2)}`;
+    const fuelTypeLabel = row.fuel_label || "Fuel";
+    const litresDisplay = row.litres ? String(row.litres) : "0";
+    const customerName = row.customer_name || row.company_name || "Customer";
+    const driverName = row.driver_name || "Driver";
+
+    const emailTasks: Promise<void>[] = [];
+
+    if (row.customer_email) {
+      emailTasks.push(
+        sendDeliveryCompletionEmail({
+          toEmail: row.customer_email,
+          recipientName: customerName,
+          audience: "customer",
+          orderNumber: orderShortId,
+          fuelType: fuelTypeLabel,
+          litres: litresDisplay,
+          deliveryAddress,
+          deliveredAt: deliveredAtFormatted,
+          driverName,
+          customerName,
+          paymentAmount,
+          paidAt: paidAtFormatted,
+        }),
+      );
+    }
+
+    if (row.driver_email) {
+      emailTasks.push(
+        sendDeliveryCompletionEmail({
+          toEmail: row.driver_email,
+          recipientName: driverName,
+          audience: "driver",
+          orderNumber: orderShortId,
+          fuelType: fuelTypeLabel,
+          litres: litresDisplay,
+          deliveryAddress,
+          deliveredAt: deliveredAtFormatted,
+          driverName,
+          customerName,
+          paymentAmount,
+          paidAt: paidAtFormatted,
+        }),
+      );
+    }
+
+    if (emailTasks.length > 0) {
+      await Promise.all(emailTasks);
+    }
+  } catch (e) {
+    console.error("[payment] receipt email failed:", e);
+  }
+}
+
 export async function initiateCustomerOrderPayment(
   orderId: string,
   payerUserId: string,
@@ -315,6 +426,7 @@ export async function completePaymentFromWebhook(
         if (cust[0]?.userId) {
           await notificationService.notifyOrderPaid(cust[0].userId, order.id);
         }
+        await sendCustomerOrderPaymentReceiptEmails(order.id, new Date());
         if (order.assignedDriverId) {
           const drv = await pool.query(`SELECT user_id FROM drivers WHERE id = $1`, [
             order.assignedDriverId,

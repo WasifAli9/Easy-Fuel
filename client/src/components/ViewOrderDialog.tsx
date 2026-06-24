@@ -40,7 +40,7 @@ import { OrderChat } from "./OrderChat";
 import { useCurrency } from "@/hooks/use-currency";
 import { cn, formatCurrency, normalizeProfilePhotoUrl } from "@/lib/utils";
 import { useWebSocket } from "@/hooks/useWebSocket";
-import { DeliverySignatureProof } from "@/components/DeliverySignatureProof";
+import { OrderPaymentProof } from "@/components/OrderPaymentProof";
 import { canShowOrderTrackingMap } from "@/lib/order-tracking";
 
 const orderEditSchema = z.object({
@@ -711,7 +711,7 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                     </div>
                   )}
 
-                  {order.state === "delivered" ? <DeliverySignatureProof order={order} /> : null}
+                  {order.state === "delivered" ? <OrderPaymentProof order={order} /> : null}
 
                   <div className="rounded-xl border border-border/60 p-3 space-y-2 bg-muted/20">
                     <p className="text-sm font-medium">Pricing</p>
