@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { KeyboardAvoidingView, Modal, Platform, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
+import { KeyboardAvoidingView, Linking, Modal, Platform, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActivityIndicator, Card, Chip, Divider, Text } from "react-native-paper";
 import { Button } from "@/design/paper-button";
@@ -72,7 +72,7 @@ export function CustomerOrderDetailModal({
   });
 
   const orderState = (orderQuery.data as { state?: string } | undefined)?.state;
-  const awaitingQuotes = orderState === "created" || orderState === "awaiting_payment";
+  const awaitingQuotes = orderState === "created";
   const offersPollMs = useMemo(() => (awaitingQuotes ? 4_000 : 15_000), [awaitingQuotes]);
 
   const offersQuery = useQuery({
@@ -92,7 +92,7 @@ export function CustomerOrderDetailModal({
   useEffect(() => {
     if (!visible || !orderId || !orderQuery.data) return;
     const st = String((orderQuery.data as { state?: string }).state ?? "");
-    if (st === "created" || st === "awaiting_payment") {
+    if (st === "created") {
       void queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId, "offers"] });
     }
   }, [visible, orderId, orderQuery.data, orderQuery.dataUpdatedAt, queryClient]);
@@ -108,11 +108,25 @@ export function CustomerOrderDetailModal({
     },
   });
 
+  const payMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.post<{ paymentUrl: string }>(`/api/orders/${orderId}/pay`, {});
+      return res.data;
+    },
+    onSuccess: async (data) => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId] });
+      if (data?.paymentUrl) {
+        await Linking.openURL(data.paymentUrl);
+      }
+    },
+  });
+
   const order = orderQuery.data as
     | {
         state?: string;
         litres?: string | number;
         total_cents?: number;
+        paid_at?: string | null;
         created_at?: string;
         fuel_types?: { label?: string };
       }
@@ -195,6 +209,22 @@ export function CustomerOrderDetailModal({
                 </Text>
                 {order.state === "delivered" ? (
                   <DeliverySignatureDisplay order={order as Record<string, unknown>} />
+                ) : null}
+                {order.state === "awaiting_payment" && !order.paid_at ? (
+                  <Button
+                    mode="contained"
+                    buttonColor={theme.colors.primary}
+                    textColor={theme.colors.onPrimary}
+                    style={styles.mt}
+                    onPress={() => payMutation.mutate()}
+                    loading={payMutation.isPending}
+                    icon="credit-card-outline"
+                  >
+                    Pay with Ozow
+                  </Button>
+                ) : null}
+                {payMutation.isError ? (
+                  <Text style={styles.error}>{(payMutation.error as Error).message}</Text>
                 ) : null}
               </Card.Content>
             </Card>

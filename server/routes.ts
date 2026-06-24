@@ -10,7 +10,7 @@ import pushRoutes from "./push-routes";
 import locationRoutes from "./location-routes";
 import chatRoutes from "./chat-routes";
 import notificationRoutes from "./notification-routes";
-import { handleOzowSubscriptionWebhook, handleOzowSupplierSubscriptionWebhook } from "./webhooks";
+import { handleOzowPayinWebhook, handleOzowPayoutNotificationWebhook, handleOzowPayoutVerificationWebhook } from "./webhooks";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { ObjectPermission } from "./objectAcl";
 import { websocketService } from "./websocket";
@@ -523,11 +523,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Public webhook: OZOW subscription payment callback (no auth)
-  app.get("/api/webhooks/ozow-subscription", handleOzowSubscriptionWebhook);
-  app.post("/api/webhooks/ozow-subscription", handleOzowSubscriptionWebhook);
-  app.get("/api/webhooks/ozow-supplier-subscription", handleOzowSupplierSubscriptionWebhook);
-  app.post("/api/webhooks/ozow-supplier-subscription", handleOzowSupplierSubscriptionWebhook);
+  app.get("/api/webhooks/ozow-payin", handleOzowPayinWebhook);
+  app.post("/api/webhooks/ozow-payin", handleOzowPayinWebhook);
+  app.get("/api/webhooks/ozow-payout-notification", handleOzowPayoutNotificationWebhook);
+  app.post("/api/webhooks/ozow-payout-notification", handleOzowPayoutNotificationWebhook);
+  app.get("/api/webhooks/ozow-payout-verification", handleOzowPayoutVerificationWebhook);
+  app.post("/api/webhooks/ozow-payout-verification", handleOzowPayoutVerificationWebhook);
 
   // Public route: Get all fuel types (no auth required)
   app.get("/api/fuel-types", async (req, res) => {

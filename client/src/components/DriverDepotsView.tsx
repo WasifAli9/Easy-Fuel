@@ -804,7 +804,6 @@ export function DriverDepotsView({ defaultTab = "orders" }: DriverDepotsViewProp
           open={paymentDialogOpen}
           onOpenChange={setPaymentDialogOpen}
           order={selectedOrderForPayment}
-          supplierBankDetails={{}}
         />
       )}
 

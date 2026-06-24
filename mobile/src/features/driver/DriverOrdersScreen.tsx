@@ -18,7 +18,6 @@ import { useModalLayout } from "@/components/modal-layout";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { IconMetaRow } from "@/components/IconMetaRow";
 import { DeliverySignatureDisplay } from "@/components/DeliverySignatureDisplay";
-import { SignatureCapturePad, type SignatureCapturePadRef } from "@/components/SignatureCapturePad";
 import { formatMoneyFromCents } from "@/lib/format-currency";
 import { formatOrderIdShort, formatOrderState } from "@/lib/format-labels";
 
@@ -68,13 +67,6 @@ export function DriverOrdersScreen() {
   const [segment, setSegment] = useState<"assigned" | "history">("assigned");
   const [selectedOrder, setSelectedOrder] = useState<DriverOrder | null>(null);
   const [chatVisible, setChatVisible] = useState(false);
-  const [signatureName, setSignatureName] = useState("");
-  const [signatureData, setSignatureData] = useState<string | null>(null);
-  const [hasDrawnSignature, setHasDrawnSignature] = useState(false);
-  const [pendingCompleteOrderId, setPendingCompleteOrderId] = useState<string | null>(null);
-  const [signaturePadKey, setSignaturePadKey] = useState(0);
-  const [signatureScrollLocked, setSignatureScrollLocked] = useState(false);
-  const signatureRef = useRef<SignatureCapturePadRef>(null);
   const orderModalScrollRef = useRef<ScrollView>(null);
   const queryClient = useQueryClient();
   const setHideDriverHeader = useUiOverlayStore((state) => state.setHideDriverHeader);
@@ -84,19 +76,7 @@ export function DriverOrdersScreen() {
     return () => setHideDriverHeader(false);
   }, [selectedOrder, setHideDriverHeader]);
 
-  useEffect(() => {
-    if (!selectedOrder || selectedOrder.state !== "picked_up") {
-      setSignatureScrollLocked(false);
-    }
-  }, [selectedOrder?.id, selectedOrder?.state]);
-
   const consumeDeepLink = useNotificationDeepLinkStore((s) => s.consume);
-
-  useEffect(() => {
-    if (!pendingCompleteOrderId || !signatureData) return;
-    statusMutation.mutate({ action: "complete", orderId: pendingCompleteOrderId });
-    setPendingCompleteOrderId(null);
-  }, [pendingCompleteOrderId, signatureData]);
 
   const assignedQuery = useQuery({
     queryKey: ["/api/driver/assigned-orders"],
@@ -129,12 +109,7 @@ export function DriverOrdersScreen() {
   const statusMutation = useMutation({
     mutationFn: async ({ action, orderId }: { action: "start" | "pickup" | "complete"; orderId: string }) => {
       if (action === "complete") {
-        return (
-          await apiClient.post(`/api/driver/orders/${orderId}/complete`, {
-            signatureData: signatureData || `mobile-signature-${Date.now()}-${signatureName || "driver"}`,
-            signatureName: signatureName || "Driver",
-          })
-        ).data as DriverOrder;
+        return (await apiClient.post(`/api/driver/orders/${orderId}/complete`, {})).data as DriverOrder;
       }
       return (await apiClient.post(`/api/driver/orders/${orderId}/${action}`)).data as DriverOrder;
     },
@@ -146,11 +121,9 @@ export function DriverOrdersScreen() {
       });
 
       const nextState = (updatedOrder as any)?.state;
-      if (nextState === "delivered") {
-        setSignatureData(null);
-        setHasDrawnSignature(false);
-        setPendingCompleteOrderId(null);
-        setSignaturePadKey((k) => k + 1);
+      if (nextState === "awaiting_payment" || nextState === "delivered") {
+        setSelectedOrder(null);
+        setChatVisible(false);
       }
 
       await Promise.all([
@@ -310,9 +283,8 @@ export function DriverOrdersScreen() {
                     style={styles.modalScroll}
                     contentContainerStyle={styles.modalScrollContent}
                     keyboardShouldPersistTaps="handled"
-                    keyboardDismissMode={selectedOrder.state === "picked_up" ? "none" : "on-drag"}
-                    automaticallyAdjustKeyboardInsets={selectedOrder.state !== "picked_up"}
-                    scrollEnabled={!signatureScrollLocked}
+                    keyboardDismissMode="on-drag"
+                    automaticallyAdjustKeyboardInsets
                     showsVerticalScrollIndicator={false}
                   >
                 <View style={[styles.statusPill, { backgroundColor: theme.colors.primaryContainer }]}>
@@ -410,6 +382,18 @@ export function DriverOrdersScreen() {
                     >
                       Mark Picked Up
                     </Button>
+                  {selectedOrder.state === "picked_up" ? (
+                    <Button
+                      mode="contained"
+                      buttonColor="#16a34a"
+                      textColor="#ffffff"
+                      style={styles.primaryFullBtn}
+                      contentStyle={styles.primaryFullBtnInner}
+                      onPress={() => statusMutation.mutate({ action: "complete", orderId: selectedOrder.id })}
+                      loading={statusMutation.isPending}
+                    >
+                      Confirm & request payment
+                    </Button>
                   ) : null}
                 </View>
 
@@ -424,63 +408,6 @@ export function DriverOrdersScreen() {
                 </Button>
 
                   </ScrollView>
-
-                  {selectedOrder.state === "picked_up" ? (
-                    <View style={styles.signatureDock}>
-                      <Text style={styles.signatureDockTitle}>Customer sign-off</Text>
-                      <TextInput
-                        mode="outlined"
-                        label="Signature Name"
-                        value={signatureName}
-                        onChangeText={setSignatureName}
-                        style={styles.signatureInput}
-                      />
-                      <Text style={styles.signatureLabel}>Customer Signature *</Text>
-                      <SignatureCapturePad
-                        ref={signatureRef}
-                        padKey={signaturePadKey}
-                        style={[styles.signatureCanvas, { borderColor: theme.colors.primary }]}
-                        onOK={(sig) => setSignatureData(sig)}
-                        onEmpty={() => setSignatureData(null)}
-                        onClear={() => {
-                          setSignatureData(null);
-                          setHasDrawnSignature(false);
-                        }}
-                        onEnd={() => setHasDrawnSignature(true)}
-                        onDrawingStart={() => setSignatureScrollLocked(true)}
-                        onDrawingEnd={() => setSignatureScrollLocked(false)}
-                      />
-                      <Button
-                        mode="outlined"
-                        style={styles.secondaryFullBtn}
-                        onPress={() => {
-                          setSignatureData(null);
-                          setHasDrawnSignature(false);
-                          setPendingCompleteOrderId(null);
-                          setSignaturePadKey((k) => k + 1);
-                          setSignatureScrollLocked(false);
-                        }}
-                      >
-                        Clear Signature
-                      </Button>
-                      <Button
-                        mode="contained"
-                        buttonColor={theme.colors.primary}
-                        textColor={theme.colors.onPrimary}
-                        style={styles.primaryFullBtn}
-                        contentStyle={styles.primaryFullBtnInner}
-                        onPress={() => {
-                          if (!selectedOrder?.id) return;
-                          setPendingCompleteOrderId(selectedOrder.id);
-                          signatureRef.current?.readSignature();
-                        }}
-                        loading={statusMutation.isPending}
-                        disabled={statusMutation.isPending || !hasDrawnSignature}
-                      >
-                        Complete Delivery
-                      </Button>
-                    </View>
-                  ) : null}
 
                   {chatVisible ? (
                     <View style={[styles.modalChatDock, { paddingBottom: footerPaddingBottom }]}>

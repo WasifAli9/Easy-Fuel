@@ -4,6 +4,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import { Icon, divIcon } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { Truck, MapPin } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useWebSocket } from "@/hooks/useWebSocket";
@@ -43,6 +44,36 @@ function RecenterMap({ lat, lng }: { lat: number; lng: number }) {
   useEffect(() => {
     map.setView([lat, lng], map.getZoom());
   }, [lat, lng, map]);
+  return null;
+}
+
+/** Leaflet measures the container on mount; hidden tabs / dialog resize need a refresh. */
+function InvalidateMapSize() {
+  const map = useMap();
+
+  useEffect(() => {
+    const refresh = () => {
+      map.invalidateSize({ animate: false });
+    };
+
+    refresh();
+    const timers = [50, 150, 350, 600].map((ms) => window.setTimeout(refresh, ms));
+    window.addEventListener("resize", refresh);
+
+    const container = map.getContainer().parentElement;
+    let observer: ResizeObserver | undefined;
+    if (container && typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(() => refresh());
+      observer.observe(container);
+    }
+
+    return () => {
+      timers.forEach((id) => window.clearTimeout(id));
+      window.removeEventListener("resize", refresh);
+      observer?.disconnect();
+    };
+  }, [map]);
+
   return null;
 }
 
@@ -114,7 +145,7 @@ export function DriverLocationMap({
 
   if (loading) {
     return (
-      <Card className={className}>
+      <Card className={cn("w-full", className)}>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Truck className="h-5 w-5" />
@@ -135,7 +166,7 @@ export function DriverLocationMap({
     const is404 = (error as any)?.message?.includes("404") || (error as any)?.statusCode === 404;
     if (!is404) {
       return (
-        <Card className={className}>
+        <Card className={cn("w-full", className)}>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Truck className="h-5 w-5" />
@@ -157,7 +188,7 @@ export function DriverLocationMap({
   // If no driver location available yet, show placeholder with message
   if (!driverLocation || !driverLocation.latitude || !driverLocation.longitude) {
     return (
-      <Card className={className}>
+      <Card className={cn("w-full", className)}>
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -177,12 +208,13 @@ export function DriverLocationMap({
               </p>
             </div>
             {deliveryLat && deliveryLng && (
-              <div className="rounded-lg overflow-hidden border" style={{ height: "300px", width: "100%" }}>
+              <div className="rounded-lg overflow-hidden border w-full" style={{ height: "300px", width: "100%" }}>
                 <MapContainer
                   center={[deliveryLat, deliveryLng]}
                   zoom={13}
                   style={{ height: "100%", width: "100%" }}
                 >
+                  <InvalidateMapSize />
                   <TileLayer
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -225,7 +257,7 @@ export function DriverLocationMap({
   }
 
   return (
-    <Card className={className}>
+    <Card className={cn("w-full", className)}>
       <CardHeader>
         <CardTitle className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -244,13 +276,14 @@ export function DriverLocationMap({
             <span>Real-time GPS tracking (updates every 0.5 seconds)</span>
           </div>
 
-          <div className="rounded-lg overflow-hidden border" style={{ height: "400px" }}>
+          <div className="rounded-lg overflow-hidden border w-full" style={{ height: "400px" }}>
             <MapContainer
               center={[centerLat, centerLng]}
               zoom={14}
               style={{ height: "100%", width: "100%" }}
               data-testid="map-driver-location"
             >
+              <InvalidateMapSize />
               <TileLayer
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"

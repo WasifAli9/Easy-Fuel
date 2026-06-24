@@ -136,5 +136,23 @@ process.on('uncaughtException', (error) => {
   setInterval(() => {
     void runExpiringDocumentCheck();
   }, 6 * 60 * 60 * 1000);
+
+  const runPaymentReminders = async () => {
+    try {
+      const { sendUnpaidDeliveryReminders } = await import("./payment-reminder-service");
+      const result = await sendUnpaidDeliveryReminders();
+      if (result.sent > 0) {
+        log(`[payment] sent ${result.sent} unpaid delivery reminder(s)`);
+      }
+    } catch (error) {
+      console.error("[payment] reminder job failed:", error);
+    }
+  };
+  setTimeout(() => {
+    void runPaymentReminders();
+  }, 30_000);
+  setInterval(() => {
+    void runPaymentReminders();
+  }, 12 * 60 * 60 * 1000);
 })();
 

@@ -50,7 +50,6 @@ export function CustomerCreateOrderModal({
   const [vehicleRegistration, setVehicleRegistration] = useState("");
   const [equipmentType, setEquipmentType] = useState("");
   const [tankCapacity, setTankCapacity] = useState("");
-  const [paymentMethodId, setPaymentMethodId] = useState("");
   const [termsAccepted, setTermsAccepted] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
 
@@ -70,12 +69,6 @@ export function CustomerCreateOrderModal({
     queryFn: async () => (await apiClient.get<Address[]>("/api/delivery-addresses")).data ?? [],
     enabled: visible,
   });
-  const paymentMethodsQuery = useQuery({
-    queryKey: ["/api/payment-methods"],
-    queryFn: async () => (await apiClient.get<any[]>("/api/payment-methods")).data ?? [],
-    enabled: visible,
-  });
-
   const createMutation = useMutation({
     mutationFn: async () => {
       const { data } = await apiClient.post("/api/orders", {
@@ -91,7 +84,6 @@ export function CustomerCreateOrderModal({
         vehicleRegistration: vehicleRegistration || null,
         equipmentType: equipmentType || null,
         tankCapacity: tankCapacity || null,
-        paymentMethodId: paymentMethodId || null,
         termsAccepted,
         signatureData: null,
       });
@@ -110,7 +102,6 @@ export function CustomerCreateOrderModal({
 
   const fuelTypes = fuelTypesQuery.data ?? [];
   const addresses = addressesQuery.data ?? [];
-  const paymentMethods = paymentMethodsQuery.data ?? [];
   const selectedFuelLabel = fuelTypes.find((f) => f.id === fuelTypeId)?.label ?? "";
   const selectedAddressLabel =
     addresses.find((a) => a.id === deliveryAddressId)?.label ||
@@ -318,28 +309,6 @@ export function CustomerCreateOrderModal({
               keyboardType="decimal-pad"
               style={styles.input}
             />
-
-            {paymentMethods.length > 0 ? (
-              <>
-                <Text variant="labelLarge" style={styles.mt}>
-                  Payment method (optional)
-                </Text>
-                <View style={styles.chips}>
-                  <Button mode={paymentMethodId === "" ? "contained" : "outlined"} onPress={() => setPaymentMethodId("")}>
-                    None
-                  </Button>
-                  {paymentMethods.map((pm: { id?: string; label?: string }) => (
-                    <Button
-                      key={pm.id ?? "pm"}
-                      mode={paymentMethodId === pm.id ? "contained" : "outlined"}
-                      onPress={() => setPaymentMethodId(pm.id ?? "")}
-                    >
-                      {pm.label || pm.id}
-                    </Button>
-                  ))}
-                </View>
-              </>
-            ) : null}
 
             <View style={styles.termsRow}>
               <Text>I accept the terms and conditions</Text>

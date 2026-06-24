@@ -28,6 +28,14 @@ import { websocketService } from "./websocket";
 import { pushNotificationService } from "./push-service";
 import { ensureChatThreadForAssignment } from "./chat-service";
 import { orderNotifications, offerNotifications } from "./notification-helpers";
+import { calculateCustomerOrderSplit } from "./payment-service";
+import { initiateCustomerOrderPayment, PaymentBlockedError } from "./payment-ledger-service";
+import {
+  assertCustomerCanPlaceOrder,
+  assertCustomerCanAcceptOffer,
+  assertDriverHasBankForPayout,
+  getUnpaidDeliveredOrdersForCustomer,
+} from "./payment-risk-service";
 
 const router = Router();
 
@@ -476,7 +484,7 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
       return res.status(404).json({ error: "Order not found" });
     }
 
-    if (order.state !== "created" && order.state !== "awaiting_payment") {
+    if (order.state !== "created") {
       return res.status(409).json({ error: "Order can no longer accept driver quotes" });
     }
 
@@ -492,6 +500,16 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
 
     if (offer.state !== "pending_customer") {
       return res.status(409).json({ error: "This offer has already been actioned" });
+    }
+
+    try {
+      await assertCustomerCanAcceptOffer(customer.id);
+      await assertDriverHasBankForPayout(offer.driverId);
+    } catch (e) {
+      if (e instanceof PaymentBlockedError) {
+        return res.status(402).json({ error: e.message, code: e.code });
+      }
+      throw e;
     }
 
     const nowIso = new Date().toISOString();
@@ -537,8 +555,9 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
     // Calculate total: (fuel_price_per_liter * litres) + (price_per_km * distance_km)
     const fuelCostCents = Math.round(fuelPricePerLiterCents * litres);
     const deliveryFeeCents = Math.round(pricePerKmCents * distanceKm);
-    const serviceFee = Number(order.serviceFeeCents) || 0;
-    const totalCents = fuelCostCents + deliveryFeeCents + serviceFee;
+    const split = await calculateCustomerOrderSplit(fuelCostCents, deliveryFeeCents);
+    const serviceFeeCents = split.platformFeeCents;
+    const totalCents = split.grossCents;
 
     const { pool } = await import("./db");
     const activeRes = await pool.query(
@@ -566,6 +585,7 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
         confirmedDeliveryTime: offer.proposedDeliveryTime,
         fuelPriceCents: fuelPricePerLiterCents,
         deliveryFeeCents: deliveryFeeCents,
+        serviceFeeCents: serviceFeeCents,
         totalCents: totalCents,
         updatedAt: new Date(nowIso),
       })
@@ -862,7 +882,7 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
         fuelPricePerLiterCents: fuelPricePerLiterCents,
         fuelCostCents,
         deliveryFeeCents,
-        serviceFeeCents: serviceFee,
+        serviceFeeCents,
         totalCents,
         currency: driverCurrency,
       }).catch(() => {
@@ -929,6 +949,15 @@ router.post("/orders", async (req, res) => {
     const customer = await getCustomerByUserId(user.id);
     if (!customer) {
       return res.status(404).json({ error: "Customer profile not found" });
+    }
+
+    try {
+      await assertCustomerCanPlaceOrder(customer.id);
+    } catch (e) {
+      if (e instanceof PaymentBlockedError) {
+        return res.status(402).json({ error: e.message, code: e.code });
+      }
+      throw e;
     }
 
     // Get delivery address details if provided
@@ -1122,8 +1151,8 @@ router.patch("/orders/:id", async (req, res) => {
       return res.status(404).json({ error: "Order not found" });
     }
 
-    // Only allow updates for orders in "created" or "awaiting_payment" state
-    if (!["created", "awaiting_payment"].includes(existingOrder.state)) {
+    // Only allow updates while the order is still open (not yet assigned or delivered)
+    if (existingOrder.state !== "created") {
       return res.status(400).json({ 
         error: "Order cannot be modified in current state" 
       });
@@ -2074,6 +2103,61 @@ router.get("/orders/:orderId/driver-location", async (req, res) => {
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Unpaid delivered orders (pay-after-delivery gate + UI banner)
+router.get("/orders/unpaid-summary", async (req, res) => {
+  const user = (req as any).user;
+  try {
+    const customer = await getCustomerByUserId(user.id);
+    if (!customer) {
+      return res.status(404).json({ error: "Customer profile not found" });
+    }
+    const unpaid = await getUnpaidDeliveredOrdersForCustomer(customer.id);
+    res.json({
+      count: unpaid.length,
+      orders: unpaid.map((o) => ({
+        id: o.id,
+        totalCents: o.totalCents,
+        deliveredAt: o.deliveredAt,
+      })),
+      blocked: unpaid.length > 0,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Initiate Ozow payment after delivery (pay-after-delivery model)
+router.post("/orders/:orderId/pay", async (req, res) => {
+  const user = (req as any).user;
+  const { orderId } = req.params;
+
+  try {
+    const customer = await getCustomerByUserId(user.id);
+    if (!customer) {
+      return res.status(404).json({ error: "Customer profile not found" });
+    }
+
+    const orderRows = await db
+      .select()
+      .from(orders)
+      .where(and(eq(orders.id, orderId), eq(orders.customerId, customer.id)))
+      .limit(1);
+    const order = orderRows[0];
+    if (!order) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    const result = await initiateCustomerOrderPayment(orderId, user.id);
+    res.json(result);
+  } catch (error: any) {
+    console.error("[customer pay]", error);
+    if (error instanceof PaymentBlockedError) {
+      return res.status(402).json({ error: error.message, code: error.code });
+    }
+    res.status(400).json({ error: error.message || "Payment initiation failed" });
   }
 });
 

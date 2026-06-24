@@ -57,6 +57,12 @@ export default function CustomerDashboard() {
     retry: false, // Don't retry on errors
   });
 
+  const { data: unpaidSummary } = useQuery<{ count: number; blocked: boolean }>({
+    queryKey: ["/api/orders/unpaid-summary"],
+    enabled: !loading && !!session?.access_token && !!profile && profile.role === "customer",
+    refetchInterval: 60_000,
+  });
+
   // Ensure orders is always an array (never null/undefined)
   const orders = ordersData || [];
 
@@ -336,6 +342,19 @@ export default function CustomerDashboard() {
                 />
               </div>
             </div>
+
+            {unpaidSummary?.blocked && unpaidSummary.count > 0 ? (
+              <div className="mb-6 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
+                <p className="font-medium text-amber-900 dark:text-amber-100">
+                  Payment required: {unpaidSummary.count} order
+                  {unpaidSummary.count === 1 ? "" : "s"} awaiting payment after delivery.
+                </p>
+                <p className="mt-1 text-muted-foreground">
+                  Pay open deliveries before placing a new order. Open an order and tap{" "}
+                  <strong>Pay with Ozow</strong>.
+                </p>
+              </div>
+            ) : null}
 
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
               <Popover open={filterOpen} onOpenChange={setFilterOpen}>

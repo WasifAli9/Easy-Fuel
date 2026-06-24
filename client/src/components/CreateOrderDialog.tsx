@@ -30,11 +30,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Plus, MapPin, Truck, CreditCard, FileSignature } from "lucide-react";
+import { Plus, MapPin, Truck, FileSignature } from "lucide-react";
 import { AddAddressDialog } from "@/components/AddAddressDialog";
 import { FormDatePicker } from "@/components/FormDatePicker";
 import { SignaturePad } from "@/components/SignaturePad";
@@ -55,7 +54,6 @@ const orderFormSchema = z.object({
   tankCapacity: z.string().optional().refine((val) => !val || (!isNaN(Number(val)) && Number(val) > 0), {
     message: "Tank capacity must be a positive number",
   }),
-  paymentMethodId: z.string().optional(),
   termsAccepted: z.boolean().refine((val) => val === true, {
     message: "You must accept the terms and conditions",
   }),
@@ -84,11 +82,6 @@ export function CreateOrderDialog({ trigger, onOrderCreated }: CreateOrderDialog
     queryKey: ["/api/delivery-addresses"],
   });
 
-  // Fetch payment methods
-  const { data: paymentMethods = [], isLoading: loadingPaymentMethods } = useQuery<any[]>({
-    queryKey: ["/api/payment-methods"],
-  });
-
   const form = useForm<OrderFormValues>({
     resolver: zodResolver(orderFormSchema),
     defaultValues: {
@@ -103,7 +96,6 @@ export function CreateOrderDialog({ trigger, onOrderCreated }: CreateOrderDialog
       vehicleRegistration: "",
       equipmentType: "",
       tankCapacity: "",
-      paymentMethodId: "",
       termsAccepted: false,
     },
   });
@@ -123,7 +115,6 @@ export function CreateOrderDialog({ trigger, onOrderCreated }: CreateOrderDialog
         vehicleRegistration: values.vehicleRegistration || null,
         equipmentType: values.equipmentType || null,
         tankCapacity: values.tankCapacity || null,
-        paymentMethodId: values.paymentMethodId || null,
         termsAccepted: values.termsAccepted,
         signatureData: signatureData || null,
       });
@@ -208,9 +199,9 @@ export function CreateOrderDialog({ trigger, onOrderCreated }: CreateOrderDialog
                   <Truck className="h-4 w-4 mr-1" />
                   Vehicle
                 </TabsTrigger>
-                <TabsTrigger value="payment">
-                  <CreditCard className="h-4 w-4 mr-1" />
-                  Payment
+                <TabsTrigger value="confirm">
+                  <FileSignature className="h-4 w-4 mr-1" />
+                  Confirm
                 </TabsTrigger>
               </TabsList>
 
@@ -481,50 +472,10 @@ export function CreateOrderDialog({ trigger, onOrderCreated }: CreateOrderDialog
                 />
               </TabsContent>
 
-              <TabsContent value="payment" className="space-y-4 mt-4">
-                <FormField
-                  control={form.control}
-                  name="paymentMethodId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Payment Method</FormLabel>
-                      <Select
-                        onValueChange={field.onChange}
-                        defaultValue={field.value}
-                        disabled={loadingPaymentMethods}
-                      >
-                        <FormControl>
-                          <SelectTrigger data-testid="select-payment-method">
-                            <SelectValue placeholder="Select payment method" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {paymentMethods.length === 0 ? (
-                            <div className="p-2 text-sm text-muted-foreground">
-                              No payment methods saved. Add one in your profile settings.
-                            </div>
-                          ) : (
-                            paymentMethods.map((method) => (
-                              <SelectItem
-                                key={method.id}
-                                value={method.id}
-                                data-testid={`option-payment-${method.id}`}
-                              >
-                                {method.label} ({method.method_type})
-                              </SelectItem>
-                            ))
-                          )}
-                        </SelectContent>
-                      </Select>
-                      <FormDescription>
-                        Optional: Select saved payment method or pay later
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <Separator className="my-4" />
+              <TabsContent value="confirm" className="space-y-4 mt-4">
+                <p className="text-sm text-muted-foreground">
+                  Payment is collected after delivery when your order is complete.
+                </p>
 
                 <div className="space-y-4">
                   <div>

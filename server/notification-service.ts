@@ -243,7 +243,7 @@ class NotificationService {
       userId: customerId,
       type: "order_paid",
       title: "Payment Confirmed",
-      message: "Your payment has been confirmed. Looking for available drivers...",
+      message: "Your payment has been confirmed. Thank you!",
       data: { orderId },
     });
   }

@@ -2938,6 +2938,15 @@ router.post("/compliance/documents/:id/reject", async (req, res) => {
 
 // ============== APP SETTINGS ROUTES ==============
 
+router.get("/ozow-status", async (_req, res) => {
+  try {
+    const { getOzowIntegrationDiagnostics } = await import("./payment-risk-service");
+    res.json(getOzowIntegrationDiagnostics());
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get app settings
 router.get("/settings", async (req, res) => {
   try {

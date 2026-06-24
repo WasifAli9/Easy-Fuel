@@ -488,12 +488,7 @@ function formatDateTimeForZA(date: string | null | undefined): string {
 }
 
 const deliveryCompletionSchema = z.object({
-  signatureData: z
-    .string({
-      required_error: "Signature data is required",
-      invalid_type_error: "Signature data must be a string",
-    })
-    .min(20, "Signature data is too short"),
+  signatureData: z.string().min(20, "Signature data is too short").optional(),
   signatureName: z
     .string()
     .trim()
@@ -1403,16 +1398,20 @@ router.post("/orders/:orderId/complete", checkDriverCompliance, async (req, res)
 
     const now = new Date();
 
+    const updatePayload: Record<string, unknown> = {
+      state: "awaiting_payment",
+      delivered_at: now,
+      updated_at: now,
+    };
+    if (signatureData) {
+      updatePayload.delivery_signature_data = signatureData;
+      updatePayload.delivery_signature_name = normalizedSignatureName;
+      updatePayload.delivery_signed_at = now;
+    }
+
     const { error: updateError } = await drizzleAdmin
       .from("orders")
-      .update({
-        state: "delivered",
-        delivered_at: now,
-        delivery_signature_data: signatureData,
-        delivery_signature_name: normalizedSignatureName,
-        delivery_signed_at: now,
-        updated_at: now,
-      })
+      .update(updatePayload)
       .eq("id", orderId)
       .eq("assigned_driver_id", driver.id)
       .eq("state", "picked_up");
@@ -1421,8 +1420,8 @@ router.post("/orders/:orderId/complete", checkDriverCompliance, async (req, res)
 
     const updatedOrder = await fetchOrderForDriver(orderId, driver.id);
 
-    if (!updatedOrder || updatedOrder.state !== "delivered") {
-      return res.status(409).json({ error: "Order could not be marked as delivered. Please retry." });
+    if (!updatedOrder || updatedOrder.state !== "awaiting_payment") {
+      return res.status(409).json({ error: "Order could not be marked as awaiting payment. Please retry." });
     }
 
     // Fetch full updated order data for WebSocket broadcast
@@ -1490,6 +1489,19 @@ router.post("/orders/:orderId/complete", checkDriverCompliance, async (req, res)
         Number(litresDisplay) || 0,
         fuelTypeLabel
       );
+
+      try {
+        const { notificationService } = await import("./notification-service");
+        const totalRands = (Number(updatedOrder.total_cents || 0) / 100).toFixed(2);
+        await notificationService.notifyOrderAwaitingPayment(
+          customerUserId,
+          orderId,
+          Number(totalRands),
+          "ZAR",
+        );
+      } catch (payNotifyErr) {
+        console.error("[driver complete] payment notification failed:", payNotifyErr);
+      }
     }
 
     let customerEmail = customerUserId
@@ -1554,9 +1566,7 @@ router.post("/orders/:orderId/complete", checkDriverCompliance, async (req, res)
       await Promise.all(emailPromises);
     }
 
-    await cleanupChatForOrder(updatedOrder.id);
-
-    res.json({ success: true, state: "delivered" });
+    res.json({ success: true, state: "awaiting_payment" });
   } catch (error: any) {
     res.status(500).json({ error: error.message || "Failed to complete delivery" });
   }
@@ -3879,152 +3889,21 @@ router.post("/depot-orders/:orderId/cancel", async (req, res) => {
 
 // ============== DRIVER DEPOT ORDER PAYMENT & SIGNATURES ==============
 
-// Submit payment for depot order
+// Submit payment for depot order (Ozow online only)
 router.post("/depot-orders/:orderId/payment", checkDriverCompliance, async (req, res) => {
   const user = (req as any).user;
   const { orderId } = req.params;
-  const { paymentMethod, paymentProofUrl } = req.body;
 
   try {
-    if (!paymentMethod || !["bank_transfer", "online_payment", "pay_outside_app"].includes(paymentMethod)) {
-      return res.status(400).json({ error: "Valid payment method is required" });
-    }
-
-    // Get driver ID
-    const { data: driver, error: driverError } = await drizzleAdmin
-      .from("drivers")
-      .select("id")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (driverError) throw driverError;
-    if (!driver) {
-      return res.status(404).json({ error: "Driver profile not found" });
-    }
-
-    const order = await fetchHydratedDriverDepotOrder(orderId, driver.id);
-    if (!order) {
-      return res.status(404).json({ error: "Order not found" });
-    }
-
-    // Only allow payment if status is pending_payment
-    if (order.status !== "pending_payment") {
-      return res.status(400).json({ error: `Order status must be pending_payment. Current: ${order.status}` });
-    }
-
-    // For bank transfer, require proof URL
-    if (paymentMethod === "bank_transfer" && !paymentProofUrl) {
-      return res.status(400).json({ error: "Payment proof URL is required for bank transfer" });
-    }
-
-    // Update order with payment information
-    const updateData: any = {
-      payment_method: paymentMethod,
-      updated_at: new Date(),
-    };
-
-    if (paymentProofUrl) {
-      let normalizedPaymentProofUrl = paymentProofUrl;
-      try {
-        normalizedPaymentProofUrl = uploadUrlToObjectPath(paymentProofUrl);
-      } catch (normalizeError) {
-        console.warn("[driver depot payment] Could not normalize payment proof URL, storing raw value:", normalizeError);
-      }
-      updateData.payment_proof_url = normalizedPaymentProofUrl;
-    }
-
-    // Handle different payment methods
-    if (paymentMethod === "online_payment") {
-      // Online payment: mark as paid, go directly to ready_for_pickup (payment processed immediately)
-      updateData.payment_status = "paid";
-      updateData.status = "ready_for_pickup";
-    } else if (paymentMethod === "bank_transfer") {
-      // Bank transfer: mark as paid (payment submitted with proof), waiting for supplier verification
-      updateData.payment_status = "paid";
-      updateData.status = "pending_payment";
-    } else if (paymentMethod === "pay_outside_app") {
-      // Pay outside app: skip payment verification, go directly to ready_for_pickup
-      updateData.payment_status = "not_required";
-      updateData.status = "ready_for_pickup";
-    }
-
-    await pool.query(
-      `UPDATE driver_depot_orders
-       SET payment_method = $2,
-           payment_proof_url = $3,
-           payment_status = $4,
-           status = $5,
-           updated_at = now()
-       WHERE id = $1`,
-      [
-        orderId,
-        updateData.payment_method ?? null,
-        updateData.payment_proof_url ?? null,
-        updateData.payment_status ?? null,
-        updateData.status ?? null,
-      ]
-    );
-
-    const updatedOrderResult = await pool.query(
-      `SELECT o.*,
-              json_build_object('id', d.id, 'name', d.name,
-                'suppliers', json_build_object('owner_id', s.owner_id)
-              ) AS depots,
-              json_build_object('id', ft.id, 'label', ft.label) AS fuel_types
-       FROM driver_depot_orders o
-       LEFT JOIN depots d ON d.id = o.depot_id
-       LEFT JOIN suppliers s ON s.id = d.supplier_id
-       LEFT JOIN fuel_types ft ON ft.id = o.fuel_type_id
-       WHERE o.id = $1
-       LIMIT 1`,
-      [orderId]
-    );
-    const updatedOrder = updatedOrderResult.rows[0] || { ...order, ...updateData };
-
-    // Notify supplier (SQL lookup — nested drizzle embeds are not hydrated)
-    try {
-      const supplierCtx = await lookupSupplierContextForDepotOrder(orderId);
-      if (supplierCtx) {
-        const { websocketService } = await import("./websocket");
-        websocketService.sendOrderUpdate(supplierCtx.supplierOwnerId, {
-          type: "driver_depot_payment_submitted",
-          orderId: updatedOrder.id,
-          paymentMethod: updatedOrder.payment_method ?? paymentMethod,
-          paymentStatus: updatedOrder.payment_status,
-        });
-
-        const { notificationService } = await import("./notification-service");
-        const { data: driverProfile } = await drizzleAdmin
-          .from("profiles")
-          .select("full_name")
-          .eq("id", user.id)
-          .maybeSingle();
-        const driverName = driverProfile?.full_name || "Driver";
-        const totalPrice = supplierCtx.totalPriceCents / 100;
-        const currency = "ZAR";
-
-        await notificationService.notifySupplierPaymentReceived(
-          supplierCtx.supplierOwnerId,
-          updatedOrder.id,
-          supplierCtx.depotName,
-          supplierCtx.fuelLabel,
-          supplierCtx.litres,
-          totalPrice,
-          currency,
-          paymentMethod,
-          driverName,
-        );
-      } else {
-        console.warn("[driver depot payment] No supplier owner found for order", { orderId });
-      }
-    } catch (notifyError) {
-      console.error("[driver depot payment] Supplier notification failed:", notifyError);
-    }
-
-    res.json(updatedOrder);
+    const { initiateDepotOrderPayment, PaymentBlockedError } = await import("./payment-ledger-service");
+    const result = await initiateDepotOrderPayment(orderId, user.id);
+    res.json(result);
   } catch (error: any) {
-    console.error("Error submitting payment:", error);
-    res.status(500).json({ error: error.message });
+    console.error("Error initiating depot payment:", error);
+    if (error instanceof PaymentBlockedError) {
+      return res.status(402).json({ error: error.message, code: error.code });
+    }
+    res.status(400).json({ error: error.message || "Payment initiation failed" });
   }
 });
 

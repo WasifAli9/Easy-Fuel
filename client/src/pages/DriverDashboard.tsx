@@ -330,19 +330,19 @@ export default function DriverDashboard() {
       queryClient.setQueryData<any[]>(["/api/driver/assigned-orders"], (old = []) => {
         const exists = old.findIndex((o: any) => o.id === orderId);
         if (exists >= 0) {
-          // Update existing order
-          const updated = [...old];
-          updated[exists] = orderData;
-          return updated;
+          if (["assigned", "en_route", "picked_up"].includes(orderData.state)) {
+            const updated = [...old];
+            updated[exists] = orderData;
+            return updated;
+          }
+          return old.filter((o: any) => o.id !== orderId);
         } else if (["assigned", "en_route", "picked_up"].includes(orderData.state)) {
-          // Add new order if it's in an active state
           return [orderData, ...old];
         }
         return old;
       });
 
-      // Update completed orders if delivered
-      if (orderData.state === "delivered") {
+      if (orderData.state === "delivered" || orderData.state === "paid") {
         queryClient.setQueryData<any[]>(["/api/driver/completed-orders"], (old = []) => {
           const exists = old.findIndex((o: any) => o.id === orderId);
           if (exists >= 0) {

@@ -30,15 +30,15 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { MapPin, Calendar, Package, User, Phone, Clock, Loader2, CheckCircle2, XCircle } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { MapPin, Calendar, Package, Loader2, CheckCircle2, XCircle, CreditCard, MessageCircle, Navigation } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DriverLocationMap } from "./DriverLocationMap";
 import { OrderChat } from "./OrderChat";
 import { useCurrency } from "@/hooks/use-currency";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { formatCurrency, normalizeProfilePhotoUrl } from "@/lib/utils";
+import { cn, formatCurrency, normalizeProfilePhotoUrl } from "@/lib/utils";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { DeliverySignatureProof } from "@/components/DeliverySignatureProof";
 import { canShowOrderTrackingMap } from "@/lib/order-tracking";
@@ -67,6 +67,7 @@ interface ViewOrderDialogProps {
 
 export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialogProps) {
   const [isEditing, setIsEditing] = useState(false);
+  const [activeTab, setActiveTab] = useState("details");
   const { toast } = useToast();
   const { currencySymbol, currency } = useCurrency();
 
@@ -193,6 +194,13 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
 
   // Update form when order data changes
   useEffect(() => {
+    if (!open) {
+      setActiveTab("details");
+      setIsEditing(false);
+    }
+  }, [open]);
+
+  useEffect(() => {
     if (order) {
       form.reset({
         fuelTypeId: order.fuel_type_id || "",
@@ -298,6 +306,25 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
     },
   });
 
+  const payOrderMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", `/api/orders/${orderId}/pay`);
+      return response.json() as Promise<{ paymentUrl: string }>;
+    },
+    onSuccess: (data) => {
+      if (data.paymentUrl) {
+        window.location.href = data.paymentUrl;
+      }
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Payment failed",
+        description: error.message || "Could not start payment",
+        variant: "destructive",
+      });
+    },
+  });
+
   const onSubmit = (values: OrderEditValues) => {
     updateOrderMutation.mutate(values);
   };
@@ -315,7 +342,7 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
   if (loadingOrder) {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent data-testid="dialog-view-order">
+        <DialogContent className="flex max-h-[min(92dvh,92vh)] w-[calc(100%-1.5rem)] flex-col overflow-hidden p-0" data-testid="dialog-view-order">
           <DialogHeader>
             <DialogTitle>Order Details</DialogTitle>
             <DialogDescription>Loading order details...</DialogDescription>
@@ -331,7 +358,7 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
   if (!order) {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent data-testid="dialog-view-order">
+        <DialogContent className="flex max-h-[min(92dvh,92vh)] w-[calc(100%-1.5rem)] flex-col overflow-hidden p-0" data-testid="dialog-view-order">
           <DialogHeader>
             <DialogTitle>Order Details</DialogTitle>
             <DialogDescription>Order not found</DialogDescription>
@@ -341,366 +368,460 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
     );
   }
 
-  const canEdit = ["created", "awaiting_payment"].includes(order.state);
-  const canCancel = !["delivered", "cancelled", "picked_up", "en_route"].includes(order.state);
-  const chatClosed = ["delivered", "cancelled", "refunded"].includes(order.state);
+  const canEdit = order.state === "created";
+  const canCancel = !["delivered", "cancelled", "picked_up", "en_route", "paid", "awaiting_payment"].includes(order.state);
+  const canPay =
+    order.state === "awaiting_payment" && !order.paid_at && !order.paidAt;
+  const chatClosed = ["delivered", "cancelled", "refunded", "paid"].includes(order.state);
   const canShowChat = !!order.assigned_driver_id && order.chat_enabled !== false;
   const chatReadOnly = chatClosed;
+  const showTrackingMap = canShowOrderTrackingMap(order);
+  const isSplitTab = activeTab === "tracking" || activeTab === "chat";
+
+  const orderSummarySidebar = (
+    <>
+      <div className="rounded-xl border border-border/70 bg-gradient-to-br from-muted/50 to-muted/20 p-3 space-y-2.5">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-background/80 border border-border/60">
+            <Package className="h-4 w-4 text-primary" />
+          </div>
+          <div className="min-w-0">
+            <p className="font-semibold truncate" data-testid="text-fuel-type">
+              {order.fuel_types?.label || "Unknown"}
+            </p>
+            <p className="text-sm text-muted-foreground" data-testid="text-litres">
+              {order.litres}L
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-start gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-background/80 border border-border/60 shrink-0">
+            <MapPin className="h-4 w-4 text-primary" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-medium">Delivery Location</p>
+            <p className="text-sm text-muted-foreground break-all" data-testid="text-coordinates">
+              {order.drop_lat}, {order.drop_lng}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {order.assigned_driver_id && order.driver_details ? (
+        <div className="rounded-xl border border-primary/25 bg-primary/[0.06] p-3">
+          <Badge variant="default" className="bg-primary text-xs mb-2.5">
+            Driver Assigned
+          </Badge>
+          <div className="flex items-center gap-3">
+            <Avatar className="h-10 w-10 shrink-0">
+              <AvatarImage
+                src={normalizeProfilePhotoUrl(order.driver_details.profile_photo_url) || undefined}
+                onError={() => {}}
+                alt={order.driver_details.full_name || "Driver"}
+              />
+              <AvatarFallback className="bg-primary text-primary-foreground text-xs">
+                {(order.driver_details.full_name || "Driver")
+                  .split(" ")
+                  .map((n: string) => n[0])
+                  .join("")
+                  .toUpperCase()
+                  .slice(0, 2)}
+              </AvatarFallback>
+            </Avatar>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold truncate" data-testid="text-driver-name">
+                {order.driver_details.full_name || "Driver"}
+              </p>
+              <a
+                href={`tel:${order.driver_details.phone}`}
+                className="text-sm text-primary hover:underline"
+                data-testid="text-driver-phone"
+              >
+                {order.driver_details.phone || "Phone not available"}
+              </a>
+            </div>
+          </div>
+          {order.confirmed_delivery_time && (
+            <div className="mt-3 rounded-lg border border-border/50 bg-background/60 px-2.5 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Confirmed delivery</p>
+              <p className="text-xs font-medium" data-testid="text-confirmed-delivery-time">
+                {new Date(order.confirmed_delivery_time).toLocaleString("en-ZA", {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                  timeZone: "Africa/Johannesburg",
+                })}
+              </p>
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">Order total</p>
+        <p className="text-lg font-semibold text-primary" data-testid="text-sidebar-total">
+          {formatCurrency(pricingBreakdown.total, currency)}
+        </p>
+      </div>
+    </>
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-hidden" data-testid="dialog-view-order">
-        <DialogHeader>
-          <div className="flex items-center justify-between">
-            <DialogTitle>Order Details</DialogTitle>
-            <StatusBadge status={order.state} />
-          </div>
-          <DialogDescription>
-            Order ID: {order.id}
-          </DialogDescription>
-        </DialogHeader>
+      <DialogContent
+        className={cn(
+          "flex flex-col gap-0 overflow-hidden p-0",
+          "w-[calc(100%-1.5rem)] max-w-[calc(100vw-1.5rem)]",
+          "max-h-[min(92dvh,92vh)] h-[min(92dvh,92vh)]",
+          "top-[4dvh] translate-y-0 sm:top-[50%] sm:translate-y-[-50%]",
+          "transition-[max-width] duration-200",
+          isSplitTab ? "sm:max-w-[920px]" : "sm:max-w-[640px]",
+        )}
+        data-testid="dialog-view-order"
+      >
+        <div className="shrink-0 px-6 pt-6 pb-3">
+          <DialogHeader>
+            <div className="flex items-center justify-between gap-3">
+              <DialogTitle>Order Details</DialogTitle>
+              <StatusBadge status={order.state} />
+            </div>
+            <DialogDescription className="truncate">
+              Order ID: {order.id}
+            </DialogDescription>
+          </DialogHeader>
+        </div>
 
         {!isEditing ? (
-          <ScrollArea className="max-h-[65vh] pr-4">
-            <div className="space-y-4">
-            {/* Order Summary */}
-            <div className="space-y-3">
-              <div className="flex items-center gap-3 p-3 bg-muted rounded-lg">
-                <Package className="h-5 w-5 text-muted-foreground" />
-                <div>
-                  <p className="font-semibold" data-testid="text-fuel-type">
-                    {order.fuel_types?.label || "Unknown"}
-                  </p>
-                  <p className="text-sm text-muted-foreground" data-testid="text-litres">
-                    {order.litres}L
-                  </p>
-                </div>
-              </div>
+          <>
+            <Tabs
+              value={activeTab}
+              onValueChange={setActiveTab}
+              className="flex min-h-0 flex-1 flex-col px-6"
+            >
+              <TabsList className="grid h-11 w-full shrink-0 grid-cols-3 bg-muted/70 p-1">
+                <TabsTrigger value="details" className="gap-1.5 text-xs sm:text-sm" data-testid="tab-order-details">
+                  <Package className="h-3.5 w-3.5" />
+                  Details
+                </TabsTrigger>
+                <TabsTrigger value="tracking" className="gap-1.5 text-xs sm:text-sm" data-testid="tab-order-tracking">
+                  <Navigation className="h-3.5 w-3.5" />
+                  Tracking
+                </TabsTrigger>
+                <TabsTrigger value="chat" className="gap-1.5 text-xs sm:text-sm" data-testid="tab-order-chat">
+                  <MessageCircle className="h-3.5 w-3.5" />
+                  Chat
+                </TabsTrigger>
+              </TabsList>
 
-              <div className="flex items-start gap-3 p-3 bg-muted rounded-lg">
-                <MapPin className="h-5 w-5 mt-0.5 text-muted-foreground" />
-                <div className="flex-1">
-                  <p className="text-sm font-medium">Delivery Location</p>
-                  <p className="text-sm text-muted-foreground" data-testid="text-coordinates">
-                    {order.drop_lat}, {order.drop_lng}
-                  </p>
-                </div>
-              </div>
-
-              {order.time_window && (
-                <div className="flex items-center gap-3 p-3 bg-muted rounded-lg">
-                  <Calendar className="h-5 w-5 text-muted-foreground" />
-                  <div>
-                    <p className="text-sm font-medium">Time Window</p>
-                    <p className="text-sm text-muted-foreground">{order.time_window}</p>
-                  </div>
-                </div>
-              )}
-
-              {(loadingQuotes || driverQuotes.length > 0) && (
-                <div className="space-y-3 border border-border/60 rounded-lg p-3 bg-background/60">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium">Available Drivers</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Prices calculated automatically based on driver pricing and distance
-                      </p>
+              <div className="mt-3 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1 -mr-1 pb-2">
+              <TabsContent value="details" className="mt-0 focus-visible:outline-none data-[state=inactive]:hidden">
+                  <div className="space-y-4 pb-2">
+                    {orderSummarySidebar}
+                  {order.time_window && (
+                    <div className="flex items-center gap-3 p-3 rounded-lg border border-border/60 bg-muted/30">
+                      <Calendar className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium">Time Window</p>
+                        <p className="text-sm text-muted-foreground">{order.time_window}</p>
+                      </div>
                     </div>
-                    {loadingQuotes && (
-                      <span className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        Loading…
-                      </span>
-                    )}
-                  </div>
+                  )}
 
-                    {!loadingQuotes && driverQuotes.length === 0 ? (
-                      <p className="text-xs text-muted-foreground">
-                        No drivers available yet. We'll notify you as soon as drivers become available.
-                      </p>
-                    ) : (
-                      <div className="space-y-3">
-                        {/* Sort by total price (lowest first) */}
-                        {[...driverQuotes]
-                          .sort((a: any, b: any) => {
-                            const totalA = a.estimatedPricing?.total || 0;
-                            const totalB = b.estimatedPricing?.total || 0;
-                            return totalA - totalB;
-                          })
-                          .map((quote: any) => {
-                          // Use estimated pricing from API response
-                          const estimatedPricing = quote.estimatedPricing || {};
-                          const totalPrice = estimatedPricing.total || 0;
-                          const fuelCost = estimatedPricing.fuelCost || 0;
-                          const deliveryFee = estimatedPricing.deliveryFee || 0;
-                          const distanceKm = estimatedPricing.distanceKm || 0;
-                          const pricePerKmCents = estimatedPricing.pricePerKmCents || quote.proposed_price_per_km_cents || 0;
-                          const pricePerKm = pricePerKmCents / 100;
+                  {(loadingQuotes || driverQuotes.length > 0) && (
+                    <div className="space-y-3 border border-border/60 rounded-xl p-3 bg-background/60">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium">Available Drivers</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Prices calculated automatically based on driver pricing and distance
+                          </p>
+                        </div>
+                        {loadingQuotes && (
+                          <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Loading…
+                          </span>
+                        )}
+                      </div>
 
-                          const driverName = quote.driver?.profile?.fullName || "Driver";
-                          const isPendingDecision = !order.assigned_driver_id && quote.state === "pending_customer";
-                          const isAccepted = quote.state === "customer_accepted";
-                          const isDeclined = quote.state === "customer_declined";
-                          const isResponded = quote.state === "customer_accepted" || quote.state === "customer_declined";
-                          const isProcessing =
-                            acceptDriverOfferMutation.isPending &&
-                            acceptDriverOfferMutation.variables === quote.id;
+                      {!loadingQuotes && driverQuotes.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">
+                          No drivers available yet. We'll notify you as soon as drivers become available.
+                        </p>
+                      ) : (
+                        <div className="space-y-3">
+                          {[...driverQuotes]
+                            .sort((a: any, b: any) => {
+                              const totalA = a.estimatedPricing?.total || 0;
+                              const totalB = b.estimatedPricing?.total || 0;
+                              return totalA - totalB;
+                            })
+                            .map((quote: any) => {
+                              const estimatedPricing = quote.estimatedPricing || {};
+                              const totalPrice = estimatedPricing.total || 0;
+                              const fuelCost = estimatedPricing.fuelCost || 0;
+                              const deliveryFee = estimatedPricing.deliveryFee || 0;
+                              const distanceKm = estimatedPricing.distanceKm || 0;
+                              const pricePerKmCents = estimatedPricing.pricePerKmCents || quote.proposed_price_per_km_cents || 0;
+                              const pricePerKm = pricePerKmCents / 100;
+                              const driverName = quote.driver?.profile?.fullName || "Driver";
+                              const isPendingDecision = !order.assigned_driver_id && quote.state === "pending_customer";
+                              const isAccepted = quote.state === "customer_accepted";
+                              const isDeclined = quote.state === "customer_declined";
+                              const isResponded = quote.state === "customer_accepted" || quote.state === "customer_declined";
+                              const isProcessing =
+                                acceptDriverOfferMutation.isPending &&
+                                acceptDriverOfferMutation.variables === quote.id;
+                              const driverProfilePhotoUrl =
+                                quote.driver?.profile?.profile_photo_url || quote.driver?.profile?.profilePhotoUrl;
 
-                          const driverProfilePhotoUrl = quote.driver?.profile?.profile_photo_url || quote.driver?.profile?.profilePhotoUrl;
-                          
-                          return (
-                            <div 
-                              key={quote.id} 
-                              className={`border rounded-lg p-3 space-y-3 ${
-                                isPendingDecision 
-                                  ? "border-primary/50 bg-primary/5 hover:border-primary/70 transition-colors" 
-                                  : "border-border"
-                              }`}
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="flex items-start gap-3 flex-1">
-                                  <Avatar className="h-10 w-10 flex-shrink-0">
-                                    <AvatarImage 
-                                      src={normalizeProfilePhotoUrl(driverProfilePhotoUrl) || undefined}
-                                      alt={driverName}
-                                      onError={() => {
-                                        // Suppress image load errors
-                                      }} 
-                                    />
-                                    <AvatarFallback className="bg-primary text-primary-foreground text-xs">
-                                      {driverName.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)}
-                                    </AvatarFallback>
-                                  </Avatar>
-                                  <div className="flex-1">
-                                    <p className="text-sm font-semibold">{driverName}</p>
-                                    {quote.driver?.profile?.phone && (
+                              return (
+                                <div
+                                  key={quote.id}
+                                  className={`border rounded-lg p-3 space-y-3 ${
+                                    isPendingDecision
+                                      ? "border-primary/50 bg-primary/5 hover:border-primary/70 transition-colors"
+                                      : "border-border"
+                                  }`}
+                                >
+                                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                    <div className="flex items-start gap-3 flex-1 min-w-0">
+                                      <Avatar className="h-10 w-10 shrink-0">
+                                        <AvatarImage
+                                          src={normalizeProfilePhotoUrl(driverProfilePhotoUrl) || undefined}
+                                          alt={driverName}
+                                          onError={() => {}}
+                                        />
+                                        <AvatarFallback className="bg-primary text-primary-foreground text-xs">
+                                          {driverName
+                                            .split(" ")
+                                            .map((n: string) => n[0])
+                                            .join("")
+                                            .toUpperCase()
+                                            .slice(0, 2)}
+                                        </AvatarFallback>
+                                      </Avatar>
+                                      <div className="min-w-0">
+                                        <p className="text-sm font-semibold truncate">{driverName}</p>
+                                        {quote.driver?.profile?.phone && (
+                                          <p className="text-xs text-muted-foreground">
+                                            <a
+                                              href={`tel:${quote.driver.profile.phone}`}
+                                              className="text-primary hover:underline"
+                                            >
+                                              {quote.driver.profile.phone}
+                                            </a>
+                                          </p>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="text-left sm:text-right shrink-0">
+                                      <p className="text-lg font-bold text-primary">
+                                        {formatCurrency(totalPrice, currency)}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground">Total Price</p>
+                                    </div>
+                                  </div>
+
+                                  <div className="grid grid-cols-2 gap-2 text-xs border-t pt-2">
+                                    <div>
+                                      <p className="text-muted-foreground">Fuel Cost</p>
+                                      <p className="font-medium">{formatCurrency(fuelCost, currency)}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-muted-foreground">Delivery Fee</p>
+                                      <p className="font-medium">
+                                        {formatCurrency(deliveryFee, currency)}
+                                        {distanceKm > 0 && (
+                                          <span className="text-muted-foreground ml-1">
+                                            ({distanceKm.toFixed(1)} km × {formatCurrency(pricePerKm, currency)}/km)
+                                          </span>
+                                        )}
+                                      </p>
+                                    </div>
+                                  </div>
+
+                                  {quote.proposed_notes && (
+                                    <div className="rounded-md bg-muted/60 p-2 text-xs text-muted-foreground border border-border/70">
+                                      {quote.proposed_notes}
+                                    </div>
+                                  )}
+
+                                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                    <div className="flex items-center gap-2">
+                                      {isAccepted && (
+                                        <Badge className="bg-green-600 text-white gap-1">
+                                          <CheckCircle2 className="h-3 w-3" />
+                                          Accepted
+                                        </Badge>
+                                      )}
+                                      {isDeclined && (
+                                        <Badge variant="outline" className="text-xs gap-1 text-muted-foreground">
+                                          <XCircle className="h-3 w-3" />
+                                          Declined
+                                        </Badge>
+                                      )}
+                                      {quote.state === "pending_customer" && (
+                                        <Badge variant="outline" className="text-xs text-primary">
+                                          Available
+                                        </Badge>
+                                      )}
+                                    </div>
+
+                                    {isPendingDecision && (
+                                      <Button
+                                        size="sm"
+                                        onClick={() => handleAcceptDriverQuote(quote.id)}
+                                        disabled={isProcessing}
+                                        data-testid={`button-accept-driver-quote-${quote.id}`}
+                                      >
+                                        {isProcessing ? (
+                                          <>
+                                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                            Selecting…
+                                          </>
+                                        ) : (
+                                          "Select Driver"
+                                        )}
+                                      </Button>
+                                    )}
+
+                                    {isResponded && !isPendingDecision && (
                                       <p className="text-xs text-muted-foreground">
-                                        <a
-                                          href={`tel:${quote.driver.profile.phone}`}
-                                          className="text-primary hover:underline"
-                                        >
-                                          {quote.driver.profile.phone}
-                                        </a>
+                                        Updated{" "}
+                                        {quote.customer_response_at
+                                          ? new Date(quote.customer_response_at).toLocaleString("en-ZA", {
+                                              dateStyle: "medium",
+                                              timeStyle: "short",
+                                              timeZone: "Africa/Johannesburg",
+                                            })
+                                          : new Date(quote.updated_at).toLocaleString("en-ZA", {
+                                              dateStyle: "medium",
+                                              timeStyle: "short",
+                                              timeZone: "Africa/Johannesburg",
+                                            })}
                                       </p>
                                     )}
                                   </div>
                                 </div>
-                                <div className="text-right">
-                                  <p className="text-lg font-bold text-primary">
-                                    {formatCurrency(totalPrice, currency)}
-                                  </p>
-                                  <p className="text-xs text-muted-foreground">Total Price</p>
-                                </div>
-                              </div>
-
-                              {/* Pricing Breakdown */}
-                              <div className="grid grid-cols-2 gap-2 text-xs border-t pt-2">
-                                <div>
-                                  <p className="text-muted-foreground">Fuel Cost</p>
-                                  <p className="font-medium">{formatCurrency(fuelCost, currency)}</p>
-                                </div>
-                                <div>
-                                  <p className="text-muted-foreground">Delivery Fee</p>
-                                  <p className="font-medium">
-                                    {formatCurrency(deliveryFee, currency)}
-                                    {distanceKm > 0 && (
-                                      <span className="text-muted-foreground ml-1">
-                                        ({distanceKm.toFixed(1)} km × {formatCurrency(pricePerKm, currency)}/km)
-                                      </span>
-                                    )}
-                                  </p>
-                                </div>
-                              </div>
-
-                              {quote.proposed_notes && (
-                                <div className="rounded-md bg-muted/60 p-2 text-xs text-muted-foreground border border-border/70">
-                                  {quote.proposed_notes}
-                                </div>
-                              )}
-
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                  {isAccepted && (
-                                    <Badge className="bg-green-600 text-white gap-1">
-                                      <CheckCircle2 className="h-3 w-3" />
-                                      Accepted
-                                    </Badge>
-                                  )}
-                                  {isDeclined && (
-                                    <Badge variant="outline" className="text-xs gap-1 text-muted-foreground">
-                                      <XCircle className="h-3 w-3" />
-                                      Declined
-                                    </Badge>
-                                  )}
-                                  {quote.state === "pending_customer" && (
-                                    <Badge variant="outline" className="text-xs text-primary">
-                                      Available
-                                    </Badge>
-                                  )}
-                                </div>
-
-                                {isPendingDecision && (
-                                  <Button
-                                    size="sm"
-                                    onClick={() => handleAcceptDriverQuote(quote.id)}
-                                    disabled={isProcessing}
-                                    data-testid={`button-accept-driver-quote-${quote.id}`}
-                                  >
-                                    {isProcessing ? (
-                                      <>
-                                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                                        Selecting…
-                                      </>
-                                    ) : (
-                                      "Select Driver"
-                                    )}
-                                  </Button>
-                                )}
-
-                                {isResponded && !isPendingDecision && (
-                                  <p className="text-xs text-muted-foreground">
-                                    Updated {quote.customer_response_at
-                                      ? new Date(quote.customer_response_at).toLocaleString("en-ZA", {
-                                          dateStyle: "medium",
-                                          timeStyle: "short",
-                                          timeZone: "Africa/Johannesburg",
-                                        })
-                                      : new Date(quote.updated_at).toLocaleString("en-ZA", {
-                                          dateStyle: "medium",
-                                          timeStyle: "short",
-                                          timeZone: "Africa/Johannesburg",
-                                        })}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                </div>
-              )}
-
-              {/* Driver Information - Show when driver is assigned */}
-              {order.assigned_driver_id && order.driver_details && (
-                <div className="border-2 border-primary/20 rounded-lg p-4 space-y-3 bg-primary/5">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Badge variant="default" className="bg-primary">
-                      Driver Assigned
-                    </Badge>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-3">
-                      <Avatar className="h-10 w-10 flex-shrink-0">
-                        <AvatarImage 
-                          src={normalizeProfilePhotoUrl(order.driver_details.profile_photo_url) || undefined}
-                          onError={() => {
-                            // Suppress image load errors
-                          }} 
-                          alt={order.driver_details.full_name || "Driver"} 
-                        />
-                        <AvatarFallback className="bg-primary text-primary-foreground text-xs">
-                          {(order.driver_details.full_name || "Driver").split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div>
-                        <p className="text-sm font-medium">Driver Name</p>
-                        <p className="text-sm" data-testid="text-driver-name">
-                          {order.driver_details.full_name || "Driver"}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-3">
-                      <Phone className="h-4 w-4 text-muted-foreground" />
-                      <div>
-                        <p className="text-sm font-medium">Driver Phone</p>
-                        <p className="text-sm" data-testid="text-driver-phone">
-                          <a 
-                            href={`tel:${order.driver_details.phone}`}
-                            className="text-primary hover:underline"
-                          >
-                            {order.driver_details.phone || "Not available"}
-                          </a>
-                        </p>
-                      </div>
-                    </div>
-
-                    {order.confirmed_delivery_time && (
-                      <div className="flex items-center gap-3">
-                        <Clock className="h-4 w-4 text-muted-foreground" />
-                        <div>
-                          <p className="text-sm font-medium">Confirmed Delivery Time</p>
-                          <p className="text-sm" data-testid="text-confirmed-delivery-time">
-                            {new Date(order.confirmed_delivery_time).toLocaleString("en-ZA", {
-                              dateStyle: "medium",
-                              timeStyle: "short",
-                              timeZone: "Africa/Johannesburg",
+                              );
                             })}
-                          </p>
                         </div>
+                      )}
+                    </div>
+                  )}
+
+                  {order.state === "delivered" ? <DeliverySignatureProof order={order} /> : null}
+
+                  <div className="rounded-xl border border-border/60 p-3 space-y-2 bg-muted/20">
+                    <p className="text-sm font-medium">Pricing</p>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Fuel Cost</span>
+                      <span data-testid="text-fuel-cost">
+                        {formatCurrency(pricingBreakdown.fuelCost, currency)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Delivery Fee</span>
+                      <span data-testid="text-delivery-fee">
+                        {formatCurrency(pricingBreakdown.deliveryFee, currency)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Service Fee</span>
+                      <span data-testid="text-service-fee">
+                        {formatCurrency(pricingBreakdown.serviceFee, currency)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between font-semibold pt-2 border-t">
+                      <span>Total</span>
+                      <span className="text-primary" data-testid="text-total">
+                        {formatCurrency(pricingBreakdown.total, currency)}
+                      </span>
+                    </div>
+                  </div>
+                  </div>
+              </TabsContent>
+
+              <TabsContent value="tracking" className="mt-0 focus-visible:outline-none data-[state=inactive]:hidden">
+                <div className="flex flex-col gap-4 sm:flex-row sm:min-h-[min(52dvh,480px)]">
+                  <aside className="sm:w-[260px] shrink-0 sm:border-r sm:border-border/50 sm:pr-4 space-y-3">
+                    {orderSummarySidebar}
+                  </aside>
+                  <div className="flex-1 min-w-0 min-h-[360px] flex flex-col w-full">
+                    {!showTrackingMap ? (
+                      <div className="flex flex-1 min-h-[360px] flex-col items-center justify-center rounded-xl border border-dashed border-border/70 bg-muted/20 px-6 text-center">
+                        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                          <Navigation className="h-6 w-6 text-muted-foreground" />
+                        </div>
+                        <p className="font-medium">Live tracking not available yet</p>
+                        <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+                          Tracking opens once a driver is assigned and your delivery is in progress.
+                        </p>
+                      </div>
+                    ) : activeTab === "tracking" ? (
+                      <div className="flex-1 rounded-xl overflow-hidden border border-border/60 min-h-[360px] w-full">
+                        <DriverLocationMap
+                          key={`tracking-map-${order.id}`}
+                          orderId={order.id}
+                          deliveryLat={Number(order.drop_lat ?? order.dropLat)}
+                          deliveryLng={Number(order.drop_lng ?? order.dropLng)}
+                          className="h-full border-0 shadow-none"
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="chat" className="mt-0 focus-visible:outline-none data-[state=inactive]:hidden">
+                <div className="flex flex-col gap-4 sm:flex-row sm:min-h-[min(52dvh,480px)]">
+                  <aside className="sm:w-[260px] shrink-0 sm:border-r sm:border-border/50 sm:pr-4 space-y-3">
+                    {orderSummarySidebar}
+                  </aside>
+                  <div className="flex-1 min-w-0 min-h-[360px] flex flex-col">
+                    {canShowChat ? (
+                      <div className="flex-1 min-h-[360px] rounded-xl border border-border/60 overflow-hidden">
+                        <OrderChat
+                          orderId={order.id}
+                          currentUserType="customer"
+                          readOnly={chatReadOnly}
+                          variant="embedded"
+                        />
+                      </div>
+                    ) : (
+                      <div className="flex flex-1 min-h-[360px] flex-col items-center justify-center rounded-xl border border-dashed border-border/70 bg-muted/20 px-6 text-center">
+                        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                          <MessageCircle className="h-6 w-6 text-muted-foreground" />
+                        </div>
+                        <p className="font-medium">Chat not available yet</p>
+                        <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+                          Message your driver here after you assign one to your order.
+                        </p>
                       </div>
                     )}
                   </div>
                 </div>
-              )}
-
-              {/* Live map — before chat, from assigned through picked up */}
-              {showTrackingMap && (
-                <div className="space-y-4">
-                  <DriverLocationMap
-                    orderId={order.id}
-                    deliveryLat={Number(order.drop_lat ?? order.dropLat)}
-                    deliveryLng={Number(order.drop_lng ?? order.dropLng)}
-                  />
-                </div>
-              )}
-
-              {order.state === "delivered" ? <DeliverySignatureProof order={order} /> : null}
-
-              {/* Chat with driver — view history after delivery; send only while active */}
-              {canShowChat && (
-                <div className="space-y-4">
-                  <OrderChat
-                    orderId={order.id}
-                    currentUserType="customer"
-                    readOnly={chatReadOnly}
-                  />
-                </div>
-              )}
-
-              {/* Pricing Breakdown */}
-              <div className="border-t pt-3 space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Fuel Cost</span>
-                  <span data-testid="text-fuel-cost">
-                    {formatCurrency(pricingBreakdown.fuelCost, currency)}
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Delivery Fee</span>
-                  <span data-testid="text-delivery-fee">
-                    {formatCurrency(pricingBreakdown.deliveryFee, currency)}
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Service Fee</span>
-                  <span data-testid="text-service-fee">
-                    {formatCurrency(pricingBreakdown.serviceFee, currency)}
-                  </span>
-                </div>
-                <div className="flex justify-between font-semibold pt-2 border-t">
-                  <span>Total</span>
-                  <span className="text-primary" data-testid="text-total">
-                    {formatCurrency(pricingBreakdown.total, currency)}
-                  </span>
-                </div>
+              </TabsContent>
               </div>
-            </div>
+            </Tabs>
 
-            {/* Actions */}
-            <div className="flex justify-end gap-3 pt-4">
+            <div className="shrink-0 flex justify-end gap-3 flex-wrap border-t bg-background px-6 py-3 sm:py-4">
+              {canPay && (
+                <Button
+                  onClick={() => payOrderMutation.mutate()}
+                  disabled={payOrderMutation.isPending}
+                  className="gap-2"
+                  data-testid="button-pay-order"
+                >
+                  {payOrderMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <CreditCard className="h-4 w-4" />
+                  )}
+                  Pay with Ozow
+                </Button>
+              )}
               {canCancel && (
                 <Button
                   variant="destructive"
@@ -712,19 +833,17 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                 </Button>
               )}
               {canEdit && (
-                <Button
-                  onClick={() => setIsEditing(true)}
-                  data-testid="button-edit-order"
-                >
+                <Button onClick={() => setIsEditing(true)} data-testid="button-edit-order">
                   Edit Order
                 </Button>
               )}
             </div>
-            </div>
-          </ScrollArea>
+          </>
         ) : (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-6 pb-6">
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <form onSubmit={form.handleSubmit(onSubmit)} className="flex min-h-0 flex-1 flex-col space-y-4">
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1 -mr-1">
               <FormField
                 control={form.control}
                 name="fuelTypeId"
@@ -837,7 +956,9 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
                 )}
               />
 
-              <div className="flex justify-end gap-3 pt-4">
+              </div>
+
+              <div className="flex shrink-0 justify-end gap-3 border-t pt-4">
                 <Button
                   type="button"
                   variant="outline"
@@ -856,6 +977,7 @@ export function ViewOrderDialog({ orderId, open, onOpenChange }: ViewOrderDialog
               </div>
             </form>
           </Form>
+          </div>
         )}
       </DialogContent>
     </Dialog>

@@ -13,7 +13,7 @@ export const roleFeatureMap: Record<UserRole, MobileFeature[]> = {
     { id: "auth", status: "parity", description: "Sign-in, sign-up, session restore." },
     { id: "orders", status: "parity", description: "Create, track, filter tabs, offers, chat (aligned with web)." },
     { id: "chat", status: "parity", description: "Order-level chat via shared OrderChatPanel." },
-    { id: "payments", status: "parity", description: "Payment methods selectable on create order." },
+    { id: "payments", status: "parity", description: "Pay after delivery via Ozow when order is complete." },
     { id: "profile", status: "parity", description: "Profile PUT /api/profile and billing fields." },
     { id: "addresses", status: "parity", description: "CRUD /api/delivery-addresses." },
     {

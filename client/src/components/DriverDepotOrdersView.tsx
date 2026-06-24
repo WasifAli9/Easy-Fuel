@@ -375,41 +375,10 @@ export function DriverDepotOrdersView({ statusFilter }: DriverDepotOrdersViewPro
                       </Button>
                     </>
                   )}
-                  {order.status === "pending_payment" && order.payment_status === "paid" && order.payment_method === "bank_transfer" && order.payment_proof_url && (
-                    <>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setSelectedOrderForProof(order);
-                          setPaymentProofDialogOpen(true);
-                        }}
-                      >
-                        <Eye className="h-4 w-4 mr-1" />
-                        View Proof
-                      </Button>
-                      <Button
-                        variant="default"
-                        size="sm"
-                        onClick={() => verifyPaymentMutation.mutate(order.id)}
-                        disabled={verifyPaymentMutation.isPending}
-                      >
-                        <CheckCircle className="h-4 w-4 mr-1" />
-                        Confirm Payment
-                      </Button>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => {
-                          const reason = prompt("Reason for rejection (optional):");
-                          rejectPaymentMutation.mutate({ orderId: order.id, reason: reason || undefined });
-                        }}
-                        disabled={rejectPaymentMutation.isPending}
-                      >
-                        <XCircle className="h-4 w-4 mr-1" />
-                        Not Received
-                      </Button>
-                    </>
+                  {order.status === "pending_payment" && order.payment_status === "pending_payment" && (
+                    <Button variant="outline" size="sm" disabled>
+                      Awaiting Ozow payment
+                    </Button>
                   )}
                   {order.status === "ready_for_pickup" && (
                     <Button

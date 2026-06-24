@@ -2441,6 +2441,16 @@ router.post("/driver-depot-orders/:orderId/accept", requireSupplier, async (req,
       return res.status(400).json({ error: `Cannot accept order with status: ${order.status}` });
     }
 
+    const { assertSupplierHasBankForPayout, PaymentBlockedError } = await import("./payment-risk-service");
+    try {
+      await assertSupplierHasBankForPayout(supplier.id);
+    } catch (e) {
+      if (e instanceof PaymentBlockedError) {
+        return res.status(402).json({ error: e.message, code: e.code });
+      }
+      throw e;
+    }
+
     // Update order to pending_payment
     const { data: updatedOrder, error: updateError } = await drizzleClient
       .from("driver_depot_orders")

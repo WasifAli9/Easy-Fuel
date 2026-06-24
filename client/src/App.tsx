@@ -25,6 +25,7 @@ import SupplierProfile from "@/pages/SupplierProfile";
 import AdminDashboard from "@/pages/AdminDashboard";
 import CompanyDashboard from "@/pages/CompanyDashboard";
 import NotFound from "@/pages/not-found";
+import { PaymentSuccessPage, PaymentCancelPage } from "@/pages/PaymentResult";
 
 function ProtectedRoute({ 
   component: Component, 
@@ -118,6 +119,8 @@ function Router() {
       <Route path="/admin">
         {() => <ProtectedRoute component={AdminDashboard} role="admin" />}
       </Route>
+      <Route path="/payment/success" component={PaymentSuccessPage} />
+      <Route path="/payment/cancel" component={PaymentCancelPage} />
       <Route path="/company">
         {() => <ProtectedRoute component={CompanyDashboard} role="company" />}
       </Route>

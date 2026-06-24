@@ -187,20 +187,19 @@ export function DriverDepotScreen() {
       if (!selectedOrderForPayment?.id) {
         throw new Error("No order selected.");
       }
-      if (!paymentMethod) {
-        throw new Error("Please select a payment method.");
-      }
-      if (paymentMethod === "bank_transfer" && !paymentProofUrl) {
-        throw new Error("Please upload proof of payment.");
-      }
-      return apiClient.post(`/api/driver/depot-orders/${selectedOrderForPayment.id}/payment`, {
-        paymentMethod,
-        paymentProofUrl: paymentProofUrl || undefined,
-      });
+      const res = await apiClient.post<{ paymentUrl: string }>(
+        `/api/driver/depot-orders/${selectedOrderForPayment.id}/payment`,
+        {},
+      );
+      return res.data;
     },
-    onSuccess: async () => {
+    onSuccess: async (data) => {
       closePaymentModal();
       await queryClient.invalidateQueries({ queryKey: ["/api/driver/depot-orders"] });
+      if (data?.paymentUrl) {
+        const { Linking } = await import("react-native");
+        await Linking.openURL(data.paymentUrl);
+      }
     },
     onError: (error) => {
       setPaymentError((error as Error)?.message || "Payment failed.");
@@ -697,59 +696,12 @@ export function DriverDepotScreen() {
             <Card mode="outlined" style={[styles.modalCard, styles.paymentCard]}>
               <Card.Content>
                 <Text variant="titleSmall" style={styles.paymentSectionTitle}>
-                  Payment method
+                  Ozow secure checkout
                 </Text>
-                <View style={styles.paymentMethodList}>
-                  <Button
-                    mode={paymentMethod === "bank_transfer" ? "contained" : "outlined"}
-                    icon="bank-outline"
-                    contentStyle={styles.paymentMethodBtnContent}
-                    style={styles.paymentMethodBtn}
-                    buttonColor={paymentMethod === "bank_transfer" ? theme.colors.primary : undefined}
-                    textColor={paymentMethod === "bank_transfer" ? theme.colors.onPrimary : theme.colors.onSurface}
-                    onPress={() => setPaymentMethod("bank_transfer")}
-                  >
-                    Bank transfer — upload proof
-                  </Button>
-                  <Button
-                    mode={paymentMethod === "online_payment" ? "contained" : "outlined"}
-                    icon="credit-card-outline"
-                    contentStyle={styles.paymentMethodBtnContent}
-                    style={styles.paymentMethodBtn}
-                    buttonColor={paymentMethod === "online_payment" ? theme.colors.primary : undefined}
-                    textColor={paymentMethod === "online_payment" ? theme.colors.onPrimary : theme.colors.onSurface}
-                    onPress={() => setPaymentMethod("online_payment")}
-                  >
-                    Online payment (OZOW)
-                  </Button>
-                  <Button
-                    mode={paymentMethod === "pay_outside_app" ? "contained" : "outlined"}
-                    icon="hand-coin-outline"
-                    contentStyle={styles.paymentMethodBtnContent}
-                    style={styles.paymentMethodBtn}
-                    buttonColor={paymentMethod === "pay_outside_app" ? theme.colors.primary : undefined}
-                    textColor={paymentMethod === "pay_outside_app" ? theme.colors.onPrimary : theme.colors.onSurface}
-                    onPress={() => setPaymentMethod("pay_outside_app")}
-                  >
-                    Pay outside app
-                  </Button>
-                </View>
-
-                {paymentMethod === "online_payment" ? (
-                  <Text style={styles.paymentHint}>
-                    You will be redirected to OZOW to pay securely by card or instant EFT.
-                  </Text>
-                ) : null}
-
-                {paymentMethod === "bank_transfer" ? (
-                  <View style={styles.bankProofWrap}>
-                    <Button mode="outlined" icon="file-upload-outline" onPress={handleUploadProof} loading={uploadingProof}>
-                      {paymentProofUrl ? "Reupload proof" : "Upload proof of payment"}
-                    </Button>
-                    {paymentProofUrl ? <Text style={styles.paymentHintSuccess}>Proof uploaded</Text> : null}
-                  </View>
-                ) : null}
-
+                <Text style={styles.paymentHint}>
+                  Pay by card, instant EFT, Capitec Pay, ABSA Pay, or other Ozow methods. Platform fee is deducted
+                  automatically; the supplier receives the net amount.
+                </Text>
                 {paymentError ? <Text style={styles.errorText}>{paymentError}</Text> : null}
               </Card.Content>
             </Card>
@@ -764,14 +716,10 @@ export function DriverDepotScreen() {
               textColor={theme.colors.onPrimary}
               onPress={() => submitPaymentMutation.mutate()}
               loading={submitPaymentMutation.isPending}
-              disabled={
-                submitPaymentMutation.isPending ||
-                !paymentMethod ||
-                (paymentMethod === "bank_transfer" && !paymentProofUrl)
-              }
+              disabled={submitPaymentMutation.isPending}
               style={styles.footerBtnPrimary}
             >
-              Submit payment
+              Pay with Ozow
             </Button>
           </View>
         </ModalSafeArea>

@@ -261,8 +261,12 @@ export const appSettings = pgTable("app_settings", {
   driverRadiusExtendedMiles: integer("driver_radius_extended_miles").default(500),
   /** Driver subscription tier max radius (miles): Premium/Unlimited */
   driverRadiusUnlimitedMiles: integer("driver_radius_unlimited_miles").default(999),
+  /** Platform fee % on customer delivery orders (pay-in split) */
+  customerOrderPlatformFeePercent: numeric("customer_order_platform_fee_percent").notNull().default("5"),
+  /** Platform fee % on driver depot orders (pay-in split) */
+  depotOrderPlatformFeePercent: numeric("depot_order_platform_fee_percent").notNull().default("5"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 // Fuel Types table
@@ -494,7 +498,52 @@ export const driverDepotOrders = pgTable("driver_depot_orders", {
   pickupDate: timestamp("pickup_date"),
   completedAt: timestamp("completed_at"),
   settlementId: uuid("settlement_id"),
+  paymentTransactionId: uuid("payment_transaction_id"),
   notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+/** Ozow pay-in ledger (customer orders, depot orders). */
+export const paymentTransactions = pgTable("payment_transactions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  contextType: text("context_type").notNull(), // customer_order | depot_order
+  contextId: uuid("context_id").notNull(),
+  payerUserId: uuid("payer_user_id"),
+  payeeType: text("payee_type"), // driver | supplier
+  payeeId: uuid("payee_id"),
+  grossCents: integer("gross_cents").notNull(),
+  platformFeeCents: integer("platform_fee_cents").notNull().default(0),
+  netPayoutCents: integer("net_payout_cents").notNull().default(0),
+  currency: text("currency").notNull().default("ZAR"),
+  status: text("status").notNull().default("pending"), // pending | completed | failed | cancelled
+  ozowTransactionId: text("ozow_transaction_id"),
+  ozowPaymentUrl: text("ozow_payment_url"),
+  transactionReference: text("transaction_reference").notNull(),
+  raw: jsonb("raw"),
+  paidAt: timestamp("paid_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+/** Ozow payout ledger (disburse net to driver/supplier after pay-in). */
+export const payoutTransactions = pgTable("payout_transactions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  paymentTransactionId: uuid("payment_transaction_id")
+    .notNull()
+    .references(() => paymentTransactions.id),
+  recipientType: text("recipient_type").notNull(), // driver | supplier
+  recipientId: uuid("recipient_id").notNull(),
+  amountCents: integer("amount_cents").notNull(),
+  currency: text("currency").notNull().default("ZAR"),
+  status: text("status").notNull().default("pending"), // pending | submitted | completed | failed
+  ozowPayoutId: text("ozow_payout_id"),
+  bankAccountName: text("bank_account_name"),
+  bankName: text("bank_name"),
+  accountNumber: text("account_number"),
+  branchCode: text("branch_code"),
+  raw: jsonb("raw"),
+  paidAt: timestamp("paid_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -705,6 +754,7 @@ export const orders = pgTable("orders", {
   vehicleId: uuid("vehicle_id").references(() => vehicles.id, { onDelete: "set null" }),
   confirmedDeliveryTime: timestamp("confirmed_delivery_time"),
   paidAt: timestamp("paid_at"),
+  paymentTransactionId: uuid("payment_transaction_id"),
   deliveredAt: timestamp("delivered_at"),
   deliverySignatureData: text("delivery_signature_data"),
   deliverySignatureName: text("delivery_signature_name"),
@@ -1044,6 +1094,18 @@ export const insertPaymentSchema = createInsertSchema(payments).omit({
   updatedAt: true 
 });
 
+export const insertPaymentTransactionSchema = createInsertSchema(paymentTransactions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertPayoutTransactionSchema = createInsertSchema(payoutTransactions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export const insertDriverSubscriptionSchema = createInsertSchema(driverSubscriptions).omit({
   id: true,
   createdAt: true,
@@ -1191,6 +1253,12 @@ export type ProofOfDelivery = typeof proofOfDelivery.$inferSelect;
 
 export type InsertPayment = z.infer<typeof insertPaymentSchema>;
 export type Payment = typeof payments.$inferSelect;
+
+export type InsertPaymentTransaction = z.infer<typeof insertPaymentTransactionSchema>;
+export type PaymentTransaction = typeof paymentTransactions.$inferSelect;
+
+export type InsertPayoutTransaction = z.infer<typeof insertPayoutTransactionSchema>;
+export type PayoutTransaction = typeof payoutTransactions.$inferSelect;
 
 export type InsertDriverSubscription = z.infer<typeof insertDriverSubscriptionSchema>;
 export type DriverSubscription = typeof driverSubscriptions.$inferSelect;
