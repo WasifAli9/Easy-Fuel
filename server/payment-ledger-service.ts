@@ -22,6 +22,7 @@ import {
   defaultCancelUrl,
   defaultSuccessUrl,
   isOzowConfigured,
+  isOzowPayinDryRun,
 } from "./ozow-service";
 import { submitOzowPayout } from "./ozow-payout-service";
 import {
@@ -229,7 +230,7 @@ export async function initiateCustomerOrderPayment(
     .set({ paymentTransactionId: tx.id, updatedAt: new Date() })
     .where(eq(orders.id, orderId));
 
-  if (process.env.OZOW_PAYIN_DRY_RUN === "true" && process.env.OZOW_IS_TEST === "true") {
+  if (isOzowPayinDryRun()) {
     await completePaymentFromWebhook(tx.id, "Complete", "payin-dry-run", { dryRun: true });
   }
 

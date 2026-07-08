@@ -61,6 +61,19 @@ function oneApiBaseUrl(): string {
   return OZOW_ONE_API_BASE_URL;
 }
 
+/** Truthy env flags: true / 1 / yes (trim + ignore quotes / CRLF). */
+export function envFlagEnabled(name: string): boolean {
+  const raw = process.env[name];
+  if (raw == null) return false;
+  const v = String(raw).trim().replace(/^["']|["']$/g, "").toLowerCase();
+  return v === "true" || v === "1" || v === "yes";
+}
+
+export function isOzowPayinDryRun(): boolean {
+  // Dry-run is controlled only by OZOW_PAYIN_DRY_RUN (does not also require OZOW_IS_TEST).
+  return envFlagEnabled("OZOW_PAYIN_DRY_RUN");
+}
+
 function formatOzowApiError(context: string, status: number, rawText: string): string {
   if (status === 401 || status === 403) {
     return `${context}: Ozow rejected the credentials (HTTP ${status}). Check OZOW_CLIENT_ID, OZOW_CLIENT_SECRET, and OZOW_SITE_CODE in your .env file.`;
@@ -166,7 +179,7 @@ async function createOneApiPayment(
 ): Promise<{ paymentUrl: string; paymentId?: string }> {
   const token = await getOneApiAccessToken();
   const notifyUrl = params.notifyUrl || ozowPayinNotifyUrl();
-  const isTest = process.env.OZOW_IS_TEST === "true";
+  const isTest = envFlagEnabled("OZOW_IS_TEST");
 
   const payload: Record<string, unknown> = {
     siteCode: OZOW_SITE_CODE,
@@ -235,14 +248,23 @@ export async function createOzowPayIn(params: OzowPayInParams): Promise<OzowPayI
     );
   }
 
-  if (process.env.OZOW_PAYIN_DRY_RUN === "true" && process.env.OZOW_IS_TEST === "true") {
-    console.warn("[ozow] OZOW_PAYIN_DRY_RUN enabled – skipping live Ozow checkout");
+  if (isOzowPayinDryRun()) {
+    console.warn(
+      `[ozow] OZOW_PAYIN_DRY_RUN enabled – skipping live Ozow checkout` +
+        ` (OZOW_IS_TEST=${JSON.stringify(process.env.OZOW_IS_TEST)})`,
+    );
     return {
       paymentUrl: params.successUrl,
       paymentId: `dry-run-${params.transactionReference}`,
       transactionReference: params.transactionReference,
     };
   }
+
+  console.warn(
+    `[ozow] live pay-in: dryRun=${JSON.stringify(process.env.OZOW_PAYIN_DRY_RUN)}` +
+      ` isTest=${JSON.stringify(process.env.OZOW_IS_TEST)}` +
+      ` siteCode=${OZOW_SITE_CODE ? "set" : "missing"}`,
+  );
 
   const result = await createOneApiPayment(params);
   return {

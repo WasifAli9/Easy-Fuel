@@ -13,7 +13,7 @@ Configure in server `.env`:
 | `OZOW_PAYOUT_SUBMIT_PATH` | Confirm with Itu (e.g. `/v1/requestpayout`) |
 | `OZOW_PAYOUT_API_KEY` | Payout API key from Ozow dashboard (may differ from pay-in key) |
 | `OZOW_PAYOUT_ACCESS_TOKEN` | 24-char string for payout verification webhooks |
-| `OZOW_PAYOUT_DRY_RUN=true` | Record payouts without calling Ozow API (until float/dashboard ready) |
+| `OZOW_PAYIN_DRY_RUN=true` | Skip live Ozow checkout and auto-complete pay-ins (staging/dev). Does **not** require `OZOW_IS_TEST`. |
 | `OZOW_WEBHOOK_SKIP_VERIFY=true` | **Staging only** with `OZOW_IS_TEST=true` if hash signing fails |
 | `PAYMENT_REMINDER_AFTER_HOURS=24` | Hours after delivery before payment reminder push |
 

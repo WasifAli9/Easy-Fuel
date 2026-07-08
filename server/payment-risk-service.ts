@@ -8,7 +8,7 @@ import {
   getDriverBankDetails,
   getSupplierBankDetailsForDepotOrder,
 } from "./payment-service";
-import { isOzowConfigured } from "./ozow-service";
+import { isOzowConfigured, isOzowPayinDryRun, envFlagEnabled } from "./ozow-service";
 import { isOzowPayoutConfigured, payoutNotificationUrl, payoutVerificationUrl } from "./ozow-payout-service";
 
 export class PaymentBlockedError extends Error {
@@ -100,10 +100,9 @@ export function getOzowIntegrationDiagnostics() {
   return {
     payinConfigured: isOzowConfigured(),
     payoutConfigured: isOzowPayoutConfigured(),
-    payinDryRun: process.env.OZOW_PAYIN_DRY_RUN === "true",
-    payoutDryRun: process.env.OZOW_PAYOUT_DRY_RUN === "true",
-    webhookSkipVerify:
-      process.env.OZOW_WEBHOOK_SKIP_VERIFY === "true" && process.env.OZOW_IS_TEST === "true",
+    payinDryRun: isOzowPayinDryRun(),
+    payoutDryRun: envFlagEnabled("OZOW_PAYOUT_DRY_RUN"),
+    webhookSkipVerify: envFlagEnabled("OZOW_WEBHOOK_SKIP_VERIFY") && envFlagEnabled("OZOW_IS_TEST"),
     siteCode: process.env.OZOW_SITE_CODE ? "set" : "missing",
     clientId: process.env.OZOW_CLIENT_ID ? "set" : "missing",
     clientSecret: process.env.OZOW_CLIENT_SECRET ? "set" : "missing",
@@ -112,6 +111,10 @@ export function getOzowIntegrationDiagnostics() {
     payinWebhookUrl: publicUrl ? `${publicUrl.replace(/\/$/, "")}/api/webhooks/ozow-payin` : null,
     payoutNotificationUrl: publicUrl ? payoutNotificationUrl() : null,
     payoutVerificationUrl: publicUrl ? payoutVerificationUrl() : null,
-    isTest: process.env.OZOW_IS_TEST === "true",
+    isTest: envFlagEnabled("OZOW_IS_TEST"),
+    raw: {
+      OZOW_PAYIN_DRY_RUN: process.env.OZOW_PAYIN_DRY_RUN ?? null,
+      OZOW_IS_TEST: process.env.OZOW_IS_TEST ?? null,
+    },
   };
 }
