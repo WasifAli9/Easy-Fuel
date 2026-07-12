@@ -9,7 +9,10 @@ import {
   verifyPayoutRequest,
   markPayoutCompleted,
   markPayoutFailed,
+  markPayoutCancelled,
   getPayoutById,
+  getPayoutByMerchantReference,
+  getStoredAccountDecryptionKey,
 } from "./ozow-payout-service";
 
 function flattenIncoming(req: Request): Record<string, string | undefined> {
@@ -69,7 +72,7 @@ export async function handleOzowPayinWebhook(req: Request, res: Response) {
   }
 }
 
-/** Ozow payout verification – approve if access token and amount match. */
+/** Ozow payout verification – approve if access token and amount match; return decryption key. */
 export async function handleOzowPayoutVerificationWebhook(req: Request, res: Response) {
   try {
     const flat = flattenIncoming(req);
@@ -79,8 +82,17 @@ export async function handleOzowPayoutVerificationWebhook(req: Request, res: Res
       return res.status(401).json({ verified: false, error: "Invalid access token" });
     }
 
-    const payoutId = String(body.payoutId || body.PayoutId || body.reference || body.Reference || "");
-    const payout = payoutId ? await getPayoutById(payoutId) : null;
+    const payoutId = String(
+      body.payoutId || body.PayoutId || body.id || body.Id || "",
+    );
+    const merchantRef = String(
+      body.merchantReference || body.MerchantReference || body.reference || body.Reference || "",
+    );
+
+    let payout = payoutId ? await getPayoutById(payoutId) : null;
+    if (!payout && merchantRef) {
+      payout = await getPayoutByMerchantReference(merchantRef);
+    }
 
     if (payout) {
       const requestedAmount = Number(body.amount || body.Amount || 0);
@@ -90,7 +102,16 @@ export async function handleOzowPayoutVerificationWebhook(req: Request, res: Res
       }
     }
 
-    return res.status(200).json({ verified: true });
+    const decryptionKey = getStoredAccountDecryptionKey(payout);
+    return res.status(200).json({
+      verified: true,
+      ...(decryptionKey
+        ? {
+            accountNumberDecryptionKey: decryptionKey,
+            AccountNumberDecryptionKey: decryptionKey,
+          }
+        : {}),
+    });
   } catch (e) {
     console.error("[ozow-payout-verification]", e);
     return res.status(500).json({ verified: false, error: "Verification failed" });
@@ -106,17 +127,68 @@ export async function handleOzowPayoutNotificationWebhook(req: Request, res: Res
     const payoutId = String(
       body.payoutId || body.PayoutId || body.id || body.Id || body.reference || "",
     );
-    const status = String(body.status || body.Status || "").toLowerCase();
-    const raw = flat as Record<string, unknown>;
+    const status = String(
+      body.status || body.Status || body.event || body.Event || body.messageType || "",
+    ).toLowerCase();
+    const raw = { ...flat, notificationBody: body } as Record<string, unknown>;
 
     if (!payoutId) {
-      return res.status(200).json({ ok: true, ignored: true });
+      return res.status(200).json({ ok: true, ignored: true, status });
     }
 
-    if (status === "complete" || status === "completed" || status === "success") {
+    if (
+      status.includes("verificationsuccess") ||
+      status.includes("verification_success") ||
+      status === "verificationsuccess"
+    ) {
+      const existing = await getPayoutById(payoutId);
+      if (existing) {
+        const { db } = await import("./db");
+        const { payoutTransactions } = await import("@shared/schema");
+        const { eq } = await import("drizzle-orm");
+        await db
+          .update(payoutTransactions)
+          .set({
+            raw: {
+              ...((existing.raw as object) || {}),
+              verificationSuccessNotification: raw,
+            },
+            updatedAt: new Date(),
+          })
+          .where(eq(payoutTransactions.id, existing.id));
+      }
+      return res.status(200).json({ ok: true, event: "verificationSuccess" });
+    }
+
+    if (
+      status === "complete" ||
+      status === "completed" ||
+      status === "success" ||
+      status.includes("payoutcomplete")
+    ) {
       await markPayoutCompleted(payoutId, raw);
-    } else if (status === "failed" || status === "error" || status === "cancelled") {
+    } else if (status === "cancelled" || status.includes("payoutcancelled")) {
+      await markPayoutCancelled(payoutId, raw);
+    } else if (status === "failed" || status === "error") {
       await markPayoutFailed(payoutId, raw);
+    } else {
+      console.info("[ozow-payout-notification] unhandled status:", status, payoutId);
+      const existing = await getPayoutById(payoutId);
+      if (existing) {
+        const { db } = await import("./db");
+        const { payoutTransactions } = await import("@shared/schema");
+        const { eq } = await import("drizzle-orm");
+        await db
+          .update(payoutTransactions)
+          .set({
+            raw: {
+              ...((existing.raw as object) || {}),
+              lastNotification: raw,
+            },
+            updatedAt: new Date(),
+          })
+          .where(eq(payoutTransactions.id, existing.id));
+      }
     }
 
     return res.status(200).json({ ok: true });

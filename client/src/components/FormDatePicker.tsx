@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import type { Control, FieldPath, FieldValues } from "react-hook-form";
 import { Calendar as CalendarIcon } from "lucide-react";
 import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -15,6 +14,7 @@ import {
 } from "@/components/ui/form";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { FormTimePicker } from "@/components/FormTimePicker";
 
 export function parseLocalYmd(ymd: string | undefined): Date | undefined {
   if (!ymd?.trim()) return undefined;
@@ -86,6 +86,7 @@ export function DateTimePickerField({
   placeholder = "Pick date and time",
   "data-testid": dataTestId,
 }: DateTimePickerFieldProps) {
+  const [open, setOpen] = useState(false);
   const datePart = value.length >= 10 ? value.slice(0, 10) : "";
   const timePart = value.length >= 16 ? value.slice(11, 16) : "";
   const selected = parseLocalYmd(datePart);
@@ -95,11 +96,13 @@ export function DateTimePickerField({
   const setDate = (d: Date | undefined) => {
     if (!d) {
       onChange("");
+      setOpen(false);
       return;
     }
     const ymd = formatLocalYmd(d);
     const time = timePart || "09:00";
     onChange(`${ymd}T${time}`);
+    setOpen(false);
   };
 
   const setTime = (time: string) => {
@@ -111,7 +114,7 @@ export function DateTimePickerField({
     <div className="space-y-2">
       <Label htmlFor={id}>{label}</Label>
       <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2">
-        <Popover>
+        <Popover open={open} onOpenChange={setOpen}>
           <PopoverTrigger asChild>
             <Button
               id={id}
@@ -142,12 +145,10 @@ export function DateTimePickerField({
             />
           </PopoverContent>
         </Popover>
-        <Input
-          type="time"
+        <FormTimePicker
           value={timePart}
-          onChange={(e) => setTime(e.target.value)}
-          className="h-9 w-full sm:w-[140px] bg-background"
-          aria-label="Pickup time"
+          onChange={setTime}
+          className="h-9 w-full sm:w-[160px]"
         />
       </div>
     </div>
@@ -177,6 +178,7 @@ export function NativeFormDatePicker({
   "data-testid": dataTestId,
 }: NativeFormDatePickerProps) {
   const [value, setValue] = useState(defaultValue);
+  const [open, setOpen] = useState(false);
   const min = minDate ? startOfDay(minDate) : undefined;
   const max = maxDate ? startOfDay(maxDate) : undefined;
 
@@ -190,7 +192,7 @@ export function NativeFormDatePicker({
     <>
       <Label htmlFor={id ?? name}>{label}</Label>
       <input type="hidden" name={name} value={value} readOnly />
-      <Popover>
+      <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button
             type="button"
@@ -211,7 +213,10 @@ export function NativeFormDatePicker({
           <Calendar
             mode="single"
             selected={selected}
-            onSelect={(d) => setValue(d ? formatLocalYmd(d) : "")}
+            onSelect={(d) => {
+              setValue(d ? formatLocalYmd(d) : "");
+              setOpen(false);
+            }}
             disabled={(date) => {
               const day = startOfDay(date);
               if (min && day < min) return true;
@@ -259,47 +264,88 @@ export function FormDatePicker<T extends FieldValues>({
       render={({ field }) => {
         const selected = parseLocalYmd(field.value);
         return (
-          <FormItem>
-            <FormLabel>{label}</FormLabel>
-            <Popover>
-              <PopoverTrigger asChild>
-                <FormControl>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    data-testid={dataTestId}
-                    className={cn(
-                      "w-full pl-3 text-left font-normal h-9",
-                      !field.value && "text-muted-foreground",
-                    )}
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4 shrink-0 opacity-70" />
-                    {selected
-                      ? selected.toLocaleDateString("en-ZA", { dateStyle: "medium" })
-                      : placeholder}
-                  </Button>
-                </FormControl>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="start">
-                <Calendar
-                  mode="single"
-                  selected={selected}
-                  onSelect={(d) => field.onChange(d ? formatLocalYmd(d) : "")}
-                  disabled={(date) => {
-                    const day = startOfDay(date);
-                    if (min && day < min) return true;
-                    if (max && day > max) return true;
-                    return false;
-                  }}
-                  initialFocus
-                />
-              </PopoverContent>
-            </Popover>
-            {description ? <FormDescription>{description}</FormDescription> : null}
-            <FormMessage />
-          </FormItem>
+          <FormDatePickerItem
+            label={label}
+            description={description}
+            placeholder={placeholder}
+            dataTestId={dataTestId}
+            selected={selected}
+            value={field.value}
+            onChange={field.onChange}
+            min={min}
+            max={max}
+          />
         );
       }}
     />
+  );
+}
+
+function FormDatePickerItem({
+  label,
+  description,
+  placeholder,
+  dataTestId,
+  selected,
+  value,
+  onChange,
+  min,
+  max,
+}: {
+  label: string;
+  description?: string;
+  placeholder: string;
+  dataTestId?: string;
+  selected: Date | undefined;
+  value: string | undefined;
+  onChange: (value: string) => void;
+  min?: Date;
+  max?: Date;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <FormItem>
+      <FormLabel>{label}</FormLabel>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <FormControl>
+            <Button
+              type="button"
+              variant="outline"
+              data-testid={dataTestId}
+              className={cn(
+                "w-full pl-3 text-left font-normal h-9",
+                !value && "text-muted-foreground",
+              )}
+            >
+              <CalendarIcon className="mr-2 h-4 w-4 shrink-0 opacity-70" />
+              {selected
+                ? selected.toLocaleDateString("en-ZA", { dateStyle: "medium" })
+                : placeholder}
+            </Button>
+          </FormControl>
+        </PopoverTrigger>
+        <PopoverContent className="w-auto p-0" align="start">
+          <Calendar
+            mode="single"
+            selected={selected}
+            onSelect={(d) => {
+              onChange(d ? formatLocalYmd(d) : "");
+              setOpen(false);
+            }}
+            disabled={(date) => {
+              const day = startOfDay(date);
+              if (min && day < min) return true;
+              if (max && day > max) return true;
+              return false;
+            }}
+            initialFocus
+          />
+        </PopoverContent>
+      </Popover>
+      {description ? <FormDescription>{description}</FormDescription> : null}
+      <FormMessage />
+    </FormItem>
   );
 }

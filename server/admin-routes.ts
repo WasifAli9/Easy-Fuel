@@ -2947,6 +2947,22 @@ router.get("/ozow-status", async (_req, res) => {
   }
 });
 
+/** List Ozow payout banks (bankGroupId) – requires OZOW_PAYOUT_API_KEY. */
+router.get("/ozow-available-banks", async (_req, res) => {
+  try {
+    const { getAvailableBanks, isOzowPayoutConfigured } = await import("./ozow-payout-service");
+    if (!isOzowPayoutConfigured()) {
+      return res.status(400).json({
+        error: "Set OZOW_PAYOUT_API_KEY and OZOW_SITE_CODE, then restart the server.",
+      });
+    }
+    const banks = await getAvailableBanks(true);
+    res.json({ count: banks.length, banks });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get app settings
 router.get("/settings", async (req, res) => {
   try {

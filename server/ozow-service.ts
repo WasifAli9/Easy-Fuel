@@ -100,7 +100,8 @@ async function getOneApiAccessToken(): Promise<string> {
   const body = new URLSearchParams({
     client_id: OZOW_CLIENT_ID,
     client_secret: OZOW_CLIENT_SECRET,
-    scope: "payment",
+    // Ozow confirmed scope must be "payments" (docs incorrectly say "payment")
+    scope: "payments",
     grant_type: "client_credentials",
   });
 
@@ -181,20 +182,42 @@ async function createOneApiPayment(
   const notifyUrl = params.notifyUrl || ozowPayinNotifyUrl();
   const isTest = envFlagEnabled("OZOW_IS_TEST");
 
+  const merchantReference = params.transactionReference.slice(0, 50);
+  const expireAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const bankReference = (params.bankReference || merchantReference)
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .slice(0, 20);
+
+  /**
+   * Staging One API accepts a flat JSON body (not JSON:API).
+   * Required: siteCode, amount{currency,value}, merchantReference, expireAt, region.
+   * Confirmed working against https://stagingone.ozow.com/v1/payments (HTTP 201).
+   */
   const payload: Record<string, unknown> = {
     siteCode: OZOW_SITE_CODE,
+    region: "ZA",
     countryCode: "ZA",
     currencyCode: "ZAR",
-    amount: Number(params.amountRands.toFixed(2)),
-    transactionReference: params.transactionReference.slice(0, 50),
-    bankReference: (params.bankReference || params.transactionReference).slice(0, 20),
+    amount: {
+      currency: "ZAR",
+      value: Number(params.amountRands.toFixed(2)),
+    },
+    merchantReference,
+    transactionReference: merchantReference,
+    bankReference,
+    expireAt,
     notifyUrl,
     successUrl: params.successUrl,
     cancelUrl: params.cancelUrl,
+    errorUrl: params.cancelUrl,
     isTest,
   };
   if (params.customerName) payload.customer = params.customerName.slice(0, 100);
   if (params.customerEmail) payload.customerEmail = params.customerEmail.slice(0, 150);
+
+  if (isTest) {
+    console.info("[ozow] create payment request:", JSON.stringify(payload));
+  }
 
   const res = await fetch(`${oneApiBaseUrl()}/v1/payments`, {
     method: "POST",
@@ -216,15 +239,32 @@ async function createOneApiPayment(
       data = { ...nested, ...asRecord(nested.attributes), links: data.links ?? nested.links };
     }
   } catch {
-    throw new Error(`Ozow One API create payment returned non-JSON (${res.status}): ${rawText}`);
+    throw new Error(
+      `Ozow One API create payment returned non-JSON (${res.status}): ${rawText.slice(0, 300)}`,
+    );
   }
 
   if (!res.ok) {
-    const msg =
+    console.error("[ozow] create payment validation/error body:", rawText.slice(0, 2000));
+    const topErrors = Array.isArray(data.errors) ? data.errors : null;
+    let detailMsg =
       pickString(data, "message", "title", "detail") ||
       pickString(asRecord(data.error), "message", "Message") ||
-      rawText;
-    throw new Error(`Ozow One API create payment failed (${res.status}): ${msg}`);
+      "";
+    if (!detailMsg && topErrors && topErrors.length > 0) {
+      detailMsg = topErrors
+        .map((e) => {
+          const er = asRecord(e) || {};
+          const pointer = pickString(asRecord(er.source), "pointer");
+          const detail = pickString(er, "detail", "title", "message");
+          if (pointer && detail) return `${pointer}: ${detail}`;
+          return detail || pointer || JSON.stringify(e);
+        })
+        .join("; ");
+    }
+    throw new Error(
+      `Ozow One API create payment failed (${res.status}): ${detailMsg || rawText.slice(0, 500)}`,
+    );
   }
 
   const paymentId = pickString(data, "id", "paymentId");

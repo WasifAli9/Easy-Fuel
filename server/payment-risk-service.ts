@@ -106,6 +106,7 @@ export function getOzowIntegrationDiagnostics() {
     siteCode: process.env.OZOW_SITE_CODE ? "set" : "missing",
     clientId: process.env.OZOW_CLIENT_ID ? "set" : "missing",
     clientSecret: process.env.OZOW_CLIENT_SECRET ? "set" : "missing",
+    payoutApiKey: process.env.OZOW_PAYOUT_API_KEY || process.env.OZOW_API_KEY ? "set" : "missing",
     oneApiBaseUrl: process.env.OZOW_ONE_API_BASE_URL || "https://stagingone.ozow.com",
     publicAppUrl: publicUrl,
     payinWebhookUrl: publicUrl ? `${publicUrl.replace(/\/$/, "")}/api/webhooks/ozow-payin` : null,
@@ -115,6 +116,7 @@ export function getOzowIntegrationDiagnostics() {
     raw: {
       OZOW_PAYIN_DRY_RUN: process.env.OZOW_PAYIN_DRY_RUN ?? null,
       OZOW_IS_TEST: process.env.OZOW_IS_TEST ?? null,
+      OZOW_PAYOUT_DRY_RUN: process.env.OZOW_PAYOUT_DRY_RUN ?? null,
     },
   };
 }

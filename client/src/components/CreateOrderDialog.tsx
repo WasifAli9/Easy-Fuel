@@ -36,6 +36,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Plus, MapPin, Truck, FileSignature } from "lucide-react";
 import { AddAddressDialog } from "@/components/AddAddressDialog";
 import { FormDatePicker } from "@/components/FormDatePicker";
+import { FormTimePicker } from "@/components/FormTimePicker";
 import { SignaturePad } from "@/components/SignaturePad";
 
 const orderFormSchema = z.object({
@@ -352,9 +353,9 @@ export function CreateOrderDialog({ trigger, onOrderCreated }: CreateOrderDialog
                       <FormItem>
                         <FormLabel>From Time</FormLabel>
                         <FormControl>
-                          <Input
-                            type="time"
-                            {...field}
+                          <FormTimePicker
+                            value={field.value}
+                            onChange={field.onChange}
                             data-testid="input-from-time"
                           />
                         </FormControl>
@@ -370,9 +371,9 @@ export function CreateOrderDialog({ trigger, onOrderCreated }: CreateOrderDialog
                       <FormItem>
                         <FormLabel>To Time</FormLabel>
                         <FormControl>
-                          <Input
-                            type="time"
-                            {...field}
+                          <FormTimePicker
+                            value={field.value}
+                            onChange={field.onChange}
                             data-testid="input-to-time"
                           />
                         </FormControl>

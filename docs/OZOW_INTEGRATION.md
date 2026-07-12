@@ -52,8 +52,8 @@ References:
 
 | Ozow docs | Easy Fuel today | Status |
 |-----------|-----------------|--------|
-| OAuth token: `POST {ONE_API}/v1/token` with `client_id`, `client_secret`, `grant_type=client_credentials`, `scope=payment` | Same – `ozow-service.ts` | **OK** |
-| Create payment: `POST {ONE_API}/v1/payments` + redirect to checkout URL from response | Same – no legacy `stagingapi` bridge | **OK** |
+| OAuth token: `POST {ONE_API}/v1/token` with `client_id`, `client_secret`, `grant_type=client_credentials`, `scope=payments` | Same – `ozow-service.ts` (Itu: docs wrongly say `payment`) | **OK** |
+| Create payment: `POST {ONE_API}/v1/payments` (flat JSON: `amount:{currency,value}`, `region`, `siteCode`, `merchantReference`, `expireAt`) → `redirectUrl` | Same – no legacy `stagingapi` bridge | **OK** |
 | `NotifyUrl` webhook (HTTPS) | `/api/webhooks/ozow-payin` | **OK** |
 | Verify webhook hash (`Hash` / `HashCheck`) | SHA256 with `OZOW_CLIENT_SECRET` | **OK** (staging skip flag available) |
 | Success / cancel redirect URLs | `/payment/success`, `/payment/cancel` | **OK** |
@@ -66,16 +66,14 @@ Per [Payouts integration](https://hub.ozow.com/docs/payouts-api/p91zsgmrgnnm2-pa
 
 | Ozow docs | Easy Fuel today | Status |
 |-----------|-----------------|--------|
-| Base URL `https://stagingpayoutsapi.ozow.com` | `OZOW_PAYOUT_API_BASE_URL` (default updated) | **OK** – confirm submit path with Itu |
-| Auth: `ApiKey` + `SiteCode` headers | `ApiKey` + `SiteCode` on submit request | **OK** |
-| Step 1: `GET /v1/getpayoutavailability` | Not implemented | **Gap** (optional but recommended) |
-| Step 2: Request Payout (HTTP POST) | `POST {base}{OZOW_PAYOUT_SUBMIT_PATH}` – body schema TBD | **Needs Itu** – exact path + `bankGroupId` mapping |
-| Step 3: Verification webhook | `/api/webhooks/ozow-payout-verification` + 24-char access token | **OK** (concept) |
-| Step 4: `GET /v1/getpayout` | Not implemented | **Gap** (optional but recommended) |
-| Payout notification webhook | `/api/webhooks/ozow-payout-notification` | **OK** |
-| End-to-end staging sign-off (mock + actual API) | Use `OZOW_PAYOUT_DRY_RUN=true` until dashboard/float ready | **Pending** |
-
-**Ask Itu to confirm:** payout submit endpoint + request schema, separate Payout API key vs pay-in credentials, `AccountNumberDecryptionKey` for verification webhooks, and exact checkout URL field returned from `POST /v1/payments` if staging tests fail.
+| Base URL `https://stagingpayoutsapi.ozow.com` | `OZOW_PAYOUT_API_BASE_URL` | **OK** |
+| Auth: `ApiKey` + `SiteCode` headers | `OZOW_PAYOUT_API_KEY` + `OZOW_SITE_CODE` | **OK** – set Payout API Key from dashboard |
+| Step 1: `GET /v1/getavailablebanks` | `getAvailableBanks()` + bank-name → `bankGroupId` | **OK** |
+| Step 2: Request Payout | Ozow schema: `merchantReference`, `bankingDetails`, AES account, `hashCheck` | **OK** |
+| Step 3: Verification webhook | Returns `verified` + `accountNumberDecryptionKey` | **OK** |
+| Step 4: `GET /v1/getpayout` | `fetchOzowPayoutStatus()` | **OK** |
+| Payout notification webhook | Complete / cancelled / verificationSuccess handled | **OK** |
+| End-to-end staging sign-off | Set `OZOW_PAYOUT_DRY_RUN=false` after key is set | **Pending Itu tests** |
 
 ---
 
