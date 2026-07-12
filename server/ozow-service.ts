@@ -8,6 +8,12 @@ import { ozowPayinNotifyUrl, publicAppUrl } from "./payment-service";
 const OZOW_SITE_CODE = process.env.OZOW_SITE_CODE || "";
 const OZOW_CLIENT_ID = process.env.OZOW_CLIENT_ID || "";
 const OZOW_CLIENT_SECRET = process.env.OZOW_CLIENT_SECRET || "";
+/** Merchant Private Key from Ozow dashboard – used for pay-in webhook Hash (SHA512). */
+const OZOW_PRIVATE_KEY = (
+  process.env.OZOW_PRIVATE_KEY ||
+  process.env.OZOW_API_PRIVATE_KEY ||
+  ""
+).trim();
 const OZOW_ONE_API_BASE_URL = (
   process.env.OZOW_ONE_API_BASE_URL || "https://stagingone.ozow.com"
 ).replace(/\/$/, "");
@@ -55,6 +61,21 @@ export function isOzowConfigured(): boolean {
 
 function sha256Hex(input: string): string {
   return crypto.createHash("sha256").update(input, "utf8").digest("hex");
+}
+
+function sha512Hex(input: string): string {
+  return crypto.createHash("sha512").update(input, "utf8").digest("hex");
+}
+
+function pickField(
+  body: Record<string, string | undefined>,
+  ...keys: string[]
+): string {
+  for (const k of keys) {
+    const v = body[k];
+    if (v !== undefined && v !== null && String(v) !== "") return String(v);
+  }
+  return "";
 }
 
 function oneApiBaseUrl(): string {
@@ -344,28 +365,120 @@ export function defaultCancelUrl(context: string, contextId: string): string {
 }
 
 /**
- * Verify Ozow pay-in webhook notification hash.
- * One API notifications use the `Hash` field (legacy notifications may use `HashCheck`).
+ * Verify Ozow pay-in webhook / redirect Hash.
+ * Ozow: SHA512(lowercase(SiteCode + TransactionId + TransactionReference + Amount + Status
+ *   + [Optional1..5] + CurrencyCode + IsTest + [StatusMessage] + PrivateKey))
+ * Confirmed against staging responsetest.php Hash String.
+ * @see https://ozow.com/integrations (transaction notification hash)
  */
 export function verifyWebhookPayload(
   bodyOrQuery: Record<string, string | undefined>,
 ): { valid: boolean; payload: OzowWebhookPayload | null } {
-  const hashReceived =
-    bodyOrQuery.Hash || bodyOrQuery.hash || bodyOrQuery.HashCheck || bodyOrQuery.hashCheck || "";
-  const transactionRef =
-    bodyOrQuery.TransactionReference ||
-    bodyOrQuery.transactionReference ||
-    bodyOrQuery.TransactionId ||
-    bodyOrQuery.transactionId ||
-    "";
-  const status = bodyOrQuery.Status || bodyOrQuery.status || "";
+  const hashReceived = pickField(
+    bodyOrQuery,
+    "Hash",
+    "hash",
+    "HashCheck",
+    "hashCheck",
+  );
+  const siteCode = pickField(bodyOrQuery, "SiteCode", "siteCode") || OZOW_SITE_CODE;
+  const transactionId = pickField(
+    bodyOrQuery,
+    "TransactionId",
+    "transactionId",
+  );
+  const transactionRef = pickField(
+    bodyOrQuery,
+    "TransactionReference",
+    "transactionReference",
+  );
+  const amount = pickField(bodyOrQuery, "Amount", "amount");
+  const status = pickField(bodyOrQuery, "Status", "status");
+  const currencyCode = pickField(
+    bodyOrQuery,
+    "CurrencyCode",
+    "currencyCode",
+    "Currency",
+  );
+  const isTest = pickField(bodyOrQuery, "IsTest", "isTest");
+  const statusMessage = pickField(
+    bodyOrQuery,
+    "StatusMessage",
+    "statusMessage",
+  );
+  const optional1 = pickField(bodyOrQuery, "Optional1", "optional1");
+  const optional2 = pickField(bodyOrQuery, "Optional2", "optional2");
+  const optional3 = pickField(bodyOrQuery, "Optional3", "optional3");
+  const optional4 = pickField(bodyOrQuery, "Optional4", "optional4");
+  const optional5 = pickField(bodyOrQuery, "Optional5", "optional5");
 
   if (!transactionRef || !status) {
     return { valid: false, payload: null };
   }
 
-  let valid = true;
-  if (hashReceived && OZOW_CLIENT_SECRET) {
+  let valid = !hashReceived; // no hash provided → accept (rare)
+  const privateKey = OZOW_PRIVATE_KEY;
+
+  if (hashReceived && privateKey) {
+    // Match Ozow responsetest "Hash String" (empty optionals / StatusMessage omitted).
+    const candidates = [
+      [
+        siteCode,
+        transactionId,
+        transactionRef,
+        amount,
+        status,
+        currencyCode,
+        isTest,
+        privateKey,
+      ].join(""),
+      // Full docs order with empty optionals included as "".
+      [
+        siteCode,
+        transactionId,
+        transactionRef,
+        amount,
+        status,
+        optional1,
+        optional2,
+        optional3,
+        optional4,
+        optional5,
+        currencyCode,
+        isTest,
+        statusMessage,
+        privateKey,
+      ].join(""),
+      // Minimal redirect hash (some success redirects omit currency/isTest).
+      [siteCode, transactionId, transactionRef, amount, status, privateKey].join(""),
+    ];
+
+    const received = hashReceived.toLowerCase();
+    valid = candidates.some((raw) => {
+      const expected = sha512Hex(raw.toLowerCase());
+      return expected === received;
+    });
+
+    if (!valid) {
+      console.warn("[ozow] pay-in webhook hash mismatch", {
+        siteCode,
+        transactionRef,
+        status,
+        amount,
+        hasPrivateKey: true,
+      });
+    }
+  } else if (hashReceived && !privateKey) {
+    console.error(
+      "[ozow] OZOW_PRIVATE_KEY is not set – cannot verify pay-in webhook Hash. " +
+        "Set Merchant Details → Private Key in .env",
+    );
+    valid = false;
+  }
+
+  // Legacy fallback (incorrect for Ozow notify) kept only if private key path failed
+  // and old env accidentally relied on client secret — do not prefer this.
+  if (!valid && hashReceived && OZOW_CLIENT_SECRET && !privateKey) {
     const copy = { ...bodyOrQuery };
     delete copy.Hash;
     delete copy.hash;
@@ -376,13 +489,13 @@ export function verifyWebhookPayload(
       .sort();
     const queryString = sortedKeys.map((k) => `${k}=${copy[k]}`).join("&");
     const expected = sha256Hex(queryString.toLowerCase() + OZOW_CLIENT_SECRET);
-    valid = hashReceived === expected || hashReceived.toLowerCase() === expected.toLowerCase();
+    valid = hashReceived.toLowerCase() === expected.toLowerCase();
   }
 
   if (
     !valid &&
-    process.env.OZOW_WEBHOOK_SKIP_VERIFY === "true" &&
-    process.env.OZOW_IS_TEST === "true"
+    envFlagEnabled("OZOW_WEBHOOK_SKIP_VERIFY") &&
+    envFlagEnabled("OZOW_IS_TEST")
   ) {
     console.warn("[ozow] Webhook hash mismatch ignored (OZOW_WEBHOOK_SKIP_VERIFY staging mode)");
     valid = true;
@@ -391,9 +504,9 @@ export function verifyWebhookPayload(
   const payload: OzowWebhookPayload = {
     TransactionReference: transactionRef,
     Status: status,
-    TransactionId: bodyOrQuery.TransactionId || bodyOrQuery.transactionId,
-    Amount: bodyOrQuery.Amount ? parseFloat(bodyOrQuery.Amount) : undefined,
-    Currency: bodyOrQuery.CurrencyCode || bodyOrQuery.Currency,
+    TransactionId: transactionId || undefined,
+    Amount: amount ? parseFloat(amount) : undefined,
+    Currency: currencyCode || undefined,
     ...bodyOrQuery,
   };
 

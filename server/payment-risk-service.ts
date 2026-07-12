@@ -107,6 +107,7 @@ export function getOzowIntegrationDiagnostics() {
     clientId: process.env.OZOW_CLIENT_ID ? "set" : "missing",
     clientSecret: process.env.OZOW_CLIENT_SECRET ? "set" : "missing",
     payoutApiKey: process.env.OZOW_PAYOUT_API_KEY || process.env.OZOW_API_KEY ? "set" : "missing",
+    privateKey: process.env.OZOW_PRIVATE_KEY || process.env.OZOW_API_PRIVATE_KEY ? "set" : "missing",
     oneApiBaseUrl: process.env.OZOW_ONE_API_BASE_URL || "https://stagingone.ozow.com",
     publicAppUrl: publicUrl,
     payinWebhookUrl: publicUrl ? `${publicUrl.replace(/\/$/, "")}/api/webhooks/ozow-payin` : null,
