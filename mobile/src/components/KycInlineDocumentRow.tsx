@@ -128,6 +128,7 @@ export function KycInlineDocumentRow({
         <MaterialCommunityIcons name={iconName as never} size={18} color={theme.colors.primary} />
         <Text variant="labelLarge" style={styles.label}>
           {label ?? `${title} (PDF)`}
+          {isRequired ? <Text style={styles.requiredMark}> *</Text> : null}
         </Text>
         <View style={[styles.statusBadge, { backgroundColor: chip.backgroundColor }]}>
           <Text style={[styles.statusBadgeText, { color: chip.textColor }]}>
@@ -197,6 +198,10 @@ function getStyles(theme: typeof lightTheme, isDark: boolean) {
       fontWeight: "600",
       color: theme.colors.onSurface,
       paddingTop: 1,
+    },
+    requiredMark: {
+      color: "#DC2626",
+      fontWeight: "700",
     },
     statusBadge: {
       paddingHorizontal: 10,

@@ -127,6 +127,27 @@ function textToFuelTypes(text: string): string[] {
     .filter(Boolean);
 }
 
+function nonempty(v: string): boolean {
+  return v.trim().length > 0;
+}
+
+/** Red asterisk for required field labels (React Native Paper accepts ReactNode labels). */
+function reqLabel(text: string) {
+  return (
+    <>
+      {text}
+      <Text style={{ color: "#DC2626", fontWeight: "700" }}> *</Text>
+    </>
+  );
+}
+
+const SATISFYING_DOC_STATUSES = new Set(["draft", "pending", "pending_review", "approved", "verified"]);
+
+function isDocSatisfying(status: string | null | undefined): boolean {
+  if (!status) return false;
+  return SATISFYING_DOC_STATUSES.has(String(status).toLowerCase());
+}
+
 export function SupplierKycDocumentsScreen() {
   const mode = useUiThemeStore((s) => s.mode);
   const theme = mode === "dark" ? darkTheme : lightTheme;
@@ -277,30 +298,35 @@ export function SupplierKycDocumentsScreen() {
   });
 
   const saveComplianceMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (opts?: { silent?: boolean }) => {
+      const silent = Boolean(opts?.silent);
       const res = await apiClient.put<Record<string, unknown>>("/api/supplier/compliance", buildCompliancePayload());
-      return res.data;
-    },
-    onSuccess: async (data) => {
+      const data = res.data;
       if (!data || typeof data !== "object") {
-        Alert.alert("Save unclear", "Reload this screen to confirm your details were saved.");
-        return;
+        throw new Error("Save unclear — reload this screen to confirm your details were saved.");
       }
       if ("message" in data && data.message === "No fields to update") {
-        Alert.alert("Nothing was saved", "Fill in at least one field and try again.");
-        return;
+        // Already persisted — OK when submitting.
+        return { data, silent, noChanges: true as const };
       }
       const apiErr =
         "error" in data && typeof data.error === "string" && data.error.trim().length > 0
           ? String(data.error).trim()
           : null;
       if (apiErr) {
-        Alert.alert("Save failed", apiErr);
-        return;
+        throw new Error(apiErr);
       }
+      return { data, silent, noChanges: false as const };
+    },
+    onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["/api/supplier/profile"] });
       await queryClient.invalidateQueries({ queryKey: ["/api/supplier/compliance/status"] });
       await queryClient.invalidateQueries({ queryKey: ["/api/supplier/compliance/kyb-readiness"] });
+      if (result.silent) return;
+      if (result.noChanges) {
+        Alert.alert("Nothing was saved", "Fill in at least one field and try again.");
+        return;
+      }
       Alert.alert("Saved", "Your compliance draft was saved. Submit KYB when your checklist is complete.");
     },
     onError: (err: unknown) => {
@@ -425,6 +451,55 @@ export function SupplierKycDocumentsScreen() {
 
   const progressPct = docProgress.total > 0 ? Math.round((docProgress.approved / docProgress.total) * 100) : 0;
 
+  /** Client-side gate matching server KYB submit rules (company + banking + required docs). */
+  const localMissing = useMemo(() => {
+    const missingFields: string[] = [];
+    if (!nonempty(companyName)) missingFields.push("Registered company name");
+    if (!nonempty(registrationNumber)) missingFields.push("CIPC / registration number");
+    if (!nonempty(bankAccountName)) missingFields.push("Account holder name");
+    if (!nonempty(bankName)) missingFields.push("Bank name");
+    if (!nonempty(accountNumber)) missingFields.push("Account number");
+    if (!nonempty(branchCode)) missingFields.push("Branch code");
+
+    const missingDocs: string[] = [];
+    for (const def of KYB_REQUIRED_DOC_TYPES) {
+      const uploaded = (docsQuery.data ?? []).find((row) => row.doc_type === def.docType);
+      if (!isDocSatisfying(uploaded?.verification_status)) {
+        missingDocs.push(def.title);
+      }
+    }
+    return { missingFields, missingDocs, isComplete: missingFields.length === 0 && missingDocs.length === 0 };
+  }, [
+    companyName,
+    registrationNumber,
+    bankAccountName,
+    bankName,
+    accountNumber,
+    branchCode,
+    docsQuery.data,
+  ]);
+
+  const handleSubmitKyb = async () => {
+    if (!localMissing.isComplete) {
+      const bits: string[] = [];
+      if (localMissing.missingFields.length) {
+        bits.push(`Missing fields:\n• ${localMissing.missingFields.join("\n• ")}`);
+      }
+      if (localMissing.missingDocs.length) {
+        bits.push(`Missing documents:\n• ${localMissing.missingDocs.join("\n• ")}`);
+      }
+      Alert.alert("Cannot submit KYB", bits.join("\n\n") || "Complete all required items marked with *.");
+      return;
+    }
+    try {
+      // Persist latest form values so server readiness matches what the user sees.
+      await saveComplianceMutation.mutateAsync({ silent: true });
+      await submitKybMutation.mutateAsync();
+    } catch {
+      // Errors surfaced via mutation onError handlers.
+    }
+  };
+
   const getKybYmd = (key: KybDateKey): string => {
     switch (key) {
       case "vatExpiry":
@@ -513,7 +588,7 @@ export function SupplierKycDocumentsScreen() {
     setIosDateKey(key);
   };
 
-  const kybDateRow = (key: KybDateKey, label: string) => {
+  const kybDateRow = (key: KybDateKey, label: string, required = false) => {
     const value = getKybYmd(key);
     const display =
       value && /^\d{4}-\d{2}-\d{2}$/.test(value)
@@ -523,6 +598,7 @@ export function SupplierKycDocumentsScreen() {
       <View key={key} style={styles.kycDateRow}>
         <Text variant="labelLarge" style={styles.kycDateLabel}>
           {label}
+          {required ? <Text style={{ color: "#DC2626", fontWeight: "700" }}> *</Text> : null}
         </Text>
         <Button mode="outlined" onPress={() => openKybDatePicker(key)} style={styles.input} contentStyle={styles.kycDateButtonContent}>
           {display}
@@ -664,17 +740,34 @@ export function SupplierKycDocumentsScreen() {
           Your details
         </Text>
         <Text variant="bodySmall" style={styles.kycBlockHint}>
-          Each section includes its related fields and PDF upload — same layout as the web portal. Save drafts as you go.
+          Fields marked with a red * are required to submit KYB. Save drafts as you go, then submit when everything required is complete.
         </Text>
 
         {kycFormCard(
           <>
             <Text style={styles.kycSectionLetter}>Section A</Text>
             <Text variant="titleMedium" style={styles.kycSectionTitle}>
+              Banking details
+            </Text>
+            <Text variant="bodySmall" style={[styles.kycBlockHint, { marginBottom: 10 }]}>
+              Required to submit KYB and to accept driver depot orders (payouts).
+            </Text>
+            <TextInput mode="outlined" label={reqLabel("Account holder name")} value={bankAccountName} onChangeText={setBankAccountName} style={styles.input} />
+            <TextInput mode="outlined" label={reqLabel("Bank name")} value={bankName} onChangeText={setBankName} style={styles.input} />
+            <TextInput mode="outlined" label={reqLabel("Account number")} value={accountNumber} onChangeText={setAccountNumber} style={styles.input} keyboardType="number-pad" />
+            <TextInput mode="outlined" label={reqLabel("Branch code")} value={branchCode} onChangeText={setBranchCode} style={styles.input} keyboardType="number-pad" />
+            {saveDraftBtn}
+          </>,
+        )}
+
+        {kycFormCard(
+          <>
+            <Text style={styles.kycSectionLetter}>Section B</Text>
+            <Text variant="titleMedium" style={styles.kycSectionTitle}>
               Company registration
             </Text>
-            <TextInput mode="outlined" label="Registered company name *" value={companyName} onChangeText={setCompanyName} style={styles.input} />
-            <TextInput mode="outlined" label="CIPC / registration number *" value={registrationNumber} onChangeText={setRegistrationNumber} style={styles.input} />
+            <TextInput mode="outlined" label={reqLabel("Registered company name")} value={companyName} onChangeText={setCompanyName} style={styles.input} />
+            <TextInput mode="outlined" label={reqLabel("CIPC / registration number")} value={registrationNumber} onChangeText={setRegistrationNumber} style={styles.input} />
             <TextInput mode="outlined" label="Registered address" value={registeredAddress} onChangeText={setRegisteredAddress} style={styles.input} />
             <TextInput mode="outlined" label="Director names (comma-separated)" value={directorNames} onChangeText={setDirectorNames} style={styles.input} />
             {kycDoc("cipc_certificate", "CIPC Certificate", "CIPC certificate upload")}
@@ -684,7 +777,7 @@ export function SupplierKycDocumentsScreen() {
 
         {kycFormCard(
           <>
-            <Text style={styles.kycSectionLetter}>Section B</Text>
+            <Text style={styles.kycSectionLetter}>Section C</Text>
             <Text variant="titleMedium" style={styles.kycSectionTitle}>
               VAT certificate
             </Text>
@@ -697,7 +790,7 @@ export function SupplierKycDocumentsScreen() {
 
         {kycFormCard(
           <>
-            <Text style={styles.kycSectionLetter}>Section C</Text>
+            <Text style={styles.kycSectionLetter}>Section D</Text>
             <Text variant="titleMedium" style={styles.kycSectionTitle}>
               SARS tax clearance
             </Text>
@@ -710,7 +803,7 @@ export function SupplierKycDocumentsScreen() {
 
         {kycFormCard(
           <>
-            <Text style={styles.kycSectionLetter}>Section D</Text>
+            <Text style={styles.kycSectionLetter}>Section E</Text>
             <Text variant="titleMedium" style={styles.kycSectionTitle}>
               DMRE wholesale fuel licence
             </Text>
@@ -725,7 +818,7 @@ export function SupplierKycDocumentsScreen() {
 
         {kycFormCard(
           <>
-            <Text style={styles.kycSectionLetter}>Section E</Text>
+            <Text style={styles.kycSectionLetter}>Section F</Text>
             <Text variant="titleMedium" style={styles.kycSectionTitle}>
               Site licence
             </Text>
@@ -738,7 +831,7 @@ export function SupplierKycDocumentsScreen() {
 
         {kycFormCard(
           <>
-            <Text style={styles.kycSectionLetter}>Section F</Text>
+            <Text style={styles.kycSectionLetter}>Section G</Text>
             <Text variant="titleMedium" style={styles.kycSectionTitle}>
               Environmental authorisation
             </Text>
@@ -751,7 +844,7 @@ export function SupplierKycDocumentsScreen() {
 
         {kycFormCard(
           <>
-            <Text style={styles.kycSectionLetter}>Section G</Text>
+            <Text style={styles.kycSectionLetter}>Section H</Text>
             <Text variant="titleMedium" style={styles.kycSectionTitle}>
               Fire department certificate
             </Text>
@@ -765,7 +858,7 @@ export function SupplierKycDocumentsScreen() {
 
         {kycFormCard(
           <>
-            <Text style={styles.kycSectionLetter}>Section H</Text>
+            <Text style={styles.kycSectionLetter}>Section I</Text>
             <Text variant="titleMedium" style={styles.kycSectionTitle}>
               Health, safety & spill compliance
             </Text>
@@ -784,7 +877,7 @@ export function SupplierKycDocumentsScreen() {
 
         {kycFormCard(
           <>
-            <Text style={styles.kycSectionLetter}>Section I</Text>
+            <Text style={styles.kycSectionLetter}>Section J</Text>
             <Text variant="titleMedium" style={styles.kycSectionTitle}>
               SABS & calibration
             </Text>
@@ -802,7 +895,7 @@ export function SupplierKycDocumentsScreen() {
 
         {kycFormCard(
           <>
-            <Text style={styles.kycSectionLetter}>Section J</Text>
+            <Text style={styles.kycSectionLetter}>Section K</Text>
             <Text variant="titleMedium" style={styles.kycSectionTitle}>
               Public liability insurance
             </Text>
@@ -815,40 +908,28 @@ export function SupplierKycDocumentsScreen() {
           </>,
         )}
 
-        {kycFormCard(
-          <>
-            <Text style={styles.kycSectionLetter}>Section K</Text>
-            <Text variant="titleMedium" style={styles.kycSectionTitle}>
-              Banking details
-            </Text>
-            <TextInput mode="outlined" label="Account holder name *" value={bankAccountName} onChangeText={setBankAccountName} style={styles.input} />
-            <TextInput mode="outlined" label="Bank name *" value={bankName} onChangeText={setBankName} style={styles.input} />
-            <TextInput mode="outlined" label="Account number *" value={accountNumber} onChangeText={setAccountNumber} style={styles.input} />
-            <TextInput mode="outlined" label="Branch code *" value={branchCode} onChangeText={setBranchCode} style={styles.input} />
-            {saveDraftBtn}
-          </>,
-        )}
-
         {(() => {
           const r = kybReadinessQuery.data;
-          const canSubmit = Boolean(r?.can_submit ?? r?.canSubmit);
           const pkg = r?.package_submitted_at ?? r?.packageSubmittedAt;
           const overall = r?.overall_status ?? r?.overallStatus ?? "";
           const awaiting = Boolean(pkg && overall === "pending");
+          const canSubmitLocal = localMissing.isComplete && !awaiting && overall !== "approved";
           const hint = awaiting
             ? "Your package is awaiting admin review."
             : overall === "approved"
               ? "Your KYB is approved."
-              : r
+              : !localMissing.isComplete
                 ? (() => {
-                    const md = r.missing_docs ?? r.missingDocs ?? [];
-                    const mf = r.missing_fields ?? r.missingFields ?? [];
                     const bits: string[] = [];
-                    if (md.length) bits.push(`Missing documents: ${md.join(", ")}`);
-                    if (mf.length) bits.push(`Missing fields: ${mf.join(", ")}`);
-                    return bits.length > 0 ? bits.join("\n") : "Complete all required items to enable Submit KYB.";
+                    if (localMissing.missingFields.length) {
+                      bits.push(`Missing fields: ${localMissing.missingFields.join(", ")}`);
+                    }
+                    if (localMissing.missingDocs.length) {
+                      bits.push(`Missing documents: ${localMissing.missingDocs.join(", ")}`);
+                    }
+                    return bits.join("\n") || "Complete all required items marked with * to enable Submit KYB.";
                   })()
-                : "Loading readiness…";
+                : "All required fields and documents look complete. You can submit KYB for review.";
           return (
             <Card style={[styles.card, { marginTop: 8, marginBottom: 24 }]} mode="contained">
               <Card.Content>
@@ -873,15 +954,16 @@ export function SupplierKycDocumentsScreen() {
                     style={{ flex: 1 }}
                     buttonColor={theme.colors.primary}
                     textColor={theme.colors.onPrimary}
-                    loading={submitKybMutation.isPending}
+                    loading={submitKybMutation.isPending || saveComplianceMutation.isPending}
                     disabled={
                       submitKybMutation.isPending ||
+                      saveComplianceMutation.isPending ||
                       kybReadinessQuery.isLoading ||
-                      !canSubmit ||
-                      awaiting ||
-                      overall === "approved"
+                      !canSubmitLocal
                     }
-                    onPress={() => submitKybMutation.mutate()}
+                    onPress={() => {
+                      void handleSubmitKyb();
+                    }}
                   >
                     Submit KYB
                   </Button>

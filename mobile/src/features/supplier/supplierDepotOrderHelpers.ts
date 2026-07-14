@@ -58,6 +58,14 @@ export function statusBadgeStyle(
 }
 
 export function mutationErrorMessage(error: unknown) {
-  const e = error as { response?: { data?: { error?: string } }; message?: string };
+  const e = error as { response?: { data?: { error?: string; code?: string } }; message?: string; code?: string };
   return e.response?.data?.error || e.message || "Something went wrong.";
+}
+
+export function isSupplierBankIncompleteError(error: unknown): boolean {
+  const e = error as { response?: { data?: { code?: string; error?: string } }; code?: string; message?: string };
+  const code = e.response?.data?.code || e.code;
+  if (code === "supplier_bank_incomplete") return true;
+  const msg = String(e.response?.data?.error || e.message || "").toLowerCase();
+  return msg.includes("bank details are incomplete") || msg.includes("supplier_bank_incomplete");
 }

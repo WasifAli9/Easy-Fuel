@@ -6,7 +6,28 @@ import { withCaseAliasesDeep } from "./case-normalize";
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
-    throw new Error(`${res.status}: ${text}`);
+    let message = text;
+    let code: string | undefined;
+    try {
+      const parsed = JSON.parse(text) as { error?: string; message?: string; code?: string };
+      message = parsed.error || parsed.message || text;
+      code = parsed.code;
+    } catch {
+      if (/<[a-z][\s\S]*>/i.test(text)) {
+        if (res.status === 502) {
+          message =
+            "Server unavailable (502). The app backend may have crashed or restarted — try again or check the server.";
+        } else if (res.status === 503) {
+          message = "Server temporarily unavailable (503). Please try again.";
+        } else {
+          message = `Request failed (${res.status}).`;
+        }
+      }
+    }
+    const err = new Error(message) as Error & { status?: number; code?: string };
+    err.status = res.status;
+    err.code = code;
+    throw err;
   }
 }
 

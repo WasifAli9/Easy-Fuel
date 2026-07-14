@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
 import {
   Table,
@@ -19,6 +20,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Package, CheckCircle, XCircle, CreditCard, FileSignature, Eye, Fuel, FileCheck2, AlertCircle } from "lucide-react";
@@ -37,10 +48,22 @@ interface DriverDepotOrdersViewProps {
   statusFilter?: string[] | null;
 }
 
+function isSupplierBankIncompleteError(error: unknown): boolean {
+  const e = error as { code?: string; message?: string; status?: number };
+  if (e?.code === "supplier_bank_incomplete") return true;
+  const msg = String(e?.message || "");
+  return (
+    msg.includes("supplier_bank_incomplete") ||
+    msg.toLowerCase().includes("bank details are incomplete")
+  );
+}
+
 export function DriverDepotOrdersView({ statusFilter }: DriverDepotOrdersViewProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { currency } = useCurrency();
+  const [, setLocation] = useLocation();
+  const [bankDetailsAlertOpen, setBankDetailsAlertOpen] = useState(false);
   const [paymentProofDialogOpen, setPaymentProofDialogOpen] = useState(false);
   const [selectedOrderForProof, setSelectedOrderForProof] = useState<any>(null);
   const [proofImageError, setProofImageError] = useState(false);
@@ -166,7 +189,11 @@ export function DriverDepotOrdersView({ statusFilter }: DriverDepotOrdersViewPro
       toast({ title: "Order Accepted", description: "Order has been accepted. Driver can now proceed with payment." });
     },
     onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      if (isSupplierBankIncompleteError(error)) {
+        setBankDetailsAlertOpen(true);
+        return;
+      }
+      toast({ title: "Could not accept order", description: error.message, variant: "destructive" });
     },
   });
 
@@ -676,6 +703,29 @@ export function DriverDepotOrdersView({ statusFilter }: DriverDepotOrdersViewPro
       open={receiptDialogOpen}
       onOpenChange={setReceiptDialogOpen}
     />
+
+    <AlertDialog open={bankDetailsAlertOpen} onOpenChange={setBankDetailsAlertOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Bank details required</AlertDialogTitle>
+          <AlertDialogDescription>
+            Please add your company bank details in your profile before accepting a driver order.
+            This is needed so payouts can be sent to you after payment.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={() => {
+              setBankDetailsAlertOpen(false);
+              setLocation("/supplier/profile#banking");
+            }}
+          >
+            Add bank details
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
     </>
   );
 }

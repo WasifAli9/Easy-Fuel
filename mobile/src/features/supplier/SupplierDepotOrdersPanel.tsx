@@ -19,6 +19,7 @@ import {
   formatOrderStatusLabel,
   fuelIconName,
   getDriverDisplayName,
+  isSupplierBankIncompleteError,
   mutationErrorMessage,
   statusBadgeStyle,
   type SupplierDepotOrder,
@@ -61,7 +62,17 @@ export function SupplierDepotOrdersPanel({ listHeader, listChrome = "default" }:
   const acceptMutation = useMutation({
     mutationFn: (orderId: string) => apiClient.post(`/api/supplier/driver-depot-orders/${orderId}/accept`),
     onSuccess: invalidate,
-    onError: (e) => Alert.alert("Error", mutationErrorMessage(e)),
+    onError: (e) => {
+      if (isSupplierBankIncompleteError(e)) {
+        Alert.alert(
+          "Bank details required",
+          "Please add your company bank details in your profile before accepting a driver order.",
+          [{ text: "OK" }],
+        );
+        return;
+      }
+      Alert.alert("Could not accept order", mutationErrorMessage(e));
+    },
   });
 
   const rejectMutation = useMutation({

@@ -462,10 +462,14 @@ export function verifyWebhookPayload(
     if (!valid) {
       console.warn("[ozow] pay-in webhook hash mismatch", {
         siteCode,
+        transactionId: transactionId || "(missing)",
         transactionRef,
         status,
         amount,
-        hasPrivateKey: true,
+        currencyCode: currencyCode || "(missing)",
+        isTest: isTest || "(missing)",
+        privateKeyLast4: privateKey.slice(-4),
+        hashReceivedLast8: received.slice(-8),
       });
     }
   } else if (hashReceived && !privateKey) {

@@ -26,7 +26,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { useWebSocket } from "@/hooks/useWebSocket";
-import { User, Lock, ArrowLeft, Shield, Building, FileText, Upload, AlertTriangle, CheckCircle2, XCircle, Loader2, Menu } from "lucide-react";
+import { User, Lock, ArrowLeft, Shield, Building, FileText, Upload, AlertTriangle, CheckCircle2, XCircle, Loader2, Menu, Landmark } from "lucide-react";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -276,73 +276,82 @@ export default function SupplierProfile() {
       // Environmental Liability Insurance
       env_insurance_number: "",
       env_insurance_expiry_date: "",
+      // Banking
+      bank_account_name: "",
+      bank_name: "",
+      account_number: "",
+      branch_code: "",
     },
   });
 
-  // Reset form when profile data loads or changes
+  // Subscribe so isDirty is reliable when guarding the hydrate effect below.
+  const { isDirty: complianceIsDirty } = complianceForm.formState;
+
+  // Hydrate from profile only when the form is pristine — never wipe mid-typing.
   useEffect(() => {
-    if (profile) {
-      complianceForm.reset({
-        // Company Registration - map registered_name to company_name
-        company_name: profile.registered_name || profile.company_name || "",
-        registration_number: profile.registration_number || "",
-        registered_address: profile.registered_address || "",
-        director_names: Array.isArray(profile.director_names) ? profile.director_names : (profile.director_names ? [profile.director_names] : []),
-        // VAT Certificate
-        vat_number: profile.vat_number || "",
-        // SARS Tax Clearance
-        tax_clearance_number: profile.tax_clearance_number || "",
-        tax_clearance_expiry: profile.tax_clearance_expiry ? formatDateForInput(profile.tax_clearance_expiry) : "",
-        // Wholesale Fuel Licence - map dmre_license_number to wholesale_license_number
-        wholesale_license_number: profile.dmre_license_number || profile.wholesale_license_number || "",
-        wholesale_license_issue_date: profile.wholesale_license_issue_date ? formatDateForInput(profile.wholesale_license_issue_date) : "",
-        wholesale_license_expiry_date: profile.dmre_license_expiry ? formatDateForInput(profile.dmre_license_expiry) : (profile.wholesale_license_expiry_date ? formatDateForInput(profile.wholesale_license_expiry_date) : ""),
-        allowed_fuel_types: Array.isArray(profile.allowed_fuel_types) ? profile.allowed_fuel_types : (profile.allowed_fuel_types ? [profile.allowed_fuel_types] : []),
-        // Additional Fuel Trading Permit
-        permit_number: profile.permit_number || "",
-        permit_expiry_date: profile.permit_expiry_date ? formatDateForInput(profile.permit_expiry_date) : "",
-        // Environmental Authorisation
-        environmental_auth_number: profile.environmental_auth_number || "",
-        approved_storage_capacity_litres: profile.approved_storage_capacity_litres || "",
-        // Fire Department Certificate
-        fire_certificate_number: profile.fire_certificate_number || "",
-        fire_certificate_issue_date: profile.fire_certificate_issue_date ? formatDateForInput(profile.fire_certificate_issue_date) : "",
-        fire_certificate_expiry_date: profile.fire_certificate_expiry_date ? formatDateForInput(profile.fire_certificate_expiry_date) : "",
-        // Health & Safety File
-        hse_file_verified: profile.hse_file_verified || false,
-        hse_file_last_updated: profile.hse_file_last_updated ? formatDateForInput(profile.hse_file_last_updated) : "",
-        // Spill Containment Compliance
-        spill_compliance_confirmed: profile.spill_compliance_confirmed || false,
-        // SABS Fuel Quality Certificate
-        sabs_certificate_number: profile.sabs_certificate_number || "",
-        sabs_certificate_issue_date: profile.sabs_certificate_issue_date ? formatDateForInput(profile.sabs_certificate_issue_date) : "",
-        sabs_certificate_expiry_date: profile.sabs_certificate_expiry_date ? formatDateForInput(profile.sabs_certificate_expiry_date) : "",
-        // Pump / Meter Calibration Certificates
-        calibration_certificate_number: profile.calibration_certificate_number || "",
-        calibration_certificate_issue_date: profile.calibration_certificate_issue_date ? formatDateForInput(profile.calibration_certificate_issue_date) : "",
-        calibration_certificate_expiry_date: profile.calibration_certificate_expiry_date ? formatDateForInput(profile.calibration_certificate_expiry_date) : "",
-        // Public Liability Insurance
-        public_liability_policy_number: profile.public_liability_policy_number || "",
-        public_liability_insurance_provider: profile.public_liability_insurance_provider || "",
-        public_liability_coverage_amount_rands: profile.public_liability_coverage_amount_rands || "",
-        public_liability_policy_expiry_date: profile.public_liability_policy_expiry_date ? formatDateForInput(profile.public_liability_policy_expiry_date) : "",
-        // Environmental Liability Insurance
-        env_insurance_number: profile.env_insurance_number || "",
-        env_insurance_expiry_date: profile.env_insurance_expiry_date ? formatDateForInput(profile.env_insurance_expiry_date) : "",
-      });
-    }
-  }, [profile, complianceForm]);
+    if (!profile) return;
+    if (complianceIsDirty) return;
+    complianceForm.reset({
+      company_name: profile.registered_name || profile.company_name || "",
+      registration_number: profile.registration_number || "",
+      registered_address: profile.registered_address || "",
+      director_names: Array.isArray(profile.director_names) ? profile.director_names : (profile.director_names ? [profile.director_names] : []),
+      vat_number: profile.vat_number || "",
+      tax_clearance_number: profile.tax_clearance_number || "",
+      tax_clearance_expiry: profile.tax_clearance_expiry ? formatDateForInput(profile.tax_clearance_expiry) : "",
+      wholesale_license_number: profile.dmre_license_number || profile.wholesale_license_number || "",
+      wholesale_license_issue_date: profile.wholesale_license_issue_date ? formatDateForInput(profile.wholesale_license_issue_date) : "",
+      wholesale_license_expiry_date: profile.dmre_license_expiry ? formatDateForInput(profile.dmre_license_expiry) : (profile.wholesale_license_expiry_date ? formatDateForInput(profile.wholesale_license_expiry_date) : ""),
+      allowed_fuel_types: Array.isArray(profile.allowed_fuel_types) ? profile.allowed_fuel_types : (profile.allowed_fuel_types ? [profile.allowed_fuel_types] : []),
+      permit_number: profile.permit_number || "",
+      permit_expiry_date: profile.permit_expiry_date ? formatDateForInput(profile.permit_expiry_date) : "",
+      environmental_auth_number: profile.environmental_auth_number || "",
+      approved_storage_capacity_litres: profile.approved_storage_capacity_litres || "",
+      fire_certificate_number: profile.fire_certificate_number || "",
+      fire_certificate_issue_date: profile.fire_certificate_issue_date ? formatDateForInput(profile.fire_certificate_issue_date) : "",
+      fire_certificate_expiry_date: profile.fire_certificate_expiry_date ? formatDateForInput(profile.fire_certificate_expiry_date) : "",
+      hse_file_verified: profile.hse_file_verified || false,
+      hse_file_last_updated: profile.hse_file_last_updated ? formatDateForInput(profile.hse_file_last_updated) : "",
+      spill_compliance_confirmed: profile.spill_compliance_confirmed || false,
+      sabs_certificate_number: profile.sabs_certificate_number || "",
+      sabs_certificate_issue_date: profile.sabs_certificate_issue_date ? formatDateForInput(profile.sabs_certificate_issue_date) : "",
+      sabs_certificate_expiry_date: profile.sabs_certificate_expiry_date ? formatDateForInput(profile.sabs_certificate_expiry_date) : "",
+      calibration_certificate_number: profile.calibration_certificate_number || "",
+      calibration_certificate_issue_date: profile.calibration_certificate_issue_date ? formatDateForInput(profile.calibration_certificate_issue_date) : "",
+      calibration_certificate_expiry_date: profile.calibration_certificate_expiry_date ? formatDateForInput(profile.calibration_certificate_expiry_date) : "",
+      public_liability_policy_number: profile.public_liability_policy_number || "",
+      public_liability_insurance_provider: profile.public_liability_insurance_provider || "",
+      public_liability_coverage_amount_rands: profile.public_liability_coverage_amount_rands || "",
+      public_liability_policy_expiry_date: profile.public_liability_policy_expiry_date ? formatDateForInput(profile.public_liability_policy_expiry_date) : "",
+      env_insurance_number: profile.env_insurance_number || "",
+      env_insurance_expiry_date: profile.env_insurance_expiry_date ? formatDateForInput(profile.env_insurance_expiry_date) : "",
+      bank_account_name: profile.bank_account_name || "",
+      bank_name: profile.bank_name || "",
+      account_number: profile.account_number || "",
+      branch_code: profile.branch_code || "",
+    });
+  }, [profile, complianceIsDirty]);
+
+  // Deep-link to banking section from accept-order alert
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.location.hash !== "#banking") return;
+    const t = window.setTimeout(() => {
+      document.getElementById("banking")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [profile?.id]);
 
   const updateComplianceMutation = useMutation({
     mutationFn: async (data: any) => {
       return apiRequest("PUT", "/api/supplier/compliance", data);
     },
     onSuccess: async () => {
-      // Invalidate and refetch profile data to get updated values
+      // Keep current values but mark form clean so the next profile hydrate can sync.
+      complianceForm.reset(complianceForm.getValues());
       await queryClient.invalidateQueries({ queryKey: ["/api/supplier/profile"] });
       await queryClient.invalidateQueries({ queryKey: ["/api/supplier/compliance/status"] });
       await queryClient.invalidateQueries({ queryKey: ["/api/supplier/compliance/kyb-readiness"] });
-      // Refetch profile to update form values
       await queryClient.refetchQueries({ queryKey: ["/api/supplier/profile"] });
       toast({
         title: "Success",
@@ -1041,6 +1050,85 @@ export default function SupplierProfile() {
                   onSubmit={complianceForm.handleSubmit((data) => updateComplianceMutation.mutate(data))} 
                   className="space-y-8"
                 >
+                  {/* Banking details for payouts — shown first (required for KYB + depot orders) */}
+                  <div id="banking" className="space-y-6 scroll-mt-24">
+                    <div className="border-b-2 border-primary/20 pb-3">
+                      <h2 className="text-xl font-bold flex items-center gap-2">
+                        <Landmark className="h-5 w-5 text-primary" />
+                        Banking details
+                      </h2>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Required to submit KYB and before you can accept driver depot orders. Used for receiving payouts.
+                        Fields marked with <span className="text-destructive font-semibold">*</span> are required.
+                      </p>
+                    </div>
+
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="bank_account_name"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>
+                                Account holder name <span className="text-destructive">*</span>
+                              </FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Account name as per bank" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={complianceForm.control}
+                          name="bank_name"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>
+                                Bank name <span className="text-destructive">*</span>
+                              </FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="e.g. ABSA, FNB, Standard Bank" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={complianceForm.control}
+                          name="account_number"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>
+                                Account number <span className="text-destructive">*</span>
+                              </FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Bank account number" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={complianceForm.control}
+                          name="branch_code"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>
+                                Branch code <span className="text-destructive">*</span>
+                              </FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Branch / sort code" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
                   {/* ========== SECTION 1: COMPANY LEGITIMACY ========== */}
                   <div className="space-y-6">
                     <div className="border-b-2 border-primary/20 pb-3">
@@ -1060,7 +1148,7 @@ export default function SupplierProfile() {
                           name="company_name"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Company Name *</FormLabel>
+                              <FormLabel>Company Name <span className="text-destructive">*</span></FormLabel>
                               <FormControl>
                                 <Input {...field} placeholder="Enter company name" />
                               </FormControl>
@@ -1074,7 +1162,7 @@ export default function SupplierProfile() {
                           name="registration_number"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Registration Number (CIPC) *</FormLabel>
+                              <FormLabel>Registration Number (CIPC) <span className="text-destructive">*</span></FormLabel>
                               <FormControl>
                                 <Input {...field} placeholder="Enter CIPC registration number" />
                               </FormControl>
@@ -1089,7 +1177,7 @@ export default function SupplierProfile() {
                         name="registered_address"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Registered Address *</FormLabel>
+                            <FormLabel>Registered Address</FormLabel>
                             <FormControl>
                               <Textarea {...field} placeholder="Enter registered company address" />
                             </FormControl>
@@ -1103,7 +1191,7 @@ export default function SupplierProfile() {
                         name="director_names"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Director Names *</FormLabel>
+                            <FormLabel>Director Names</FormLabel>
                             <FormControl>
                               <Textarea 
                                 {...field} 
@@ -1123,7 +1211,7 @@ export default function SupplierProfile() {
 
                       {/* CIPC Documents Upload */}
                       <div className="pt-4 border-t border-border">
-                        <h4 className="text-sm font-semibold mb-3">CIPC Documents Upload *</h4>
+                        <h4 className="text-sm font-semibold mb-3">CIPC Documents Upload <span className="text-destructive">*</span></h4>
                         {(() => {
                           const existingDoc = findDocument("cipc_certificate");
                           return existingDoc ? (
@@ -1136,6 +1224,7 @@ export default function SupplierProfile() {
                               </div>
                               <div className="flex gap-2">
                                 <Button
+                                  type="button"
                                   variant="outline"
                                   size="sm"
                                   onClick={() => downloadComplianceDocument(existingDoc)}
@@ -1179,7 +1268,7 @@ export default function SupplierProfile() {
                         name="vat_number"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>VAT Number *</FormLabel>
+                            <FormLabel>VAT Number</FormLabel>
                             <FormControl>
                               <Input {...field} placeholder="Enter VAT number" />
                             </FormControl>
@@ -1190,7 +1279,7 @@ export default function SupplierProfile() {
 
                       {/* VAT Certificate Upload */}
                       <div className="pt-4 border-t border-border">
-                        <h4 className="text-sm font-semibold mb-3">VAT Certificate Upload *</h4>
+                        <h4 className="text-sm font-semibold mb-3">VAT Certificate Upload <span className="text-destructive">*</span></h4>
                         {(() => {
                           const existingDoc = findDocument("vat_certificate");
                           return existingDoc ? (
@@ -1204,6 +1293,7 @@ export default function SupplierProfile() {
                               </div>
                               <div className="flex gap-2">
                                 <Button
+                                  type="button"
                                   variant="outline"
                                   size="sm"
                                   onClick={() => downloadComplianceDocument(existingDoc)}
@@ -1248,7 +1338,7 @@ export default function SupplierProfile() {
                           name="tax_clearance_number"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Tax Clearance Number *</FormLabel>
+                              <FormLabel>Tax Clearance Number</FormLabel>
                               <FormControl>
                                 <Input {...field} placeholder="Enter tax clearance number" />
                               </FormControl>
@@ -1262,7 +1352,7 @@ export default function SupplierProfile() {
                           name="tax_clearance_expiry"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Tax Clearance Expiry Date *</FormLabel>
+                              <FormLabel>Tax Clearance Expiry Date</FormLabel>
                               <FormControl>
                                 <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
                               </FormControl>
@@ -1274,7 +1364,7 @@ export default function SupplierProfile() {
 
                       {/* Tax Clearance Document Upload */}
                       <div className="pt-4 border-t border-border">
-                        <h4 className="text-sm font-semibold mb-3">Tax Clearance Certificate Upload *</h4>
+                        <h4 className="text-sm font-semibold mb-3">Tax Clearance Certificate Upload <span className="text-destructive">*</span></h4>
                         {(() => {
                           const existingDoc = findDocument("tax_clearance");
                           return existingDoc ? (
@@ -1288,6 +1378,7 @@ export default function SupplierProfile() {
                               </div>
                               <div className="flex gap-2">
                                 <Button
+                                  type="button"
                                   variant="outline"
                                   size="sm"
                                   onClick={() => downloadComplianceDocument(existingDoc)}
@@ -1345,7 +1436,7 @@ export default function SupplierProfile() {
                           name="wholesale_license_number"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Wholesale License Number *</FormLabel>
+                              <FormLabel>Wholesale License Number</FormLabel>
                               <FormControl>
                                 <Input {...field} placeholder="Enter DMRE license number" />
                               </FormControl>
@@ -1359,7 +1450,7 @@ export default function SupplierProfile() {
                           name="allowed_fuel_types"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Allowed Fuel Types *</FormLabel>
+                              <FormLabel>Allowed Fuel Types</FormLabel>
                               <FormControl>
                                 <Input 
                                   {...field} 
@@ -1384,7 +1475,7 @@ export default function SupplierProfile() {
                           name="wholesale_license_issue_date"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>License Issue Date *</FormLabel>
+                              <FormLabel>License Issue Date</FormLabel>
                               <FormControl>
                                 <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
                               </FormControl>
@@ -1398,7 +1489,7 @@ export default function SupplierProfile() {
                           name="wholesale_license_expiry_date"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>License Expiry Date *</FormLabel>
+                              <FormLabel>License Expiry Date</FormLabel>
                               <FormControl>
                                 <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
                               </FormControl>
@@ -1410,7 +1501,7 @@ export default function SupplierProfile() {
 
                       {/* DMRE License Document Upload */}
                       <div className="pt-4 border-t border-border">
-                        <h4 className="text-sm font-semibold mb-3">DMRE Wholesale Fuel License Document Upload *</h4>
+                        <h4 className="text-sm font-semibold mb-3">DMRE Wholesale Fuel License Document Upload <span className="text-destructive">*</span></h4>
                         {(() => {
                           const existingDoc = findDocument("dmre_license");
                           return existingDoc ? (
@@ -1424,6 +1515,7 @@ export default function SupplierProfile() {
                               </div>
                               <div className="flex gap-2">
                                 <Button
+                                  type="button"
                                   variant="outline"
                                   size="sm"
                                   onClick={() => downloadComplianceDocument(existingDoc)}
@@ -1508,6 +1600,7 @@ export default function SupplierProfile() {
                               </div>
                               <div className="flex gap-2">
                                 <Button
+                                  type="button"
                                   variant="outline"
                                   size="sm"
                                   onClick={() => downloadComplianceDocument(existingDoc)}
@@ -1562,7 +1655,7 @@ export default function SupplierProfile() {
                           name="environmental_auth_number"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Environmental Authorisation Number *</FormLabel>
+                              <FormLabel>Environmental Authorisation Number</FormLabel>
                               <FormControl>
                                 <Input {...field} placeholder="Enter authorisation number" />
                               </FormControl>
@@ -1576,7 +1669,7 @@ export default function SupplierProfile() {
                           name="approved_storage_capacity_litres"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Approved Storage Capacity (Litres) *</FormLabel>
+                              <FormLabel>Approved Storage Capacity (Litres)</FormLabel>
                               <FormControl>
                                 <Input type="number" {...field} placeholder="Enter capacity in litres" />
                               </FormControl>
@@ -1588,7 +1681,7 @@ export default function SupplierProfile() {
 
                       {/* Environmental Document Upload */}
                       <div className="pt-4 border-t border-border">
-                        <h4 className="text-sm font-semibold mb-3">Environmental Authorisation Document Upload *</h4>
+                        <h4 className="text-sm font-semibold mb-3">Environmental Authorisation Document Upload <span className="text-destructive">*</span></h4>
                         {(() => {
                           const existingDoc = findDocument("environmental_authorisation");
                           return existingDoc ? (
@@ -1601,6 +1694,7 @@ export default function SupplierProfile() {
                               </div>
                               <div className="flex gap-2">
                                 <Button
+                                  type="button"
                                   variant="outline"
                                   size="sm"
                                   onClick={() => downloadComplianceDocument(existingDoc)}
@@ -1645,7 +1739,7 @@ export default function SupplierProfile() {
                           name="fire_certificate_number"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Fire Certificate Number *</FormLabel>
+                              <FormLabel>Fire Certificate Number</FormLabel>
                               <FormControl>
                                 <Input {...field} placeholder="Enter certificate number" />
                               </FormControl>
@@ -1661,7 +1755,7 @@ export default function SupplierProfile() {
                           name="fire_certificate_issue_date"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Fire Certificate Issue Date *</FormLabel>
+                              <FormLabel>Fire Certificate Issue Date</FormLabel>
                               <FormControl>
                                 <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
                               </FormControl>
@@ -1675,7 +1769,7 @@ export default function SupplierProfile() {
                           name="fire_certificate_expiry_date"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Fire Certificate Expiry Date *</FormLabel>
+                              <FormLabel>Fire Certificate Expiry Date</FormLabel>
                               <FormControl>
                                 <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
                               </FormControl>
@@ -1687,7 +1781,7 @@ export default function SupplierProfile() {
 
                       {/* Fire Certificate Document Upload */}
                       <div className="pt-4 border-t border-border">
-                        <h4 className="text-sm font-semibold mb-3">Fire Department Certificate Upload *</h4>
+                        <h4 className="text-sm font-semibold mb-3">Fire Department Certificate Upload <span className="text-destructive">*</span></h4>
                         {(() => {
                           const existingDoc = findDocument("fire_certificate");
                           return existingDoc ? (
@@ -1701,6 +1795,7 @@ export default function SupplierProfile() {
                               </div>
                               <div className="flex gap-2">
                                 <Button
+                                  type="button"
                                   variant="outline"
                                   size="sm"
                                   onClick={() => downloadComplianceDocument(existingDoc)}
@@ -1814,6 +1909,7 @@ export default function SupplierProfile() {
                               </div>
                               <div className="flex gap-2">
                                 <Button
+                                  type="button"
                                   variant="outline"
                                   size="sm"
                                   onClick={() => downloadComplianceDocument(existingDoc)}
@@ -1867,7 +1963,7 @@ export default function SupplierProfile() {
                         name="sabs_certificate_number"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>SABS Certificate Number *</FormLabel>
+                            <FormLabel>SABS Certificate Number</FormLabel>
                             <FormControl>
                               <Input {...field} placeholder="Enter certificate number" />
                             </FormControl>
@@ -1882,7 +1978,7 @@ export default function SupplierProfile() {
                           name="sabs_certificate_issue_date"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Certificate Issue Date *</FormLabel>
+                              <FormLabel>Certificate Issue Date</FormLabel>
                               <FormControl>
                                 <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
                               </FormControl>
@@ -1896,7 +1992,7 @@ export default function SupplierProfile() {
                           name="sabs_certificate_expiry_date"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Certificate Expiry Date *</FormLabel>
+                              <FormLabel>Certificate Expiry Date</FormLabel>
                               <FormControl>
                                 <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
                               </FormControl>
@@ -1908,7 +2004,7 @@ export default function SupplierProfile() {
 
                       {/* SABS Document Upload */}
                       <div className="pt-4 border-t border-border">
-                        <h4 className="text-sm font-semibold mb-3">SABS Fuel Quality Certificate Upload *</h4>
+                        <h4 className="text-sm font-semibold mb-3">SABS Fuel Quality Certificate Upload <span className="text-destructive">*</span></h4>
                         {(() => {
                           const existingDoc = findDocument("sabs_certificate");
                           return existingDoc ? (
@@ -1922,6 +2018,7 @@ export default function SupplierProfile() {
                               </div>
                               <div className="flex gap-2">
                                 <Button
+                                  type="button"
                                   variant="outline"
                                   size="sm"
                                   onClick={() => downloadComplianceDocument(existingDoc)}
@@ -1965,7 +2062,7 @@ export default function SupplierProfile() {
                         name="calibration_certificate_number"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Calibration Certificate Number *</FormLabel>
+                            <FormLabel>Calibration Certificate Number</FormLabel>
                             <FormControl>
                               <Input {...field} placeholder="Enter certificate number" />
                             </FormControl>
@@ -1980,7 +2077,7 @@ export default function SupplierProfile() {
                           name="calibration_certificate_issue_date"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Calibration Issue Date *</FormLabel>
+                              <FormLabel>Calibration Issue Date</FormLabel>
                               <FormControl>
                                 <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
                               </FormControl>
@@ -1994,7 +2091,7 @@ export default function SupplierProfile() {
                           name="calibration_certificate_expiry_date"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Calibration Expiry Date *</FormLabel>
+                              <FormLabel>Calibration Expiry Date</FormLabel>
                               <FormControl>
                                 <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
                               </FormControl>
@@ -2006,7 +2103,7 @@ export default function SupplierProfile() {
 
                       {/* Calibration Certificate Document Upload */}
                       <div className="pt-4 border-t border-border">
-                        <h4 className="text-sm font-semibold mb-3">Pump/Meter Calibration Certificate Upload *</h4>
+                        <h4 className="text-sm font-semibold mb-3">Pump/Meter Calibration Certificate Upload <span className="text-destructive">*</span></h4>
                         {(() => {
                           const existingDoc = findDocument("calibration_certificate");
                           return existingDoc ? (
@@ -2020,6 +2117,7 @@ export default function SupplierProfile() {
                               </div>
                               <div className="flex gap-2">
                                 <Button
+                                  type="button"
                                   variant="outline"
                                   size="sm"
                                   onClick={() => downloadComplianceDocument(existingDoc)}
@@ -2074,7 +2172,7 @@ export default function SupplierProfile() {
                           name="public_liability_policy_number"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Policy Number *</FormLabel>
+                              <FormLabel>Policy Number</FormLabel>
                               <FormControl>
                                 <Input {...field} placeholder="Enter policy number" />
                               </FormControl>
@@ -2088,7 +2186,7 @@ export default function SupplierProfile() {
                           name="public_liability_insurance_provider"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Insurance Provider *</FormLabel>
+                              <FormLabel>Insurance Provider</FormLabel>
                               <FormControl>
                                 <Input {...field} placeholder="Enter insurance provider" />
                               </FormControl>
@@ -2104,7 +2202,7 @@ export default function SupplierProfile() {
                           name="public_liability_coverage_amount_rands"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Coverage Amount (Rands) *</FormLabel>
+                              <FormLabel>Coverage Amount (Rands)</FormLabel>
                               <FormControl>
                                 <Input type="number" {...field} placeholder="Enter coverage amount" />
                               </FormControl>
@@ -2118,7 +2216,7 @@ export default function SupplierProfile() {
                           name="public_liability_policy_expiry_date"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Policy Expiry Date *</FormLabel>
+                              <FormLabel>Policy Expiry Date</FormLabel>
                               <FormControl>
                                 <Input type="date" {...field} value={field.value ? formatDateForInput(field.value) : ''} />
                               </FormControl>
@@ -2130,7 +2228,7 @@ export default function SupplierProfile() {
 
                       {/* Public Liability Insurance Document Upload */}
                       <div className="pt-4 border-t border-border">
-                        <h4 className="text-sm font-semibold mb-3">Public Liability Insurance Document Upload *</h4>
+                        <h4 className="text-sm font-semibold mb-3">Public Liability Insurance Document Upload <span className="text-destructive">*</span></h4>
                         {(() => {
                           const existingDoc = findDocument("public_liability_insurance");
                           return existingDoc ? (
@@ -2144,6 +2242,7 @@ export default function SupplierProfile() {
                               </div>
                               <div className="flex gap-2">
                                 <Button
+                                  type="button"
                                   variant="outline"
                                   size="sm"
                                   onClick={() => downloadComplianceDocument(existingDoc)}
@@ -2228,6 +2327,7 @@ export default function SupplierProfile() {
                               </div>
                               <div className="flex gap-2">
                                 <Button
+                                  type="button"
                                   variant="outline"
                                   size="sm"
                                   onClick={() => downloadComplianceDocument(existingDoc)}

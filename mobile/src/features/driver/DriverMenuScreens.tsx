@@ -66,6 +66,27 @@ function normalizeDriverIdType(raw: string | undefined | null): string {
   return "";
 }
 
+function nonempty(v: string): boolean {
+  return v.trim().length > 0;
+}
+
+/** Red asterisk for required field labels (React Native Paper accepts ReactNode labels). */
+function reqLabel(text: string) {
+  return (
+    <>
+      {text}
+      <Text style={{ color: "#DC2626", fontWeight: "700" }}> *</Text>
+    </>
+  );
+}
+
+const SATISFYING_DOC_STATUSES = new Set(["draft", "pending", "pending_review", "approved", "verified"]);
+
+function isDocSatisfying(status: string | null | undefined): boolean {
+  if (!status) return false;
+  return SATISFYING_DOC_STATUSES.has(String(status).toLowerCase());
+}
+
 function parseYmdToLocalDate(s: string): Date {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec((s || "").trim());
   if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
@@ -165,7 +186,7 @@ const KYC_REQUIRED_DOC_TYPES = [
     required: true,
   },
   { docType: "criminal_check", aliases: [], title: "Criminal Clearance", required: true },
-  { docType: "banking_proof", aliases: ["bank_proof"], title: "Banking Proof", required: false },
+  { docType: "banking_proof", aliases: ["bank_proof"], title: "Banking Proof", required: true },
   { docType: "medical_fitness", aliases: [], title: "Medical Fitness Certificate", required: false },
 ];
 
@@ -423,7 +444,8 @@ export function DriverKycDocumentsScreen() {
   }, [profileQuery.data]);
 
   const saveComplianceMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (opts?: { silent?: boolean }) => {
+      const silent = Boolean(opts?.silent);
       const idNum = idNumber.trim();
       if (idNum && !idType.trim()) {
         throw new Error("SELECT_ID_TYPE");
@@ -460,23 +482,12 @@ export function DriverKycDocumentsScreen() {
         account_number: accountNumber.trim() || null,
         branch_code: branchCode.trim() || null,
       });
-      return res.data;
-    },
-    onSuccess: async (data) => {
+      const data = res.data;
       if (!data || typeof data !== "object") {
-        Alert.alert(
-          "Save unclear",
-          "The server returned an empty response. Pull to refresh or open the screen again to confirm your details.",
-        );
-        await queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
-        return;
+        throw new Error("Save unclear — pull to refresh or open this screen again to confirm your details.");
       }
       if ("message" in data && data.message === "No fields to update") {
-        Alert.alert(
-          "Nothing was saved",
-          "The server did not apply any changes. Fill in at least one field, confirm ID type if you entered an ID number, and try again.",
-        );
-        return;
+        return { data, silent, noChanges: true as const };
       }
       const apiErr =
         "error" in data &&
@@ -485,12 +496,22 @@ export function DriverKycDocumentsScreen() {
           ? String((data as { error: string }).error).trim()
           : null;
       if (apiErr) {
-        Alert.alert("Save failed", apiErr);
-        return;
+        throw new Error(apiErr);
       }
+      return { data, silent, noChanges: false as const };
+    },
+    onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["/api/driver/profile"] });
       await queryClient.refetchQueries({ queryKey: ["/api/driver/profile"] });
       await queryClient.invalidateQueries({ queryKey: ["/api/driver/compliance/kyc-readiness"] });
+      if (result.silent) return;
+      if (result.noChanges) {
+        Alert.alert(
+          "Nothing was saved",
+          "Fill in at least one field, confirm ID type if you entered an ID number, and try again.",
+        );
+        return;
+      }
       Alert.alert("Saved", "Your compliance draft was saved. Submit KYC when your checklist is complete.");
     },
     onError: (err: unknown) => {
@@ -639,6 +660,131 @@ export function DriverKycDocumentsScreen() {
 
   const progressPct = docProgress.total > 0 ? Math.round((docProgress.approved / docProgress.total) * 100) : 0;
 
+  const hasSatisfyingDoc = (docType: string, aliases: string[] = []) => {
+    const uploaded = (docsQuery.data ?? []).find((row) =>
+      ([docType, ...aliases] as string[]).includes(row.doc_type),
+    );
+    return isDocSatisfying(uploaded?.verification_status);
+  };
+
+  /** Client-side gate matching server KYC submit rules. */
+  const localMissing = useMemo(() => {
+    const missingFields: string[] = [];
+    if (!nonempty(bankAccountHolder)) missingFields.push("Account holder name");
+    if (!nonempty(bankName)) missingFields.push("Bank name");
+    if (!nonempty(accountNumber)) missingFields.push("Account number");
+    if (!nonempty(branchCode)) missingFields.push("Branch code");
+
+    if (!nonempty(idType)) missingFields.push("ID type");
+    else if (idType === "SA_ID" || idType === "Passport") {
+      if (!nonempty(idNumber)) missingFields.push(idType === "Passport" ? "Passport number" : "SA ID number");
+    }
+
+    if (!nonempty(addressLine1)) missingFields.push("Street address");
+    if (!nonempty(city)) missingFields.push("City");
+    if (!nonempty(province)) missingFields.push("Province");
+    if (!nonempty(postalCode)) missingFields.push("Postal code");
+
+    if (!nonempty(licenseNumber)) missingFields.push("License number");
+    if (!nonempty(licenseCode)) missingFields.push("License code");
+    if (!nonempty(licenseIssueDate)) missingFields.push("License issue date");
+    if (!nonempty(licenseExpiryDate)) missingFields.push("License expiry date");
+
+    if (prdpRequired) {
+      if (!nonempty(prdpNumber)) missingFields.push("PrDP number");
+      if (!nonempty(prdpCategory)) missingFields.push("PrDP category");
+      if (!nonempty(prdpIssueDate)) missingFields.push("PrDP issue date");
+      if (!nonempty(prdpExpiryDate)) missingFields.push("PrDP expiry date");
+    }
+    if (dgTrainingRequired) {
+      if (!nonempty(dgTrainingProvider)) missingFields.push("Training provider");
+      if (!nonempty(dgTrainingCertificateNumber)) missingFields.push("Training certificate number");
+      if (!nonempty(dgTrainingIssueDate)) missingFields.push("Training issue date");
+      if (!nonempty(dgTrainingExpiryDate)) missingFields.push("Training expiry date");
+    }
+    if (criminalCheckDone) {
+      if (!nonempty(criminalCheckReference)) missingFields.push("Criminal check reference");
+      if (!nonempty(criminalCheckDate)) missingFields.push("Criminal check date");
+    }
+
+    const missingDocs: string[] = [];
+    if (!hasSatisfyingDoc("banking_proof", ["bank_proof"])) missingDocs.push("Banking Proof");
+    if (!hasSatisfyingDoc("drivers_license")) missingDocs.push("Driver's License");
+    if (!idType) {
+      if (!hasSatisfyingDoc("za_id", ["id_document"]) && !hasSatisfyingDoc("passport")) {
+        missingDocs.push("SA ID or Passport");
+      }
+    } else if (idType === "SA_ID") {
+      if (!hasSatisfyingDoc("za_id", ["id_document"])) missingDocs.push("South African ID");
+    } else if (idType === "Passport") {
+      if (!hasSatisfyingDoc("passport")) missingDocs.push("Passport");
+    }
+    if (prdpRequired && !hasSatisfyingDoc("prdp", ["prdp_document"])) {
+      missingDocs.push("Professional Driving Permit (PrDP-D)");
+    }
+    if (dgTrainingRequired && !hasSatisfyingDoc("dangerous_goods_training")) {
+      missingDocs.push("Dangerous Goods Training Certificate");
+    }
+    if (criminalCheckDone && !hasSatisfyingDoc("criminal_check")) {
+      missingDocs.push("Criminal Clearance");
+    }
+
+    return {
+      missingFields,
+      missingDocs,
+      isComplete: missingFields.length === 0 && missingDocs.length === 0,
+    };
+  }, [
+    bankAccountHolder,
+    bankName,
+    accountNumber,
+    branchCode,
+    idType,
+    idNumber,
+    addressLine1,
+    city,
+    province,
+    postalCode,
+    licenseNumber,
+    licenseCode,
+    licenseIssueDate,
+    licenseExpiryDate,
+    prdpRequired,
+    prdpNumber,
+    prdpCategory,
+    prdpIssueDate,
+    prdpExpiryDate,
+    dgTrainingRequired,
+    dgTrainingProvider,
+    dgTrainingCertificateNumber,
+    dgTrainingIssueDate,
+    dgTrainingExpiryDate,
+    criminalCheckDone,
+    criminalCheckReference,
+    criminalCheckDate,
+    docsQuery.data,
+  ]);
+
+  const handleSubmitKyc = async () => {
+    if (!localMissing.isComplete) {
+      const bits: string[] = [];
+      if (localMissing.missingFields.length) {
+        bits.push(`Missing fields:\n• ${localMissing.missingFields.join("\n• ")}`);
+      }
+      if (localMissing.missingDocs.length) {
+        bits.push(`Missing documents:\n• ${localMissing.missingDocs.join("\n• ")}`);
+      }
+      Alert.alert("Cannot submit KYC", bits.join("\n\n") || "Complete all required items marked with *.");
+      return;
+    }
+    try {
+      await saveComplianceMutation.mutateAsync({ silent: true });
+      await submitKycMutation.mutateAsync();
+    } catch {
+      // Errors surfaced via mutation onError handlers.
+    }
+  };
+
   const getKycYmd = (key: KycDateKey): string => {
     switch (key) {
       case "licenseIssue":
@@ -729,7 +875,7 @@ export function DriverKycDocumentsScreen() {
     }
   };
 
-  const kycDateRow = (key: KycDateKey, label: string) => {
+  const kycDateRow = (key: KycDateKey, label: string, required = false) => {
     const value = getKycYmd(key);
     const display =
       value && /^\d{4}-\d{2}-\d{2}$/.test(value)
@@ -739,6 +885,7 @@ export function DriverKycDocumentsScreen() {
       <View key={key} style={styles.kycDateRow}>
         <Text variant="labelLarge" style={styles.kycDateLabel}>
           {label}
+          {required ? <Text style={{ color: "#DC2626", fontWeight: "700" }}> *</Text> : null}
         </Text>
         <Button mode="outlined" onPress={() => openKycDatePicker(key)} style={styles.input} contentStyle={styles.kycDateButtonContent}>
           {display}
@@ -902,12 +1049,44 @@ export function DriverKycDocumentsScreen() {
         Your details
       </Text>
       <Text variant="bodySmall" style={styles.kycBlockHint}>
-        Each section includes its related fields and PDF upload — same layout as the web portal. Save drafts as you go.
+        Fields marked with a red * are required to submit KYC. Save drafts as you go, then submit when everything required is complete.
       </Text>
 
       {kycFormCard(
         <>
           <Text style={styles.kycSectionLetter}>Section A</Text>
+          <Text variant="titleMedium" style={styles.kycSectionTitle}>
+            Banking details
+          </Text>
+          <Text variant="bodySmall" style={[styles.kycBlockHint, { marginBottom: 10 }]}>
+            Required to submit KYC. Used for payouts and incentives.
+          </Text>
+          <View style={styles.twoCol}>
+            <TextInput mode="outlined" label={reqLabel("Account holder name")} value={bankAccountHolder} onChangeText={setBankAccountHolder} style={styles.input} />
+            <TextInput mode="outlined" label={reqLabel("Bank name")} value={bankName} onChangeText={setBankName} style={styles.input} />
+            <TextInput mode="outlined" label={reqLabel("Account number")} value={accountNumber} onChangeText={setAccountNumber} style={styles.input} keyboardType="number-pad" />
+            <TextInput mode="outlined" label={reqLabel("Branch code")} value={branchCode} onChangeText={setBranchCode} style={styles.input} keyboardType="number-pad" />
+          </View>
+          {kycDoc("banking_proof", "Banking Proof", "Banking proof upload", { aliases: ["bank_proof"] })}
+          <Button
+            mode="contained"
+            compact
+            buttonColor={theme.colors.primary}
+            textColor={theme.colors.onPrimary}
+            style={styles.kycPrimaryButton}
+            contentStyle={styles.kycPrimaryButtonContent}
+            labelStyle={styles.kycButtonLabel}
+            onPress={() => saveComplianceMutation.mutate()}
+            loading={saveComplianceMutation.isPending}
+          >
+            Save draft
+          </Button>
+        </>,
+      )}
+
+      {kycFormCard(
+        <>
+          <Text style={styles.kycSectionLetter}>Section B</Text>
           <Text variant="titleMedium" style={styles.kycSectionTitle}>
             SA ID / Passport
           </Text>
@@ -931,7 +1110,7 @@ export function DriverKycDocumentsScreen() {
                   >
                     <View style={styles.kycSelectFieldInner}>
                       <Text style={[styles.kycSelectFloatingLabel, { color: theme.colors.primary }]}>
-                        ID type <Text style={{ color: theme.colors.error }}>*</Text>
+                        ID type <Text style={{ color: "#DC2626", fontWeight: "700" }}>*</Text>
                       </Text>
                       <View style={styles.kycSelectValueRow}>
                         <Text
@@ -988,7 +1167,13 @@ export function DriverKycDocumentsScreen() {
                 />
               </Menu>
             </View>
-            <TextInput mode="outlined" label="ID Number / Passport Number" value={idNumber} onChangeText={setIdNumber} style={styles.input} />
+            <TextInput
+              mode="outlined"
+              label={reqLabel(idType === "Passport" ? "Passport number" : "ID number")}
+              value={idNumber}
+              onChangeText={setIdNumber}
+              style={styles.input}
+            />
             {idType === "Passport" ? (
               <TextInput mode="outlined" label="Passport Issue Country" value={idIssueCountry} onChangeText={setIdIssueCountry} style={styles.input} />
             ) : null}
@@ -1007,39 +1192,39 @@ export function DriverKycDocumentsScreen() {
 
       {kycFormCard(
         <>
-          <Text style={styles.kycSectionLetter}>Section B</Text>
+          <Text style={styles.kycSectionLetter}>Section C</Text>
           <Text variant="titleMedium" style={styles.kycSectionTitle}>
             Proof of address
           </Text>
           <View style={styles.twoCol}>
             <TextInput
               mode="outlined"
-              label="Street address"
+              label={reqLabel("Street address")}
               value={addressLine1}
               onChangeText={setAddressLine1}
               style={styles.input}
               placeholder="Street, unit, building (one line)"
             />
-            <TextInput mode="outlined" label="City" value={city} onChangeText={setCity} style={styles.input} />
-            <TextInput mode="outlined" label="Province" value={province} onChangeText={setProvince} style={styles.input} />
-            <TextInput mode="outlined" label="Postal Code" value={postalCode} onChangeText={setPostalCode} style={styles.input} />
+            <TextInput mode="outlined" label={reqLabel("City")} value={city} onChangeText={setCity} style={styles.input} />
+            <TextInput mode="outlined" label={reqLabel("Province")} value={province} onChangeText={setProvince} style={styles.input} />
+            <TextInput mode="outlined" label={reqLabel("Postal code")} value={postalCode} onChangeText={setPostalCode} style={styles.input} />
             <TextInput mode="outlined" label="Country" value={country} onChangeText={setCountry} style={styles.input} />
           </View>
-          {kycDoc("proof_of_address", "Proof of Address", "Proof of address upload")}
+          {kycDoc("proof_of_address", "Proof of Address", "Proof of address upload", { optional: true })}
         </>,
       )}
 
       {kycFormCard(
         <>
-          <Text style={styles.kycSectionLetter}>Section C</Text>
+          <Text style={styles.kycSectionLetter}>Section D</Text>
           <Text variant="titleMedium" style={styles.kycSectionTitle}>
             {"Driver's license"}
           </Text>
           <View style={styles.twoCol}>
-            <TextInput mode="outlined" label="License Number *" value={licenseNumber} onChangeText={setLicenseNumber} style={styles.input} />
-            <TextInput mode="outlined" label="License Code *" value={licenseCode} onChangeText={setLicenseCode} style={styles.input} />
-            {kycDateRow("licenseIssue", "License issue date *")}
-            {kycDateRow("licenseExpiry", "License expiry date *")}
+            <TextInput mode="outlined" label={reqLabel("License number")} value={licenseNumber} onChangeText={setLicenseNumber} style={styles.input} />
+            <TextInput mode="outlined" label={reqLabel("License code")} value={licenseCode} onChangeText={setLicenseCode} style={styles.input} />
+            {kycDateRow("licenseIssue", "License issue date", true)}
+            {kycDateRow("licenseExpiry", "License expiry date", true)}
           </View>
           {kycDoc("drivers_license", "Driver's License", "Driver's licence upload")}
         </>,
@@ -1047,7 +1232,7 @@ export function DriverKycDocumentsScreen() {
 
       {kycFormCard(
         <>
-          <Text style={styles.kycSectionLetter}>Section D</Text>
+          <Text style={styles.kycSectionLetter}>Section E</Text>
           <Text variant="titleMedium" style={styles.kycSectionTitle}>
             PrDP (dangerous goods)
           </Text>
@@ -1057,10 +1242,10 @@ export function DriverKycDocumentsScreen() {
           </View>
           {prdpRequired ? (
             <View style={styles.twoCol}>
-              <TextInput mode="outlined" label="PrDP Number *" value={prdpNumber} onChangeText={setPrdpNumber} style={styles.input} />
-              <TextInput mode="outlined" label="PrDP Category *" value={prdpCategory} onChangeText={setPrdpCategory} style={styles.input} />
-              {kycDateRow("prdpIssue", "PrDP issue date *")}
-              {kycDateRow("prdpExpiry", "PrDP expiry date *")}
+              <TextInput mode="outlined" label={reqLabel("PrDP number")} value={prdpNumber} onChangeText={setPrdpNumber} style={styles.input} />
+              <TextInput mode="outlined" label={reqLabel("PrDP category")} value={prdpCategory} onChangeText={setPrdpCategory} style={styles.input} />
+              {kycDateRow("prdpIssue", "PrDP issue date", true)}
+              {kycDateRow("prdpExpiry", "PrDP expiry date", true)}
             </View>
           ) : null}
           {prdpRequired ? kycDoc("prdp", "Professional Driving Permit (PrDP-D)", "PrDP upload", { aliases: ["prdp_document"] }) : null}
@@ -1082,7 +1267,7 @@ export function DriverKycDocumentsScreen() {
 
       {kycFormCard(
         <>
-          <Text style={styles.kycSectionLetter}>Section E</Text>
+          <Text style={styles.kycSectionLetter}>Section F</Text>
           <Text variant="titleMedium" style={styles.kycSectionTitle}>
             Dangerous goods / Hazchem training
           </Text>
@@ -1092,10 +1277,10 @@ export function DriverKycDocumentsScreen() {
           </View>
           {dgTrainingRequired ? (
             <View style={styles.twoCol}>
-              <TextInput mode="outlined" label="Training Provider" value={dgTrainingProvider} onChangeText={setDgTrainingProvider} style={styles.input} />
-              <TextInput mode="outlined" label="Certificate Number" value={dgTrainingCertificateNumber} onChangeText={setDgTrainingCertificateNumber} style={styles.input} />
-              {kycDateRow("dgIssue", "Training issue date *")}
-              {kycDateRow("dgExpiry", "Training expiry date (if applicable)")}
+              <TextInput mode="outlined" label={reqLabel("Training provider")} value={dgTrainingProvider} onChangeText={setDgTrainingProvider} style={styles.input} />
+              <TextInput mode="outlined" label={reqLabel("Certificate number")} value={dgTrainingCertificateNumber} onChangeText={setDgTrainingCertificateNumber} style={styles.input} />
+              {kycDateRow("dgIssue", "Training issue date", true)}
+              {kycDateRow("dgExpiry", "Training expiry date", true)}
             </View>
           ) : null}
           {dgTrainingRequired
@@ -1106,7 +1291,7 @@ export function DriverKycDocumentsScreen() {
 
       {kycFormCard(
         <>
-          <Text style={styles.kycSectionLetter}>Section F</Text>
+          <Text style={styles.kycSectionLetter}>Section G</Text>
           <Text variant="titleMedium" style={styles.kycSectionTitle}>
             Criminal clearance
           </Text>
@@ -1116,27 +1301,11 @@ export function DriverKycDocumentsScreen() {
           </View>
           {criminalCheckDone ? (
             <View style={styles.twoCol}>
-              <TextInput mode="outlined" label="Criminal Check Reference" value={criminalCheckReference} onChangeText={setCriminalCheckReference} style={styles.input} />
-              {kycDateRow("criminal", "Criminal check date *")}
+              <TextInput mode="outlined" label={reqLabel("Criminal check reference")} value={criminalCheckReference} onChangeText={setCriminalCheckReference} style={styles.input} />
+              {kycDateRow("criminal", "Criminal check date", true)}
             </View>
           ) : null}
           {criminalCheckDone ? kycDoc("criminal_check", "Criminal Clearance", "Criminal clearance upload") : null}
-        </>,
-      )}
-
-      {kycFormCard(
-        <>
-          <Text style={styles.kycSectionLetter}>Section G</Text>
-          <Text variant="titleMedium" style={styles.kycSectionTitle}>
-            Payment details
-          </Text>
-          <View style={styles.twoCol}>
-            <TextInput mode="outlined" label="Account Holder Name" value={bankAccountHolder} onChangeText={setBankAccountHolder} style={styles.input} />
-            <TextInput mode="outlined" label="Bank Name" value={bankName} onChangeText={setBankName} style={styles.input} />
-            <TextInput mode="outlined" label="Account Number" value={accountNumber} onChangeText={setAccountNumber} style={styles.input} />
-            <TextInput mode="outlined" label="Branch Code" value={branchCode} onChangeText={setBranchCode} style={styles.input} />
-          </View>
-          {kycDoc("banking_proof", "Banking Proof", "Banking proof upload", { aliases: ["bank_proof"], optional: true })}
           {kycDoc("medical_fitness", "Medical Fitness Certificate", "Medical fitness upload", { optional: true })}
           <Button
             mode="contained"
@@ -1156,24 +1325,26 @@ export function DriverKycDocumentsScreen() {
 
       {(() => {
         const r = kycReadinessQuery.data;
-        const canSubmit = Boolean(r?.can_submit ?? r?.canSubmit);
         const pkg = r?.package_submitted_at ?? r?.packageSubmittedAt;
         const overall = r?.overall_status ?? r?.overallStatus ?? "";
         const awaiting = Boolean(pkg && overall === "pending");
+        const canSubmitLocal = localMissing.isComplete && !awaiting && overall !== "approved";
         const hint = awaiting
           ? "Your package is awaiting admin review."
           : overall === "approved"
             ? "Your KYC is approved."
-            : r
+            : !localMissing.isComplete
               ? (() => {
-                  const md = r.missing_docs ?? r.missingDocs ?? [];
-                  const mf = r.missing_fields ?? r.missingFields ?? [];
                   const bits: string[] = [];
-                  if (md.length) bits.push(`Missing documents: ${md.join(", ")}`);
-                  if (mf.length) bits.push(`Missing fields: ${mf.join(", ")}`);
-                  return bits.length > 0 ? bits.join("\n") : "Complete all required items to enable Submit KYC.";
+                  if (localMissing.missingFields.length) {
+                    bits.push(`Missing fields: ${localMissing.missingFields.join(", ")}`);
+                  }
+                  if (localMissing.missingDocs.length) {
+                    bits.push(`Missing documents: ${localMissing.missingDocs.join(", ")}`);
+                  }
+                  return bits.join("\n") || "Complete all required items marked with * to enable Submit KYC.";
                 })()
-              : "Loading readiness…";
+              : "All required fields and documents look complete. You can submit KYC for review.";
         return (
           <Card style={[styles.card, { marginTop: 8, marginBottom: 24 }]} mode="contained">
             <Card.Content>
@@ -1198,15 +1369,16 @@ export function DriverKycDocumentsScreen() {
                   style={{ flex: 1 }}
                   buttonColor={theme.colors.primary}
                   textColor={theme.colors.onPrimary}
-                  loading={submitKycMutation.isPending}
+                  loading={submitKycMutation.isPending || saveComplianceMutation.isPending}
                   disabled={
                     submitKycMutation.isPending ||
+                    saveComplianceMutation.isPending ||
                     kycReadinessQuery.isLoading ||
-                    !canSubmit ||
-                    awaiting ||
-                    overall === "approved"
+                    !canSubmitLocal
                   }
-                  onPress={() => submitKycMutation.mutate()}
+                  onPress={() => {
+                    void handleSubmitKyc();
+                  }}
                 >
                   Submit KYC
                 </Button>

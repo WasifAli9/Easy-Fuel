@@ -18,6 +18,7 @@ import {
   formatOrderStatusLabel,
   fuelIconName,
   getDriverDisplayName,
+  isSupplierBankIncompleteError,
   mutationErrorMessage,
   type SupplierDepotOrder,
 } from "@/features/supplier/supplierDepotOrderHelpers";
@@ -49,7 +50,17 @@ export function SupplierDepotOrderDetailModal({ order, visible, onDismiss }: Sup
       Alert.alert("Order accepted", "The driver can proceed with payment.");
       onDismiss();
     },
-    onError: (e) => Alert.alert("Error", mutationErrorMessage(e)),
+    onError: (e) => {
+      if (isSupplierBankIncompleteError(e)) {
+        Alert.alert(
+          "Bank details required",
+          "Please add your company bank details in your profile before accepting a driver order.",
+          [{ text: "OK" }],
+        );
+        return;
+      }
+      Alert.alert("Could not accept order", mutationErrorMessage(e));
+    },
   });
 
   const rejectMutation = useMutation({

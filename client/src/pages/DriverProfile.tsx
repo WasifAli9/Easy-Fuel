@@ -100,6 +100,8 @@ function ComplianceDateField({
   name: string;
   label: string;
 }) {
+  const required = label.trimEnd().endsWith("*");
+  const displayLabel = required ? label.replace(/\s*\*$/, "").trimEnd() : label;
   return (
     <FormField
       control={control}
@@ -108,7 +110,10 @@ function ComplianceDateField({
         const selected = parseLocalYmd(field.value);
         return (
           <FormItem>
-            <FormLabel>{label}</FormLabel>
+            <FormLabel>
+              {displayLabel}
+              {required ? <span className="text-destructive"> *</span> : null}
+            </FormLabel>
             <Popover>
               <PopoverTrigger asChild>
                 <FormControl>
@@ -237,47 +242,48 @@ export default function DriverProfile() {
     });
   };
 
-  // Compliance form
+  // Compliance form — do not use the `values` prop: profile polls every 5s and that
+  // forced re-sync was kicking focus out of inputs after 1–2 keystrokes.
   const complianceForm = useForm<any>({
     defaultValues: {
-      // SA ID / Passport
-      id_type: profile?.id_type || "",
-      id_number: profile?.id_number || "",
-      id_issue_country: profile?.id_issue_country || "",
-      // Proof of Address
-      address_line_1: mergeStreetAddress(profile?.address_line_1, profile?.address_line_2),
-      city: profile?.city || "",
-      province: profile?.province || "",
-      postal_code: profile?.postal_code || "",
-      country: profile?.country || "South Africa",
-      // Driver's Licence
-      license_number: profile?.license_number || "",
-      license_code: profile?.license_code || "",
-      license_issue_date: profile?.license_issue_date || "",
-      license_expiry_date: profile?.license_expiry_date || "",
-      // PrDP
-      prdp_required: profile?.prdp_required || false,
-      prdp_number: profile?.prdp_number || "",
-      prdp_category: profile?.prdp_category || "",
-      prdp_issue_date: profile?.prdp_issue_date || "",
-      prdp_expiry_date: profile?.prdp_expiry_date || "",
-      // Dangerous Goods Training
-      dg_training_required: profile?.dg_training_required || false,
-      dg_training_provider: profile?.dg_training_provider || "",
-      dg_training_certificate_number: profile?.dg_training_certificate_number || "",
-      dg_training_issue_date: profile?.dg_training_issue_date || "",
-      dg_training_expiry_date: profile?.dg_training_expiry_date || "",
-      // Criminal Check
-      criminal_check_done: profile?.criminal_check_done || false,
-      criminal_check_reference: profile?.criminal_check_reference || "",
-      criminal_check_date: profile?.criminal_check_date || "",
-      // Bank & Payment
-      bank_account_holder: profile?.bank_account_holder || "",
-      bank_name: profile?.bank_name || "",
-      account_number: profile?.account_number || "",
-      branch_code: profile?.branch_code || "",
+      id_type: "",
+      id_number: "",
+      id_issue_country: "",
+      address_line_1: "",
+      city: "",
+      province: "",
+      postal_code: "",
+      country: "South Africa",
+      license_number: "",
+      license_code: "",
+      license_issue_date: "",
+      license_expiry_date: "",
+      prdp_required: false,
+      prdp_number: "",
+      prdp_category: "",
+      prdp_issue_date: "",
+      prdp_expiry_date: "",
+      dg_training_required: false,
+      dg_training_provider: "",
+      dg_training_certificate_number: "",
+      dg_training_issue_date: "",
+      dg_training_expiry_date: "",
+      criminal_check_done: false,
+      criminal_check_reference: "",
+      criminal_check_date: "",
+      bank_account_holder: "",
+      bank_name: "",
+      account_number: "",
+      branch_code: "",
     },
-    values: profile ? {
+  });
+
+  const { isDirty: complianceIsDirty } = complianceForm.formState;
+
+  useEffect(() => {
+    if (!profile) return;
+    if (complianceIsDirty) return;
+    complianceForm.reset({
       id_type: profile.id_type || "",
       id_number: profile.id_number || "",
       id_issue_country: profile.id_issue_country || "",
@@ -307,8 +313,8 @@ export default function DriverProfile() {
       bank_name: profile.bank_name || "",
       account_number: profile.account_number || "",
       branch_code: profile.branch_code || "",
-    } : undefined,
-  });
+    });
+  }, [profile, complianceIsDirty]);
 
   const updateComplianceMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -320,6 +326,8 @@ export default function DriverProfile() {
       return null;
     },
     onSuccess: async (responseData) => {
+      // Mark form clean with values just saved so polling cannot fight mid-edit state.
+      complianceForm.reset(complianceForm.getValues());
       // Update the query cache with the response data if available
       if (responseData) {
         queryClient.setQueryData(["/api/driver/profile"], (oldData: any) => {
@@ -1268,6 +1276,140 @@ export default function DriverProfile() {
                   )}
                   className="space-y-8"
                 >
+                  {/* Banking first — required for KYC submit */}
+                  <div id="banking" className="space-y-6 scroll-mt-24">
+                    <div className="border-b-2 border-primary/20 pb-3">
+                      <h2 className="text-xl font-bold flex items-center gap-2">
+                        <Building className="h-5 w-5 text-primary" />
+                        Banking details
+                      </h2>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Required to submit KYC. Used for payouts, incentives, rebates, or commissions.
+                        Fields marked with <span className="text-destructive font-semibold">*</span> are required.
+                      </p>
+                    </div>
+
+                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="bank_account_holder"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>
+                                Account holder name <span className="text-destructive">*</span>
+                              </FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter account holder name" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={complianceForm.control}
+                          name="bank_name"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>
+                                Bank name <span className="text-destructive">*</span>
+                              </FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter bank name" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={complianceForm.control}
+                          name="account_number"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>
+                                Account number <span className="text-destructive">*</span>
+                              </FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter account number" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={complianceForm.control}
+                          name="branch_code"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>
+                                Branch code <span className="text-destructive">*</span>
+                              </FormLabel>
+                              <FormControl>
+                                <Input {...field} placeholder="Enter branch code" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <div className="pt-4 border-t border-border">
+                        <h4 className="text-sm font-semibold mb-3">
+                          Banking Proof Document Upload <span className="text-destructive">*</span>
+                        </h4>
+                        {(() => {
+                          const existingDoc = findDocument("banking_proof");
+                          return existingDoc ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm text-muted-foreground">
+                                  Uploaded: {new Date(existingDoc.created_at).toLocaleDateString()}
+                                </p>
+                                {getDocumentStatusBadge(existingDoc.verification_status)}
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => downloadComplianceDocument(existingDoc)}
+                                >
+                                  Download
+                                </Button>
+                                <ObjectUploader
+                                  onGetUploadParameters={getUploadURL}
+                                  onComplete={(result) => handleDocumentUpload("banking_proof", "Banking Proof", result)}
+                                  allowedFileTypes={["application/pdf"]}
+                                  maxFileSize={10485760}
+                                  buttonVariant="outline"
+                                  buttonSize="sm"
+                                >
+                                  Replace
+                                </ObjectUploader>
+                              </div>
+                            </div>
+                          ) : (
+                            <ObjectUploader
+                              onGetUploadParameters={getUploadURL}
+                              onComplete={(result) => handleDocumentUpload("banking_proof", "Banking Proof", result)}
+                              allowedFileTypes={["application/pdf"]}
+                              maxFileSize={10485760}
+                              buttonVariant="default"
+                            >
+                              <Upload className="h-4 w-4 mr-2" />
+                              Upload Banking Proof Document
+                            </ObjectUploader>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+
                   {/* ========== SECTION 1: DRIVER (PERSON) – IDENTITY & LEGAL ========== */}
                   <div className="space-y-6">
                     <div className="border-b-2 border-primary/20 pb-3">
@@ -1287,7 +1429,7 @@ export default function DriverProfile() {
                           name="id_type"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>ID Type *</FormLabel>
+                              <FormLabel>ID Type <span className="text-destructive">*</span></FormLabel>
                               <FormControl>
                                 <select
                                   className={cn(
@@ -1315,7 +1457,7 @@ export default function DriverProfile() {
                           name="id_number"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>ID Number / Passport Number *</FormLabel>
+                              <FormLabel>ID Number / Passport Number <span className="text-destructive">*</span></FormLabel>
                               <FormControl>
                                 <Input {...field} placeholder="Enter ID or passport number" />
                               </FormControl>
@@ -1331,7 +1473,7 @@ export default function DriverProfile() {
                           name="id_issue_country"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Passport Issue Country *</FormLabel>
+                              <FormLabel>Passport Issue Country</FormLabel>
                               <FormControl>
                                 <Input {...field} placeholder="Enter country" />
                               </FormControl>
@@ -1343,7 +1485,7 @@ export default function DriverProfile() {
 
                       {/* ID Document Upload */}
                       <div className="pt-4 border-t border-border">
-                        <h4 className="text-sm font-semibold mb-3">ID Document Upload *</h4>
+                        <h4 className="text-sm font-semibold mb-3">ID Document Upload <span className="text-destructive">*</span></h4>
                         {(() => {
                           const existingDoc = findDocument(complianceForm.watch("id_type") === "SA_ID" ? "za_id" : "passport");
                           return existingDoc ? (
@@ -1356,6 +1498,7 @@ export default function DriverProfile() {
                               </div>
                               <div className="flex gap-2">
                                 <Button
+                                  type="button"
                                   variant="outline"
                                   size="sm"
                                   onClick={() => downloadComplianceDocument(existingDoc)}
@@ -1407,7 +1550,7 @@ export default function DriverProfile() {
                         name="address_line_1"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Street address *</FormLabel>
+                            <FormLabel>Street address <span className="text-destructive">*</span></FormLabel>
                             <FormControl>
                               <Input {...field} placeholder="Street, unit, building (one line)" />
                             </FormControl>
@@ -1422,7 +1565,7 @@ export default function DriverProfile() {
                           name="city"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>City *</FormLabel>
+                              <FormLabel>City <span className="text-destructive">*</span></FormLabel>
                               <FormControl>
                                 <Input {...field} placeholder="City" />
                               </FormControl>
@@ -1436,7 +1579,7 @@ export default function DriverProfile() {
                           name="province"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Province *</FormLabel>
+                              <FormLabel>Province <span className="text-destructive">*</span></FormLabel>
                               <FormControl>
                                 <Input {...field} placeholder="Province" />
                               </FormControl>
@@ -1452,7 +1595,7 @@ export default function DriverProfile() {
                           name="postal_code"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Postal Code *</FormLabel>
+                              <FormLabel>Postal Code <span className="text-destructive">*</span></FormLabel>
                               <FormControl>
                                 <Input {...field} placeholder="Postal code" />
                               </FormControl>
@@ -1466,7 +1609,7 @@ export default function DriverProfile() {
                           name="country"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Country *</FormLabel>
+                              <FormLabel>Country</FormLabel>
                               <FormControl>
                                 <Input {...field} placeholder="Country" />
                               </FormControl>
@@ -1487,7 +1630,7 @@ export default function DriverProfile() {
                           name="license_number"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>License Number *</FormLabel>
+                              <FormLabel>License Number <span className="text-destructive">*</span></FormLabel>
                               <FormControl>
                                 <Input {...field} placeholder="Enter license number" />
                               </FormControl>
@@ -1501,7 +1644,7 @@ export default function DriverProfile() {
                           name="license_code"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>License Code *</FormLabel>
+                              <FormLabel>License Code <span className="text-destructive">*</span></FormLabel>
                               <FormControl>
                                 <Input {...field} placeholder="e.g., B, EB, C1, EC" />
                               </FormControl>
@@ -1527,7 +1670,7 @@ export default function DriverProfile() {
 
                       {/* License Document Upload */}
                       <div className="pt-4 border-t border-border">
-                        <h4 className="text-sm font-semibold mb-3">Driver's License Document Upload *</h4>
+                        <h4 className="text-sm font-semibold mb-3">Driver's License Document Upload <span className="text-destructive">*</span></h4>
                         {(() => {
                           const existingDoc = findDocument("drivers_license");
                           return existingDoc ? (
@@ -1541,6 +1684,7 @@ export default function DriverProfile() {
                               </div>
                               <div className="flex gap-2">
                                 <Button
+                                  type="button"
                                   variant="outline"
                                   size="sm"
                                   onClick={() => downloadComplianceDocument(existingDoc)}
@@ -1609,7 +1753,7 @@ export default function DriverProfile() {
                               name="prdp_number"
                               render={({ field }) => (
                                 <FormItem>
-                                  <FormLabel>PrDP Number *</FormLabel>
+                                  <FormLabel>PrDP Number <span className="text-destructive">*</span></FormLabel>
                                   <FormControl>
                                     <Input {...field} placeholder="Enter PrDP number" />
                                   </FormControl>
@@ -1623,7 +1767,7 @@ export default function DriverProfile() {
                               name="prdp_category"
                               render={({ field }) => (
                                 <FormItem>
-                                  <FormLabel>PrDP Category *</FormLabel>
+                                  <FormLabel>PrDP Category <span className="text-destructive">*</span></FormLabel>
                                   <FormControl>
                                     <Input {...field} placeholder="e.g., Dangerous Goods" />
                                   </FormControl>
@@ -1649,7 +1793,7 @@ export default function DriverProfile() {
 
                           {/* PrDP Document Upload */}
                           <div className="pt-4 border-t border-border">
-                            <h4 className="text-sm font-semibold mb-3">PrDP Document Upload *</h4>
+                            <h4 className="text-sm font-semibold mb-3">PrDP Document Upload <span className="text-destructive">*</span></h4>
                             {(() => {
                               const existingDoc = findDocument("prdp");
                               return existingDoc ? (
@@ -1663,6 +1807,7 @@ export default function DriverProfile() {
                                   </div>
                                   <div className="flex gap-2">
                                     <Button
+                                      type="button"
                                       variant="outline"
                                       size="sm"
                                       onClick={() => downloadComplianceDocument(existingDoc)}
@@ -1732,7 +1877,7 @@ export default function DriverProfile() {
                               name="dg_training_provider"
                               render={({ field }) => (
                                 <FormItem>
-                                  <FormLabel>Training Provider *</FormLabel>
+                                  <FormLabel>Training Provider <span className="text-destructive">*</span></FormLabel>
                                   <FormControl>
                                     <Input {...field} placeholder="Enter training provider name" />
                                   </FormControl>
@@ -1746,7 +1891,7 @@ export default function DriverProfile() {
                               name="dg_training_certificate_number"
                               render={({ field }) => (
                                 <FormItem>
-                                  <FormLabel>Certificate Number *</FormLabel>
+                                  <FormLabel>Certificate Number <span className="text-destructive">*</span></FormLabel>
                                   <FormControl>
                                     <Input {...field} placeholder="Enter certificate number" />
                                   </FormControl>
@@ -1766,13 +1911,13 @@ export default function DriverProfile() {
                             <ComplianceDateField
                               control={complianceForm.control}
                               name="dg_training_expiry_date"
-                              label="Training Expiry Date (if applicable)"
+                              label="Training Expiry Date *"
                             />
                           </div>
 
                           {/* DG Training Document Upload */}
                           <div className="pt-4 border-t border-border">
-                            <h4 className="text-sm font-semibold mb-3">Dangerous Goods Training Certificate Upload *</h4>
+                            <h4 className="text-sm font-semibold mb-3">Dangerous Goods Training Certificate Upload <span className="text-destructive">*</span></h4>
                             {(() => {
                               const existingDoc = findDocument("dangerous_goods_training", "Dangerous Goods Training Certificate");
                               return existingDoc ? (
@@ -1786,6 +1931,7 @@ export default function DriverProfile() {
                                   </div>
                                   <div className="flex gap-2">
                                     <Button
+                                      type="button"
                                       variant="outline"
                                       size="sm"
                                       onClick={() => downloadComplianceDocument(existingDoc)}
@@ -1855,7 +2001,7 @@ export default function DriverProfile() {
                               name="criminal_check_reference"
                               render={({ field }) => (
                                 <FormItem>
-                                  <FormLabel>Criminal Check Reference *</FormLabel>
+                                  <FormLabel>Criminal Check Reference <span className="text-destructive">*</span></FormLabel>
                                   <FormControl>
                                     <Input {...field} placeholder="Enter reference number" />
                                   </FormControl>
@@ -1873,7 +2019,7 @@ export default function DriverProfile() {
 
                           {/* Criminal Check Document Upload */}
                           <div className="pt-4 border-t border-border">
-                            <h4 className="text-sm font-semibold mb-3">Criminal Clearance Document Upload *</h4>
+                            <h4 className="text-sm font-semibold mb-3">Criminal Clearance Document Upload <span className="text-destructive">*</span></h4>
                             {(() => {
                               const existingDoc = findDocument("criminal_check");
                               return existingDoc ? (
@@ -1886,6 +2032,7 @@ export default function DriverProfile() {
                                   </div>
                                   <div className="flex gap-2">
                                     <Button
+                                      type="button"
                                       variant="outline"
                                       size="sm"
                                       onClick={() => downloadComplianceDocument(existingDoc)}
@@ -1920,129 +2067,6 @@ export default function DriverProfile() {
                           </div>
                         </>
                       )}
-                    </div>
-                  </div>
-
-                  {/* ========== SECTION 2: DRIVER – BANK & PAYMENT DETAILS ========== */}
-                  <div className="space-y-6 pt-4 border-t-2 border-primary/20">
-                    <div className="border-b-2 border-primary/20 pb-3">
-                      <h2 className="text-xl font-bold flex items-center gap-2">
-                        <Building className="h-5 w-5 text-primary" />
-                        2. Driver – Bank & Payment Details
-                      </h2>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        If you ever receive incentives, rebates, or commissions
-                      </p>
-                    </div>
-
-                    <div className="bg-muted/30 rounded-lg p-6 space-y-4 border border-border">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <FormField
-                          control={complianceForm.control}
-                          name="bank_account_holder"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Account Holder Name</FormLabel>
-                              <FormControl>
-                                <Input {...field} placeholder="Enter account holder name" />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        <FormField
-                          control={complianceForm.control}
-                          name="bank_name"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Bank Name</FormLabel>
-                              <FormControl>
-                                <Input {...field} placeholder="Enter bank name" />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <FormField
-                          control={complianceForm.control}
-                          name="account_number"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Account Number</FormLabel>
-                              <FormControl>
-                                <Input {...field} placeholder="Enter account number" />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        <FormField
-                          control={complianceForm.control}
-                          name="branch_code"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Branch Code</FormLabel>
-                              <FormControl>
-                                <Input {...field} placeholder="Enter branch code" />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      </div>
-
-                      {/* Banking Proof Document Upload */}
-                      <div className="pt-4 border-t border-border">
-                        <h4 className="text-sm font-semibold mb-3">Banking Proof Document Upload</h4>
-                        {(() => {
-                          const existingDoc = findDocument("banking_proof");
-                          return existingDoc ? (
-                            <div className="space-y-2">
-                              <div className="flex items-center justify-between">
-                                <p className="text-sm text-muted-foreground">
-                                  Uploaded: {new Date(existingDoc.created_at).toLocaleDateString()}
-                                </p>
-                                {getDocumentStatusBadge(existingDoc.verification_status)}
-                              </div>
-                              <div className="flex gap-2">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => downloadComplianceDocument(existingDoc)}
-                                >
-                                  Download
-                                </Button>
-                                <ObjectUploader
-                                  onGetUploadParameters={getUploadURL}
-                                  onComplete={(result) => handleDocumentUpload("banking_proof", "Banking Proof", result)}
-                                  allowedFileTypes={["application/pdf"]}
-                                  maxFileSize={10485760}
-                                  buttonVariant="outline"
-                                  buttonSize="sm"
-                                >
-                                  Replace
-                                </ObjectUploader>
-                              </div>
-                            </div>
-                          ) : (
-                            <ObjectUploader
-                              onGetUploadParameters={getUploadURL}
-                              onComplete={(result) => handleDocumentUpload("banking_proof", "Banking Proof", result)}
-                              allowedFileTypes={["application/pdf"]}
-                              maxFileSize={10485760}
-                              buttonVariant="default"
-                            >
-                              <Upload className="h-4 w-4 mr-2" />
-                              Upload Banking Proof Document
-                            </ObjectUploader>
-                          );
-                        })()}
-                      </div>
                     </div>
                   </div>
 
