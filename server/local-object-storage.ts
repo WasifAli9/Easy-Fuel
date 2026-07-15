@@ -1,9 +1,18 @@
 import { randomUUID } from "crypto";
 import fs from "fs/promises";
 import path from "path";
+import { fileURLToPath } from "url";
+
+/** Project root (parent of `server/` or `dist/` when bundled). */
+const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 export function getLocalStorageDir() {
-  return path.resolve(process.env.LOCAL_STORAGE_DIR || "./storage");
+  const configured = process.env.LOCAL_STORAGE_DIR || "./storage";
+  if (path.isAbsolute(configured)) {
+    return path.resolve(configured);
+  }
+  // Resolve relative to app root — process.cwd() breaks under IIS / Windows services.
+  return path.resolve(appRoot, configured);
 }
 
 export function getPrivateObjectDirName() {
@@ -30,6 +39,65 @@ export function objectPathToRelative(objectPath: string) {
 export function objectPathToAbsolute(objectPath: string) {
   const rel = objectPathToRelative(objectPath);
   return path.join(getLocalStorageDir(), rel);
+}
+
+/**
+ * Alternate relative keys under LOCAL_STORAGE_DIR.
+ * Upload/signing history used private/, local/uploads/, and bare uploads/ prefixes.
+ */
+export function localObjectRelativeCandidates(objectPath: string): string[] {
+  const rel = objectPathToRelative(objectPath);
+  const privateDir = getPrivateObjectDirName();
+  const privateEscaped = privateDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const bare = rel
+    .replace(/^local\/uploads\//, "")
+    .replace(/^local\//, "")
+    .replace(new RegExp(`^${privateEscaped}/uploads/`), "")
+    .replace(new RegExp(`^${privateEscaped}/`), "")
+    .replace(/^uploads\//, "");
+
+  const candidates: string[] = [];
+  const add = (value: string) => {
+    try {
+      const clean = sanitizeRelativePath(value);
+      if (!candidates.includes(clean)) candidates.push(clean);
+    } catch {
+      /* skip invalid */
+    }
+  };
+
+  add(rel);
+  for (const prefix of [
+    "",
+    "uploads/",
+    "local/",
+    "local/uploads/",
+    `${privateDir}/`,
+    `${privateDir}/uploads/`,
+  ]) {
+    add(`${prefix}${bare}`);
+  }
+  if (bare !== rel) {
+    add(`${privateDir}/${rel}`);
+    add(`local/${rel}`);
+  }
+
+  return candidates;
+}
+
+/** First existing absolute path on disk for a stored object, or null. */
+export async function resolveLocalObjectAbsolutePath(objectPath: string): Promise<string | null> {
+  const root = getLocalStorageDir();
+  for (const rel of localObjectRelativeCandidates(objectPath)) {
+    const abs = path.join(root, rel);
+    try {
+      await fs.access(abs);
+      return abs;
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
 
 export async function ensureLocalParentDir(absoluteFilePath: string) {

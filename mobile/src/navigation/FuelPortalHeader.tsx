@@ -10,8 +10,7 @@ import { getFuelPortalTokens } from "@/design/fuel-portal-tokens";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
 import { apiClient } from "@/services/api/client";
-import { normalizeFilePath, resolveApiUrl } from "@/lib/files";
-import { appConfig } from "@/services/config";
+import { resolveProfilePhotoDisplayUri } from "@/lib/profile-photo-display";
 
 type FuelPortalHeaderProps = {
   onOpenMenu: () => void;
@@ -27,44 +26,31 @@ export function FuelPortalHeader({ onOpenMenu }: FuelPortalHeaderProps) {
   const isDark = mode === "dark";
   const t = getFuelPortalTokens(theme, isDark);
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
+
   const authMeQuery = useQuery({
     queryKey: ["/api/auth/me"],
-    queryFn: async () => (await apiClient.get("/api/auth/me")).data as { profile?: { profile_photo_url?: string | null } },
+    queryFn: async () =>
+      (await apiClient.get("/api/auth/me")).data as {
+        profile?: { profile_photo_url?: string | null; profilePhotoUrl?: string | null };
+      },
     staleTime: 60_000,
   });
 
-  const rawPhotoUrl = authMeQuery.data?.profile?.profile_photo_url ?? null;
-  const normalizedPhotoPath = normalizeFilePath(rawPhotoUrl);
-  /** `/objects/...` requires auth; RN `Image` does not send session cookies — use tokenized view URL. */
-  const needsObjectPresign = Boolean(normalizedPhotoPath?.startsWith("/objects/"));
+  const rawPhotoUrl =
+    authMeQuery.data?.profile?.profile_photo_url ?? authMeQuery.data?.profile?.profilePhotoUrl ?? null;
 
-  const presignAvatarQuery = useQuery({
-    queryKey: ["/api/objects/presigned-url", "fuel-header-avatar", normalizedPhotoPath],
-    enabled:
-      authMeQuery.isSuccess &&
-      needsObjectPresign &&
-      Boolean(normalizedPhotoPath),
-    staleTime: 50 * 60 * 1000,
-    queryFn: async () => {
-      const path = normalizedPhotoPath;
-      if (!path) throw new Error("Missing profile photo path.");
-      const { data } = await apiClient.post<{ signedUrl: string }>("/api/objects/presigned-url", {
-        objectPath: path,
-      });
-      return data.signedUrl;
-    },
+  const avatarQuery = useQuery({
+    queryKey: ["profile-photo-display", "fuel-header", rawPhotoUrl],
+    enabled: authMeQuery.isSuccess && Boolean(rawPhotoUrl),
+    staleTime: 5 * 60_000,
+    queryFn: () => resolveProfilePhotoDisplayUri(rawPhotoUrl),
   });
 
-  const avatarUri =
-    normalizedPhotoPath == null
-      ? null
-      : needsObjectPresign
-        ? presignAvatarQuery.data ?? null
-        : resolveApiUrl(appConfig.apiBaseUrl, normalizedPhotoPath);
+  const avatarUri = avatarQuery.data ?? null;
 
   useEffect(() => {
     setAvatarLoadFailed(false);
-  }, [normalizedPhotoPath, presignAvatarQuery.data]);
+  }, [rawPhotoUrl, avatarUri]);
 
   return (
     <View
@@ -92,7 +78,10 @@ export function FuelPortalHeader({ onOpenMenu }: FuelPortalHeaderProps) {
           onPress={onOpenMenu}
           style={[
             styles.avatar,
-            { borderColor: t.borderSubtle, backgroundColor: isDark ? theme.colors.surfaceVariant : theme.colors.primaryContainer },
+            {
+              borderColor: t.borderSubtle,
+              backgroundColor: isDark ? theme.colors.surfaceVariant : theme.colors.primaryContainer,
+            },
           ]}
           accessibilityRole="button"
           accessibilityLabel="Account and menu"
@@ -145,6 +134,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: StyleSheet.hairlineWidth,
+    overflow: "hidden",
   },
   avatarImage: {
     width: "100%",

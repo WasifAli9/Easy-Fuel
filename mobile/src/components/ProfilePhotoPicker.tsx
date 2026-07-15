@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, Image, StyleSheet, View } from "react-native";
 import { ActivityIndicator, Text } from "react-native-paper";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -6,9 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/design/paper-button";
 import { darkTheme, lightTheme } from "@/design/theme";
 import { useUiThemeStore } from "@/store/ui-theme-store";
-import { apiClient } from "@/services/api/client";
-import { normalizeFilePath, resolveApiUrl } from "@/lib/files";
-import { appConfig } from "@/services/config";
+import { resolveProfilePhotoDisplayUri } from "@/lib/profile-photo-display";
 import { pickAndUploadProfilePhoto, type ProfilePhotoRole } from "@/services/profile-photo";
 
 type ProfilePhotoPickerProps = {
@@ -23,39 +21,24 @@ export function ProfilePhotoPicker({ role, photoUrl, queryKeysToInvalidate = [] 
   const styles = getStyles(theme);
   const queryClient = useQueryClient();
   const [loadFailed, setLoadFailed] = useState(false);
+  const [imageReady, setImageReady] = useState(false);
   const [localPhotoPath, setLocalPhotoPath] = useState<string | null>(null);
 
   const effectivePhotoPath = localPhotoPath ?? photoUrl ?? null;
-  const normalizedPhotoPath = normalizeFilePath(effectivePhotoPath);
 
-  const presignQuery = useQuery({
-    queryKey: ["/api/objects/presigned-url", "profile-photo", role, normalizedPhotoPath],
-    enabled: Boolean(normalizedPhotoPath),
-    staleTime: 0,
-    queryFn: async () => {
-      const path = normalizedPhotoPath;
-      if (!path) throw new Error("Missing photo path");
-      const { data } = await apiClient.post<{ signedUrl: string }>("/api/objects/presigned-url", {
-        objectPath: path,
-      });
-      const signed = data.signedUrl;
-      return signed.startsWith("http") ? signed : resolveApiUrl(appConfig.apiBaseUrl, signed);
-    },
+  const displayQuery = useQuery({
+    queryKey: ["profile-photo-display", role, effectivePhotoPath],
+    enabled: Boolean(effectivePhotoPath),
+    staleTime: 5 * 60_000,
+    retry: 1,
+    queryFn: () => resolveProfilePhotoDisplayUri(effectivePhotoPath),
   });
 
-  const displayUri = useMemo(() => {
-    if (!normalizedPhotoPath) return null;
-    if (normalizedPhotoPath.startsWith("http://") || normalizedPhotoPath.startsWith("https://")) {
-      return normalizedPhotoPath;
-    }
-    if (normalizedPhotoPath.startsWith("/objects/")) {
-      return presignQuery.data ?? null;
-    }
-    return resolveApiUrl(appConfig.apiBaseUrl, normalizedPhotoPath);
-  }, [normalizedPhotoPath, presignQuery.data]);
+  const displayUri = displayQuery.data ?? null;
 
   useEffect(() => {
     setLoadFailed(false);
+    setImageReady(false);
   }, [displayUri, effectivePhotoPath]);
 
   const uploadMutation = useMutation({
@@ -70,6 +53,7 @@ export function ProfilePhotoPicker({ role, photoUrl, queryKeysToInvalidate = [] 
         ...queryKeysToInvalidate,
       ];
       await Promise.all(keys.map((key) => queryClient.invalidateQueries({ queryKey: [key] })));
+      await queryClient.invalidateQueries({ queryKey: ["profile-photo-display"] });
       await queryClient.refetchQueries({ queryKey: ["/api/profile"] });
       Alert.alert("Photo updated", "Your profile picture was saved.");
     },
@@ -85,19 +69,31 @@ export function ProfilePhotoPicker({ role, photoUrl, queryKeysToInvalidate = [] 
     },
   });
 
-  const showSpinner = uploadMutation.isPending || (Boolean(normalizedPhotoPath) && presignQuery.isLoading);
+  const showSpinner =
+    uploadMutation.isPending || (Boolean(effectivePhotoPath) && (displayQuery.isLoading || displayQuery.isFetching));
+  const showImage = Boolean(displayUri) && !loadFailed && !displayQuery.isError;
 
   return (
     <View style={styles.row}>
       <View style={[styles.avatarWrap, { borderColor: theme.colors.outline }]}>
-        {showSpinner ? (
-          <ActivityIndicator />
-        ) : displayUri && !loadFailed ? (
-          <Image
-            source={{ uri: displayUri }}
-            style={styles.avatarImage}
-            onError={() => setLoadFailed(true)}
-          />
+        {showSpinner && !imageReady ? (
+          <ActivityIndicator color={theme.colors.primary} />
+        ) : showImage ? (
+          <>
+            {!imageReady ? (
+              <MaterialCommunityIcons name="account-circle" size={56} color={theme.colors.onSurfaceVariant} />
+            ) : null}
+            <Image
+              source={{ uri: displayUri! }}
+              style={[styles.avatarImage, !imageReady ? styles.avatarImageHidden : null]}
+              resizeMode="cover"
+              onLoad={() => setImageReady(true)}
+              onError={() => {
+                setLoadFailed(true);
+                setImageReady(false);
+              }}
+            />
+          </>
         ) : (
           <MaterialCommunityIcons name="account-circle" size={56} color={theme.colors.onSurfaceVariant} />
         )}
@@ -113,6 +109,9 @@ export function ProfilePhotoPicker({ role, photoUrl, queryKeysToInvalidate = [] 
           {effectivePhotoPath ? "Change photo" : "Upload photo"}
         </Button>
         <Text style={styles.hint}>JPG or PNG, up to 5 MB</Text>
+        {displayQuery.isError && effectivePhotoPath ? (
+          <Text style={styles.errorHint}>Could not load photo. Try uploading again.</Text>
+        ) : null}
       </View>
     </View>
   );
@@ -137,8 +136,12 @@ const getStyles = (theme: typeof lightTheme) =>
       backgroundColor: theme.colors.surfaceVariant,
     },
     avatarImage: {
+      ...StyleSheet.absoluteFillObject,
       width: 88,
       height: 88,
+    },
+    avatarImageHidden: {
+      opacity: 0,
     },
     actions: {
       flex: 1,
@@ -147,5 +150,9 @@ const getStyles = (theme: typeof lightTheme) =>
     hint: {
       fontSize: 12,
       color: theme.colors.onSurfaceVariant,
+    },
+    errorHint: {
+      fontSize: 12,
+      color: theme.colors.error,
     },
   });

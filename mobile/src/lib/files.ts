@@ -180,13 +180,34 @@ async function downloadObjectBytes(
     return bytes;
   } catch (err: unknown) {
     const status = (err as { response?: { status?: number } })?.response?.status;
-    const legacyPrefix = "/objects/uploads/";
-    const localPrefix = "/objects/local/uploads/";
-    if (status === 404 && objectApiPath.startsWith(legacyPrefix) && !objectApiPath.startsWith(localPrefix)) {
-      const alt = objectApiPath.replace(legacyPrefix, localPrefix);
-      const bytes = await tryFetch(alt);
-      if (bytes.byteLength === 0) throw new Error("Document file is empty.");
-      return bytes;
+    if (status !== 404) throw err;
+
+    const alternates: string[] = [];
+    const pushAlt = (path: string) => {
+      if (path !== objectApiPath && !alternates.includes(path)) alternates.push(path);
+    };
+
+    if (objectApiPath.startsWith("/objects/uploads/")) {
+      pushAlt(objectApiPath.replace("/objects/uploads/", "/objects/local/uploads/"));
+      pushAlt(objectApiPath.replace("/objects/uploads/", "/objects/private/uploads/"));
+    }
+    if (objectApiPath.startsWith("/objects/local/uploads/")) {
+      pushAlt(objectApiPath.replace("/objects/local/uploads/", "/objects/uploads/"));
+      pushAlt(objectApiPath.replace("/objects/local/uploads/", "/objects/private/uploads/"));
+    }
+    if (objectApiPath.startsWith("/objects/private/uploads/")) {
+      pushAlt(objectApiPath.replace("/objects/private/uploads/", "/objects/local/uploads/"));
+      pushAlt(objectApiPath.replace("/objects/private/uploads/", "/objects/uploads/"));
+    }
+
+    for (const alt of alternates) {
+      try {
+        const bytes = await tryFetch(alt);
+        if (bytes.byteLength === 0) throw new Error("Document file is empty.");
+        return bytes;
+      } catch {
+        /* try next */
+      }
     }
     throw err;
   }

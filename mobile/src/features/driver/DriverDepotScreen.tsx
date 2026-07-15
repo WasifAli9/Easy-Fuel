@@ -430,9 +430,16 @@ export function DriverDepotScreen() {
             renderItem={({ item }) => (
               <Card mode="outlined" style={styles.itemCard}>
                 <Card.Content>
-                  <View style={styles.rowBetween}>
-                    <Text variant="titleMedium">{item.depots?.name || "Depot"}</Text>
-                    <Chip compact icon="information-outline">
+                  <View style={styles.orderHeader}>
+                    <Text variant="titleMedium" style={styles.orderDepotName}>
+                      {item.depots?.name || "Depot"}
+                    </Text>
+                    <Chip
+                      compact
+                      icon="information-outline"
+                      style={styles.statusChip}
+                      textStyle={styles.statusChipText}
+                    >
                       {formatDepotOrderStatus({
                         status: item.status,
                         payment_status: item.payment_status,
@@ -445,7 +452,13 @@ export function DriverDepotScreen() {
                   <IconMetaRow icon="calendar-outline" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.onSurfaceVariant}>
                     {item.pickup_date ? new Date(item.pickup_date).toLocaleDateString("en-ZA") : "No date"}
                   </IconMetaRow>
-                  <IconMetaRow icon="cash" color={theme.colors.onSurface} iconColor={theme.colors.primary}>
+                  <IconMetaRow
+                    icon="cash"
+                    color={theme.colors.onSurface}
+                    iconColor={theme.colors.primary}
+                    style={styles.amountRow}
+                    numberOfLines={1}
+                  >
                     {formatMoneyFromCents(Number(item.total_price_cents || 0))}
                   </IconMetaRow>
                   <View style={styles.actionRow}>
@@ -841,9 +854,30 @@ const getStyles = (theme: typeof lightTheme) => {
   empty: { ...p.empty, marginTop: 20 },
   itemCard: p.listCard,
   rowBetween: p.rowBetween,
+  orderHeader: {
+    gap: 8,
+    marginBottom: 2,
+  },
+  orderDepotName: {
+    flexShrink: 1,
+    paddingRight: 4,
+  },
+  statusChip: {
+    alignSelf: "flex-start",
+    maxWidth: "100%",
+    height: "auto",
+    minHeight: 32,
+  },
+  statusChipText: {
+    flexShrink: 1,
+    flexWrap: "wrap",
+  },
+  amountRow: {
+    marginTop: 6,
+  },
   meta: { marginTop: 4, color: theme.colors.onSurfaceVariant },
   amount: { marginTop: 6, fontWeight: "700", color: theme.colors.primary },
-  actionRow: { flexDirection: "row", gap: 8, marginTop: 10 },
+  actionRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
   orderBtn: { marginTop: 10, alignSelf: "flex-start" },
   fuelStockBlock: {
     marginTop: 8,
@@ -891,12 +925,19 @@ const getStyles = (theme: typeof lightTheme) => {
     borderRadius: 12,
     backgroundColor: theme.colors.surfaceVariant,
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
   },
-  paymentTotalLabel: { color: theme.colors.onSurfaceVariant, fontWeight: "600" },
-  paymentTotalValue: { fontSize: 20, fontWeight: "800", color: theme.colors.primary },
+  paymentTotalLabel: { color: theme.colors.onSurfaceVariant, fontWeight: "600", flexShrink: 0 },
+  paymentTotalValue: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: theme.colors.primary,
+    flexShrink: 1,
+    textAlign: "right",
+  },
   paymentSectionTitle: { marginBottom: 10, fontWeight: "700" },
   paymentMethodList: { gap: 8 },
   paymentMethodBtn: {

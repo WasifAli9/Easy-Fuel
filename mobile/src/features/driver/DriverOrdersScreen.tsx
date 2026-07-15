@@ -209,14 +209,19 @@ export function DriverOrdersScreen() {
           renderItem={({ item }) => (
             <Card mode="outlined" style={styles.orderCard}>
               <Card.Content>
-                <View style={styles.rowBetween}>
+                <View style={styles.orderHeader}>
                   <View style={styles.orderTitleRow}>
                     <MaterialCommunityIcons name="fuel" size={20} color={theme.colors.primary} />
                     <Text variant="titleMedium" style={styles.orderTitleText}>
                       {(item.fuel_types?.label || "Fuel")} · {item.litres ?? 0}L
                     </Text>
                   </View>
-                  <Chip compact icon={item.state === "delivered" ? "check" : "progress-clock"}>
+                  <Chip
+                    compact
+                    icon={item.state === "delivered" ? "check" : "progress-clock"}
+                    style={styles.statusChip}
+                    textStyle={styles.statusChipText}
+                  >
                     {formatOrderState(item.state)}
                   </Chip>
                 </View>
@@ -562,15 +567,28 @@ const getStyles = (theme: typeof lightTheme) => {
   },
   orderCard: p.listCard,
   rowBetween: p.rowBetween,
+  orderHeader: {
+    gap: 8,
+    marginBottom: 2,
+  },
   orderTitleRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    flex: 1,
+    flexShrink: 1,
     minWidth: 0,
   },
   orderTitleText: {
-    flex: 1,
+    flexShrink: 1,
+  },
+  statusChip: {
+    alignSelf: "flex-start",
+    maxWidth: "100%",
+    height: "auto",
+    minHeight: 32,
+  },
+  statusChipText: {
+    flexShrink: 1,
   },
   orderAmountRow: {
     marginTop: 6,

@@ -169,7 +169,7 @@ export function SupplierDepotOrdersPanel({ listHeader, listChrome = "default" }:
       <Pressable onPress={() => openOrderDetail(item)} accessibilityRole="button">
         <Card mode="elevated" elevation={isDark ? 2 : 3} style={styles.card}>
           <Card.Content style={styles.cardInner}>
-            <View style={styles.rowBetween}>
+            <View style={styles.cardHeader}>
               <Text style={[styles.orderId, { color: theme.colors.primary }]}>#{item.id.slice(0, 8)}</Text>
               <View style={[styles.statusPill, { backgroundColor: badge.bg }]}>
                 <Text style={[styles.statusPillText, { color: badge.fg }]}>{statusLabel}</Text>
@@ -363,20 +363,29 @@ const getStyles = (theme: typeof lightTheme, t: ReturnType<typeof getFuelPortalT
     },
     cardInner: { paddingVertical: 4 },
     rowBetween: p.rowBetween,
-    orderId: { fontSize: 15, fontWeight: "700" },
+    cardHeader: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 8,
+    },
+    orderId: { fontSize: 15, fontWeight: "700", flexShrink: 0 },
     statusPill: {
       paddingHorizontal: 12,
       paddingVertical: 5,
       borderRadius: 999,
+      flexShrink: 1,
+      maxWidth: "100%",
     },
-    statusPillText: { fontSize: 12, fontWeight: "700" },
+    statusPillText: { fontSize: 12, fontWeight: "700", flexShrink: 1 },
     fuelTitle: { marginTop: 10, fontSize: 17, fontWeight: "700", color: theme.colors.onSurface },
     driverRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
-    driverText: { fontSize: 14, color: theme.colors.onSurfaceVariant },
-    volumeRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
+    driverText: { fontSize: 14, color: theme.colors.onSurfaceVariant, flexShrink: 1 },
+    volumeRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8, marginTop: 8 },
     volumeText: { fontSize: 14, color: theme.colors.onSurfaceVariant, fontWeight: "600" },
     dot: { color: theme.colors.onSurfaceVariant, fontWeight: "700" },
-    priceText: { fontSize: 15, fontWeight: "800" },
+    priceText: { fontSize: 15, fontWeight: "800", flexShrink: 0 },
     tapHint: { marginTop: 10, fontSize: 12, color: theme.colors.primary, fontWeight: "600" },
     sectionHeader: {
       flexDirection: "row",

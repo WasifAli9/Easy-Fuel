@@ -6,7 +6,7 @@ import path from "path";
 import type { Response } from "express";
 import jwt from "jsonwebtoken";
 import { extensionToMime, setFileResponseHeaders } from "./file-response-utils";
-import { objectPathToAbsolute } from "./local-object-storage";
+import { resolveLocalObjectAbsolutePath } from "./local-object-storage";
 
 const SECRET = process.env.JWT_ACCESS_SECRET || "dev_access_secret_change_me";
 
@@ -46,7 +46,12 @@ export async function streamLocalObjectToResponse(
   objectPath: string,
   opts?: { filename?: string; mimeType?: string; inline?: boolean },
 ): Promise<void> {
-  const abs = objectPathToAbsolute(objectPath);
+  const abs = await resolveLocalObjectAbsolutePath(objectPath);
+  if (!abs) {
+    const err = new Error("Local object not found") as NodeJS.ErrnoException;
+    err.code = "ENOENT";
+    throw err;
+  }
   const buf = await fs.readFile(abs);
   const ext = path.extname(abs).toLowerCase();
   const mimeType = opts?.mimeType || extensionToMime(ext) || "application/octet-stream";

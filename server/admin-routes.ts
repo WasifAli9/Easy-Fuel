@@ -12,12 +12,11 @@ import {
   vehicles,
 } from "@shared/schema";
 import { db, pool } from "./db";
-import { ObjectStorageService } from "./objectStorage";
+import { ensureStoredObjectPath } from "./objectStorage";
 import { getDriverComplianceStatus, getSupplierComplianceStatus } from "./compliance-service";
 import { websocketService } from "./websocket";
 
 const router = Router();
-const objectStorageService = new ObjectStorageService();
 
 async function getLocalAuthUserById(userId: string): Promise<{ id: string; email: string } | null> {
   const result = await pool.query(`SELECT id::text, email FROM local_auth_users WHERE id = $1 LIMIT 1`, [
@@ -2394,14 +2393,8 @@ router.put("/users/:userId/profile-picture", async (req, res) => {
       return res.status(400).json({ error: "profilePictureURL is required" });
     }
 
-    // Set ACL for the profile picture with the target user as owner
-    const objectPath = await objectStorageService.trySetObjectEntityAclPolicy(
-      profilePictureURL,
-      {
-        owner: userId,
-        visibility: "public", // Profile pictures are public
-      }
-    );
+    // Persist profile photo path (files live on server disk under LOCAL_STORAGE_DIR).
+    const objectPath = await ensureStoredObjectPath(profilePictureURL);
 
     // Update profile_photo_url in database (if column exists)
     try {

@@ -194,17 +194,26 @@ export function CustomerOrdersScreen() {
           renderItem={({ item }) => (
             <Card mode="outlined" style={styles.card}>
               <Card.Content>
-                <View style={styles.rowBetween}>
+                <View style={styles.orderHeader}>
                   <View style={styles.orderTitleRow}>
                     <MaterialCommunityIcons name="fuel" size={18} color={theme.colors.primary} />
-                    <Text variant="titleMedium">{item.fuel_types?.label ?? "Fuel"}</Text>
+                    <Text variant="titleMedium" style={styles.orderTitleText}>
+                      {item.fuel_types?.label ?? "Fuel"}
+                    </Text>
                   </View>
-                  <Chip compact icon="information-outline">{formatOrderState(item.state ?? item.order_status)}</Chip>
+                  <Chip
+                    compact
+                    icon="information-outline"
+                    style={styles.statusChip}
+                    textStyle={styles.statusChipText}
+                  >
+                    {formatOrderState(item.state ?? item.order_status)}
+                  </Chip>
                 </View>
                 <IconMetaRow icon="map-marker-outline" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.onSurfaceVariant}>
                   {formatCustomerOrderAddress(item)}
                 </IconMetaRow>
-                <IconMetaRow icon="gauge" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.onSurfaceVariant}>
+                <IconMetaRow icon="gauge" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.onSurfaceVariant} numberOfLines={1}>
                   {item.litres != null ? `${item.litres} L` : "—"} · {formatMoneyFromCents(item.total_cents ?? 0)}
                 </IconMetaRow>
                 <IconMetaRow icon="clock-outline" color={theme.colors.onSurfaceVariant} iconColor={theme.colors.onSurfaceVariant}>
@@ -251,7 +260,11 @@ const getStyles = (theme: typeof lightTheme) => {
     newOrderBtn: { alignSelf: "flex-start", borderRadius: buttonBorderRadius },
     subtitle: p.subtitle,
     rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 8 },
-    orderTitleRow: { flexDirection: "row", alignItems: "center", gap: 8, flex: 1 },
+    orderHeader: { gap: 8, marginBottom: 2 },
+    orderTitleRow: { flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1, minWidth: 0 },
+    orderTitleText: { flexShrink: 1 },
+    statusChip: { alignSelf: "flex-start", maxWidth: "100%", height: "auto", minHeight: 32 },
+    statusChipText: { flexShrink: 1 },
     segment: { marginTop: 12 },
     filterHint: { marginTop: 8, color: theme.colors.primary, fontWeight: "600" },
     list: { paddingHorizontal: 12, paddingBottom: 24, gap: 10 },

@@ -11,15 +11,18 @@ import locationRoutes from "./location-routes";
 import chatRoutes from "./chat-routes";
 import notificationRoutes from "./notification-routes";
 import { handleOzowPayinWebhook, handleOzowPayoutNotificationWebhook, handleOzowPayoutVerificationWebhook } from "./webhooks";
-import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
-import { ObjectPermission } from "./objectAcl";
+import { ObjectStorageService, ObjectNotFoundError, ensureStoredObjectPath } from "./objectStorage";
 import { websocketService } from "./websocket";
 import { bootstrapLocalAuth, changeLocalPassword, signWebSocketHandshakeToken } from "./auth-local";
 import { db } from "./db";
 import { companies, fuelTypes, profiles } from "@shared/schema";
 import { and, asc, eq, ilike } from "drizzle-orm";
-import fs from "fs/promises";
-import { objectPathToAbsolute, uploadUrlToObjectPath, writeLocalObject } from "./local-object-storage";
+import {
+  getLocalStorageDir,
+  resolveLocalObjectAbsolutePath,
+  uploadUrlToObjectPath,
+  writeLocalObject,
+} from "./local-object-storage";
 import {
   normalizeToObjectPath,
   readObjectViewToken,
@@ -231,17 +234,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Public objects endpoint (for public assets)
+  // Public assets on local disk under `storage/public/` (no auth).
   app.get("/public-objects/:filePath(*)", async (req, res) => {
     const filePath = req.params.filePath;
+    if (!filePath?.trim()) {
+      return res.status(400).json({ error: "Invalid file path" });
+    }
     try {
-      const file = await objectStorageService.searchPublicObject(filePath);
-      if (!file) {
+      const { parseObjectFileQuery } = await import("./file-response-utils");
+      const fileQuery = parseObjectFileQuery(req);
+      const objectPath = `/objects/public/${filePath.replace(/^\/+/, "")}`;
+      const localAbs = await resolveLocalObjectAbsolutePath(objectPath);
+      if (!localAbs) {
         return res.status(404).json({ error: "File not found" });
       }
-      objectStorageService.downloadObject(file, res);
+      await streamLocalObjectToResponse(res, objectPath, fileQuery);
     } catch (error) {
-      console.error("Error searching for public object:", error);
+      console.error("Error serving public object:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
   });
@@ -256,22 +265,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const { parseObjectFileQuery } = await import("./file-response-utils");
       const fileQuery = parseObjectFileQuery(req);
-      try {
-        const abs = objectPathToAbsolute(objectPath);
-        await fs.access(abs);
-        await streamLocalObjectToResponse(res, objectPath, fileQuery);
-        return;
-      } catch {
-        const objectFile = await objectStorageService.getObjectEntityFile(objectPath);
-        await objectStorageService.downloadObject(objectFile, res, 3600, fileQuery);
+      const localAbs = await resolveLocalObjectAbsolutePath(objectPath);
+      if (!localAbs) {
+        return res.status(404).json({
+          error: "File not found",
+          hint: `No local file under ${getLocalStorageDir()} for ${objectPath}`,
+        });
       }
+      await streamLocalObjectToResponse(res, objectPath, fileQuery);
     } catch (e) {
       console.error("[api/objects/view]", e);
       return res.status(404).json({ error: "File not found" });
     }
   });
 
-  // Private objects: local disk (LOCAL_STORAGE_DIR) first, then Replit/GCS object storage if configured.
+  // Private objects: served from LOCAL_STORAGE_DIR; session or Bearer auth required.
   app.get("/objects/:objectPath(*)", async (req, res) => {
     const user = await resolveAuthedUser(req);
     const userId = user?.id;
@@ -288,35 +296,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { parseObjectFileQuery } = await import("./file-response-utils");
       const fileQuery = parseObjectFileQuery(req);
 
-      try {
-        const abs = objectPathToAbsolute(canonicalPath);
-        await fs.access(abs);
-        await streamLocalObjectToResponse(res, canonicalPath, fileQuery);
-        return;
-      } catch {
-        // fall through to Replit / GCS-backed object storage
+      const localAbs = await resolveLocalObjectAbsolutePath(canonicalPath);
+      if (!localAbs) {
+        console.warn("[objects] local file missing", {
+          path: canonicalPath,
+          storageDir: getLocalStorageDir(),
+        });
+        return res.status(404).json({
+          error: "Object not found",
+          hint: `No file on disk under LOCAL_STORAGE_DIR (${getLocalStorageDir()}). Re-upload the document if it was stored elsewhere.`,
+        });
       }
 
-      const objectFile = await objectStorageService.getObjectEntityFile(req.path);
-      const canAccess = await objectStorageService.canAccessObjectEntity({
-        objectFile,
-        userId,
-        requestedPermission: ObjectPermission.READ,
-      });
-      if (!canAccess) {
-        return res.status(401).json({ error: "Unauthorized" });
-      }
-      objectStorageService.downloadObject(objectFile, res, 3600, fileQuery);
+      await streamLocalObjectToResponse(res, canonicalPath, fileQuery);
     } catch (error: any) {
-      console.error("Error checking object access:", error);
+      console.error("Error serving object:", error);
       if (error instanceof ObjectNotFoundError) {
         return res.status(404).json({ error: "Object not found" });
-      }
-      if (error?.message?.includes("PRIVATE_OBJECT_DIR not set")) {
-        return res.status(503).json({
-          error: "Object storage is not configured",
-          hint: "Set LOCAL_STORAGE_DIR (e.g. ./storage) for local files, or PRIVATE_OBJECT_DIR for hosted object storage.",
-        });
       }
       return res.status(500).json({ error: "Internal server error" });
     }
@@ -329,20 +325,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "objectPath is required" });
       }
       const objectPath = normalizeToObjectPath(String(raw));
-      let fileReady = false;
-      try {
-        await fs.access(objectPathToAbsolute(objectPath));
-        fileReady = true;
-      } catch {
-        try {
-          await objectStorageService.getObjectEntityFile(objectPath);
-          fileReady = true;
-        } catch {
-          /* not on disk or in object storage */
-        }
-      }
-      if (!fileReady) {
-        return res.status(404).json({ error: "File not found" });
+      const localAbs = await resolveLocalObjectAbsolutePath(objectPath);
+      if (!localAbs) {
+        return res.status(404).json({
+          error: "File not found",
+          hint: `No local file under ${getLocalStorageDir()} for ${objectPath}`,
+        });
       }
       const { buildDocumentFilename, sanitizeDownloadFilename } = await import("./file-response-utils");
       const host = req.get("host") || "localhost";
@@ -379,15 +367,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/objects/upload", requireAuth, async (req, res) => {
     try {
       const uploadURL = await objectStorageService.getObjectEntityUploadURL();
-      if (uploadURL.startsWith("local://")) {
-        const rest = uploadURL.replace("local://", "").replace(/^\/+/, "");
-        return res.json({
-          uploadURL: `/api/storage/upload/local/${rest}`,
-          storageType: "local",
-          objectPath: rest,
-        });
-      }
-      res.json({ uploadURL });
+      const rest = uploadURL.replace("local://", "").replace(/^\/+/, "");
+      return res.json({
+        uploadURL: `/api/storage/upload/local/${rest}`,
+        storageType: "local",
+        objectPath: rest,
+      });
     } catch (error: any) {
       console.error("Error generating upload URL:", error);
       res.status(500).json({
@@ -446,25 +431,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     try {
       const raw = String(profilePictureURL).trim();
-      const isLocalOrRelative =
-        raw.startsWith("/objects/") ||
-        raw.startsWith("/api/storage/upload/") ||
-        raw.startsWith("/api/object-storage/upload/") ||
-        (!raw.startsWith("http://") && !raw.startsWith("https://"));
-
-      let forDb: string;
-
-      if (isLocalOrRelative) {
-        const objectPath = uploadUrlToObjectPath(raw);
-        await fs.access(objectPathToAbsolute(objectPath));
-        forDb = objectPath.replace(/^\/objects\//, "");
-      } else {
-        const storedPath = await objectStorageService.trySetObjectEntityAclPolicy(raw, {
-          owner: user.id,
-          visibility: "public",
-        });
-        forDb = normalizeToObjectPath(storedPath).replace(/^\/objects\//, "");
+      const objectPath = uploadUrlToObjectPath(raw);
+      const localAbs = await resolveLocalObjectAbsolutePath(objectPath);
+      if (!localAbs) {
+        return res.status(404).json({ error: "Profile photo file not found on server" });
       }
+      const forDb = objectPath.replace(/^\/objects\//, "");
 
       await db
         .update(profiles)
@@ -491,32 +463,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     try {
       const raw = String(documentURL);
-
-      // Local dev storage: normalize upload URL to /objects/... (no GCS ACL)
-      if (
-        raw.includes("/api/storage/upload/") ||
-        raw.includes("/api/object-storage/upload/") ||
-        raw.startsWith("/objects/")
-      ) {
-        const objectPath = uploadUrlToObjectPath(raw);
-        return res.json({ objectPath });
-      }
-
-      // bucket/path from client (local upload response body)
-      if (raw.includes("/") && !raw.startsWith("/") && !raw.startsWith("http")) {
-        const objectPath = uploadUrlToObjectPath(raw);
-        return res.json({ objectPath });
-      }
-
-      const objectPath = await objectStorageService.trySetObjectEntityAclPolicy(
-        raw,
-        {
-          owner: user.id,
-          visibility: "private", // Documents are private
-        }
-      );
-
-      res.json({ objectPath });
+      const forDb = await ensureStoredObjectPath(raw);
+      res.json({ objectPath: forDb });
     } catch (error) {
       console.error("Error setting document ACL:", error);
       res.status(500).json({ error: "Internal server error" });

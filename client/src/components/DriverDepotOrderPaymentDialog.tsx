@@ -80,7 +80,7 @@ export function DriverDepotOrderPaymentDialog({
           </div>
           <div className="flex justify-between font-semibold pt-2 border-t">
             <span>Total</span>
-            <span className="text-primary">{formatCurrency(totalCents, currency)}</span>
+            <span className="text-primary">{formatCurrency(totalCents / 100, currency)}</span>
           </div>
         </div>
 
