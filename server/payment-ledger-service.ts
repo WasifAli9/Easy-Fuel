@@ -158,10 +158,13 @@ export async function initiateCustomerOrderPayment(
   }
   if (order.paidAt) throw new Error("Order is already paid");
 
+  const litres = Number(order.litres);
   const split = await calculateCustomerOrderSplit(
-    Math.round(order.fuelPriceCents * Number(order.litres)),
+    Math.round(order.fuelPriceCents * litres),
     order.deliveryFeeCents,
+    litres,
   );
+  // Prefer fees already stored on the order (priced at accept time); fall back to live rate.
   const grossCents = order.totalCents > 0 ? order.totalCents : split.grossCents;
   const platformFeeCents =
     order.serviceFeeCents > 0 ? order.serviceFeeCents : split.platformFeeCents;
@@ -263,8 +266,9 @@ export async function initiateDepotOrderPayment(
     throw new Error(`Order status must be pending_payment. Current: ${order.status}`);
   }
 
-  const grossCents = order.total_price_cents;
-  const split = await calculateDepotOrderSplit(grossCents);
+  const grossCents = Number(order.total_price_cents);
+  const litres = Number(order.litres);
+  const split = await calculateDepotOrderSplit(grossCents, litres);
   const supplierId = order.depot_supplier_id;
 
   await assertSupplierHasBankForPayout(supplierId);

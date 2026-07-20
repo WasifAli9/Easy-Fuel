@@ -145,6 +145,10 @@ export default function SupplierProfile() {
   const { data: profile, isLoading } = useQuery<any>({
     queryKey: ["/api/supplier/profile"],
   });
+  const { data: fuelTypesData } = useQuery<Array<{ id: string; code: string; label: string }>>({
+    queryKey: ["/api/fuel-types"],
+  });
+  const fuelTypes = fuelTypesData ?? [];
 
   // Get compliance status
   const { data: complianceStatus } = useQuery<any>({
@@ -291,6 +295,20 @@ export default function SupplierProfile() {
   useEffect(() => {
     if (!profile) return;
     if (complianceIsDirty) return;
+    const savedFuelTypes = Array.isArray(profile.allowed_fuel_types)
+      ? profile.allowed_fuel_types
+      : profile.allowed_fuel_types
+        ? [profile.allowed_fuel_types]
+        : [];
+    const normalizedFuelTypes = savedFuelTypes
+      .map((saved: string) => {
+        const value = String(saved).trim().toLowerCase();
+        return fuelTypes.find(
+          (fuelType) =>
+            fuelType.code.toLowerCase() === value || fuelType.label.toLowerCase() === value,
+        )?.code;
+      })
+      .filter(Boolean);
     complianceForm.reset({
       company_name: profile.registered_name || profile.company_name || "",
       registration_number: profile.registration_number || "",
@@ -302,7 +320,7 @@ export default function SupplierProfile() {
       wholesale_license_number: profile.dmre_license_number || profile.wholesale_license_number || "",
       wholesale_license_issue_date: profile.wholesale_license_issue_date ? formatDateForInput(profile.wholesale_license_issue_date) : "",
       wholesale_license_expiry_date: profile.dmre_license_expiry ? formatDateForInput(profile.dmre_license_expiry) : (profile.wholesale_license_expiry_date ? formatDateForInput(profile.wholesale_license_expiry_date) : ""),
-      allowed_fuel_types: Array.isArray(profile.allowed_fuel_types) ? profile.allowed_fuel_types : (profile.allowed_fuel_types ? [profile.allowed_fuel_types] : []),
+      allowed_fuel_types: normalizedFuelTypes,
       permit_number: profile.permit_number || "",
       permit_expiry_date: profile.permit_expiry_date ? formatDateForInput(profile.permit_expiry_date) : "",
       environmental_auth_number: profile.environmental_auth_number || "",
@@ -330,7 +348,7 @@ export default function SupplierProfile() {
       account_number: profile.account_number || "",
       branch_code: profile.branch_code || "",
     });
-  }, [profile, complianceIsDirty]);
+  }, [profile, complianceIsDirty, fuelTypesData]);
 
   // Deep-link to banking section from accept-order alert
   useEffect(() => {
@@ -1451,18 +1469,30 @@ export default function SupplierProfile() {
                           render={({ field }) => (
                             <FormItem>
                               <FormLabel>Allowed Fuel Types</FormLabel>
-                              <FormControl>
-                                <Input 
-                                  {...field} 
-                                  placeholder="e.g., Diesel, Petrol, Paraffin (comma-separated)"
-                                  value={Array.isArray(field.value) ? field.value.join(", ") : field.value || ""}
-                                  onChange={(e) => {
-                                    const value = e.target.value;
-                                    const types = value.split(",").map(t => t.trim()).filter(Boolean);
-                                    field.onChange(types);
-                                  }}
-                                />
-                              </FormControl>
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                {fuelTypes.map((fuelType) => {
+                                  const selected = Array.isArray(field.value) ? field.value : [];
+                                  const checked = selected.includes(fuelType.code);
+                                  return (
+                                    <label
+                                      key={fuelType.id}
+                                      className="flex items-center gap-3 rounded-md border p-3 text-sm"
+                                    >
+                                      <Checkbox
+                                        checked={checked}
+                                        onCheckedChange={(nextChecked) => {
+                                          field.onChange(
+                                            nextChecked
+                                              ? [...selected, fuelType.code]
+                                              : selected.filter((code: string) => code !== fuelType.code),
+                                          );
+                                        }}
+                                      />
+                                      <span>{fuelType.label}</span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
                               <FormMessage />
                             </FormItem>
                           )}

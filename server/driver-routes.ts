@@ -4,7 +4,6 @@ import { db, pool } from "./db";
 import { createDrizzleCompat } from "./drizzle-compat";
 import { DRIVER_MY_JOB_STATES } from "@shared/driver-job-states";
 import { sendDriverAcceptanceEmail } from "./email-service";
-import { sendDriverAcceptanceEmail } from "./email-service";
 import {
   deliveryAddresses,
   fuelTypes,
@@ -25,6 +24,10 @@ import {
 import { getDriverMaxRadiusMiles } from "./subscription-service";
 import { vehicleToCamelCase, syncDriverVehicleCapacityLitres } from "./vehicle-utils";
 import { getOpenDispatchOfferExpiry, notifyCustomersDriverPricingChanged } from "./dispatch-service";
+import {
+  validateActiveFuelTypeCodes,
+  validateActiveFuelTypeId,
+} from "./fuel-type-service";
 import { z } from "zod";
 import dotenv from "dotenv";
 import { normalizeSignatureForStorage, uploadUrlToObjectPath } from "./local-object-storage";
@@ -1996,6 +1999,11 @@ router.post("/vehicles", async (req, res) => {
     if (!registrationNumber || String(registrationNumber).trim().length === 0) {
       return res.status(400).json({ error: "Registration number is required" });
     }
+    const vehicleFuelTypes = body.fuel_types ?? body.fuelTypes ?? null;
+    const fuelTypesError = await validateActiveFuelTypeCodes(vehicleFuelTypes);
+    if (fuelTypesError) {
+      return res.status(400).json({ error: fuelTypesError });
+    }
 
     const insertResult = await pool.query(
       `INSERT INTO vehicles (
@@ -2017,7 +2025,7 @@ router.post("/vehicles", async (req, res) => {
         body.model ?? null,
         body.year ?? null,
         body.capacity_litres ?? body.capacityLitres ?? null,
-        body.fuel_types ?? body.fuelTypes ?? null,
+        vehicleFuelTypes,
         body.license_disk_expiry ?? body.licenseDiskExpiry ?? null,
         body.roadworthy_expiry ?? body.roadworthyExpiry ?? null,
         body.insurance_expiry ?? body.insuranceExpiry ?? null,
@@ -2154,7 +2162,13 @@ router.patch("/vehicles/:vehicleId", async (req, res) => {
     if (cap !== undefined) updateData.capacity_litres = cap === null || cap === "" ? null : Number(cap);
 
     const fuelTypes = pick("fuel_types", "fuelTypes");
-    if (fuelTypes !== undefined) updateData.fuel_types = fuelTypes;
+    if (fuelTypes !== undefined) {
+      const fuelTypesError = await validateActiveFuelTypeCodes(fuelTypes);
+      if (fuelTypesError) {
+        return res.status(400).json({ error: fuelTypesError });
+      }
+      updateData.fuel_types = fuelTypes;
+    }
 
     const licenseDisk = pick("license_disk_expiry", "licenseDiskExpiry");
     if (licenseDisk !== undefined) updateData.license_disk_expiry = parseBodyDate(licenseDisk);
@@ -2517,6 +2531,10 @@ router.put("/pricing/:fuelTypeId", async (req, res) => {
     const driver = driverResult.rows[0];
     if (!driver) {
       return res.status(404).json({ error: "Driver profile not found" });
+    }
+    const fuelTypeError = await validateActiveFuelTypeId(fuelTypeId);
+    if (fuelTypeError) {
+      return res.status(400).json({ error: fuelTypeError });
     }
 
     // Validate fuel price per liter
@@ -3224,8 +3242,9 @@ router.get("/depots", async (req, res) => {
       if (fuelTypeIds.length > 0) {
         const { data: fuelRows } = await drizzleAdmin
           .from("fuel_types")
-          .select("id, label, code")
-          .in("id", fuelTypeIds);
+          .select("id, label, code, active")
+          .in("id", fuelTypeIds)
+          .eq("active", true);
         for (const fuel of fuelRows || []) {
           const fuelId = (fuel as any).id;
           if (fuelId) fuelTypeMap.set(fuelId, fuel);
@@ -3235,7 +3254,7 @@ router.get("/depots", async (req, res) => {
       for (const row of allDepotPrices || []) {
         const depotId = (row as any).depot_id ?? (row as any).depotId;
         const fuelTypeId = (row as any).fuel_type_id ?? (row as any).fuelTypeId;
-        if (!depotId) continue;
+        if (!depotId || !fuelTypeMap.has(fuelTypeId)) continue;
         if (!pricesByDepot.has(depotId)) pricesByDepot.set(depotId, []);
         pricesByDepot.get(depotId)!.push({
           ...row,
@@ -3468,6 +3487,10 @@ router.post("/depot-orders", checkDriverCompliance, async (req, res) => {
       return res.status(400).json({ 
         error: "depotId, fuelTypeId, and litres are required" 
       });
+    }
+    const fuelTypeError = await validateActiveFuelTypeId(fuelTypeId);
+    if (fuelTypeError) {
+      return res.status(400).json({ error: fuelTypeError });
     }
 
     const litresNum = parseFloat(litres);

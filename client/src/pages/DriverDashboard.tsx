@@ -8,18 +8,19 @@ import { DriverPreferencesManager } from "@/components/DriverPreferencesManager"
 import { DriverLocationTracker } from "@/components/DriverLocationTracker";
 import { OrderChat } from "@/components/OrderChat";
 import { DriverDepotsView } from "@/components/DriverDepotsView";
+import { DriverAlertsPanel } from "@/components/DriverAlertsPanel";
 import { Wallet, TrendingUp, CheckCircle, User, MapPin, Phone, DollarSign, Package, Truck, CheckCircle2, XCircle, AlertCircle, ArrowRight, Download, LayoutDashboard, Car, Settings, History, Warehouse, Store, Menu, Home, ClipboardList, MessageCircle } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useCurrency } from "@/hooks/use-currency";
-import { formatCurrency, formatMoneyAmount, formatOrderState } from "@/lib/utils";
+import { formatCurrency, formatMoneyAmount } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useLocation, Link } from "wouter";
-import { isDriverActionRequiredState, isDriverMyJobState } from "@shared/driver-job-states";
+import { isDriverMyJobState } from "@shared/driver-job-states";
 import { OrderPaymentProof } from "@/components/OrderPaymentProof";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useAuth } from "@/contexts/AuthContext";
@@ -34,10 +35,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { normalizeDocuments } from "@/lib/document-normalize";
-import { Separator } from "@/components/ui/separator";
 import {
   DashboardSidebarAside,
   DashboardSidebarInner,
@@ -46,7 +45,7 @@ import {
   DashboardNavLink,
   DashboardSidebarDivider,
 } from "@/components/dashboard/DashboardSidebar";
-import { AlertTriangle, Calendar, Shield, FileCheck, CalendarClock } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import {
   BarChart,
   Bar,
@@ -234,7 +233,7 @@ export default function DriverDashboard() {
   const assignedOrders = assignedOrdersData || [];
   const completedOrders = completedOrdersData || [];
 
-  // Fetch driver documents for Critical Alerts / Action Required / Upcoming Due (advanced dashboard)
+  // Fetch driver documents for critical alerts banner
   const { data: documentsData } = useQuery<{ id: string; doc_type: string; title?: string; expiry_date: string | null; verification_status?: string }[]>({
     queryKey: ["/api/driver/documents"],
     enabled: !loading && !!session?.access_token && !!profile && profile.role === "driver",
@@ -246,46 +245,16 @@ export default function DriverDashboard() {
 
   const isStarterDashboard = false;
 
-  // Expiry helpers (7 and 30 days)
+  // Expiry helpers for critical alerts banner
   const now = new Date();
   const in7 = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-  const in30 = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
   const docExpiringIn7 = documents.filter((d) => d.expiry_date && new Date(d.expiry_date) <= in7 && new Date(d.expiry_date) >= now).length;
-  const docExpiringIn30 = documents.filter((d) => d.expiry_date && new Date(d.expiry_date) <= in30 && new Date(d.expiry_date) >= now).length;
-  const vehicleExpiringIn30 = (vehiclesData || []).filter((v: any) => {
-    const license = v.license_disk_expiry || v.licenseDiskExpiry;
-    const roadworthy = v.roadworthy_expiry || v.roadworthyExpiry;
-    const insurance = v.insurance_expiry || v.insuranceExpiry;
-    const anyExpiry = [license, roadworthy, insurance].filter(Boolean).map((d) => new Date(d));
-    return anyExpiry.some((d) => d <= in30 && d >= now);
-  }).length;
   const vehicleExpiringIn7 = (vehiclesData || []).filter((v: any) => {
     const license = v.license_disk_expiry || v.licenseDiskExpiry;
     const roadworthy = v.roadworthy_expiry || v.roadworthyExpiry;
     const insurance = v.insurance_expiry || v.insuranceExpiry;
     const anyExpiry = [license, roadworthy, insurance].filter(Boolean).map((d) => new Date(d));
     return anyExpiry.some((d) => d <= in7 && d >= now);
-  }).length;
-  const atRiskCount = documents.filter((d) => d.expiry_date && new Date(d.expiry_date) <= in7).length
-    + (vehiclesData || []).filter((v: any) => {
-        const license = v.license_disk_expiry || v.licenseDiskExpiry;
-        const roadworthy = v.roadworthy_expiry || v.roadworthyExpiry;
-        const insurance = v.insurance_expiry || v.insuranceExpiry;
-        return [license, roadworthy, insurance].some((d) => d && new Date(d) <= in7);
-      }).length;
-  const actionRequiredJobsCount = assignedOrders.filter((o: any) => isDriverActionRequiredState(o.state)).length;
-  const actionRequiredComplianceCount = documents.filter((d) => {
-    const pending = (d.verification_status === "pending" || d.verification_status === "pending_review");
-    const expiring7 = d.expiry_date && new Date(d.expiry_date) <= in7 && new Date(d.expiry_date) >= now;
-    const overdue = d.expiry_date && new Date(d.expiry_date) < now;
-    return pending || expiring7 || overdue;
-  }).length;
-  const actionRequiredVehiclesCount = (vehiclesData || []).filter((v: any) => {
-    const license = v.license_disk_expiry || v.licenseDiskExpiry;
-    const roadworthy = v.roadworthy_expiry || v.roadworthyExpiry;
-    const insurance = v.insurance_expiry || v.insuranceExpiry;
-    const anyIn30 = [license, roadworthy, insurance].filter(Boolean).map((d) => new Date(d));
-    return anyIn30.some((d) => d <= in30 && d >= now);
   }).length;
 
   // Critical alerts (all tiers). Use `tab` for same-page sections — plain `/driver` links do not change the active tab in wouter.
@@ -362,6 +331,18 @@ export default function DriverDashboard() {
       console.log("[DriverDashboard] Invalidating assigned orders due to:", message.type);
       queryClient.invalidateQueries({ queryKey: ["/api/driver/assigned-orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/driver/stats"] });
+    }
+
+    // Keep depot alerts panel in sync when depot orders / notifications change
+    if (
+      message.type === "notification" ||
+      message.type === "depot_order_updated" ||
+      message.type === "depot_order_released" ||
+      String((message as any).payload?.type ?? "").startsWith("driver_depot_")
+    ) {
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/depot-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications/unread-count"] });
     }
   });
 
@@ -620,6 +601,23 @@ export default function DriverDashboard() {
           </div>
         </div>
 
+        {/* KPI cards: primary dashboard summary comes before alerts */}
+        <div className={cn("grid gap-4 sm:gap-5 mb-6 sm:mb-8", "grid-cols-1 sm:grid-cols-3")}>
+          <StatsCard title="Earnings This Week" value={todayEarningsDisplay} icon={Wallet} />
+          <StatsCard title="Active Jobs" value={activeJobsDisplay} description="In progress" icon={TrendingUp} />
+          <StatsCard title="Completed" value={completedThisWeekDisplay} description="This week" icon={CheckCircle} />
+        </div>
+
+        {/* Messages & depot actions — unread notifications + pay/sign/pickup CTAs */}
+        <DriverAlertsPanel
+          className="mb-4 sm:mb-6"
+          onNavigate={(tab) => {
+            setActiveTab(tab);
+            setSidebarOpen(false);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+        />
+
         {/* Critical Alerts banner (all tiers) */}
         {criticalAlerts.length > 0 && (
           <Alert className="mb-4 sm:mb-6 border-destructive/50 bg-destructive/10">
@@ -652,13 +650,6 @@ export default function DriverDashboard() {
             </AlertDescription>
           </Alert>
         )}
-
-        {/* KPI cards: 3 cards for all tiers */}
-        <div className={cn("grid gap-4 sm:gap-5 mb-6 sm:mb-8", "grid-cols-1 sm:grid-cols-3")}>
-          <StatsCard title="Earnings This Week" value={todayEarningsDisplay} icon={Wallet} />
-          <StatsCard title="Active Jobs" value={activeJobsDisplay} description="In progress" icon={TrendingUp} />
-          <StatsCard title="Completed" value={completedThisWeekDisplay} description="This week" icon={CheckCircle} />
-        </div>
 
         {/* Starter plan: show My Jobs on dashboard as before */}
         {isStarterDashboard && (
@@ -851,136 +842,6 @@ export default function DriverDashboard() {
               </div>
             )}
           </div>
-        )}
-
-        {/* Action Required + Upcoming Due in same row (70% / 30%), then At Risk — advanced dashboard only */}
-        {!isStarterDashboard && (
-          <>
-            <div className="flex flex-col lg:flex-row gap-4 mb-6">
-              <Card className="lg:w-[70%] rounded-xl border-border/50 shadow-lg shadow-black/5 overflow-hidden min-w-0">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <AlertTriangle className="h-5 w-5 text-amber-600" />
-                    Action Required
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="pt-0">
-                <Tabs defaultValue="jobs" className="w-full">
-                  <TabsList className="driver-dashboard-actions-tabs grid w-full grid-cols-3">
-                    <TabsTrigger value="jobs">Jobs ({actionRequiredJobsCount})</TabsTrigger>
-                    <TabsTrigger value="compliance">Compliance ({actionRequiredComplianceCount})</TabsTrigger>
-                    <TabsTrigger value="vehicles">Vehicles ({actionRequiredVehiclesCount})</TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="jobs" className="mt-3">
-                    {actionRequiredJobsCount === 0 ? (
-                      <p className="text-sm text-muted-foreground">No jobs needing action.</p>
-                    ) : (
-                      <ul className="space-y-2">
-                        {assignedOrders.filter((o: any) => isDriverActionRequiredState(o.state)).slice(0, 5).map((order: any) => (
-                          <li key={order.id} className="flex items-center justify-between rounded-lg border p-3 text-sm">
-                            <span>Order #{order.id.slice(-8)} — {formatOrderState(order.state)}</span>
-                            <Badge variant="secondary">{order.state === "assigned" ? "Start delivery" : order.state === "en_route" ? "Mark picked up" : "Complete"}</Badge>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </TabsContent>
-                  <TabsContent value="compliance" className="mt-3">
-                    {actionRequiredComplianceCount === 0 ? (
-                      <p className="text-sm text-muted-foreground">No compliance items due.</p>
-                    ) : (
-                      <ul className="space-y-2">
-                        {documents.filter((d) => {
-                          const pending = (d.verification_status === "pending" || d.verification_status === "pending_review");
-                          const expiring7 = d.expiry_date && new Date(d.expiry_date) <= in7 && new Date(d.expiry_date) >= now;
-                          const overdue = d.expiry_date && new Date(d.expiry_date) < now;
-                          return pending || expiring7 || overdue;
-                        }).slice(0, 5).map((d) => (
-                          <li key={d.id} className="flex items-center justify-between rounded-lg border p-3 text-sm">
-                            <span>{d.title || d.doc_type}</span>
-                            <Link href="/driver/profile">
-                              <Button variant="outline" size="sm">Review</Button>
-                            </Link>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </TabsContent>
-                  <TabsContent value="vehicles" className="mt-3">
-                    {actionRequiredVehiclesCount === 0 ? (
-                      <p className="text-sm text-muted-foreground">No vehicle renewals due soon.</p>
-                    ) : (
-                      <ul className="space-y-2">
-                        {(vehiclesData || []).filter((v: any) => {
-                          const license = v.license_disk_expiry || v.licenseDiskExpiry;
-                          const roadworthy = v.roadworthy_expiry || v.roadworthyExpiry;
-                          const insurance = v.insurance_expiry || v.insuranceExpiry;
-                          const anyIn30 = [license, roadworthy, insurance].filter(Boolean).map((d) => new Date(d));
-                          return anyIn30.some((d) => d <= in30 && d >= now);
-                        }).slice(0, 5).map((v: any) => (
-                          <li key={v.id} className="flex items-center justify-between rounded-lg border p-3 text-sm">
-                            <span>{v.registration_number || v.registrationNumber || "Vehicle"}</span>
-                            <button type="button" onClick={() => setActiveTab("vehicles")} className="text-primary hover:underline text-sm">View</button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </TabsContent>
-                </Tabs>
-                </CardContent>
-              </Card>
-
-              <Card className="lg:w-[30%] rounded-xl border-border/50 shadow-lg shadow-black/5 min-w-0 shrink-0">
-                <CardHeader className="py-3 pb-2">
-                  <CardTitle className="text-base flex items-center justify-center gap-2">
-                    <CalendarClock className="h-5 w-5 text-amber-500" />
-                    Upcoming Due
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="pt-0 space-y-2">
-                  <div className="flex items-center justify-between rounded-lg bg-muted/60 px-3 py-2.5 gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <FileCheck className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <span className="text-sm font-medium truncate">Documents (7 days)</span>
-                    </div>
-                    <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-sm font-medium tabular-nums">
-                      {docExpiringIn7}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between rounded-lg bg-muted/60 px-3 py-2.5 gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <FileCheck className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <span className="text-sm font-medium truncate">Documents (30 days)</span>
-                    </div>
-                    <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-sm font-medium tabular-nums">
-                      {docExpiringIn30}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between rounded-lg bg-muted/60 px-3 py-2.5 gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Car className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <span className="text-sm font-medium truncate">Vehicle renewals (30 days)</span>
-                    </div>
-                    <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-sm font-medium tabular-nums">
-                      {vehicleExpiringIn30}
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            <Card className="mb-6 rounded-xl border-border/50 shadow-md py-3 px-4">
-              <div className="flex items-center gap-2">
-                <Shield className="h-5 w-5 text-muted-foreground" />
-                <span className="text-sm font-medium">Compliance at risk – {atRiskCount}</span>
-                {(atRiskCount > 0) && (
-                  <Link href="/driver/profile">
-                    <Button variant="ghost" size="sm" className="h-auto p-0 text-primary hover:underline">Review</Button>
-                  </Link>
-                )}
-              </div>
-            </Card>
-          </>
         )}
 
         {/* Charts row: Activity Trends + Earnings by fuel type */}

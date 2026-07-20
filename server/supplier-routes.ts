@@ -13,6 +13,10 @@ import { z } from "zod";
 import { normalizeSignatureForStorage } from "./local-object-storage";
 import { formatMoneyAmount } from "@shared/format-currency";
 import PDFDocument from "pdfkit";
+import {
+  validateActiveFuelTypeCodes,
+  validateActiveFuelTypeId,
+} from "./fuel-type-service";
 
 type FilterOp = "eq" | "neq" | "in" | "gte" | "lte" | "gt" | "lt";
 type FilterClause = { op: FilterOp; column: string; value: any };
@@ -575,6 +579,11 @@ router.post("/depots/:depotId/pricing/:fuelTypeId/tiers", requireSupplier, check
   const { priceCents, minLitres, availableLitres } = req.body;
 
   try {
+    const fuelTypeError = await validateActiveFuelTypeId(fuelTypeId);
+    if (fuelTypeError) {
+      return res.status(400).json({ error: fuelTypeError });
+    }
+
     // Validate input
     if (!priceCents || priceCents < 0) {
       return res.status(400).json({ error: "Valid price is required" });
@@ -666,6 +675,11 @@ router.put("/depots/:depotId/pricing/:fuelTypeId/stock", requireSupplier, async 
   const { availableLitres } = req.body;
 
   try {
+    const fuelTypeError = await validateActiveFuelTypeId(fuelTypeId);
+    if (fuelTypeError) {
+      return res.status(400).json({ error: fuelTypeError });
+    }
+
     // Validate input
     const availableLitresNum = parseFloat(availableLitres);
     if (isNaN(availableLitresNum) || availableLitresNum < 0) {
@@ -794,6 +808,10 @@ router.put("/depots/:depotId/pricing/tiers/:tierId", requireSupplier, async (req
 
     if (tierError || !existingTier) {
       return res.status(404).json({ error: "Pricing tier not found" });
+    }
+    const fuelTypeError = await validateActiveFuelTypeId(existingTier.fuel_type_id);
+    if (fuelTypeError) {
+      return res.status(400).json({ error: fuelTypeError });
     }
 
     const updateData: any = {
@@ -3540,6 +3558,12 @@ router.put("/compliance", async (req, res) => {
             updateData.allowed_fuel_types = [allowed_fuel_types];
           }
         }
+      }
+    }
+    if (updateData.allowed_fuel_types !== undefined) {
+      const fuelTypesError = await validateActiveFuelTypeCodes(updateData.allowed_fuel_types);
+      if (fuelTypesError) {
+        return res.status(400).json({ error: fuelTypesError });
       }
     }
     if (shouldInclude(site_license_number)) updateData.site_license_number = site_license_number;

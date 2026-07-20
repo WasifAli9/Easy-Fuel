@@ -7,6 +7,7 @@ import {
   customers,
   documents,
   drivers,
+  fuelTypes,
   profiles,
   suppliers,
   vehicles,
@@ -106,6 +107,7 @@ const tableMap = {
   customers,
   documents,
   drivers,
+  fuel_types: fuelTypes,
   profiles,
   suppliers,
   vehicles,
@@ -175,7 +177,49 @@ function wrapError(error: unknown) {
   return { message: "Unknown database error" };
 }
 
-function createFrom(tableName: string) {
+/**
+ * Result shapes for the Supabase-style admin query adapter. `data`/`error` are
+ * intentionally `any` because the adapter dynamically shapes rows per table and
+ * per `select(...)` clause, so precise typing isn't available at call sites.
+ */
+type AdapterResult = { data: any; error: any };
+type AdapterDeleteResult = { error: any };
+
+interface AdapterUpdateBuilder extends PromiseLike<AdapterResult> {
+  eq(columnName: string, value: unknown): AdapterUpdateBuilder;
+  select(selectClause?: string): AdapterUpdateBuilder;
+  single(): Promise<AdapterResult>;
+  maybeSingle(): Promise<AdapterResult>;
+}
+
+interface AdapterInsertBuilder extends PromiseLike<AdapterResult> {
+  select(selectClause?: string): AdapterInsertBuilder;
+  single(): Promise<AdapterResult>;
+}
+
+interface AdapterDeleteBuilder extends PromiseLike<AdapterDeleteResult> {
+  eq(columnName: string, value: unknown): AdapterDeleteBuilder;
+}
+
+interface AdapterUpsertBuilder extends PromiseLike<AdapterResult> {
+  select(selectClause?: string): AdapterUpsertBuilder;
+  single(): Promise<AdapterResult>;
+}
+
+interface AdapterQueryBuilder extends PromiseLike<AdapterResult> {
+  select(selectClause?: string): AdapterQueryBuilder;
+  eq(columnName: string, value: unknown): AdapterQueryBuilder;
+  in(columnName: string, values: unknown[]): AdapterQueryBuilder;
+  order(columnName: string, opts?: { ascending?: boolean }): AdapterQueryBuilder;
+  single(): Promise<AdapterResult>;
+  maybeSingle(): Promise<AdapterResult>;
+  update(updateData: Record<string, unknown>): AdapterUpdateBuilder;
+  insert(values: Record<string, unknown> | Record<string, unknown>[]): AdapterInsertBuilder;
+  delete(): AdapterDeleteBuilder;
+  upsert(values: Record<string, unknown>, opts?: { onConflict?: string }): AdapterUpsertBuilder;
+}
+
+function createFrom(tableName: string): AdapterQueryBuilder {
   const table = getTable(tableName);
 
   const wherePredicates: Predicate[] = [];
@@ -284,7 +328,7 @@ function createFrom(tableName: string) {
         const inserted = await db
           .insert(table)
           .values(values as any)
-          .returning(selected);
+          .returning(selected as any);
         if (isSingle) {
           return { data: inserted[0] || null, error: inserted[0] ? null : notFoundError() };
         }
@@ -348,7 +392,7 @@ function createFrom(tableName: string) {
             target: conflictColumn,
             set: values as any,
           })
-          .returning(selected);
+          .returning(selected as any);
         if (isSingle) {
           return { data: inserted[0] || null, error: inserted[0] ? null : notFoundError() };
         }
@@ -403,7 +447,7 @@ function createFrom(tableName: string) {
     then(resolve: any, reject: any) {
       return runSelect().then(resolve, reject);
     },
-  };
+  } as unknown as AdapterQueryBuilder;
 }
 
 const adminDb = {
@@ -415,7 +459,7 @@ const adminDb = {
 async function attachPendingDocumentCounts(
   ownerType: "driver" | "supplier",
   rows: Record<string, unknown>[],
-) {
+): Promise<Record<string, any>[]> {
   return Promise.all(
     rows.map(async (row) => {
       const ownerId = row.id as string;
@@ -493,10 +537,10 @@ router.get("/users", async (req, res) => {
     const { data: customersData } = await adminDb.from("customers").select("*");
 
     // Combine data
-    const usersWithDetails = profilesData?.map(profile => {
-      const driver = driversData?.find(d => d.user_id === profile.id);
-      const supplier = suppliersData?.find(s => s.owner_id === profile.id);
-      const customer = customersData?.find(c => c.user_id === profile.id);
+    const usersWithDetails = profilesData?.map((profile: any) => {
+      const driver = driversData?.find((d: any) => d.user_id === profile.id);
+      const supplier = suppliersData?.find((s: any) => s.owner_id === profile.id);
+      const customer = customersData?.find((c: any) => c.user_id === profile.id);
 
       return {
         id: profile.id,
@@ -574,7 +618,7 @@ router.get("/customers", async (req, res) => {
 
     // Fetch profiles and emails for customers
     const customersWithProfiles = await Promise.all(
-      (customers || []).map(async (customer) => {
+      (customers || []).map(async (customer: any) => {
         const customerUserId = getRowUserId(customer);
         // Try to fetch profile with profile_photo_url, fallback to without if column doesn't exist
         let profile = null;
@@ -641,7 +685,7 @@ router.get("/suppliers", async (req, res) => {
 
     // Fetch profiles and emails for suppliers
     const suppliersWithProfiles = await Promise.all(
-      (suppliers || []).map(async (supplier) => {
+      (suppliers || []).map(async (supplier: any) => {
         const supplierUserId = getRowUserId(supplier);
         // Try to fetch profile with profile_photo_url, fallback to without if column doesn't exist
         let profile = null;
@@ -737,7 +781,7 @@ router.get("/drivers", async (req, res) => {
 
     // Fetch profiles, emails, and vehicles for drivers
     const driversWithProfiles = await Promise.all(
-      (drivers || []).map(async (driver) => {
+      (drivers || []).map(async (driver: any) => {
         const driverUserId = getRowUserId(driver);
         // Try to fetch profile with profile_photo_url, fallback to without if column doesn't exist
         let profile = null;
@@ -832,7 +876,7 @@ router.get("/kyc/pending", async (req, res) => {
 
     // Fetch profiles for drivers
     const driversWithProfiles = await Promise.all(
-      (pendingDrivers || []).map(async (driver) => {
+      (pendingDrivers || []).map(async (driver: any) => {
         const driverUserId = getRowUserId(driver);
         const { data: profile } = driverUserId
           ? await adminDb
@@ -854,7 +898,7 @@ router.get("/kyc/pending", async (req, res) => {
 
     // Fetch profiles for suppliers
     const suppliersWithProfiles = await Promise.all(
-      (pendingSuppliers || []).map(async (supplier) => {
+      (pendingSuppliers || []).map(async (supplier: any) => {
         const supplierUserId = getRowUserId(supplier);
         const { data: profile } = supplierUserId
           ? await adminDb
@@ -2091,7 +2135,7 @@ router.get("/users/:userId/documents", async (req, res) => {
         .eq("driver_id", ownerId);
       
       if (vehicles && vehicles.length > 0) {
-        const vehicleIds = vehicles.map(v => v.id).filter(id => id && uuidRegex.test(id));
+        const vehicleIds = vehicles.map((v: any) => v.id).filter((id: any) => id && uuidRegex.test(id));
         if (vehicleIds.length > 0) {
           const { data: vDocs } = await adminDb
             .from("documents")
@@ -2956,6 +3000,40 @@ router.get("/ozow-available-banks", async (_req, res) => {
   }
 });
 
+// Fuel type configuration. Public APIs expose only active rows; admins see all.
+router.get("/fuel-types", async (_req, res) => {
+  try {
+    const rows = await db.select().from(fuelTypes).orderBy(asc(fuelTypes.label));
+    res.json(rows);
+  } catch (error: any) {
+    console.error("Error fetching admin fuel types:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.patch("/fuel-types/:id", async (req, res) => {
+  const fuelTypeId = req.params.id;
+  const { active } = req.body ?? {};
+  if (typeof active !== "boolean") {
+    return res.status(400).json({ error: "active must be true or false" });
+  }
+
+  try {
+    const rows = await db
+      .update(fuelTypes)
+      .set({ active })
+      .where(eq(fuelTypes.id, fuelTypeId))
+      .returning();
+    if (!rows[0]) {
+      return res.status(404).json({ error: "Fuel type not found" });
+    }
+    res.json(rows[0]);
+  } catch (error: any) {
+    console.error("Error updating fuel type:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get app settings
 router.get("/settings", async (req, res) => {
   try {
@@ -2979,18 +3057,27 @@ router.get("/settings", async (req, res) => {
           driver_radius_standard_miles: 200,
           driver_radius_extended_miles: 500,
           driver_radius_unlimited_miles: 999,
+          driver_pickup_radius_miles: 500,
+          customer_order_platform_fee_per_litre_cents: 100,
+          depot_order_platform_fee_per_litre_cents: 100,
         });
       }
       throw error;
     }
 
     // Ensure price_per_km_cents and driver radius columns exist (handle case where columns don't exist yet)
+    const s = settings as any;
     const response = {
-      ...settings,
-      price_per_km_cents: settings.price_per_km_cents ?? 5000,
-      driver_radius_standard_miles: settings.driver_radius_standard_miles ?? 200,
-      driver_radius_extended_miles: settings.driver_radius_extended_miles ?? 500,
-      driver_radius_unlimited_miles: settings.driver_radius_unlimited_miles ?? 999,
+      ...s,
+      price_per_km_cents: s.price_per_km_cents ?? 5000,
+      driver_radius_standard_miles: s.driver_radius_standard_miles ?? 200,
+      driver_radius_extended_miles: s.driver_radius_extended_miles ?? 500,
+      driver_radius_unlimited_miles: s.driver_radius_unlimited_miles ?? 999,
+      driver_pickup_radius_miles: s.driver_pickup_radius_miles ?? 500,
+      customer_order_platform_fee_per_litre_cents:
+        s.customer_order_platform_fee_per_litre_cents ?? 100,
+      depot_order_platform_fee_per_litre_cents:
+        s.depot_order_platform_fee_per_litre_cents ?? 100,
     };
 
     res.json(response);
@@ -3009,6 +3096,9 @@ router.get("/settings", async (req, res) => {
         driver_radius_standard_miles: 200,
         driver_radius_extended_miles: 500,
         driver_radius_unlimited_miles: 999,
+        driver_pickup_radius_miles: 500,
+        customer_order_platform_fee_per_litre_cents: 100,
+        depot_order_platform_fee_per_litre_cents: 100,
       });
     }
     res.status(500).json({ error: error.message });
@@ -3018,7 +3108,20 @@ router.get("/settings", async (req, res) => {
 // Update app settings
 router.put("/settings", async (req, res) => {
   try {
-    const { price_per_km_cents, service_fee_percent, service_fee_min_cents, base_delivery_fee_cents, dispatch_radius_km, dispatch_sla_seconds, driver_radius_standard_miles, driver_radius_extended_miles, driver_radius_unlimited_miles } = req.body;
+    const {
+      price_per_km_cents,
+      service_fee_percent,
+      service_fee_min_cents,
+      base_delivery_fee_cents,
+      dispatch_radius_km,
+      dispatch_sla_seconds,
+      driver_radius_standard_miles,
+      driver_radius_extended_miles,
+      driver_radius_unlimited_miles,
+      driver_pickup_radius_miles,
+      customer_order_platform_fee_per_litre_cents,
+      depot_order_platform_fee_per_litre_cents,
+    } = req.body;
 
     const updateData: any = {
       updated_at: new Date(),
@@ -3076,6 +3179,34 @@ router.put("/settings", async (req, res) => {
       updateData.driver_radius_unlimited_miles = v;
     }
 
+    if (driver_pickup_radius_miles !== undefined) {
+      const v = parseInt(driver_pickup_radius_miles, 10);
+      if (isNaN(v) || v < 1 || v > 9999) {
+        return res.status(400).json({ error: "Driver pickup radius must be between 1 and 9999 miles" });
+      }
+      updateData.driver_pickup_radius_miles = v;
+    }
+
+    if (customer_order_platform_fee_per_litre_cents !== undefined) {
+      const v = Number(customer_order_platform_fee_per_litre_cents);
+      if (!Number.isFinite(v) || v < 0 || v > 1_000_000) {
+        return res.status(400).json({
+          error: "Customer order commission per litre must be between R0.00 and R10,000.00",
+        });
+      }
+      updateData.customer_order_platform_fee_per_litre_cents = Math.round(v);
+    }
+
+    if (depot_order_platform_fee_per_litre_cents !== undefined) {
+      const v = Number(depot_order_platform_fee_per_litre_cents);
+      if (!Number.isFinite(v) || v < 0 || v > 1_000_000) {
+        return res.status(400).json({
+          error: "Depot order commission per litre must be between R0.00 and R10,000.00",
+        });
+      }
+      updateData.depot_order_platform_fee_per_litre_cents = Math.round(v);
+    }
+
     const { data: updatedSettings, error } = await adminDb
       .from("app_settings")
       .upsert({
@@ -3089,28 +3220,59 @@ router.put("/settings", async (req, res) => {
 
     if (error) {
       // If error is due to missing column, return success with message
-      if (error.message?.includes("column") || error.message?.includes("price_per_km_cents")) {
-        console.warn("price_per_km_cents column doesn't exist yet. Please run the migration script.");
-        return res.status(400).json({ 
-          error: "price_per_km_cents column doesn't exist. Please run the migration: server/add-price-per-km-column.sql",
-          requiresMigration: true
+      const errMsg = String((error as any)?.message ?? "");
+      if (
+        errMsg.includes("column") ||
+        errMsg.includes("price_per_km_cents") ||
+        errMsg.includes("platform_fee_per_litre") ||
+        errMsg.includes("driver_pickup_radius_miles")
+      ) {
+        console.warn("settings column missing. Please run the migration script.");
+        const needsPickupRadius =
+          errMsg.includes("driver_pickup_radius_miles") ||
+          updateData.driver_pickup_radius_miles !== undefined;
+        const needsPerLitre =
+          errMsg.includes("platform_fee_per_litre") ||
+          updateData.customer_order_platform_fee_per_litre_cents !== undefined ||
+          updateData.depot_order_platform_fee_per_litre_cents !== undefined;
+        return res.status(400).json({
+          error: needsPickupRadius
+            ? "Driver pickup radius column doesn't exist. Please run: server/add-driver-pickup-radius-column.sql"
+            : needsPerLitre
+              ? "Per-litre commission columns don't exist. Please run: server/add-platform-fee-per-litre-columns.sql"
+              : "price_per_km_cents column doesn't exist. Please run the migration: server/add-price-per-km-column.sql",
+          requiresMigration: true,
         });
       }
       throw error;
     }
 
     // Ensure price_per_km_cents and driver radius are included in response
+    const u = updatedSettings as any;
     const response = {
-      ...updatedSettings,
-      price_per_km_cents: updatedSettings.price_per_km_cents ?? 5000,
-      driver_radius_standard_miles: updatedSettings.driver_radius_standard_miles ?? 200,
-      driver_radius_extended_miles: updatedSettings.driver_radius_extended_miles ?? 500,
-      driver_radius_unlimited_miles: updatedSettings.driver_radius_unlimited_miles ?? 999,
+      ...u,
+      price_per_km_cents: u.price_per_km_cents ?? 5000,
+      driver_radius_standard_miles: u.driver_radius_standard_miles ?? 200,
+      driver_radius_extended_miles: u.driver_radius_extended_miles ?? 500,
+      driver_radius_unlimited_miles: u.driver_radius_unlimited_miles ?? 999,
+      driver_pickup_radius_miles: u.driver_pickup_radius_miles ?? 500,
+      customer_order_platform_fee_per_litre_cents:
+        u.customer_order_platform_fee_per_litre_cents ?? 100,
+      depot_order_platform_fee_per_litre_cents:
+        u.depot_order_platform_fee_per_litre_cents ?? 100,
     };
 
     res.json({ success: true, settings: response });
   } catch (error: any) {
     console.error("Error updating app settings:", error);
+    const errMsg = String(error?.message ?? "");
+    if (errMsg.includes("column") || errMsg.includes("platform_fee_per_litre")) {
+      return res.status(400).json({
+        error:
+          "Per-litre commission columns don't exist. Please run: server/add-platform-fee-per-litre-columns.sql",
+        requiresMigration: true,
+      });
+    }
     res.status(500).json({ error: error.message });
   }
 });

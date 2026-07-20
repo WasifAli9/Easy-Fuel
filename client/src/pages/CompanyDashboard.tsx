@@ -85,8 +85,40 @@ interface CompanyVehicleRow {
   model: string | null;
   year: number | null;
   capacityLitres: number | null;
+  fuelTypes?: string[] | null;
   vehicleStatus: string | null;
   assignedDriverName: string | null;
+  licenseDiskExpiry?: string | null;
+  roadworthyExpiry?: string | null;
+  insuranceExpiry?: string | null;
+  trackerInstalled?: boolean | null;
+  trackerProvider?: string | null;
+  vehicleRegCertificateNumber?: string | null;
+  roadworthyCertificateNumber?: string | null;
+  roadworthyIssueDate?: string | null;
+  dgVehiclePermitRequired?: boolean | null;
+  dgVehiclePermitNumber?: string | null;
+  dgVehiclePermitIssueDate?: string | null;
+  dgVehiclePermitExpiryDate?: string | null;
+  vehicleInsured?: boolean | null;
+  insuranceProvider?: string | null;
+  policyNumber?: string | null;
+  policyExpiryDate?: string | null;
+  loaRequired?: boolean | null;
+  loaIssueDate?: string | null;
+  loaExpiryDate?: string | null;
+  createdAt?: string | null;
+}
+
+function formatVehicleDate(value?: string | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleDateString();
+}
+
+function formatYesNo(value?: boolean | null) {
+  if (value == null) return "—";
+  return value ? "Yes" : "No";
 }
 
 interface CompanyDriverRow {
@@ -116,6 +148,7 @@ export default function CompanyDashboard() {
   const [assignVehicleId, setAssignVehicleId] = useState<string | null>(null);
   const [assignDriverId, setAssignDriverId] = useState<string>("");
   const [addVehicleOpen, setAddVehicleOpen] = useState(false);
+  const [selectedVehicle, setSelectedVehicle] = useState<CompanyVehicleRow | null>(null);
 
   const { data: overview, isLoading: overviewLoading } = useQuery<{
     totalDrivers: number;
@@ -761,7 +794,11 @@ export default function CompanyDashboard() {
                     </TableHeader>
                     <TableBody>
                       {fleetVehicles.map((v) => (
-                        <TableRow key={v.id}>
+                        <TableRow
+                          key={v.id}
+                          className="cursor-pointer hover:bg-muted/50"
+                          onClick={() => setSelectedVehicle(v)}
+                        >
                           <TableCell className="font-medium">{v.registrationNumber}</TableCell>
                           <TableCell>
                             {[v.make, v.model, v.year].filter(Boolean).join(" ") || "—"}
@@ -777,7 +814,7 @@ export default function CompanyDashboard() {
                               <span className="text-muted-foreground">Unassigned</span>
                             )}
                           </TableCell>
-                          <TableCell className="text-right space-x-2">
+                          <TableCell className="text-right space-x-2" onClick={(e) => e.stopPropagation()}>
                             {!v.driverId ? (
                               <Button size="sm" variant="default" onClick={() => { setAssignVehicleId(v.id); setAssignDriverId(""); }}>
                                 Assign
@@ -1059,6 +1096,165 @@ export default function CompanyDashboard() {
           </div>
         </main>
       </div>
+
+      <Dialog open={!!selectedVehicle} onOpenChange={(open) => { if (!open) setSelectedVehicle(null); }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Vehicle details</DialogTitle>
+            <DialogDescription>
+              Full details for {selectedVehicle?.registrationNumber ?? "this fleet vehicle"}.
+            </DialogDescription>
+          </DialogHeader>
+          {selectedVehicle && (
+            <div className="space-y-5 py-1">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg border bg-muted/30 p-3 sm:col-span-2">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Registration</p>
+                  <p className="mt-1 text-base font-semibold">{selectedVehicle.registrationNumber}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Vehicle</p>
+                  <p className="mt-1 text-sm font-medium">
+                    {[selectedVehicle.make, selectedVehicle.model, selectedVehicle.year].filter(Boolean).join(" ") || "—"}
+                  </p>
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Capacity</p>
+                  <p className="mt-1 text-sm font-medium">
+                    {selectedVehicle.capacityLitres != null ? `${selectedVehicle.capacityLitres} L` : "—"}
+                  </p>
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Status</p>
+                  <div className="mt-1">
+                    <Badge variant="outline">{selectedVehicle.vehicleStatus || "pending"}</Badge>
+                  </div>
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Assigned driver</p>
+                  <p className="mt-1 text-sm font-medium">
+                    {selectedVehicle.driverId
+                      ? selectedVehicle.assignedDriverName || selectedVehicle.driverId.slice(0, 8) + "…"
+                      : "Unassigned"}
+                  </p>
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-3 sm:col-span-2">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Fuel types</p>
+                  <p className="mt-1 text-sm font-medium">
+                    {selectedVehicle.fuelTypes?.length
+                      ? selectedVehicle.fuelTypes
+                          .map((code) => {
+                            const match = fuelTypes.find((ft: any) => ft.code === code || ft.id === code);
+                            return match?.label || formatDisplayFieldValue(code);
+                          })
+                          .join(", ")
+                      : "—"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <h4 className="text-sm font-semibold">Expiry dates</h4>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">License disk</p>
+                    <p className="mt-1 text-sm font-medium">{formatVehicleDate(selectedVehicle.licenseDiskExpiry)}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Roadworthy</p>
+                    <p className="mt-1 text-sm font-medium">{formatVehicleDate(selectedVehicle.roadworthyExpiry)}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Insurance</p>
+                    <p className="mt-1 text-sm font-medium">{formatVehicleDate(selectedVehicle.insuranceExpiry)}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <h4 className="text-sm font-semibold">Tracker</h4>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Tracker installed</p>
+                    <p className="mt-1 text-sm font-medium">{formatYesNo(selectedVehicle.trackerInstalled)}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Tracker provider</p>
+                    <p className="mt-1 text-sm font-medium">{selectedVehicle.trackerProvider || "—"}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <h4 className="text-sm font-semibold">Vehicle compliance</h4>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Registration certificate number</p>
+                    <p className="mt-1 text-sm font-medium">{selectedVehicle.vehicleRegCertificateNumber || "—"}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Roadworthy certificate number</p>
+                    <p className="mt-1 text-sm font-medium">{selectedVehicle.roadworthyCertificateNumber || "—"}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Roadworthy issue date</p>
+                    <p className="mt-1 text-sm font-medium">{formatVehicleDate(selectedVehicle.roadworthyIssueDate)}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">DG permit required</p>
+                    <p className="mt-1 text-sm font-medium">{formatYesNo(selectedVehicle.dgVehiclePermitRequired)}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">DG permit number</p>
+                    <p className="mt-1 text-sm font-medium">{selectedVehicle.dgVehiclePermitNumber || "—"}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">DG permit issue date</p>
+                    <p className="mt-1 text-sm font-medium">{formatVehicleDate(selectedVehicle.dgVehiclePermitIssueDate)}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">DG permit expiry date</p>
+                    <p className="mt-1 text-sm font-medium">{formatVehicleDate(selectedVehicle.dgVehiclePermitExpiryDate)}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Vehicle insured</p>
+                    <p className="mt-1 text-sm font-medium">{formatYesNo(selectedVehicle.vehicleInsured)}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Insurance provider</p>
+                    <p className="mt-1 text-sm font-medium">{selectedVehicle.insuranceProvider || "—"}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Policy number</p>
+                    <p className="mt-1 text-sm font-medium">{selectedVehicle.policyNumber || "—"}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">Policy expiry date</p>
+                    <p className="mt-1 text-sm font-medium">{formatVehicleDate(selectedVehicle.policyExpiryDate)}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">LOA required</p>
+                    <p className="mt-1 text-sm font-medium">{formatYesNo(selectedVehicle.loaRequired)}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">LOA issue date</p>
+                    <p className="mt-1 text-sm font-medium">{formatVehicleDate(selectedVehicle.loaIssueDate)}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">LOA expiry date</p>
+                    <p className="mt-1 text-sm font-medium">{formatVehicleDate(selectedVehicle.loaExpiryDate)}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setSelectedVehicle(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={addVehicleOpen} onOpenChange={setAddVehicleOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">

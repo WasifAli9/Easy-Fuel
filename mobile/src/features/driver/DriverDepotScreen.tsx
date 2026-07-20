@@ -865,7 +865,6 @@ const getStyles = (theme: typeof lightTheme) => {
   statusChip: {
     alignSelf: "flex-start",
     maxWidth: "100%",
-    height: "auto",
     minHeight: 32,
   },
   statusChipText: {

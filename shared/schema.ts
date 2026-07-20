@@ -259,12 +259,22 @@ export const appSettings = pgTable("app_settings", {
   driverRadiusStandardMiles: integer("driver_radius_standard_miles").default(200),
   /** Driver subscription tier max radius (miles): Professional/Extended */
   driverRadiusExtendedMiles: integer("driver_radius_extended_miles").default(500),
-  /** Driver subscription tier max radius (miles): Premium/Unlimited */
+  /** Driver subscription tier max radius (miles): Premium/Unlimited — legacy; unused */
   driverRadiusUnlimitedMiles: integer("driver_radius_unlimited_miles").default(999),
-  /** Platform fee % on customer delivery orders (pay-in split) */
+  /** Single platform-wide driver job pickup radius (miles). Admin-editable. Default 500. */
+  driverPickupRadiusMiles: integer("driver_pickup_radius_miles").notNull().default(500),
+  /** Platform fee % on customer delivery orders (pay-in split) — legacy; unused by per-litre commission */
   customerOrderPlatformFeePercent: numeric("customer_order_platform_fee_percent").notNull().default("5"),
-  /** Platform fee % on driver depot orders (pay-in split) */
+  /** Platform fee % on driver depot orders (pay-in split) — legacy; unused by per-litre commission */
   depotOrderPlatformFeePercent: numeric("depot_order_platform_fee_percent").notNull().default("5"),
+  /** Platform commission per litre (cents) on customer → driver delivery orders. Default R1.00/L. */
+  customerOrderPlatformFeePerLitreCents: integer("customer_order_platform_fee_per_litre_cents")
+    .notNull()
+    .default(100),
+  /** Platform commission per litre (cents) on driver → supplier depot orders. Default R1.00/L. */
+  depotOrderPlatformFeePerLitreCents: integer("depot_order_platform_fee_per_litre_cents")
+    .notNull()
+    .default(100),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

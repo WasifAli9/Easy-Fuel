@@ -30,6 +30,7 @@ import { ensureChatThreadForAssignment } from "./chat-service";
 import { orderNotifications, offerNotifications } from "./notification-helpers";
 import { calculateCustomerOrderSplit } from "./payment-service";
 import { initiateCustomerOrderPayment, PaymentBlockedError } from "./payment-ledger-service";
+import { validateActiveFuelTypeId } from "./fuel-type-service";
 import {
   assertCustomerCanPlaceOrder,
   assertCustomerCanAcceptOffer,
@@ -555,7 +556,7 @@ router.post("/orders/:id/offers/:offerId/accept", async (req, res) => {
     // Calculate total: (fuel_price_per_liter * litres) + (price_per_km * distance_km)
     const fuelCostCents = Math.round(fuelPricePerLiterCents * litres);
     const deliveryFeeCents = Math.round(pricePerKmCents * distanceKm);
-    const split = await calculateCustomerOrderSplit(fuelCostCents, deliveryFeeCents);
+    const split = await calculateCustomerOrderSplit(fuelCostCents, deliveryFeeCents, litres);
     const serviceFeeCents = split.platformFeeCents;
     const totalCents = split.grossCents;
 
@@ -927,6 +928,10 @@ router.post("/orders", async (req, res) => {
     if (!fuelTypeId) {
       return res.status(400).json({ error: "Fuel type is required" });
     }
+    const fuelTypeError = await validateActiveFuelTypeId(fuelTypeId);
+    if (fuelTypeError) {
+      return res.status(400).json({ error: fuelTypeError });
+    }
 
     const litresNum = parseFloat(litres);
     if (isNaN(litresNum) || litresNum <= 0) {
@@ -1167,6 +1172,13 @@ router.patch("/orders/:id", async (req, res) => {
     if (fuelTypeId || litres) {
       const newFuelTypeId = fuelTypeId || existingOrder.fuelTypeId;
       const newLitres = parseFloat(litres || existingOrder.litres);
+
+      if (fuelTypeId) {
+        const fuelTypeError = await validateActiveFuelTypeId(fuelTypeId);
+        if (fuelTypeError) {
+          return res.status(400).json({ error: fuelTypeError });
+        }
+      }
 
       if (isNaN(newLitres) || newLitres <= 0) {
         return res.status(400).json({ error: "Invalid litres value" });

@@ -73,13 +73,19 @@ type VehicleComplianceStatus = {
   }>;
 };
 
+type FuelType = {
+  id: string;
+  code: string;
+  label: string;
+};
+
 type VehicleForm = {
   registration_number: string;
   make: string;
   model: string;
   year: string;
   capacity_litres: string;
-  fuel_types: string;
+  fuel_types: string[];
   license_disk_expiry: string;
   roadworthy_expiry: string;
   insurance_expiry: string;
@@ -117,7 +123,7 @@ const emptyForm: VehicleForm = {
   model: "",
   year: "",
   capacity_litres: "",
-  fuel_types: "",
+  fuel_types: [],
   license_disk_expiry: "",
   roadworthy_expiry: "",
   insurance_expiry: "",
@@ -322,6 +328,11 @@ export function DriverVehiclesScreen() {
     refetchInterval: 10_000,
   });
 
+  const fuelTypesQuery = useQuery({
+    queryKey: ["/api/fuel-types"],
+    queryFn: async () => (await apiClient.get<FuelType[]>("/api/fuel-types")).data ?? [],
+  });
+
   const addVehicleMutation = useMutation({
     mutationFn: async () => {
       const payload = {
@@ -330,10 +341,7 @@ export function DriverVehiclesScreen() {
         model: form.model.trim() || null,
         year: form.year ? Number(form.year) : null,
         capacity_litres: form.capacity_litres ? Number(form.capacity_litres) : null,
-        fuel_types: form.fuel_types
-          .split(",")
-          .map((v) => v.trim())
-          .filter(Boolean),
+        fuel_types: form.fuel_types,
         license_disk_expiry: form.license_disk_expiry || null,
         roadworthy_expiry: form.roadworthy_expiry || null,
         insurance_expiry: form.insurance_expiry || null,
@@ -1084,12 +1092,37 @@ export function DriverVehiclesScreen() {
                       value={form.capacity_litres}
                       onChangeText={(v) => setForm((prev) => ({ ...prev, capacity_litres: v }))}
                     />
-                    <TextInput
-                      {...addVehicleInputCommon}
-                      label="Fuel types (comma separated)"
-                      value={form.fuel_types}
-                      onChangeText={(v) => setForm((prev) => ({ ...prev, fuel_types: v }))}
-                    />
+                    <Text variant="labelLarge" style={{ marginBottom: 4, color: theme.colors.onSurfaceVariant }}>
+                      Fuel types
+                    </Text>
+                    {(fuelTypesQuery.data ?? []).map((fuelType) => {
+                      const checked = form.fuel_types.includes(fuelType.code);
+                      return (
+                        <View key={fuelType.id} style={styles.modeRow}>
+                          <Checkbox
+                            status={checked ? "checked" : "unchecked"}
+                            onPress={() =>
+                              setForm((prev) => ({
+                                ...prev,
+                                fuel_types: checked
+                                  ? prev.fuel_types.filter((code) => code !== fuelType.code)
+                                  : [...prev.fuel_types, fuelType.code],
+                              }))
+                            }
+                          />
+                          <Text onPress={() =>
+                            setForm((prev) => ({
+                              ...prev,
+                              fuel_types: checked
+                                ? prev.fuel_types.filter((code) => code !== fuelType.code)
+                                : [...prev.fuel_types, fuelType.code],
+                            }))
+                          }>
+                            {fuelType.label}
+                          </Text>
+                        </View>
+                      );
+                    })}
                     <TextInput
                       {...addVehicleInputCommon}
                       label="License disk expiry"

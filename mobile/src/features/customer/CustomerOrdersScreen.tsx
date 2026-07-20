@@ -263,7 +263,7 @@ const getStyles = (theme: typeof lightTheme) => {
     orderHeader: { gap: 8, marginBottom: 2 },
     orderTitleRow: { flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1, minWidth: 0 },
     orderTitleText: { flexShrink: 1 },
-    statusChip: { alignSelf: "flex-start", maxWidth: "100%", height: "auto", minHeight: 32 },
+    statusChip: { alignSelf: "flex-start", maxWidth: "100%", minHeight: 32 },
     statusChipText: { flexShrink: 1 },
     segment: { marginTop: 12 },
     filterHint: { marginTop: 8, color: theme.colors.primary, fontWeight: "600" },

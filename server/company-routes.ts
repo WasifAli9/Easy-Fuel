@@ -7,6 +7,7 @@ import { companies, driverCompanyMemberships, drivers, orders, profiles, vehicle
 import { and, desc, eq, gte, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import { pool } from "./db";
 import { getDriverUserId, releaseCompanyVehiclesForDriver } from "./fleet-membership-service";
+import { validateActiveFuelTypeCodes } from "./fuel-type-service";
 
 const router = Router();
 
@@ -181,6 +182,10 @@ router.post("/vehicles", async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const b = parsed.data;
   try {
+    const fuelTypesError = await validateActiveFuelTypeCodes(b.fuel_types);
+    if (fuelTypesError) {
+      return res.status(400).json({ error: fuelTypesError });
+    }
     const insert = {
       companyId: companyId,
       driverId: null as string | null,
@@ -257,7 +262,13 @@ router.patch("/vehicles/:vehicleId", async (req, res) => {
     if (b.model !== undefined) updateData.model = b.model;
     if (b.year !== undefined) updateData.year = b.year;
     if (b.capacity_litres !== undefined) updateData.capacityLitres = b.capacity_litres;
-    if (b.fuel_types !== undefined) updateData.fuelTypes = b.fuel_types;
+    if (b.fuel_types !== undefined) {
+      const fuelTypesError = await validateActiveFuelTypeCodes(b.fuel_types);
+      if (fuelTypesError) {
+        return res.status(400).json({ error: fuelTypesError });
+      }
+      updateData.fuelTypes = b.fuel_types;
+    }
     if (b.license_disk_expiry !== undefined) updateData.licenseDiskExpiry = b.license_disk_expiry ? new Date(b.license_disk_expiry) : null;
     if (b.roadworthy_expiry !== undefined) updateData.roadworthyExpiry = b.roadworthy_expiry ? new Date(b.roadworthy_expiry) : null;
     if (b.insurance_expiry !== undefined) updateData.insuranceExpiry = b.insurance_expiry ? new Date(b.insurance_expiry) : null;

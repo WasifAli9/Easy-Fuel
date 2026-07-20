@@ -70,6 +70,12 @@ type SupplierDocument = {
   created_at?: string;
 };
 
+type FuelType = {
+  id: string;
+  code: string;
+  label: string;
+};
+
 type KybReadiness = {
   can_submit?: boolean;
   canSubmit?: boolean;
@@ -120,13 +126,6 @@ function textToDirectorNames(text: string): string[] {
     .filter(Boolean);
 }
 
-function textToFuelTypes(text: string): string[] {
-  return text
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
 function nonempty(v: string): boolean {
   return v.trim().length > 0;
 }
@@ -171,7 +170,7 @@ export function SupplierKycDocumentsScreen() {
   const [wholesaleLicenseNumber, setWholesaleLicenseNumber] = useState("");
   const [wholesaleLicenseIssueDate, setWholesaleLicenseIssueDate] = useState("");
   const [wholesaleLicenseExpiryDate, setWholesaleLicenseExpiryDate] = useState("");
-  const [allowedFuelTypes, setAllowedFuelTypes] = useState("");
+  const [allowedFuelTypes, setAllowedFuelTypes] = useState<string[]>([]);
   const [siteLicenseNumber, setSiteLicenseNumber] = useState("");
   const [depotAddress, setDepotAddress] = useState("");
   const [environmentalAuthNumber, setEnvironmentalAuthNumber] = useState("");
@@ -202,6 +201,10 @@ export function SupplierKycDocumentsScreen() {
     queryFn: async () => (await apiClient.get<Record<string, unknown>>("/api/supplier/profile")).data,
     refetchOnWindowFocus: false,
   });
+  const fuelTypesQuery = useQuery({
+    queryKey: ["/api/fuel-types"],
+    queryFn: async () => (await apiClient.get<FuelType[]>("/api/fuel-types")).data ?? [],
+  });
 
   useEffect(() => {
     const p = profileQuery.data;
@@ -217,8 +220,21 @@ export function SupplierKycDocumentsScreen() {
     setWholesaleLicenseNumber(String(p.dmre_license_number ?? p.wholesale_license_number ?? ""));
     setWholesaleLicenseIssueDate(profileDateYmd(p.wholesale_license_issue_date));
     setWholesaleLicenseExpiryDate(profileDateYmd(p.dmre_license_expiry ?? p.wholesale_license_expiry_date));
+    const savedFuelTypes = Array.isArray(p.allowed_fuel_types)
+      ? p.allowed_fuel_types
+      : p.allowed_fuel_types
+        ? [p.allowed_fuel_types]
+        : [];
     setAllowedFuelTypes(
-      Array.isArray(p.allowed_fuel_types) ? p.allowed_fuel_types.join(", ") : String(p.allowed_fuel_types ?? ""),
+      savedFuelTypes
+        .map((saved) => {
+          const value = String(saved).trim().toLowerCase();
+          return fuelTypesQuery.data?.find(
+            (fuelType) =>
+              fuelType.code.toLowerCase() === value || fuelType.label.toLowerCase() === value,
+          )?.code;
+        })
+        .filter((code): code is string => Boolean(code)),
     );
     setSiteLicenseNumber(String(p.site_license_number ?? ""));
     setDepotAddress(String(p.depot_address ?? ""));
@@ -244,7 +260,7 @@ export function SupplierKycDocumentsScreen() {
     setBankName(String(p.bank_name ?? ""));
     setAccountNumber(String(p.account_number ?? ""));
     setBranchCode(String(p.branch_code ?? ""));
-  }, [profileQuery.data]);
+  }, [profileQuery.data, fuelTypesQuery.data]);
 
   const docsQuery = useQuery({
     queryKey: ["/api/supplier/documents"],
@@ -270,7 +286,7 @@ export function SupplierKycDocumentsScreen() {
     wholesale_license_number: wholesaleLicenseNumber.trim() || null,
     wholesale_license_issue_date: wholesaleLicenseIssueDate.trim() || null,
     wholesale_license_expiry_date: wholesaleLicenseExpiryDate.trim() || null,
-    allowed_fuel_types: textToFuelTypes(allowedFuelTypes),
+    allowed_fuel_types: allowedFuelTypes,
     site_license_number: siteLicenseNumber.trim() || null,
     depot_address: depotAddress.trim() || null,
     environmental_auth_number: environmentalAuthNumber.trim() || null,
@@ -810,7 +826,22 @@ export function SupplierKycDocumentsScreen() {
             <TextInput mode="outlined" label="Licence number" value={wholesaleLicenseNumber} onChangeText={setWholesaleLicenseNumber} style={styles.input} />
             {kybDateRow("wholesaleIssue", "Issue date")}
             {kybDateRow("wholesaleExpiry", "Expiry date")}
-            <TextInput mode="outlined" label="Allowed fuel types (comma-separated)" value={allowedFuelTypes} onChangeText={setAllowedFuelTypes} style={styles.input} />
+            <Text variant="labelLarge" style={styles.kycDateLabel}>Allowed fuel types</Text>
+            {(fuelTypesQuery.data ?? []).map((fuelType) => (
+              <View key={fuelType.id} style={[styles.rowBetween, styles.kycSwitchRow]}>
+                <Text>{fuelType.label}</Text>
+                <Switch
+                  value={allowedFuelTypes.includes(fuelType.code)}
+                  onValueChange={(enabled) =>
+                    setAllowedFuelTypes((current) =>
+                      enabled
+                        ? Array.from(new Set([...current, fuelType.code]))
+                        : current.filter((code) => code !== fuelType.code),
+                    )
+                  }
+                />
+              </View>
+            ))}
             {kycDoc("dmre_license", "DMRE Wholesale Fuel License", "DMRE licence upload")}
             {saveDraftBtn}
           </>,

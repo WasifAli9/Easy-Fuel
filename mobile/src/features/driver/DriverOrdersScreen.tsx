@@ -247,10 +247,6 @@ export function DriverOrdersScreen() {
                   onPress={() => {
                     setSelectedOrder(item);
                     setChatVisible(false);
-                    setSignatureData(null);
-                    setHasDrawnSignature(false);
-                    setPendingCompleteOrderId(null);
-                    setSignaturePadKey((k) => k + 1);
                   }}
                 >
                   Open
@@ -584,7 +580,6 @@ const getStyles = (theme: typeof lightTheme) => {
   statusChip: {
     alignSelf: "flex-start",
     maxWidth: "100%",
-    height: "auto",
     minHeight: 32,
   },
   statusChipText: {

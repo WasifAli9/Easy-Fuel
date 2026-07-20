@@ -403,15 +403,104 @@ function DeliveryFeeSettings() {
   );
 }
 
-// Driver subscription radius limits (admin-editable)
+interface AdminFuelType {
+  id: string;
+  code: string;
+  label: string;
+  active: boolean;
+}
+
+function FuelTypeSettings() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { profile, session, loading } = useAuth();
+  const { data: fuelTypes = [], isLoading } = useQuery<AdminFuelType[]>({
+    queryKey: ["/api/admin/fuel-types"],
+    enabled: !loading && !!session?.access_token && profile?.role === "admin",
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, active }: { id: string; active: boolean }) => {
+      const response = await apiRequest("PATCH", `/api/admin/fuel-types/${id}`, { active });
+      return response.json();
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/fuel-types"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/fuel-types"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/driver/pricing"] });
+      toast({
+        title: "Fuel type updated",
+        description: `Fuel type ${variables.active ? "enabled" : "disabled"} across the platform.`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: "Unable to update fuel type",
+        description: error?.message ?? "Please try again.",
+      });
+    },
+  });
+
+  return (
+    <Card className="border-2">
+      <CardHeader className="bg-gradient-to-r from-primary/5 to-primary/10 border-b">
+        <CardTitle className="text-xl">Fuel Types</CardTitle>
+        <CardDescription>
+          Enabled fuel types are available for customer orders, driver pricing, supplier depot
+          pricing, and vehicle setup. Existing order history is preserved.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="pt-6">
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading fuel types...</p>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {fuelTypes.map((fuelType) => {
+              const isUpdating =
+                updateMutation.isPending && updateMutation.variables?.id === fuelType.id;
+              return (
+                <div
+                  key={fuelType.id}
+                  className="flex items-center justify-between gap-4 rounded-lg border p-4"
+                >
+                  <div>
+                    <p className="font-medium">{fuelType.label}</p>
+                    <p className="text-xs text-muted-foreground">{fuelType.code}</p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={fuelType.active ? "default" : "outline"}
+                    disabled={isUpdating}
+                    onClick={() =>
+                      updateMutation.mutate({ id: fuelType.id, active: !fuelType.active })
+                    }
+                  >
+                    {fuelType.active ? (
+                      <CheckCircle2 className="mr-2 h-4 w-4" />
+                    ) : (
+                      <XCircle className="mr-2 h-4 w-4" />
+                    )}
+                    {isUpdating ? "Saving..." : fuelType.active ? "Enabled" : "Disabled"}
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Driver pickup radius (single platform-wide, admin-editable)
 function DriverRadiusSettings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { profile, session, loading } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
-  const [standardMiles, setStandardMiles] = useState<number>(200);
-  const [extendedMiles, setExtendedMiles] = useState<number>(500);
-  const [unlimitedMiles, setUnlimitedMiles] = useState<number>(999);
+  const [radiusMiles, setRadiusMiles] = useState<number>(500);
 
   const { data: settings, isLoading, error: settingsError } = useQuery<any>({
     queryKey: ["/api/admin/settings"],
@@ -421,14 +510,12 @@ function DriverRadiusSettings() {
 
   useEffect(() => {
     if (settings) {
-      setStandardMiles(settings.driver_radius_standard_miles ?? 200);
-      setExtendedMiles(settings.driver_radius_extended_miles ?? 500);
-      setUnlimitedMiles(settings.driver_radius_unlimited_miles ?? 999);
+      setRadiusMiles(settings.driver_pickup_radius_miles ?? 500);
     }
   }, [settings]);
 
   const updateMutation = useMutation({
-    mutationFn: async (payload: { driver_radius_standard_miles: number; driver_radius_extended_miles: number; driver_radius_unlimited_miles: number }) => {
+    mutationFn: async (payload: { driver_pickup_radius_miles: number }) => {
       const response = await apiRequest("PUT", "/api/admin/settings", payload);
       return response.json();
     },
@@ -436,7 +523,7 @@ function DriverRadiusSettings() {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/settings"] });
       toast({
         title: "Success",
-        description: "Driver radius limits updated successfully",
+        description: "Driver pickup radius updated successfully",
       });
       setIsEditing(false);
     },
@@ -444,26 +531,18 @@ function DriverRadiusSettings() {
       toast({
         variant: "destructive",
         title: "Error",
-        description: err?.message ?? "Failed to update radius limits",
+        description: err?.message ?? "Failed to update pickup radius",
       });
     },
   });
 
   const handleSave = () => {
-    const s = Math.max(1, Math.min(9999, Math.round(standardMiles)));
-    const e = Math.max(1, Math.min(9999, Math.round(extendedMiles)));
-    const u = Math.max(1, Math.min(9999, Math.round(unlimitedMiles)));
-    updateMutation.mutate({
-      driver_radius_standard_miles: s,
-      driver_radius_extended_miles: e,
-      driver_radius_unlimited_miles: u,
-    });
+    const v = Math.max(1, Math.min(9999, Math.round(radiusMiles)));
+    updateMutation.mutate({ driver_pickup_radius_miles: v });
   };
 
   const handleCancel = () => {
-    setStandardMiles(settings?.driver_radius_standard_miles ?? 200);
-    setExtendedMiles(settings?.driver_radius_extended_miles ?? 500);
-    setUnlimitedMiles(settings?.driver_radius_unlimited_miles ?? 999);
+    setRadiusMiles(settings?.driver_pickup_radius_miles ?? 500);
     setIsEditing(false);
   };
 
@@ -480,9 +559,9 @@ function DriverRadiusSettings() {
               <MapPin className="h-6 w-6 text-primary" />
             </div>
             <div>
-              <CardTitle className="text-xl">Driver Subscription Radius Limits</CardTitle>
+              <CardTitle className="text-xl">Driver Pickup Radius</CardTitle>
               <p className="text-sm text-muted-foreground mt-1">
-                Max job pickup radius (miles) per plan: Starter, Professional, Premium
+                Maximum job pickup radius (miles) applied to all drivers platform-wide
               </p>
             </div>
           </div>
@@ -495,52 +574,200 @@ function DriverRadiusSettings() {
         </div>
       </CardHeader>
       <CardContent className="pt-6">
-        <div className="grid gap-4 sm:grid-cols-3">
-          <div className="space-y-2 rounded-lg border p-4">
-            <Label className="text-sm font-medium">Starter (Standard)</Label>
-            {isEditing ? (
-              <Input
-                type="number"
-                min={1}
-                max={9999}
-                value={standardMiles}
-                onChange={(e) => setStandardMiles(parseInt(e.target.value, 10) || 200)}
-              />
-            ) : (
-              <p className="text-2xl font-bold">{settings?.driver_radius_standard_miles ?? 200} miles</p>
-            )}
-          </div>
-          <div className="space-y-2 rounded-lg border p-4">
-            <Label className="text-sm font-medium">Professional (Extended)</Label>
-            {isEditing ? (
-              <Input
-                type="number"
-                min={1}
-                max={9999}
-                value={extendedMiles}
-                onChange={(e) => setExtendedMiles(parseInt(e.target.value, 10) || 500)}
-              />
-            ) : (
-              <p className="text-2xl font-bold">{settings?.driver_radius_extended_miles ?? 500} miles</p>
-            )}
-          </div>
-          <div className="space-y-2 rounded-lg border p-4">
-            <Label className="text-sm font-medium">Premium (Unlimited)</Label>
-            {isEditing ? (
-              <Input
-                type="number"
-                min={1}
-                max={9999}
-                value={unlimitedMiles}
-                onChange={(e) => setUnlimitedMiles(parseInt(e.target.value, 10) || 999)}
-              />
-            ) : (
-              <p className="text-2xl font-bold">{settings?.driver_radius_unlimited_miles ?? 999} miles</p>
-            )}
-          </div>
+        <div className="max-w-xs space-y-2 rounded-lg border p-4">
+          <Label className="text-sm font-medium">Pickup radius</Label>
+          {isEditing ? (
+            <Input
+              type="number"
+              min={1}
+              max={9999}
+              value={radiusMiles}
+              onChange={(e) => setRadiusMiles(parseInt(e.target.value, 10) || 500)}
+            />
+          ) : (
+            <p className="text-2xl font-bold">{settings?.driver_pickup_radius_miles ?? 500} miles</p>
+          )}
         </div>
         {isEditing && (
           <div className="mt-4 flex gap-2">
+            <Button variant="outline" onClick={handleCancel} disabled={updateMutation.isPending}>
+              Cancel
+            </Button>
+            <Button onClick={handleSave} disabled={updateMutation.isPending}>
+              <Save className="h-4 w-4 mr-2" />
+              {updateMutation.isPending ? "Saving..." : "Save"}
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Platform commission: R per litre for customer→driver and driver→supplier orders. */
+function CommissionPerLitreSettings() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { profile, session, loading } = useAuth();
+  const [isEditing, setIsEditing] = useState(false);
+  const [customerPerLitre, setCustomerPerLitre] = useState<number>(1);
+  const [depotPerLitre, setDepotPerLitre] = useState<number>(1);
+
+  const { data: settings, isLoading, error: settingsError } = useQuery<any>({
+    queryKey: ["/api/admin/settings"],
+    enabled: !loading && !!session?.access_token && !!profile && profile.role === "admin",
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (settings) {
+      setCustomerPerLitre(
+        (settings.customer_order_platform_fee_per_litre_cents ?? 100) / 100,
+      );
+      setDepotPerLitre((settings.depot_order_platform_fee_per_litre_cents ?? 100) / 100);
+    }
+  }, [settings]);
+
+  const updateMutation = useMutation({
+    mutationFn: async (payload: {
+      customer_order_platform_fee_per_litre_cents: number;
+      depot_order_platform_fee_per_litre_cents: number;
+    }) => {
+      const response = await apiRequest("PUT", "/api/admin/settings", payload);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/settings"] });
+      toast({
+        title: "Success",
+        description: "Commission per litre updated successfully",
+      });
+      setIsEditing(false);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update commission rates",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSave = () => {
+    if (customerPerLitre < 0 || depotPerLitre < 0) {
+      toast({
+        title: "Invalid Value",
+        description: "Commission per litre cannot be negative",
+        variant: "destructive",
+      });
+      return;
+    }
+    updateMutation.mutate({
+      customer_order_platform_fee_per_litre_cents: Math.round(customerPerLitre * 100),
+      depot_order_platform_fee_per_litre_cents: Math.round(depotPerLitre * 100),
+    });
+  };
+
+  const handleCancel = () => {
+    setCustomerPerLitre((settings?.customer_order_platform_fee_per_litre_cents ?? 100) / 100);
+    setDepotPerLitre((settings?.depot_order_platform_fee_per_litre_cents ?? 100) / 100);
+    setIsEditing(false);
+  };
+
+  if (isLoading || settingsError) {
+    return null;
+  }
+
+  const customerCents = settings?.customer_order_platform_fee_per_litre_cents ?? 100;
+  const depotCents = settings?.depot_order_platform_fee_per_litre_cents ?? 100;
+  const exampleLitres = 100;
+
+  return (
+    <Card className="border-2">
+      <CardHeader className="bg-gradient-to-r from-amber-500/5 to-amber-500/10 border-b">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-amber-500/10 rounded-lg">
+              <DollarSign className="h-6 w-6 text-amber-600" />
+            </div>
+            <div>
+              <CardTitle className="text-xl">Commission per litre</CardTitle>
+              <p className="text-sm text-muted-foreground mt-1">
+                Platform fee is litres × rate (not a % of the total). Default R1.00/L for both flows.
+              </p>
+            </div>
+          </div>
+          {!isEditing && (
+            <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
+              <Edit2 className="h-4 w-4 mr-2" />
+              Edit
+            </Button>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="pt-6 space-y-4">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-2 rounded-lg border p-4">
+            <Label className="text-sm font-medium">Customer → Driver (R / L)</Label>
+            <p className="text-xs text-muted-foreground">
+              Added on top of fuel + delivery. Driver still receives the full subtotal.
+            </p>
+            {isEditing ? (
+              <Input
+                type="number"
+                min={0}
+                step={0.01}
+                value={customerPerLitre}
+                onChange={(e) => setCustomerPerLitre(parseFloat(e.target.value) || 0)}
+              />
+            ) : (
+              <p className="text-2xl font-bold text-primary">
+                R{(customerCents / 100).toFixed(2)}
+                <span className="text-base font-normal text-muted-foreground"> / L</span>
+              </p>
+            )}
+          </div>
+          <div className="space-y-2 rounded-lg border p-4">
+            <Label className="text-sm font-medium">Driver → Supplier (R / L)</Label>
+            <p className="text-xs text-muted-foreground">
+              Deducted from the depot order total when paying the supplier.
+            </p>
+            {isEditing ? (
+              <Input
+                type="number"
+                min={0}
+                step={0.01}
+                value={depotPerLitre}
+                onChange={(e) => setDepotPerLitre(parseFloat(e.target.value) || 0)}
+              />
+            ) : (
+              <p className="text-2xl font-bold text-primary">
+                R{(depotCents / 100).toFixed(2)}
+                <span className="text-base font-normal text-muted-foreground"> / L</span>
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-lg border bg-muted/40 p-4 text-sm">
+          <p className="font-medium mb-1">Example at current rates</p>
+          <p className="text-muted-foreground">
+            {exampleLitres} L customer order commission:{" "}
+            <span className="font-semibold text-foreground">
+              {formatCurrency(
+                ((isEditing ? customerPerLitre : customerCents / 100) * exampleLitres),
+              )}
+            </span>
+            {" · "}
+            {exampleLitres} L depot order commission:{" "}
+            <span className="font-semibold text-foreground">
+              {formatCurrency(((isEditing ? depotPerLitre : depotCents / 100) * exampleLitres))}
+            </span>
+          </p>
+        </div>
+
+        {isEditing && (
+          <div className="flex gap-2">
             <Button variant="outline" onClick={handleCancel} disabled={updateMutation.isPending}>
               Cancel
             </Button>
@@ -1919,6 +2146,8 @@ export default function AdminDashboard() {
             </div>
 
             <DeliveryFeeSettings />
+            <CommissionPerLitreSettings />
+            <FuelTypeSettings />
             <DriverRadiusSettings />
             </div>
           )}
