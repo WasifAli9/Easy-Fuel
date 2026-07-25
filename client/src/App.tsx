@@ -14,6 +14,9 @@ import Auth from "@/pages/Auth";
 import AuthTest from "@/pages/AuthTest";
 import ResetPassword from "@/pages/ResetPassword";
 import Signup from "@/pages/Signup";
+import Contact from "@/pages/Contact";
+import Privacy from "@/pages/Privacy";
+import Terms from "@/pages/Terms";
 import CustomerDashboard from "@/pages/CustomerDashboard";
 import SavedAddresses from "@/pages/SavedAddresses";
 import PaymentMethods from "@/pages/PaymentMethods";
@@ -92,6 +95,10 @@ function Router() {
       <Route path="/auth-test" component={AuthTest} />
       <Route path="/signup" component={Signup} />
       <Route path="/reset-password" component={ResetPassword} />
+      <Route path="/contact" component={Contact} />
+      <Route path="/support" component={Contact} />
+      <Route path="/privacy" component={Privacy} />
+      <Route path="/terms" component={Terms} />
       <Route path="/customer">
         {() => <ProtectedRoute component={CustomerDashboard} role="customer" />}
       </Route>

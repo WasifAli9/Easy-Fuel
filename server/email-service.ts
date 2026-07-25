@@ -807,3 +807,66 @@ export async function sendAdminComplianceReviewEmail(params: AdminComplianceRevi
     console.error("[sendAdminComplianceReviewEmail]", e);
   }
 }
+
+export interface ContactFormEmailParams {
+  firstName: string;
+  lastName: string;
+  phone: string;
+  email: string;
+  message: string;
+}
+
+/**
+ * Public contact / support form → inbox (default notification@easyfuel.ai).
+ * Returns false if Resend is not configured or send fails.
+ */
+export async function sendContactFormEmail(
+  params: ContactFormEmailParams,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const resolved = resolveResend();
+    if (!resolved) {
+      console.warn("RESEND_API_KEY not set; skipping contact form email");
+      return { ok: false, error: "Email service is not configured." };
+    }
+    const { client, fromEmail } = resolved;
+    const to =
+      process.env.CONTACT_TO_EMAIL?.trim() || "notification@easyfuel.ai";
+    const fullName = `${params.firstName} ${params.lastName}`.trim();
+
+    const { error } = await client.emails.send({
+      from: fromEmail,
+      to: [to],
+      replyTo: params.email,
+      subject: `Support contact — ${fullName || params.email}`,
+      html: `
+        <!DOCTYPE html>
+        <html>
+          <head><meta charset="utf-8"></head>
+          <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;">
+            <div style="background:linear-gradient(135deg,#14b8a6 0%,#0f766e 100%);color:#fff;padding:24px;border-radius:8px 8px 0 0;">
+              <h1 style="margin:0;font-size:20px;">New support message</h1>
+              <p style="margin:8px 0 0;opacity:.95;">Easy Fuel contact form</p>
+            </div>
+            <div style="border:1px solid #e5e7eb;border-top:none;padding:24px;border-radius:0 0 8px 8px;">
+              <p><strong>Name:</strong> ${escapeHtml(fullName)}</p>
+              <p><strong>Email:</strong> ${escapeHtml(params.email)}</p>
+              <p><strong>Phone:</strong> ${escapeHtml(params.phone)}</p>
+              <p><strong>Message:</strong></p>
+              <div style="white-space:pre-wrap;background:#f8fafc;padding:12px;border-radius:6px;border:1px solid #e2e8f0;">${escapeHtml(params.message)}</div>
+            </div>
+          </body>
+        </html>
+      `,
+    });
+
+    if (error) {
+      console.error("[sendContactFormEmail] Resend error:", error);
+      return { ok: false, error: "Failed to send message." };
+    }
+    return { ok: true };
+  } catch (e) {
+    console.error("[sendContactFormEmail]", e);
+    return { ok: false, error: "Failed to send message." };
+  }
+}

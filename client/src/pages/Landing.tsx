@@ -10,6 +10,13 @@ export default function Landing() {
     <div className="min-h-screen">
       <div className="fixed top-4 right-4 z-50 flex gap-2">
         <Button
+          variant="ghost"
+          onClick={() => setLocation("/contact")}
+          data-testid="button-contact-nav"
+        >
+          Contact
+        </Button>
+        <Button
           onClick={() => setLocation("/signup")}
           data-testid="button-signup-nav"
         >

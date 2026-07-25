@@ -478,7 +478,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/webhooks/ozow-payout-verification", handleOzowPayoutVerificationWebhook);
   app.post("/api/webhooks/ozow-payout-verification", handleOzowPayoutVerificationWebhook);
 
-  // Public route: Get all fuel types (no auth required)
+  // Public contact / support form (no auth) — before authenticated /api mounts
+  const contactRateLimit = new Map<string, { count: number; resetAt: number }>();
+  app.post("/api/contact", async (req: Request, res: Response) => {
+    try {
+      const ip = String(req.ip || req.socket.remoteAddress || "unknown");
+      const now = Date.now();
+      const windowMs = 15 * 60 * 1000;
+      const maxPerWindow = 5;
+      let bucket = contactRateLimit.get(ip);
+      if (!bucket || now > bucket.resetAt) {
+        bucket = { count: 0, resetAt: now + windowMs };
+        contactRateLimit.set(ip, bucket);
+      }
+      bucket.count += 1;
+      if (bucket.count > maxPerWindow) {
+        return res.status(429).json({ message: "Too many messages. Please try again later." });
+      }
+
+      const firstName = typeof req.body?.firstName === "string" ? req.body.firstName.trim() : "";
+      const lastName = typeof req.body?.lastName === "string" ? req.body.lastName.trim() : "";
+      const phone = typeof req.body?.phone === "string" ? req.body.phone.trim() : "";
+      const email = typeof req.body?.email === "string" ? req.body.email.trim() : "";
+      const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+
+      if (!firstName || !lastName) {
+        return res.status(400).json({ message: "First name and last name are required." });
+      }
+      if (!phone) {
+        return res.status(400).json({ message: "Phone is required." });
+      }
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({ message: "A valid email is required." });
+      }
+      if (!message || message.length < 5) {
+        return res.status(400).json({ message: "Please enter a short message." });
+      }
+      if (message.length > 5000) {
+        return res.status(400).json({ message: "Message is too long." });
+      }
+
+      const { sendContactFormEmail } = await import("./email-service");
+      const result = await sendContactFormEmail({ firstName, lastName, phone, email, message });
+      if (!result.ok) {
+        return res.status(503).json({ message: result.error || "Unable to send message right now." });
+      }
+      return res.json({ ok: true, message: "Thanks — we received your message." });
+    } catch (e) {
+      console.error("[POST /api/contact]", e);
+      return res.status(500).json({ message: "Something went wrong. Please try again." });
+    }
+  });
+
   app.get("/api/fuel-types", async (req, res) => {
     try {
       const rows = await db
