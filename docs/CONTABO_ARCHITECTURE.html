@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EasyFuel Contabo — Architecture</title>
+  <style>
+    :root {
+      --bg: #f0f2f5;
+      --card: #ffffff;
+      --ink: #15202b;
+      --muted: #5c6b7a;
+      --accent: #0b5fff;
+      --green: #0b6e4f;
+      --green-soft: #e6f4ef;
+      --amber: #9a5b00;
+      --amber-soft: #fff6e5;
+      --border: #d5dde6;
+      --code-bg: #0f172a;
+      --code-ink: #e2e8f0;
+      --mono: "Cascadia Code", "Fira Code", Consolas, monospace;
+      --sans: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.55;
+    }
+    header {
+      background: linear-gradient(125deg, #0b3d91 0%, #0b6e4f 100%);
+      color: #fff;
+      padding: 2.4rem 1.5rem 2rem;
+    }
+    header .wrap, .wrap { max-width: 960px; margin: 0 auto; }
+    .wrap { padding: 1.5rem; }
+    header h1 { margin: 0 0 0.45rem; font-size: 1.8rem; }
+    header p { margin: 0; opacity: 0.93; max-width: 42rem; }
+    nav.toc {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1.35rem;
+    }
+    nav.toc h2 { margin: 0 0 0.55rem; font-size: 1rem; }
+    nav.toc ol { margin: 0; padding-left: 1.25rem; }
+    nav.toc a { color: var(--accent); text-decoration: none; }
+    nav.toc a:hover { text-decoration: underline; }
+    section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.3rem 1.45rem 1.5rem;
+      margin-bottom: 1.2rem;
+    }
+    section h2 {
+      margin: 0 0 0.7rem;
+      font-size: 1.28rem;
+      padding-bottom: 0.4rem;
+      border-bottom: 2px solid #e8eef8;
+    }
+    section h3 { margin: 1.2rem 0 0.45rem; font-size: 1.05rem; }
+    section h4 { margin: 1rem 0 0.35rem; font-size: 0.98rem; color: #334; }
+    .muted { color: var(--muted); }
+    .callout {
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      margin: 0.85rem 0;
+      border: 1px solid transparent;
+    }
+    .callout.info { background: #eef4ff; border-color: #c9d8f5; }
+    .callout.ok { background: var(--green-soft); border-color: #b7e0d0; }
+    .callout.warn { background: var(--amber-soft); border-color: #f0d9a8; }
+    .callout strong { display: block; margin-bottom: 0.2rem; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.94rem;
+      margin: 0.7rem 0;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 0.55rem 0.65rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #f3f6fa; }
+    pre {
+      background: var(--code-bg);
+      color: var(--code-ink);
+      padding: 1rem 1.05rem;
+      border-radius: 10px;
+      overflow-x: auto;
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      line-height: 1.45;
+    }
+    code {
+      font-family: var(--mono);
+      font-size: 0.88em;
+      background: #eef1f5;
+      padding: 0.1em 0.35em;
+      border-radius: 4px;
+    }
+    pre code { background: none; padding: 0; color: inherit; }
+    .diagram {
+      background: #0b1220;
+      color: #dbe7f3;
+      border-radius: 12px;
+      padding: 1.1rem 1.2rem;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      line-height: 1.4;
+      overflow-x: auto;
+      white-space: pre;
+      border: 1px solid #1e293b;
+    }
+    .layer {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.75rem;
+      margin: 0.9rem 0;
+    }
+    .layer .box {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.85rem;
+      background: #fafbfd;
+    }
+    .layer .box h4 { margin: 0 0 0.35rem; }
+    .layer .box p { margin: 0; font-size: 0.9rem; color: var(--muted); }
+    .tag {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 0.15rem 0.45rem;
+      border-radius: 999px;
+      background: #e8f0fe;
+      color: #1a56db;
+      margin-bottom: 0.35rem;
+    }
+    .tag.infra { background: var(--green-soft); color: var(--green); }
+    .tag.app { background: #f3e8ff; color: #6b21a8; }
+    .tag.data { background: var(--amber-soft); color: var(--amber); }
+    footer {
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.85rem;
+      padding: 0.5rem 1.5rem 2.5rem;
+    }
+    @media (max-width: 800px) {
+      .layer { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>EasyFuel architecture on Contabo</h1>
+      <p>
+        Detailed explanation of how hosting, networking, the app container,
+        database access, authentication, storage, and CI/CD fit together for
+        <strong>portal.easyfuel.ai</strong>.
+      </p>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <nav class="toc">
+      <h2>Contents</h2>
+      <ol>
+        <li><a href="#overview">Big picture</a></li>
+        <li><a href="#layers">Layers of the system</a></li>
+        <li><a href="#containers">Containers &amp; Docker network</a></li>
+        <li><a href="#traffic">Request flow (HTTP / HTTPS / WebSocket)</a></li>
+        <li><a href="#app">Application architecture (inside easyfuel)</a></li>
+        <li><a href="#db">Database architecture &amp; access patterns</a></li>
+        <li><a href="#auth">Authentication architecture</a></li>
+        <li><a href="#storage">File storage architecture</a></li>
+        <li><a href="#jobs">Background jobs</a></li>
+        <li><a href="#cicd">CI/CD &amp; deploy architecture</a></li>
+        <li><a href="#secrets">Config &amp; secrets</a></li>
+        <li><a href="#paths">Server paths &amp; ownership</a></li>
+        <li><a href="#constraints">Design rules (do / don’t)</a></li>
+        <li><a href="#compare">Old (GoDaddy Windows) vs new (Contabo Linux)</a></li>
+      </ol>
+    </nav>
+
+    <section id="overview">
+      <h2>1. Big picture</h2>
+      <p>
+        EasyFuel is a <strong>Node.js / Express API</strong> plus a <strong>React (Vite) SPA</strong>,
+        packaged as <strong>one Docker container</strong>. On Contabo it sits behind
+        <strong>Caddy</strong> (reverse proxy + automatic HTTPS) and talks to a
+        <strong>shared PostgreSQL</strong> container over an internal Docker network named
+        <code>caddy</code>.
+      </p>
+      <div class="diagram">┌──────────────────────────────────────────────────────────────────────────┐
+│                         PUBLIC INTERNET                                  │
+│   Browsers · Mobile apps · Ozow webhooks · Resend callbacks              │
+└────────────────────────────────┬───────────────────────────────────────┘
+                                 │
+                    HTTPS :443 / HTTP :80
+                                 │
+                                 ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│  CONTABO UBUNTU HOST  (vmi3450363 · 169.58.40.94)                         │
+│                                                                          │
+│   ┌──────────────────────┐     Docker network: caddy                     │
+│   │  caddy container     │◄──────────────────────────────────────────┐   │
+│   │  ports 80 + 443      │                                           │   │
+│   │  Let's Encrypt SSL   │     reverse_proxy easyfuel:5002           │   │
+│   └──────────┬───────────┘                                           │   │
+│              │                                                       │   │
+│              ▼                                                       │   │
+│   ┌──────────────────────┐         ┌─────────────────────────────┐   │   │
+│   │  easyfuel container  │────────►│  postgres container         │───┘   │
+│   │  Express + SPA       │  SQL    │  postgres:16                │       │
+│   │  internal :5002 only │         │  DB: easyfuel               │       │
+│   │  volume: /app/storage│         │  also published             │       │
+│   └──────────────────────┘         │  127.0.0.1:5432 (SSH only)  │       │
+│                                    └─────────────────────────────┘       │
+└──────────────────────────────────────────────────────────────────────────┘
+                                 ▲
+                                 │ SSH tunnel (you / DBeaver / pgAdmin)
+                          Developer laptop</div>
+      <div class="callout ok">
+        <strong>Core idea</strong>
+        Only Caddy is public. The app and database are private on the Docker network.
+        You reach Postgres for admin tools through SSH, not through the open internet.
+      </div>
+    </section>
+
+    <section id="layers">
+      <h2>2. Layers of the system</h2>
+      <div class="layer">
+        <div class="box">
+          <div class="tag infra">Edge</div>
+          <h4>Caddy</h4>
+          <p>TLS termination, hostname routing (<code>portal.easyfuel.ai</code>), forwards to the app.</p>
+        </div>
+        <div class="box">
+          <div class="tag app">App</div>
+          <h4>easyfuel container</h4>
+          <p>Single process: API + static web UI + WebSocket on port 5002.</p>
+        </div>
+        <div class="box">
+          <div class="tag data">Data</div>
+          <h4>postgres + volume</h4>
+          <p>Relational data in Postgres; uploaded files on a Docker volume at <code>/app/storage</code>.</p>
+        </div>
+      </div>
+      <table>
+        <thead><tr><th>Layer</th><th>Technology</th><th>Responsibility</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>DNS</td>
+            <td>A record for <code>portal.easyfuel.ai</code></td>
+            <td>Points users to Contabo IP <code>169.58.40.94</code></td>
+          </tr>
+          <tr>
+            <td>Reverse proxy</td>
+            <td>Caddy v2 (Docker)</td>
+            <td>HTTP→HTTPS, certificates, route by hostname</td>
+          </tr>
+          <tr>
+            <td>Application</td>
+            <td>Node 20 · Express · React/Vite</td>
+            <td>Business API, dashboards, websockets, jobs</td>
+          </tr>
+          <tr>
+            <td>ORM / schema</td>
+            <td>Drizzle ORM · PostgreSQL</td>
+            <td>Typed queries &amp; schema in <code>shared/schema.ts</code></td>
+          </tr>
+          <tr>
+            <td>Payments</td>
+            <td>Ozow (ZA)</td>
+            <td>Pay-ins &amp; payouts via HTTPS webhooks to public URL</td>
+          </tr>
+          <tr>
+            <td>Email</td>
+            <td>Resend</td>
+            <td>Transactional emails</td>
+          </tr>
+          <tr>
+            <td>Push</td>
+            <td>Web Push (VAPID) · Expo</td>
+            <td>Browser &amp; mobile notifications</td>
+          </tr>
+          <tr>
+            <td>Mobile</td>
+            <td>Expo / React Native (separate package)</td>
+            <td>Talks to same API over HTTPS + JWT Bearer</td>
+          </tr>
+          <tr>
+            <td>CI/CD</td>
+            <td>GitHub Actions · GHCR</td>
+            <td>Build image → push → SSH restart container</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="containers">
+      <h2>3. Containers &amp; Docker network</h2>
+      <h3>Shared Docker network: <code>caddy</code></h3>
+      <p>
+        All production pieces for this stack join the external network named
+        <code>caddy</code>. Docker DNS then resolves short names:
+      </p>
+      <ul>
+        <li><code>caddy</code> → reverse proxy container</li>
+        <li><code>easyfuel</code> → app container</li>
+        <li><code>postgres</code> → database container</li>
+      </ul>
+      <div class="callout info">
+        <strong>Why the network is called <code>caddy</code></strong>
+        It already existed on the server. Postgres was already attached to it.
+        EasyFuel and Docker Caddy join the same network so they can reach each other by name.
+        Coolify networks exist on the host but are <strong>not</strong> used for EasyFuel.
+      </div>
+
+      <h3>Container roles</h3>
+      <table>
+        <thead>
+          <tr><th>Container</th><th>Image / location</th><th>Published ports</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>caddy</code></td>
+            <td><code>caddy:2</code> · compose in <code>/opt/caddy</code></td>
+            <td><strong>80, 443</strong> (public)</td>
+            <td>Only public entry point</td>
+          </tr>
+          <tr>
+            <td><code>easyfuel</code></td>
+            <td><code>ghcr.io/wasifali9/easy-fuel:latest</code> · <code>/opt/easyfuel</code></td>
+            <td><strong>None</strong></td>
+            <td>Reached only as <code>easyfuel:5002</code> on Docker network</td>
+          </tr>
+          <tr>
+            <td><code>postgres</code></td>
+            <td><code>postgres:16</code></td>
+            <td><code>127.0.0.1:5432</code> only</td>
+            <td>Not on the public internet; SSH tunnel for GUIs</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>App compose shape</h3>
+      <pre><code>services:
+  easyfuel:
+    image: ghcr.io/wasifali9/easy-fuel:latest
+    container_name: easyfuel
+    env_file: .env
+    volumes:
+      - easyfuel_storage:/app/storage
+    # NO ports: section
+    networks:
+      - caddy
+
+networks:
+  caddy:
+    external: true</code></pre>
+    </section>
+
+    <section id="traffic">
+      <h2>4. Request flow (HTTP / HTTPS / WebSocket)</h2>
+
+      <h3>Browser page load</h3>
+      <div class="diagram">1. User opens https://portal.easyfuel.ai
+2. DNS → 169.58.40.94
+3. Caddy terminates TLS (Let's Encrypt)
+4. Caddyfile rule:
+      portal.easyfuel.ai { reverse_proxy easyfuel:5002 }
+5. Request reaches Express inside easyfuel
+6. Express serves built SPA from dist/public
+   (HTML/JS/CSS) and /api/* JSON routes</div>
+
+      <h3>API call</h3>
+      <p>
+        Same origin: browser calls <code>/api/...</code> on
+        <code>https://portal.easyfuel.ai</code>. Caddy forwards everything for that
+        hostname to the app. Express routes handle auth, orders, payments, etc.
+      </p>
+
+      <h3>WebSocket</h3>
+      <p>
+        Realtime (chat, live updates) uses <code>/ws</code> on the <strong>same</strong> HTTP server.
+        Caddy’s <code>reverse_proxy</code> upgrades WebSocket connections to the app container.
+        Clients may authenticate with a session cookie (web) or a short-lived JWT / query token (mobile).
+      </p>
+
+      <h3>External webhooks (Ozow)</h3>
+      <p>
+        Ozow calls public HTTPS URLs under <code>PUBLIC_APP_URL</code>, e.g.
+        <code>https://portal.easyfuel.ai/api/webhooks/...</code>.
+        Those hit Caddy → easyfuel like any other HTTPS request.
+        That is why DNS + SSL must be correct before live payments.
+      </p>
+
+      <div class="callout warn">
+        <strong>Trust proxy</strong>
+        Express sets <code>TRUST_PROXY=1</code> so Secure cookies and HTTPS-aware behavior
+        work behind Caddy (X-Forwarded-Proto). Without this, logins can appear to succeed
+        then lose the session cookie.
+      </div>
+    </section>
+
+    <section id="app">
+      <h2>5. Application architecture (inside <code>easyfuel</code>)</h2>
+      <p>
+        One container runs one Node process. That process serves both the API and the compiled frontend.
+      </p>
+
+      <h3>Source layout (repo)</h3>
+      <table>
+        <thead><tr><th>Path</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr><td><code>server/</code></td><td>Express API, auth, payments, storage, websockets, jobs</td></tr>
+          <tr><td><code>client/</code></td><td>React SPA (Vite)</td></tr>
+          <tr><td><code>shared/</code></td><td>Shared TypeScript + Drizzle schema</td></tr>
+          <tr><td><code>public/</code></td><td>PWA assets copied into the build</td></tr>
+          <tr><td><code>mobile/</code></td><td>Expo app (separate; not inside the Docker image)</td></tr>
+          <tr><td><code>migrations/</code> · <code>schema/</code></td><td>DB migration artifacts / SQL patches</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Build output (what runs in production)</h3>
+      <div class="diagram">npm run build
+  ├─ vite build      → dist/public/   (SPA static files)
+  └─ esbuild server  → dist/index.js  (+ split chunks)
+
+Docker runtime:
+  node dist/index.js
+    ├─ Express API  /api/*
+    ├─ Static SPA   /*
+    ├─ WebSocket    /ws
+    └─ Object files /objects/*  (from /app/storage)</div>
+
+      <h3>Why “single container for everything”</h3>
+      <ul>
+        <li>Matches how the app is already built: one process serves API + UI.</li>
+        <li>Simpler ops: one image, one healthcheck, one replica.</li>
+        <li>Does <strong>not</strong> mean Postgres or Caddy live inside the same container —
+            those stay shared infra containers.</li>
+      </ul>
+
+      <h3>Main runtime modules</h3>
+      <ul>
+        <li><code>server/index.ts</code> — boot, trust proxy, timers</li>
+        <li><code>server/routes.ts</code> — HTTP route registration</li>
+        <li><code>server/auth.ts</code> / <code>auth-local.ts</code> — sessions &amp; JWT</li>
+        <li><code>server/db.ts</code> — Postgres pool via <code>DATABASE_URL</code></li>
+        <li><code>server/websocket.ts</code> — realtime</li>
+        <li><code>server/ozow-*.ts</code> — payments</li>
+        <li><code>server/local-object-storage.ts</code> — disk uploads</li>
+        <li><code>server/static.ts</code> — serve <code>dist/public</code> in production</li>
+      </ul>
+    </section>
+
+    <section id="db">
+      <h2>6. Database architecture &amp; access patterns</h2>
+
+      <h3>Two different connection styles (by design)</h3>
+      <table>
+        <thead><tr><th>Who</th><th>Host</th><th>How</th><th>Example</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>App (code)</strong></td>
+            <td><code>postgres</code></td>
+            <td>Docker DNS on network <code>caddy</code></td>
+            <td><code>postgresql://easyfuel_app:***@postgres:5432/easyfuel</code></td>
+          </tr>
+          <tr>
+            <td><strong>You (DBeaver / pgAdmin)</strong></td>
+            <td><code>localhost</code></td>
+            <td>SSH tunnel into Contabo → host-bound <code>127.0.0.1:5432</code></td>
+            <td>SSH enabled in GUI; Main host = localhost, port 5432</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="callout warn">
+        <strong>Common mistake</strong>
+        Putting <code>localhost</code> in the app <code>DATABASE_URL</code> inside Docker points at the
+        <em>container itself</em>, not the Postgres container. Always use host <code>postgres</code> for the app.
+      </div>
+
+      <h3>Databases on this server</h3>
+      <ul>
+        <li>Cluster admin user: <code>creativecloud</code> (default DB was <code>maindb</code>)</li>
+        <li>EasyFuel app DB: <code>easyfuel</code></li>
+        <li>EasyFuel app role: <code>easyfuel_app</code></li>
+      </ul>
+
+      <h3>App data access</h3>
+      <p>
+        Runtime uses <code>pg</code> Pool + Drizzle. Sessions for the web app can use
+        <code>connect-pg-simple</code> (Postgres session store). Refresh tokens for mobile JWT auth
+        are stored hashed in <code>local_auth_refresh_tokens</code>.
+      </p>
+    </section>
+
+    <section id="auth">
+      <h2>7. Authentication architecture</h2>
+      <p>EasyFuel uses <strong>local auth</strong> (not Supabase) in this Contabo setup.</p>
+
+      <h3>Web (browser)</h3>
+      <ul>
+        <li>Primary: <strong>express-session</strong> cookie (e.g. session id in a Secure cookie)</li>
+        <li>Works because Caddy terminates HTTPS and Express trusts the proxy</li>
+        <li>Client often uses a placeholder <code>access_token: "cookie-session"</code> — that is <em>not</em> a real JWT</li>
+      </ul>
+
+      <h3>Mobile / Bearer API</h3>
+      <ul>
+        <li><strong>Access JWT</strong> — short-lived, signed with <code>JWT_ACCESS_SECRET</code></li>
+        <li><strong>Refresh JWT</strong> — longer-lived, signed with <code>JWT_REFRESH_SECRET</code>, tracked in DB</li>
+        <li>Sent as <code>Authorization: Bearer …</code></li>
+      </ul>
+
+      <h3>Other JWT uses of <code>JWT_ACCESS_SECRET</code></h3>
+      <ul>
+        <li>Short-lived <strong>WebSocket</strong> tokens</li>
+        <li><strong>Object view</strong> tokens — temporary links to open <code>/objects/...</code> files without a Bearer header</li>
+      </ul>
+
+      <div class="callout info">
+        <strong>Why JWT secrets matter on Contabo</strong>
+        If you omit them, the code falls back to weak development defaults.
+        Changing secrets later invalidates existing mobile tokens (users must log in again).
+      </div>
+    </section>
+
+    <section id="storage">
+      <h2>8. File storage architecture</h2>
+      <p>
+        Default provider is <strong>local disk</strong> (<code>OBJECT_STORAGE_PROVIDER=local</code>).
+        Files live under <code>LOCAL_STORAGE_DIR</code> (in Docker: <code>/app/storage</code>),
+        backed by a Docker named volume so they survive container recreates.
+      </p>
+      <div class="diagram">Upload (authenticated)
+  PUT /api/storage/upload/...
+       │
+       ▼
+  /app/storage/private/&lt;uuid&gt;...   ← Docker volume easyfuel_storage
+
+Download / view
+  GET /objects/...
+       │  session, Bearer, or object-view JWT
+       ▼
+  stream file from volume</div>
+      <p class="muted">
+        Optional S3/MinIO helpers exist in code but are not the Contabo default.
+        Migrating from GoDaddy requires copying both the Postgres dump <em>and</em> the old <code>storage/</code> folder.
+      </p>
+    </section>
+
+    <section id="jobs">
+      <h2>9. Background jobs</h2>
+      <p>
+        Jobs run <strong>inside the same Node process</strong> using <code>setInterval</code>
+        (not Redis/Bull, not a separate worker container):
+      </p>
+      <ul>
+        <li>Expiring KYC / documents — about every 6 hours</li>
+        <li>Unpaid delivery payment reminders — about every 12 hours</li>
+      </ul>
+      <div class="callout warn">
+        <strong>Scaling rule</strong>
+        Keep <strong>one</strong> easyfuel replica. Multiple replicas would duplicate these timers.
+      </div>
+    </section>
+
+    <section id="cicd">
+      <h2>10. CI/CD &amp; deploy architecture</h2>
+      <div class="diagram">Developer pushes to main
+         │
+         ▼
+GitHub Actions (.github/workflows/deploy.yml)
+         │
+         ├─ docker build (Node 20 multi-stage)
+         │     VITE_MAPBOX_TOKEN baked into SPA
+         ├─ docker push → ghcr.io/wasifali9/easy-fuel:latest
+         ├─ scp docker-compose.yml → /opt/easyfuel/
+         └─ SSH → Contabo
+               docker login ghcr.io
+               docker pull
+               docker compose up -d --force-recreate
+
+Result: new container image live in ~1–2 minutes</div>
+      <p>
+        The Contabo host keeps <strong>secrets only in</strong> <code>/opt/easyfuel/.env</code>.
+        The image itself should not contain production secrets.
+      </p>
+      <h3>Image build stages</h3>
+      <ol>
+        <li><strong>Build stage:</strong> <code>npm ci</code> → <code>npm run build</code> (Vite + esbuild)</li>
+        <li><strong>Runtime stage:</strong> production <code>node_modules</code> + <code>dist/</code> → <code>node dist/index.js</code></li>
+      </ol>
+      <p>
+        Vite is loaded only in development via dynamic import, so the production image
+        does not need Vite as a runtime dependency.
+      </p>
+    </section>
+
+    <section id="secrets">
+      <h2>11. Config &amp; secrets</h2>
+      <table>
+        <thead><tr><th>Location</th><th>What lives there</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>/opt/easyfuel/.env</code></td>
+            <td>All runtime secrets: DB URL, session/JWT, Ozow, Resend, VAPID, etc.</td>
+          </tr>
+          <tr>
+            <td>GitHub Actions secrets</td>
+            <td>SSH key, host, Mapbox build token, optional GHCR pull token</td>
+          </tr>
+          <tr>
+            <td><code>.env.example</code> in git</td>
+            <td>Placeholders only — never real passwords</td>
+          </tr>
+          <tr>
+            <td>Docker image</td>
+            <td>Code + built frontend; no production <code>.env</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <h3>Critical Contabo env values</h3>
+      <pre><code>DATABASE_URL=postgresql://easyfuel_app:***@postgres:5432/easyfuel
+PUBLIC_APP_URL=https://portal.easyfuel.ai
+LOCAL_STORAGE_DIR=/app/storage
+TRUST_PROXY=1
+PORT=5002
+HOST=0.0.0.0
+JWT_ACCESS_SECRET=...
+JWT_REFRESH_SECRET=...
+SESSION_SECRET=...</code></pre>
+    </section>
+
+    <section id="paths">
+      <h2>12. Server paths &amp; ownership</h2>
+      <table>
+        <thead><tr><th>Path</th><th>Owner / purpose</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>/opt/caddy/</code></td>
+            <td>Shared Caddy compose + <code>Caddyfile</code> + cert data volumes</td>
+          </tr>
+          <tr>
+            <td><code>/opt/easyfuel/</code></td>
+            <td>App compose + server-only <code>.env</code></td>
+          </tr>
+          <tr>
+            <td>Docker volume <code>easyfuel_storage</code></td>
+            <td>Persistent uploads mounted at <code>/app/storage</code></td>
+          </tr>
+          <tr>
+            <td>Docker network <code>caddy</code></td>
+            <td>Private network linking caddy ↔ easyfuel ↔ postgres</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="callout warn">
+        <strong>Shared Caddyfile</strong>
+        Other apps may later share the same Caddy. Only add your site block.
+        Do not rewrite unrelated hosts.
+      </div>
+    </section>
+
+    <section id="constraints">
+      <h2>13. Design rules (do / don’t)</h2>
+      <table>
+        <thead><tr><th>Do</th><th>Don’t</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Publish 80/443 only on Caddy</td>
+            <td>Publish app port 5002 to the internet</td>
+          </tr>
+          <tr>
+            <td>Use DB host <code>postgres</code> in app env</td>
+            <td>Use <code>localhost</code> for the app inside Docker</td>
+          </tr>
+          <tr>
+            <td>Join network <code>caddy</code></td>
+            <td>Use Coolify for this app (it’s stopped / out of scope)</td>
+          </tr>
+          <tr>
+            <td>Keep secrets in server <code>.env</code></td>
+            <td>Commit <code>.env</code> to git or bake secrets into the image</td>
+          </tr>
+          <tr>
+            <td>Run one easyfuel replica</td>
+            <td>Scale to many replicas while jobs are in-process timers</td>
+          </tr>
+          <tr>
+            <td>Persist <code>/app/storage</code> volume</td>
+            <td>Assume uploads survive without a volume</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="compare">
+      <h2>14. Old (GoDaddy Windows) vs new (Contabo Linux)</h2>
+      <table>
+        <thead><tr><th>Topic</th><th>GoDaddy Windows (old)</th><th>Contabo Ubuntu (new)</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>OS</td>
+            <td>Windows Server</td>
+            <td>Ubuntu Linux</td>
+          </tr>
+          <tr>
+            <td>Process manager</td>
+            <td>IIS / pm2 / Windows service (typical)</td>
+            <td>Docker container + restart policy</td>
+          </tr>
+          <tr>
+            <td>Reverse proxy</td>
+            <td>IIS / nginx / host Caddy possible</td>
+            <td>Docker Caddy on network <code>caddy</code></td>
+          </tr>
+          <tr>
+            <td>App packaging</td>
+            <td>Source/build on VM</td>
+            <td>Immutable image from GHCR</td>
+          </tr>
+          <tr>
+            <td>Deploy</td>
+            <td>Manual / scripts</td>
+            <td>Push to <code>main</code> → Actions → SSH recreate</td>
+          </tr>
+          <tr>
+            <td>DB exposure</td>
+            <td>Often local or VM-private</td>
+            <td><code>127.0.0.1:5432</code> + SSH tunnel; app uses Docker DNS</td>
+          </tr>
+          <tr>
+            <td>Public URL</td>
+            <td>Previous host</td>
+            <td><code>https://portal.easyfuel.ai</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="callout ok">
+        <strong>What stayed the same</strong>
+        Same Node/Express + React codebase, same Postgres + Drizzle model,
+        same Ozow/Resend/VAPID integrations — only the hosting shape changed.
+      </div>
+    </section>
+  </div>
+
+  <footer>
+    EasyFuel Contabo architecture guide · Companion to <code>docs/CONTABO_NEXT_STEPS.html</code>
+  </footer>
+</body>
+</html>

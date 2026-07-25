@@ -1,0 +1,40 @@
+# Deploy on Contabo at /opt/easyfuel alongside a server-only .env
+# App joins the shared `caddy` network — no public ports (Caddy only).
+
+services:
+  easyfuel:
+    image: ${EASYFUEL_IMAGE:-ghcr.io/wasifali9/easy-fuel:latest}
+    container_name: easyfuel
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: "5002"
+      HOST: "0.0.0.0"
+      TRUST_PROXY: "1"
+      LOCAL_STORAGE_DIR: /app/storage
+    volumes:
+      - easyfuel_storage:/app/storage
+    # NO ports: — Caddy reaches easyfuel:5002 on the Docker network
+    networks:
+      - caddy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5002/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  easyfuel_storage:
+
+networks:
+  caddy:
+    external: true

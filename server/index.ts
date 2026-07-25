@@ -1,6 +1,6 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
-import { setupVite, serveStatic, log } from "./vite";
+import { serveStatic, log } from "./static";
 import { setupAuth } from "./auth";
 import { checkExpiringDocuments } from "./compliance-service";
 
@@ -100,8 +100,10 @@ process.on('uncaughtException', (error) => {
 
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
+  // doesn't interfere with the other routes.
+  // Dynamic import keeps `vite` out of the production Docker image.
   if (app.get("env") === "development") {
+    const { setupVite } = await import("./vite");
     await setupVite(app, server);
   } else {
     serveStatic(app);

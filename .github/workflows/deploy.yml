@@ -1,0 +1,95 @@
+name: Deploy EasyFuel to Contabo
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  # GHCR requires lowercase image names
+  IMAGE_NAME: wasifali9/easy-fuel
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VITE_MAPBOX_TOKEN=${{ secrets.VITE_MAPBOX_TOKEN }}
+            VITE_WS_URL=${{ secrets.VITE_WS_URL }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Copy compose file to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.CONTABO_HOST }}
+          username: ${{ secrets.CONTABO_USER }}
+          key: ${{ secrets.CONTABO_SSH_KEY }}
+          port: ${{ secrets.CONTABO_SSH_PORT || 22 }}
+          source: docker-compose.yml
+          target: /opt/easyfuel/
+          overwrite: true
+
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          EASYFUEL_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          GHCR_USER: ${{ github.actor }}
+          # Prefer a fine-grained PAT with read:packages if GITHUB_TOKEN cannot pull on the server
+          GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN || secrets.GITHUB_TOKEN }}
+        with:
+          host: ${{ secrets.CONTABO_HOST }}
+          username: ${{ secrets.CONTABO_USER }}
+          key: ${{ secrets.CONTABO_SSH_KEY }}
+          port: ${{ secrets.CONTABO_SSH_PORT || 22 }}
+          envs: EASYFUEL_IMAGE,GHCR_USER,GHCR_TOKEN
+          script: |
+            set -euo pipefail
+            mkdir -p /opt/easyfuel
+            cd /opt/easyfuel
+            if [ ! -f .env ]; then
+              echo "ERROR: /opt/easyfuel/.env is missing. Create it from .env.example before deploying."
+              exit 1
+            fi
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            export EASYFUEL_IMAGE
+            docker pull "$EASYFUEL_IMAGE"
+            EASYFUEL_IMAGE="$EASYFUEL_IMAGE" docker compose up -d --force-recreate --remove-orphans
+            docker image prune -f
+            docker logout ghcr.io || true
+            docker ps --filter name=easyfuel --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
+            docker logs --tail 40 easyfuel || true

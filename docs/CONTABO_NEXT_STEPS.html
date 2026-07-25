@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EasyFuel Contabo — Next Steps</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --card: #ffffff;
+      --ink: #1a2332;
+      --muted: #5a6a7a;
+      --accent: #0b6e4f;
+      --accent-soft: #e6f4ef;
+      --warn: #9a5b00;
+      --warn-bg: #fff6e5;
+      --danger: #9b1c1c;
+      --danger-bg: #fdecec;
+      --ok: #0b6e4f;
+      --ok-bg: #e6f4ef;
+      --border: #d8dee6;
+      --code-bg: #0f172a;
+      --code-ink: #e2e8f0;
+      --mono: "Cascadia Code", "Fira Code", Consolas, monospace;
+      --sans: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.55;
+    }
+    header {
+      background: linear-gradient(135deg, #0b6e4f 0%, #0a4d3c 100%);
+      color: #fff;
+      padding: 2.25rem 1.5rem 2rem;
+    }
+    header .wrap { max-width: 920px; margin: 0 auto; }
+    header h1 { margin: 0 0 0.4rem; font-size: 1.75rem; font-weight: 700; }
+    header p { margin: 0; opacity: 0.92; max-width: 40rem; }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 1.5rem; }
+    nav.toc {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+    nav.toc h2 { margin: 0 0 0.6rem; font-size: 1rem; }
+    nav.toc ol { margin: 0; padding-left: 1.25rem; }
+    nav.toc a { color: var(--accent); text-decoration: none; }
+    nav.toc a:hover { text-decoration: underline; }
+    section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.25rem 1.4rem 1.4rem;
+      margin-bottom: 1.25rem;
+    }
+    section h2 {
+      margin: 0 0 0.75rem;
+      font-size: 1.25rem;
+      border-bottom: 2px solid var(--accent-soft);
+      padding-bottom: 0.45rem;
+    }
+    section h3 { margin: 1.25rem 0 0.5rem; font-size: 1.05rem; }
+    p, li { color: var(--ink); }
+    .muted { color: var(--muted); }
+    .badge {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      padding: 0.2rem 0.5rem;
+      border-radius: 999px;
+      vertical-align: middle;
+      margin-left: 0.35rem;
+    }
+    .badge.done { background: var(--ok-bg); color: var(--ok); }
+    .badge.next { background: #e8f0fe; color: #1a56db; }
+    .badge.warn { background: var(--warn-bg); color: var(--warn); }
+    .callout {
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      margin: 0.85rem 0;
+      border: 1px solid transparent;
+    }
+    .callout.info { background: #eef4ff; border-color: #c9d8f5; }
+    .callout.warn { background: var(--warn-bg); border-color: #f0d9a8; }
+    .callout.danger { background: var(--danger-bg); border-color: #f0b4b4; }
+    .callout.ok { background: var(--ok-bg); border-color: #b7e0d0; }
+    .callout strong { display: block; margin-bottom: 0.25rem; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.95rem;
+      margin: 0.75rem 0;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 0.55rem 0.65rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #f0f3f7; }
+    pre {
+      background: var(--code-bg);
+      color: var(--code-ink);
+      padding: 0.9rem 1rem;
+      border-radius: 10px;
+      overflow-x: auto;
+      font-family: var(--mono);
+      font-size: 0.84rem;
+      line-height: 1.45;
+    }
+    code {
+      font-family: var(--mono);
+      font-size: 0.88em;
+      background: #eef1f5;
+      padding: 0.1em 0.35em;
+      border-radius: 4px;
+    }
+    pre code { background: none; padding: 0; color: inherit; }
+    .where {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin: -0.35rem 0 0.75rem;
+    }
+    ol.steps > li { margin-bottom: 0.85rem; }
+    footer {
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.85rem;
+      padding: 1rem 1.5rem 2.5rem;
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    @media (max-width: 720px) {
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>EasyFuel → Contabo migration</h1>
+      <p>
+        Domain: <strong>portal.easyfuel.ai</strong> · Server: Contabo
+        (<code>169.58.40.94</code> / <code>vmi3450363</code>).
+        This guide lists what is already done and every remaining step with
+        detailed explanations. Open this file in any browser.
+      </p>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <nav class="toc">
+      <h2>Contents</h2>
+      <ol>
+        <li><a href="#status">Current status (done vs left)</a></li>
+        <li><a href="#architecture">Architecture reminder</a></li>
+        <li><a href="#step-image">Step 1 — Build &amp; publish the Docker image</a></li>
+        <li><a href="#step-start">Step 2 — Start the EasyFuel container</a></li>
+        <li><a href="#step-caddy">Step 3 — Point Caddy at the app</a></li>
+        <li><a href="#step-dns">Step 4 — DNS for portal.easyfuel.ai</a></li>
+        <li><a href="#step-smoke">Step 5 — Smoke test</a></li>
+        <li><a href="#step-data">Step 6 — Migrate production data (Phase 2)</a></li>
+        <li><a href="#step-cutover">Step 7 — Cutover &amp; go-live</a></li>
+        <li><a href="#troubleshoot">Troubleshooting</a></li>
+        <li><a href="#checklist">Final checklist</a></li>
+      </ol>
+    </nav>
+
+    <section id="status">
+      <h2>Current status <span class="badge next">Read this first</span></h2>
+      <div class="grid-2">
+        <div>
+          <h3>Already done</h3>
+          <ul>
+            <li>Docker network <code>caddy</code></li>
+            <li>Postgres container + DB <code>easyfuel</code> + user <code>easyfuel_app</code></li>
+            <li>Caddy running as Docker (host systemd Caddy disabled)</li>
+            <li><code>/opt/easyfuel/.env</code> created</li>
+            <li><code>/opt/easyfuel/docker-compose.yml</code> copied</li>
+            <li>Repo has Dockerfile, compose, GitHub Actions workflow (on your PC)</li>
+          </ul>
+        </div>
+        <div>
+          <h3>Not done yet</h3>
+          <ul>
+            <li><strong>Docker image not in GHCR</strong> — that is why compose failed with <code>not found</code></li>
+            <li>EasyFuel container not running</li>
+            <li>Caddy site block for <code>portal.easyfuel.ai</code></li>
+            <li>DNS A record → Contabo</li>
+            <li>Production DB + <code>storage/</code> migration from GoDaddy</li>
+            <li>Ozow URL cutover / stop old Windows server</li>
+          </ul>
+        </div>
+      </div>
+      <div class="callout warn">
+        <strong>Important</strong>
+        Do <strong>not</strong> copy the whole project folder to Contabo for normal deploys.
+        The server only needs <code>/opt/easyfuel/.env</code> + <code>docker-compose.yml</code>.
+        The app code ships inside a Docker image built by GitHub Actions (or built once manually).
+      </div>
+    </section>
+
+    <section id="architecture">
+      <h2>Architecture reminder</h2>
+      <pre><code>Internet users
+    │ HTTPS :443
+    ▼
+Caddy container (only public ports 80/443)
+    │ Docker network "caddy"
+    ▼
+easyfuel container  →  listens on :5002 (internal only)
+    │
+    ▼
+postgres container  →  host name "postgres", DB "easyfuel"
+
+Your PC (DBeaver) → SSH tunnel → localhost:5432 → postgres</code></pre>
+      <p class="muted">
+        App <code>DATABASE_URL</code> must use host <code>postgres</code>, not <code>localhost</code>.
+        GUI tools use <code>localhost</code> only because of the SSH tunnel.
+      </p>
+    </section>
+
+    <section id="step-image">
+      <h2>Step 1 — Build &amp; publish the Docker image <span class="badge next">Do next</span></h2>
+      <p class="where">Why: compose looks for <code>ghcr.io/wasifali9/easy-fuel:latest</code>. That image does not exist until you build and publish it.</p>
+
+      <h3>Path A — Recommended (GitHub Actions auto-deploy)</h3>
+      <p>
+        Push code to <code>main</code>. GitHub builds the image, pushes it to GHCR, SSHs into Contabo,
+        and runs <code>docker compose up</code>.
+      </p>
+
+      <p><strong>1A. Commit &amp; push from your Windows PC (PowerShell)</strong></p>
+      <pre><code>cd "d:\Work-Projects\New Server\EasyFuelNewServer"
+
+git add Dockerfile .dockerignore docker-compose.yml `
+  .github/workflows/deploy.yml docs/CONTABO_DEPLOY.md `
+  scripts/linux/backup-db.sh server/static.ts server/vite.ts `
+  server/index.ts package.json .env.example
+
+git status
+git commit -m "Add Contabo Docker deploy"
+git push origin main</code></pre>
+      <div class="callout danger">
+        <strong>Never commit <code>.env</code></strong>
+        It contains secrets. It is gitignored. Only <code>.env.example</code> belongs in git.
+      </div>
+
+      <p><strong>1B. Add GitHub Actions secrets</strong></p>
+      <p>
+        GitHub repo → <strong>Settings → Secrets and variables → Actions → New repository secret</strong>
+      </p>
+      <table>
+        <thead>
+          <tr><th>Secret name</th><th>What to put</th><th>Why</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>CONTABO_HOST</code></td>
+            <td><code>169.58.40.94</code></td>
+            <td>SSH target for deploy</td>
+          </tr>
+          <tr>
+            <td><code>CONTABO_USER</code></td>
+            <td><code>root</code></td>
+            <td>SSH login user</td>
+          </tr>
+          <tr>
+            <td><code>CONTABO_SSH_KEY</code></td>
+            <td>Full private key text (including <code>BEGIN</code>/<code>END</code> lines)</td>
+            <td>Passwordless deploy from Actions</td>
+          </tr>
+          <tr>
+            <td><code>CONTABO_SSH_PORT</code></td>
+            <td><code>22</code> (optional)</td>
+            <td>Only if SSH is not on 22</td>
+          </tr>
+          <tr>
+            <td><code>VITE_MAPBOX_TOKEN</code></td>
+            <td>Your Mapbox token</td>
+            <td>Baked into the frontend at <em>image build</em> time</td>
+          </tr>
+          <tr>
+            <td><code>GHCR_PULL_TOKEN</code></td>
+            <td>Optional GitHub PAT with <code>read:packages</code></td>
+            <td>If the server cannot pull a private image</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p><strong>How to make an SSH deploy key (if you don’t have one)</strong></p>
+      <pre><code># On your PC
+ssh-keygen -t ed25519 -C "github-easyfuel-deploy" -f easyfuel_deploy -N ""
+
+# Copy PUBLIC key to Contabo
+type easyfuel_deploy.pub | ssh root@169.58.40.94 "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
+
+# Put PRIVATE key contents into GitHub secret CONTABO_SSH_KEY
+# (open easyfuel_deploy in Notepad and paste all of it)</code></pre>
+
+      <p><strong>1C. Watch the workflow</strong></p>
+      <ol class="steps">
+        <li>Open GitHub → <strong>Actions</strong> → workflow <strong>Deploy EasyFuel to Contabo</strong>.</li>
+        <li>Wait until it is green.</li>
+        <li>If red, open the failed step log and fix (usually SSH key or missing <code>/opt/easyfuel/.env</code>).</li>
+      </ol>
+
+      <h3>Path B — Quick: build image once on Contabo</h3>
+      <p>
+        Use this if you need the app running before GitHub Actions is configured.
+        Later you should still set up Path A for automatic deploys.
+      </p>
+      <p><strong>On Windows PC — copy build context</strong> (run from project root):</p>
+      <pre><code>cd "d:\Work-Projects\New Server\EasyFuelNewServer"
+ssh root@169.58.40.94 "mkdir -p /tmp/easyfuel-build"
+scp Dockerfile .dockerignore package.json package-lock.json root@169.58.40.94:/tmp/easyfuel-build/
+scp -r server client shared public attached_assets root@169.58.40.94:/tmp/easyfuel-build/
+scp vite.config.ts tsconfig.json tailwind.config.ts postcss.config.js components.json root@169.58.40.94:/tmp/easyfuel-build/</code></pre>
+      <p><strong>On Contabo — build and tag</strong></p>
+      <pre><code>cd /tmp/easyfuel-build
+docker build -t ghcr.io/wasifali9/easy-fuel:latest `
+  --build-arg VITE_MAPBOX_TOKEN="PASTE_YOUR_MAPBOX_TOKEN" .
+
+# (On Linux use \ for line break, or one long line:)
+docker build -t ghcr.io/wasifali9/easy-fuel:latest --build-arg VITE_MAPBOX_TOKEN="PASTE_YOUR_MAPBOX_TOKEN" .</code></pre>
+      <div class="callout info">
+        <strong>Note about Path B commands</strong>
+        The <code>`</code> line-continuation is PowerShell. On the Contabo bash shell, use a single line or put <code>\</code> at the end of the line.
+      </div>
+    </section>
+
+    <section id="step-start">
+      <h2>Step 2 — Start the EasyFuel container</h2>
+      <p class="where">Where: Contabo SSH · Folder: <code>/opt/easyfuel</code></p>
+      <pre><code>cd /opt/easyfuel
+ls -la
+# Must show: .env  and  docker-compose.yml
+
+docker compose pull          # Path A only (image from GHCR)
+docker compose up -d --force-recreate
+docker ps | grep easyfuel
+docker logs --tail 80 easyfuel</code></pre>
+      <p>You want logs showing the server listening on <code>0.0.0.0:5002</code> and no crash on <code>DATABASE_URL</code>.</p>
+      <p><strong>Quick internal test (from Contabo):</strong></p>
+      <pre><code>docker exec caddy wget -qO- http://easyfuel:5002/ | head</code></pre>
+      <div class="callout warn">
+        <strong>After every <code>.env</code> change</strong>
+        Recreate the container so new env vars load:
+        <code>cd /opt/easyfuel &amp;&amp; docker compose up -d --force-recreate</code>
+      </div>
+      <p><strong>Rewrite <code>.env</code> completely (if it got duplicated/appended):</strong></p>
+      <pre><code>rm -f /opt/easyfuel/.env
+# Then either paste with nano, OR from your PC:
+# scp .env root@169.58.40.94:/opt/easyfuel/.env
+
+# On PC, scp replaces the remote file entirely.
+# On server, use:  cat &gt; /opt/easyfuel/.env  (one &gt;)  — never &gt;&gt; (append)</code></pre>
+    </section>
+
+    <section id="step-caddy">
+      <h2>Step 3 — Point Caddy at the app</h2>
+      <p class="where">Where: Contabo · File: <code>/opt/caddy/Caddyfile</code> (shared — edit carefully)</p>
+      <p>
+        Caddy is the only public entry (ports 80/443). The EasyFuel container has
+        <strong>no public ports</strong>. Caddy must reverse-proxy the hostname to
+        <code>easyfuel:5002</code> on the Docker network.
+      </p>
+      <pre><code>nano /opt/caddy/Caddyfile</code></pre>
+      <p>Use this site block (add it; remove the temporary <code>:80 { respond ... }</code> when ready):</p>
+      <pre><code>portal.easyfuel.ai {
+    reverse_proxy easyfuel:5002
+}</code></pre>
+      <p>Reload Caddy (do not restart other apps’ configs carelessly):</p>
+      <pre><code>docker exec caddy caddy reload --config /etc/caddy/Caddyfile
+docker network inspect caddy --format '{{range .Containers}}{{.Name}} {{end}}'
+# Expect: postgres caddy easyfuel</code></pre>
+      <div class="callout info">
+        <strong>Let’s Encrypt</strong>
+        HTTPS certificates are automatic once DNS for <code>portal.easyfuel.ai</code>
+        points at this server. If DNS is still on GoDaddy’s old IP, SSL will fail until Step 4.
+      </div>
+    </section>
+
+    <section id="step-dns">
+      <h2>Step 4 — DNS for portal.easyfuel.ai</h2>
+      <p class="where">Where: your DNS panel for <code>easyfuel.ai</code> (wherever the domain is managed)</p>
+      <ol class="steps">
+        <li>Set TTL for <code>portal</code> to <strong>300</strong> seconds if possible (faster cutover/rollback).</li>
+        <li>Create/update <strong>A record</strong>:
+          <ul>
+            <li>Name: <code>portal</code> (or full <code>portal.easyfuel.ai</code>)</li>
+            <li>Value: <code>169.58.40.94</code></li>
+          </ul>
+        </li>
+        <li>Wait a few minutes, then check from your PC:
+          <pre><code>nslookup portal.easyfuel.ai</code></pre>
+        </li>
+        <li>Open browser: <a href="https://portal.easyfuel.ai">https://portal.easyfuel.ai</a></li>
+      </ol>
+      <div class="callout warn">
+        <strong>Cutover timing</strong>
+        If GoDaddy still serves production users, wait to flip DNS until after
+        you migrate the database and storage (Step 6), or accept downtime / dual-write risk.
+        For a first empty-DB test, flipping DNS early is fine.
+      </div>
+    </section>
+
+    <section id="step-smoke">
+      <h2>Step 5 — Smoke test</h2>
+      <table>
+        <thead><tr><th>Check</th><th>How</th></tr></thead>
+        <tbody>
+          <tr><td>Site loads over HTTPS</td><td>Browser → portal.easyfuel.ai</td></tr>
+          <tr><td>API responds</td><td>Login page / <code>/api/...</code> without 502</td></tr>
+          <tr><td>Container healthy</td><td><code>docker ps</code> + <code>docker logs easyfuel</code></td></tr>
+          <tr><td>DB connected</td><td>No <code>DATABASE_URL</code> / connection errors in logs</td></tr>
+          <tr><td>WebSocket</td><td>Chat / live updates after login (may need real user data)</td></tr>
+        </tbody>
+      </table>
+      <p class="muted">
+        An empty <code>easyfuel</code> database will not have your production users until Step 6.
+        Login may fail until you restore data or create a test user.
+      </p>
+    </section>
+
+    <section id="step-data">
+      <h2>Step 6 — Migrate production data (Phase 2)</h2>
+      <p class="where">When: maintenance window · From: GoDaddy Windows · To: Contabo</p>
+
+      <h3>6A. Database</h3>
+      <ol class="steps">
+        <li>Put GoDaddy app in maintenance / stop writes briefly.</li>
+        <li>Dump the old Postgres DB (on GoDaddy or wherever DB lives):
+          <pre><code>pg_dump -Fc -h ... -U ... -d Easyfuel -f easyfuel.dump</code></pre>
+        </li>
+        <li>Copy dump to Contabo:
+          <pre><code>scp easyfuel.dump root@169.58.40.94:/tmp/</code></pre>
+        </li>
+        <li>Restore into Docker Postgres:
+          <pre><code>docker cp /tmp/easyfuel.dump postgres:/tmp/easyfuel.dump
+docker exec -it postgres pg_restore -U creativecloud -d easyfuel --clean --if-exists /tmp/easyfuel.dump</code></pre>
+          <p class="muted">Admin user on this host is <code>creativecloud</code> (not <code>postgres</code>). Adjust if your dump needs the app owner.</p>
+        </li>
+        <li>Verify row counts for critical tables: <code>profiles</code>, <code>orders</code>, <code>drivers</code>, <code>customers</code>, <code>suppliers</code>.</li>
+      </ol>
+
+      <h3>6B. Uploaded files (<code>storage/</code>)</h3>
+      <p>
+        The app stores uploads on disk (<code>LOCAL_STORAGE_DIR=/app/storage</code>).
+        Migrating only the DB is not enough — copy the old <code>storage</code> folder into the Docker volume.
+      </p>
+      <pre><code># After container exists, find volume name:
+docker volume ls | grep easyfuel
+
+# Example restore into volume (adjust volume name + backup path):
+docker run --rm `
+  -v easyfuel_easyfuel_storage:/data `
+  -v /path/to/storage-backup:/backup `
+  alpine sh -c "cp -a /backup/. /data/"</code></pre>
+
+      <h3>6C. Optional backup script on Contabo</h3>
+      <p>Repo file: <code>scripts/linux/backup-db.sh</code></p>
+      <pre><code>bash backup-db.sh ./backups</code></pre>
+    </section>
+
+    <section id="step-cutover">
+      <h2>Step 7 — Cutover &amp; go-live</h2>
+      <ol class="steps">
+        <li>Final DB dump + storage sync from GoDaddy.</li>
+        <li>Restore on Contabo; confirm <code>docker logs easyfuel</code> look healthy.</li>
+        <li>Confirm <code>https://portal.easyfuel.ai</code> works (SSL OK).</li>
+        <li>Smoke test: login, uploads, WebSocket <code>/ws</code>, payments if staging.</li>
+        <li>Update <strong>Ozow</strong> success/cancel/webhook URLs to
+          <code>https://portal.easyfuel.ai/...</code></li>
+        <li>Confirm DNS fully points to Contabo.</li>
+        <li><strong>Stop</strong> the old GoDaddy app so it cannot accept webhooks/payments.</li>
+        <li>Monitor logs 1–2 hours.</li>
+        <li>Mobile app: set <code>EXPO_PUBLIC_API_URL=https://portal.easyfuel.ai</code> and rebuild if the API URL is baked in.</li>
+      </ol>
+      <div class="callout danger">
+        <strong>Rollback plan</strong>
+        Keep GoDaddy offline but intact + last dump. If Contabo fails: repoint DNS to GoDaddy,
+        restart old app, restore Ozow URLs to the old host.
+      </div>
+    </section>
+
+    <section id="troubleshoot">
+      <h2>Troubleshooting</h2>
+      <table>
+        <thead><tr><th>Symptom</th><th>Likely cause</th><th>Fix</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>ghcr.io/.../easy-fuel:latest: not found</code></td>
+            <td>Image never built/pushed</td>
+            <td>Step 1 Path A or B</td>
+          </tr>
+          <tr>
+            <td><code>no configuration file provided</code></td>
+            <td>Missing <code>docker-compose.yml</code> in <code>/opt/easyfuel</code></td>
+            <td>Copy compose from PC with <code>scp</code> (run scp on Windows, not on Contabo)</td>
+          </tr>
+          <tr>
+            <td><code>scp</code> “Could not resolve hostname d”</td>
+            <td>Ran Windows path on Linux server</td>
+            <td>Run <code>scp</code> from PowerShell on your PC</td>
+          </tr>
+          <tr>
+            <td><code>.env</code> has doubled/old lines</td>
+            <td>Appended instead of replaced</td>
+            <td><code>rm</code> file then rewrite, or <code>scp</code> from PC; use <code>&gt;</code> not <code>&gt;&gt;</code></td>
+          </tr>
+          <tr>
+            <td>DB connection errors</td>
+            <td>Wrong host in <code>DATABASE_URL</code></td>
+            <td>Must be <code>@postgres:5432/easyfuel</code></td>
+          </tr>
+          <tr>
+            <td>Login works but cookie lost / 401</td>
+            <td>Proxy / Secure cookies</td>
+            <td>Keep <code>TRUST_PROXY=1</code>; ensure Caddy forwards HTTPS</td>
+          </tr>
+          <tr>
+            <td>502 Bad Gateway</td>
+            <td>App not on network or not running</td>
+            <td><code>docker ps</code>; confirm <code>easyfuel</code> on network <code>caddy</code></td>
+          </tr>
+          <tr>
+            <td>SSL fails</td>
+            <td>DNS not pointing to Contabo yet</td>
+            <td>Fix A record, wait for propagation, reload Caddy</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="checklist">
+      <h2>Final checklist</h2>
+      <ul>
+        <li>☐ Docker image exists (<code>ghcr.io/wasifali9/easy-fuel:latest</code> or local tag)</li>
+        <li>☐ <code>docker ps</code> shows <code>easyfuel</code> healthy</li>
+        <li>☐ <code>/opt/easyfuel/.env</code> has <code>@postgres</code>, JWT secrets, Ozow, Resend, VAPID</li>
+        <li>☐ Caddyfile has <code>portal.easyfuel.ai → easyfuel:5002</code></li>
+        <li>☐ DNS A → <code>169.58.40.94</code></li>
+        <li>☐ HTTPS site loads</li>
+        <li>☐ Production DB restored (when going live)</li>
+        <li>☐ <code>storage/</code> volume restored (when going live)</li>
+        <li>☐ Ozow URLs updated; GoDaddy app stopped</li>
+        <li>☐ Mobile API URL updated if needed</li>
+        <li>☐ GitHub Actions secrets set for future deploys</li>
+      </ul>
+      <div class="callout ok">
+        <strong>Your immediate next action</strong>
+        Complete <a href="#step-image">Step 1</a> (Path A push + secrets, or Path B local build),
+        then <a href="#step-start">Step 2</a> <code>docker compose up</code>.
+      </div>
+    </section>
+  </div>
+
+  <footer>
+    EasyFuel Contabo next-steps guide · Keep this file local or in <code>docs/</code> · Do not put real secrets in HTML
+  </footer>
+</body>
+</html>
