@@ -7,7 +7,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  # GHCR requires lowercase image names
   IMAGE_NAME: wasifali9/easy-fuel
 
 jobs:
@@ -53,36 +52,30 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Copy compose file to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.CONTABO_HOST }}
-          username: ${{ secrets.CONTABO_USER }}
-          key: ${{ secrets.CONTABO_SSH_KEY }}
-          port: ${{ secrets.CONTABO_SSH_PORT || 22 }}
-          source: docker-compose.yml
-          target: /opt/easyfuel/
-          overwrite: true
-
+      # Compose already lives on the server at /opt/easyfuel — no SCP step.
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.2.0
         env:
           EASYFUEL_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           GHCR_USER: ${{ github.actor }}
-          # Prefer a fine-grained PAT with read:packages if GITHUB_TOKEN cannot pull on the server
           GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN || secrets.GITHUB_TOKEN }}
         with:
           host: ${{ secrets.CONTABO_HOST }}
           username: ${{ secrets.CONTABO_USER }}
           key: ${{ secrets.CONTABO_SSH_KEY }}
-          port: ${{ secrets.CONTABO_SSH_PORT || 22 }}
+          port: 22
+          script_stop: true
           envs: EASYFUEL_IMAGE,GHCR_USER,GHCR_TOKEN
           script: |
             set -euo pipefail
             mkdir -p /opt/easyfuel
             cd /opt/easyfuel
             if [ ! -f .env ]; then
-              echo "ERROR: /opt/easyfuel/.env is missing. Create it from .env.example before deploying."
+              echo "ERROR: /opt/easyfuel/.env is missing."
+              exit 1
+            fi
+            if [ ! -f docker-compose.yml ]; then
+              echo "ERROR: /opt/easyfuel/docker-compose.yml is missing."
               exit 1
             fi
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
