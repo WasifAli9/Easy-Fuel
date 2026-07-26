@@ -49,7 +49,7 @@ export function RoleSelector({ onSelectRole }: RoleSelectorProps) {
     <div className="max-w-4xl mx-auto px-4 py-12">
       <div className="text-center mb-8">
         <h2 className="text-3xl font-bold mb-2">Choose Your Role</h2>
-        <p className="text-muted-foreground">Select how you want to use Easy Fuel</p>
+        <p className="text-muted-foreground">Select how you want to use EasyFuel</p>
       </div>
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

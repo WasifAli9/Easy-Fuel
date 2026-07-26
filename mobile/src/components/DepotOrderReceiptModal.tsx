@@ -60,7 +60,7 @@ export function DepotOrderReceiptModal({ order, visible, onClose, driverName }: 
         >
           {order ? (
             <View style={styles.receiptCard}>
-              <Text style={styles.brand}>Easy Fuel</Text>
+              <Text style={styles.brand}>EasyFuel</Text>
               <Text style={styles.subTitle}>Fuel Collection Receipt</Text>
 
               <View style={styles.divider} />

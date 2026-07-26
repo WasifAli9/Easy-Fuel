@@ -101,7 +101,7 @@ export default function Signup() {
 						</div>
 						<div className="text-center space-y-1">
 							<CardTitle className="text-2xl">Create your account</CardTitle>
-							<CardDescription>Sign up to Easy Fuel and start your setup</CardDescription>
+							<CardDescription>Sign up to EasyFuel and start your setup</CardDescription>
 						</div>
 					</CardHeader>
 					<CardContent>
@@ -230,7 +230,7 @@ export default function Signup() {
 					</div>
 
 					<div className="space-y-4">
-						<h1 className="text-4xl font-bold leading-tight text-slate-50">Join Easy Fuel Today</h1>
+						<h1 className="text-4xl font-bold leading-tight text-slate-50">Join EasyFuel Today</h1>
 						<p className="text-lg text-slate-100/90 leading-relaxed">
 							Become part of South Africa's leading fuel delivery marketplace. Whether you're a customer, driver, or supplier, we have the
 							tools you need.

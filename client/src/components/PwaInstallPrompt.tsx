@@ -72,9 +72,9 @@ export function PwaInstallPrompt() {
             <Download className="w-5 h-5 text-primary" />
           </div>
           <div className="flex-1">
-            <h3 className="font-semibold mb-1">Install Easy Fuel App</h3>
+            <h3 className="font-semibold mb-1">Install EasyFuel App</h3>
             <p className="text-sm text-muted-foreground mb-3">
-              Add Easy Fuel to your home screen for a faster, app-like experience. Works offline and launches quickly.
+              Add EasyFuel to your home screen for a faster, app-like experience. Works offline and launches quickly.
             </p>
             <div className="flex gap-2">
               <Button size="sm" onClick={handleInstall}>

@@ -15,7 +15,7 @@ Notifications.setNotificationHandler({
 async function ensureAndroidNotificationChannel() {
   if (Platform.OS !== "android") return;
   await Notifications.setNotificationChannelAsync("default", {
-    name: "Easy Fuel",
+    name: "EasyFuel",
     importance: Notifications.AndroidImportance.MAX,
     vibrationPattern: [0, 250, 250, 250],
     lightColor: "#0D9488",

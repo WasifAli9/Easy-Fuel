@@ -268,7 +268,7 @@ export async function apiRequestJson<T>(
     throw new Error(
       `Expected JSON from the server but received ${ct.split(";")[0] || "unknown type"}. ` +
         (preview.startsWith("<")
-          ? "You may be hitting a login page or CDN instead of the Easy Fuel API. Check EXPO_PUBLIC_API_BASE_URL."
+          ? "You may be hitting a login page or CDN instead of the EasyFuel API. Check EXPO_PUBLIC_API_BASE_URL."
           : `Response starts with: ${preview}`),
     );
   }

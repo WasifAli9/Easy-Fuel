@@ -17,7 +17,7 @@ export default function Privacy() {
       <main className="mx-auto max-w-3xl space-y-4 px-4 py-12">
         <h1 className="text-3xl font-bold">Privacy Policy</h1>
         <p className="text-slate-600">
-          Easy Fuel processes account, order, delivery, and support information to operate the fuel
+          EasyFuel processes account, order, delivery, and support information to operate the fuel
           marketplace. Contact submissions (name, phone, email, message) are used only to respond to
           your enquiry and may be stored with our support mailbox.
         </p>

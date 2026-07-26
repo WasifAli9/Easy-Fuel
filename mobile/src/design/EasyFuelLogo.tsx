@@ -27,7 +27,7 @@ export function EasyFuelLogo({ size, borderRadius = 12, style, containerStyle }:
         </View>
       ) : (
         <Image
-          accessibilityLabel="Easy Fuel logo"
+          accessibilityLabel="EasyFuel logo"
           accessibilityIgnoresInvertColors
           resizeMode="contain"
           source={source}

@@ -111,7 +111,7 @@ export default function Auth() {
               <Logo size="lg" />
             </div>
             <div>
-              <CardTitle className="text-2xl">Welcome to Easy Fuel</CardTitle>
+              <CardTitle className="text-2xl">Welcome to EasyFuel</CardTitle>
               <CardDescription>Sign in to access your account</CardDescription>
             </div>
           </CardHeader>

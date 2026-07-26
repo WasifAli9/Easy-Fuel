@@ -17,7 +17,7 @@ export default function Terms() {
       <main className="mx-auto max-w-3xl space-y-4 px-4 py-12">
         <h1 className="text-3xl font-bold">Terms of Service</h1>
         <p className="text-slate-600">
-          By using Easy Fuel you agree to use the platform lawfully for fuel ordering, delivery, and
+          By using EasyFuel you agree to use the platform lawfully for fuel ordering, delivery, and
           related account activity. Support requests submitted via the contact form must be accurate
           and respectful.
         </p>

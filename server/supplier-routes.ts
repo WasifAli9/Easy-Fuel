@@ -2118,7 +2118,7 @@ router.get("/invoices/:id/pdf", requireSupplier, async (req, res) => {
     doc.lineWidth(1.5).strokeColor("#d1d5db").roundedRect(cardX, y, contentWidth, 730, 10).stroke();
     y += 18;
 
-    doc.font("Helvetica-Bold").fontSize(24).fillColor("#0f172a").text("Easy Fuel", cardX + 14, y);
+    doc.font("Helvetica-Bold").fontSize(24).fillColor("#0f172a").text("EasyFuel", cardX + 14, y);
     doc.font("Helvetica").fontSize(10).fillColor("#475569").text("Fuel Delivery Receipt", cardX + 14, y + 30);
     doc.font("Helvetica").fontSize(9).fillColor("#475569").text("Order ID", cardX + contentWidth - 130, y + 5, { width: 110, align: "right" });
     doc.font("Helvetica-Bold").fontSize(18).fillColor("#0f172a").text(`#${orderShortId}`, cardX + contentWidth - 130, y + 20, { width: 110, align: "right" });

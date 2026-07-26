@@ -58,7 +58,7 @@ export function buildDepotReceiptHtml(order: DepotOrderReceiptFields): string {
   return `
     <html>
       <body style="font-family: Arial, sans-serif; padding: 20px; color: #111827;">
-        <h1 style="color:#14b8a6; margin-bottom: 4px;">Easy Fuel</h1>
+        <h1 style="color:#14b8a6; margin-bottom: 4px;">EasyFuel</h1>
         <p style="margin-top:0; color:#6b7280;">Fuel Collection Receipt</p>
         <hr />
         <p><strong>Order ID:</strong> #${order.id.slice(-8).toUpperCase()}</p>

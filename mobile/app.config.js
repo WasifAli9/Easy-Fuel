@@ -9,7 +9,7 @@ const defaultProductionApi = "https://portal.easyfuel.ai";
 export default {
   expo: {
     /** Classic App.tsx entry — do not use `src/app` (Expo Router would hijack the project). */
-    name: "Easy Fuel",
+    name: "EasyFuel",
     slug: "easy-fuel-mobile",
     version: "1.0.1",
     orientation: "portrait",
@@ -31,13 +31,13 @@ export default {
         UIBackgroundModes: ["remote-notification"],
         ITSAppUsesNonExemptEncryption: false,
         NSLocationWhenInUseUsageDescription:
-          "Easy Fuel uses your location to show nearby depots, set your work area, and support deliveries while you use the app.",
+          "EasyFuel uses your location to show nearby depots, set your work area, and support deliveries while you use the app.",
         NSLocationAlwaysAndWhenInUseUsageDescription:
-          "Easy Fuel uses your location to support delivery tracking while you use the app.",
-        NSCameraUsageDescription: "Easy Fuel may use the camera to capture documents or signatures when required.",
+          "EasyFuel uses your location to support delivery tracking while you use the app.",
+        NSCameraUsageDescription: "EasyFuel may use the camera to capture documents or signatures when required.",
         NSPhotoLibraryUsageDescription:
-          "Easy Fuel accesses your photo library so you can choose a profile picture and upload images.",
-        NSFaceIDUsageDescription: "Easy Fuel uses Face ID for quick sign-in.",
+          "EasyFuel accesses your photo library so you can choose a profile picture and upload images.",
+        NSFaceIDUsageDescription: "EasyFuel uses Face ID for quick sign-in.",
       },
     },
     android: {
@@ -75,7 +75,7 @@ export default {
         "expo-location",
         {
           locationWhenInUsePermission:
-            "Easy Fuel uses your location for delivery routing and depot distance while you use the app.",
+            "EasyFuel uses your location for delivery routing and depot distance while you use the app.",
         },
       ],
       [
@@ -91,7 +91,7 @@ export default {
         "expo-image-picker",
         {
           photosPermission:
-            "Easy Fuel accesses your photo library so you can choose a profile picture and upload images.",
+            "EasyFuel accesses your photo library so you can choose a profile picture and upload images.",
         },
       ],
       "@react-native-community/datetimepicker",

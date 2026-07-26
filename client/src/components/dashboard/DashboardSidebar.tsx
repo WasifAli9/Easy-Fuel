@@ -29,7 +29,7 @@ export function DashboardSidebarAside({
 
 export function DashboardSidebarInner({
   label,
-  tagline = "Easy Fuel",
+  tagline = "EasyFuel",
   children,
 }: {
   label: string;

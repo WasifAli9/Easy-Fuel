@@ -11,7 +11,7 @@ export async function canUseBiometrics() {
 
 export async function authenticateWithBiometrics() {
   return LocalAuthentication.authenticateAsync({
-    promptMessage: "Unlock Easy Fuel",
+    promptMessage: "Unlock EasyFuel",
     fallbackLabel: "Use passcode",
     cancelLabel: "Cancel",
   });

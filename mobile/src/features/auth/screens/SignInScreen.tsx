@@ -167,7 +167,7 @@ export function SignInScreen() {
           <EasyFuelLogo size={68} borderRadius={14} />
         </View>
         <Text variant="headlineMedium" style={styles.title}>
-          Easy Fuel
+          EasyFuel
         </Text>
         <Text variant="titleMedium" style={styles.subtitle}>
           Welcome back

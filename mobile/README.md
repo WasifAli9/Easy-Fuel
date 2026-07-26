@@ -1,6 +1,6 @@
-# Easy Fuel Mobile (React Native)
+# EasyFuel Mobile (React Native)
 
-Production-ready mobile workspace for Android and iOS, built to reuse existing Easy Fuel backend APIs.
+Production-ready mobile workspace for Android and iOS, built to reuse existing EasyFuel backend APIs.
 
 ## Stack
 
@@ -12,7 +12,7 @@ Production-ready mobile workspace for Android and iOS, built to reuse existing E
 - react-hook-form + zod
 - expo-secure-store, expo-notifications, expo-location, expo-local-authentication
 
-Auth is **only** against your Easy Fuel API (local JWT from the server). There is **no** Supabase client in this app.
+Auth is **only** against your EasyFuel API (local JWT from the server). There is **no** Supabase client in this app.
 
 ## App Structure
 

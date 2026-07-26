@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reply to ITU / Ozow – Staging testing (pay-in + payout)</title>
+  <style>
+    body {
+      font-family: "Segoe UI", Arial, Helvetica, sans-serif;
+      font-size: 15px;
+      line-height: 1.55;
+      color: #222;
+      max-width: 720px;
+      margin: 24px auto;
+      padding: 0 16px 40px;
+      background: #f5f5f5;
+    }
+    .note {
+      background: #fff8e6;
+      border: 1px solid #f0d78c;
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 20px;
+      font-size: 13px;
+      color: #5c4a00;
+    }
+    .email {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 28px 32px;
+    }
+    h2 {
+      font-size: 16px;
+      margin: 22px 0 8px;
+      color: #111;
+    }
+    ul { margin: 8px 0 8px 20px; padding: 0; }
+    li { margin: 4px 0; }
+    .sig { margin-top: 28px; }
+    code {
+      font-family: Consolas, monospace;
+      font-size: 13px;
+      background: #f0f0f0;
+      padding: 1px 5px;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+  <div class="note">
+    <strong>For you (Wasif) — not part of the email:</strong>
+    Select everything inside the white box below, copy, and paste into your reply to ITU.
+  </div>
+
+  <div class="email">
+    <p>Hi,</p>
+
+    <p>
+      Thank you for your patience, and thank you for following up on our integration progress.
+    </p>
+
+    <p>
+      We want to be transparent that we are relatively new to Ozow / ITU payment methods and the
+      staging-to-live process. We would greatly appreciate your guidance so we can complete testing
+      correctly. Any support from your side would be very helpful.
+    </p>
+
+    <h2>Current standing</h2>
+    <ul>
+      <li>
+        Our application is live at <code>https://portal.easyfuel.ai</code>.
+      </li>
+      <li>
+        The staging / testing keys you provided for <strong>pay-in</strong> are in use, and we have
+        tested pay-in successfully — that side is working for us.
+      </li>
+      <li>
+        Our next goal is to test the <strong>full application flow</strong> (pay-in and payout
+        together) in staging, and only then move to live / production keys.
+      </li>
+    </ul>
+
+    <h2>What we need clarity on</h2>
+    <p>
+      The testing keys we currently have appear to cover pay-in, and pay-in testing is complete.
+      What we are unsure about is how to properly test the <strong>whole flow</strong> that includes
+      <strong>both pay-in and payouts</strong> before go-live.
+    </p>
+    <p>Could you please advise on the following?</p>
+    <ul>
+      <li>
+        How should we test the end-to-end flow in staging when the application uses both pay-in
+        and payouts (e.g. customer pays in → we later pay out)?
+      </li>
+      <li>
+        Do we need separate staging credentials, a different merchant/site setup, or additional
+        access for payouts — or can the current staging setup already support full pay-in + payout
+        testing?
+      </li>
+      <li>
+        Are there specific steps, checklist items, or webhook settings we should confirm with you
+        before we can treat staging as complete and request / switch to live keys?
+      </li>
+    </ul>
+
+    <p>
+      Our aim is to finish full staging testing of the complete flow first, then move to live keys
+      with confidence. Please let us know how you recommend we proceed, and if a short call would
+      help we are happy to arrange one.
+    </p>
+
+    <p>
+      Thank you again for your patience and support. We look forward to your guidance.
+    </p>
+
+    <div class="sig">
+      <p>Kind regards,<br />
+      Wasif Ali<br />
+      Easy Fuel<br />
+      <a href="https://portal.easyfuel.ai">https://portal.easyfuel.ai</a></p>
+    </div>
+  </div>
+</body>
+</html>

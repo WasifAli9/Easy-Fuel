@@ -210,7 +210,7 @@ export function DriverDepotOrderReceipt({ order, open, onOpenChange }: DriverDep
                   {logoLoaded ? (
                     <img 
                       src="/logo-easyfuel.png" 
-                      alt="Easy Fuel Logo" 
+                      alt="EasyFuel Logo" 
                       className="h-full w-full object-contain p-2"
                       onError={(e) => {
                         // Try alternative logo paths
@@ -231,7 +231,7 @@ export function DriverDepotOrderReceipt({ order, open, onOpenChange }: DriverDep
                 </div>
                 <div>
                   <h1 className="text-3xl font-bold text-slate-900">
-                    Easy Fuel
+                    EasyFuel
                   </h1>
                   <p className="text-sm text-slate-600">Fuel Delivery Receipt</p>
                 </div>
@@ -417,7 +417,7 @@ export function DriverDepotOrderReceipt({ order, open, onOpenChange }: DriverDep
             {/* Footer */}
             <div className="mt-8 border-t border-slate-200 pt-6 text-center">
               <p className="text-xs text-slate-600">
-                This is an official receipt from Easy Fuel. Please keep this document for your records.
+                This is an official receipt from EasyFuel. Please keep this document for your records.
               </p>
               <p className="text-xs text-slate-600 mt-2">
                 Generated on {new Date().toLocaleDateString("en-ZA", { year: "numeric", month: "long", day: "numeric" })}

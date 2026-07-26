@@ -1156,7 +1156,7 @@ class NotificationService {
       userId,
       type: "account_approved",
       title: "Account Approved",
-      message: `Your ${role} account has been approved. You can now start using Easy Fuel ZA`,
+      message: `Your ${role} account has been approved. You can now start using EasyFuel ZA`,
       data: { role },
       priority: "high",
     });

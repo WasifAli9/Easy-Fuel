@@ -10,7 +10,7 @@ function firstExistingPath(candidates) {
 }
 
 /**
- * Android + iOS network posture for Easy Fuel (aligned with Inspect360 pattern).
+ * Android + iOS network posture for EasyFuel (aligned with Inspect360 pattern).
  * Optional intermediate cert bundle (.pem/.crt/.cer) is bundled when present
  * (custom CA chain); otherwise system + user trust anchors are used.
  */
@@ -72,7 +72,7 @@ const withNetworkSecurity = (config) => {
       if (certSourcePath) {
         fs.copyFileSync(certSourcePath, path.join(androidRawPath, "intermediate_ca_bundle.pem"));
         includeBundledCa = true;
-        console.log(`✓ Bundled intermediate CA for Easy Fuel (Android): ${path.basename(certSourcePath)}`);
+        console.log(`✓ Bundled intermediate CA for EasyFuel (Android): ${path.basename(certSourcePath)}`);
       }
 
       const bundledAnchor = includeBundledCa
