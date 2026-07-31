@@ -209,9 +209,10 @@ export default function SupplierDashboard() {
 
   const activeDepots = (depots || []).filter((depot: any) => depot.is_active !== false);
   
-  // Count active orders (pending or confirmed status)
+  // Active = not finished (completed / cancelled / rejected)
+  const terminalDepotOrderStatuses = new Set(["completed", "cancelled", "rejected"]);
   const activeOrders = (orders || []).filter(
-    (order: any) => order.status === "pending" || order.status === "confirmed"
+    (order: any) => !terminalDepotOrderStatuses.has(String(order.status || "").toLowerCase())
   ).length;
 
   return (

@@ -38,7 +38,7 @@ export function SupplierAnalyticsTab() {
   const trendData = [
     { label: "Today", orders: Number(data.ordersToday || 0), litres: Number(data.totalLitresToday || 0) },
     { label: "This Week", orders: Number(data.ordersThisWeek || 0), litres: Number(data.totalLitresWeek || data.totalLitres || 0) },
-    { label: "All Time", orders: Number(data.totalOrders || data.ordersThisWeek || 0), litres: Number(data.totalLitres || 0) },
+    { label: "All Time", orders: Number(data.totalOrders || 0), litres: Number(data.totalLitres || 0) },
   ];
 
   const pieColors = ["#14b8a6", "#06b6d4", "#3b82f6", "#a855f7", "#f59e0b", "#f43f5e"];

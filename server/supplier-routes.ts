@@ -409,7 +409,8 @@ router.get("/depots", async (req, res) => {
             fuel_types (
               id,
               label,
-              code
+              code,
+              active
             )
           `)
           .in("depot_id", depotIds);
@@ -436,25 +437,29 @@ router.get("/depots", async (req, res) => {
             // Continue without pricing
             allPricing = [];
           } else {
-            // Fetch fuel types separately and merge
+            // Fetch fuel types separately and merge (active fuels only)
             const fuelTypeIds = Array.from(new Set((pricingWithoutRelation || []).map((p: any) => p.fuel_type_id).filter(Boolean)));
             if (fuelTypeIds.length > 0) {
               const { data: fuelTypes } = await drizzleClient
                 .from("fuel_types")
-                .select("id, label, code")
+                .select("id, label, code, active")
+                .eq("active", true)
                 .in("id", fuelTypeIds);
 
               const fuelTypeMap = new Map((fuelTypes || []).map((ft: any) => [ft.id, ft]));
-              allPricing = (pricingWithoutRelation || []).map((p: any) => ({
-                ...p,
-                fuel_types: fuelTypeMap.get(p.fuel_type_id) || null
-              }));
+              allPricing = (pricingWithoutRelation || [])
+                .filter((p: any) => fuelTypeMap.has(p.fuel_type_id))
+                .map((p: any) => ({
+                  ...p,
+                  fuel_types: fuelTypeMap.get(p.fuel_type_id) || null
+                }));
             } else {
-              allPricing = pricingWithoutRelation || [];
+              allPricing = [];
             }
           }
         } else {
-          allPricing = pricing || [];
+          // Hide prices for fuel types disabled in Admin → Settings
+          allPricing = (pricing || []).filter((p: any) => p.fuel_types?.active === true);
         }
       } catch (error: any) {
         console.error("Unexpected error fetching depot pricing:", error);
@@ -1750,7 +1755,15 @@ router.get("/analytics", requireSupplier, async (req, res) => {
       .eq("supplier_id", supplier.id);
     const depotIds = (depots || []).map((d: any) => d.id);
     if (depotIds.length === 0) {
-      const base = { ordersToday: 0, ordersThisWeek: 0, byStatus: {}, totalLitres: 0, totalValueCents: 0 };
+      const base = {
+        ordersToday: 0,
+        ordersThisWeek: 0,
+        totalOrders: 0,
+        activeOrders: 0,
+        byStatus: {},
+        totalLitres: 0,
+        totalValueCents: 0,
+      };
       return res.json(isAdvanced ? { ...base, byDepot: [], byFuelType: [], byPeriod: [] } : base);
     }
 
@@ -1763,14 +1776,19 @@ router.get("/analytics", requireSupplier, async (req, res) => {
     const orderList = orders || [];
 
     const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    const startOfTodayMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const startOfWeek = new Date(now);
     startOfWeek.setDate(now.getDate() - now.getDay());
     startOfWeek.setHours(0, 0, 0, 0);
-    const startOfWeekIso = startOfWeek.toISOString();
+    const startOfWeekMs = startOfWeek.getTime();
 
-    const ordersToday = orderList.filter((o: any) => o.created_at >= startOfToday).length;
-    const ordersThisWeek = orderList.filter((o: any) => o.created_at >= startOfWeekIso).length;
+    const createdAtMs = (value: unknown) => {
+      const t = new Date(value as string | number | Date).getTime();
+      return Number.isFinite(t) ? t : 0;
+    };
+
+    const ordersToday = orderList.filter((o: any) => createdAtMs(o.created_at) >= startOfTodayMs).length;
+    const ordersThisWeek = orderList.filter((o: any) => createdAtMs(o.created_at) >= startOfWeekMs).length;
     const byStatus: Record<string, number> = {};
     orderList.forEach((o: any) => {
       const s = o.status || "unknown";
@@ -1779,9 +1797,14 @@ router.get("/analytics", requireSupplier, async (req, res) => {
     const totalLitres = orderList.reduce((sum: number, o: any) => sum + (Number(o.actual_litres_delivered ?? o.litres ?? 0) || 0), 0);
     const totalValueCents = orderList.reduce((sum: number, o: any) => sum + (Number(o.total_price_cents) || 0), 0);
 
+    const terminalStatuses = new Set(["completed", "cancelled", "rejected"]);
+    const activeOrders = orderList.filter((o: any) => !terminalStatuses.has(String(o.status || "").toLowerCase())).length;
+
     const base = {
       ordersToday,
       ordersThisWeek,
+      totalOrders: orderList.length,
+      activeOrders,
       byStatus,
       totalLitres: Math.round(totalLitres * 100) / 100,
       totalValueCents,
@@ -1822,8 +1845,8 @@ router.get("/analytics", requireSupplier, async (req, res) => {
     });
 
     const byPeriod = [
-      { period: "today", orders: ordersToday, start: startOfToday, end: now.toISOString() },
-      { period: "this_week", orders: ordersThisWeek, start: startOfWeekIso, end: now.toISOString() },
+      { period: "today", orders: ordersToday, start: new Date(startOfTodayMs).toISOString(), end: now.toISOString() },
+      { period: "this_week", orders: ordersThisWeek, start: new Date(startOfWeekMs).toISOString(), end: now.toISOString() },
       { period: "all", orders: orderList.length, totalLitres: base.totalLitres, totalValueCents: base.totalValueCents },
     ];
 
