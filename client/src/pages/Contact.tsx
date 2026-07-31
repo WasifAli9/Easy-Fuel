@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useState } from "react";
 import { Link } from "wouter";
 import { Mail } from "lucide-react";
 import { Logo } from "@/components/Logo";

@@ -28,7 +28,12 @@ export interface OzowPayInParams {
   customerEmail?: string;
   successUrl: string;
   cancelUrl: string;
+  errorUrl?: string;
   notifyUrl?: string;
+  /** Returned by Ozow on browser redirect (context type, e.g. depot_order). */
+  optional1?: string;
+  /** Returned by Ozow on browser redirect (order id). */
+  optional2?: string;
 }
 
 export interface OzowPayInResult {
@@ -209,10 +214,20 @@ async function createOneApiPayment(
     .replace(/[^a-zA-Z0-9]/g, "")
     .slice(0, 20);
 
+  const successUrl = params.successUrl;
+  const cancelUrl = params.cancelUrl;
+  const errorUrl = params.errorUrl || params.cancelUrl;
+
   /**
    * Staging One API accepts a flat JSON body (not JSON:API).
    * Required: siteCode, amount{currency,value}, merchantReference, expireAt, region.
    * Confirmed working against https://stagingone.ozow.com/v1/payments (HTTP 201).
+   *
+   * Redirect URLs: send both camelCase and PascalCase. Classic Ozow posts the
+   * browser to SuccessUrl/CancelUrl/ErrorUrl; if missing, staging lands on
+   * test.ozowpay.com/responsetest.php and never returns to your portal.
+   * Keep CancelUrl ≤ 50 chars. URLs must be https and should also be set under
+   * Ozow Merchant Admin → Site → URLs.
    */
   const payload: Record<string, unknown> = {
     siteCode: OZOW_SITE_CODE,
@@ -228,17 +243,38 @@ async function createOneApiPayment(
     bankReference,
     expireAt,
     notifyUrl,
-    successUrl: params.successUrl,
-    cancelUrl: params.cancelUrl,
-    errorUrl: params.cancelUrl,
+    NotifyUrl: notifyUrl,
+    successUrl,
+    SuccessUrl: successUrl,
+    cancelUrl,
+    CancelUrl: cancelUrl,
+    errorUrl,
+    ErrorUrl: errorUrl,
     isTest,
+    IsTest: isTest,
   };
+  if (params.optional1) {
+    const v = params.optional1.slice(0, 50);
+    payload.optional1 = v;
+    payload.Optional1 = v;
+  }
+  if (params.optional2) {
+    const v = params.optional2.slice(0, 50);
+    payload.optional2 = v;
+    payload.Optional2 = v;
+  }
   if (params.customerName) payload.customer = params.customerName.slice(0, 100);
   if (params.customerEmail) payload.customerEmail = params.customerEmail.slice(0, 150);
 
-  if (isTest) {
-    console.info("[ozow] create payment request:", JSON.stringify(payload));
-  }
+  console.info("[ozow] create payment redirect URLs:", {
+    successUrl,
+    cancelUrl,
+    errorUrl,
+    notifyUrl,
+    isTest,
+    optional1: params.optional1 || null,
+    optional2: params.optional2 || null,
+  });
 
   const res = await fetch(`${oneApiBaseUrl()}/v1/payments`, {
     method: "POST",
@@ -314,8 +350,14 @@ export async function createOzowPayIn(params: OzowPayInParams): Promise<OzowPayI
       `[ozow] OZOW_PAYIN_DRY_RUN enabled – skipping live Ozow checkout` +
         ` (OZOW_IS_TEST=${JSON.stringify(process.env.OZOW_IS_TEST)})`,
     );
+    const qs = new URLSearchParams({
+      context: params.optional1 || "",
+      id: params.optional2 || "",
+      status: "Complete",
+    });
     return {
-      paymentUrl: params.successUrl,
+      // Skip Ozow return hop in dry-run; land on portal result page directly.
+      paymentUrl: `${publicAppUrl()}/payment/success?${qs.toString()}`,
       paymentId: `dry-run-${params.transactionReference}`,
       transactionReference: params.transactionReference,
     };
@@ -356,12 +398,20 @@ export async function getOneApiPaymentById(paymentId: string): Promise<Record<st
   }
 }
 
-export function defaultSuccessUrl(context: string, contextId: string): string {
-  return `${publicAppUrl()}/payment/success?context=${encodeURIComponent(context)}&id=${encodeURIComponent(contextId)}`;
+/**
+ * Browser return URLs registered with Ozow (must stay short — CancelUrl ≤ 50 chars).
+ * Ozow posts/redirects here; we 302 to the portal `/payment/*` pages with context from Optional1/2.
+ */
+export function defaultSuccessUrl(): string {
+  return `${publicAppUrl()}/api/ozow/return/success`;
 }
 
-export function defaultCancelUrl(context: string, contextId: string): string {
-  return `${publicAppUrl()}/payment/cancel?context=${encodeURIComponent(context)}&id=${encodeURIComponent(contextId)}`;
+export function defaultCancelUrl(): string {
+  return `${publicAppUrl()}/api/ozow/return/cancel`;
+}
+
+export function defaultErrorUrl(): string {
+  return `${publicAppUrl()}/api/ozow/return/error`;
 }
 
 /**

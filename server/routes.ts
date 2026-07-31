@@ -10,7 +10,7 @@ import pushRoutes from "./push-routes";
 import locationRoutes from "./location-routes";
 import chatRoutes from "./chat-routes";
 import notificationRoutes from "./notification-routes";
-import { handleOzowPayinWebhook, handleOzowPayoutNotificationWebhook, handleOzowPayoutVerificationWebhook } from "./webhooks";
+import { handleOzowPayinWebhook, handleOzowPayoutNotificationWebhook, handleOzowPayoutVerificationWebhook, handleOzowBrowserReturn } from "./webhooks";
 import { ObjectStorageService, ObjectNotFoundError, ensureStoredObjectPath } from "./objectStorage";
 import { websocketService } from "./websocket";
 import { bootstrapLocalAuth, changeLocalPassword, signWebSocketHandshakeToken } from "./auth-local";
@@ -477,6 +477,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/webhooks/ozow-payout-notification", handleOzowPayoutNotificationWebhook);
   app.get("/api/webhooks/ozow-payout-verification", handleOzowPayoutVerificationWebhook);
   app.post("/api/webhooks/ozow-payout-verification", handleOzowPayoutVerificationWebhook);
+
+  // Ozow SuccessUrl / CancelUrl / ErrorUrl — browser redirect back to portal
+  app.get("/api/ozow/return/success", handleOzowBrowserReturn("success"));
+  app.post("/api/ozow/return/success", handleOzowBrowserReturn("success"));
+  app.get("/api/ozow/return/cancel", handleOzowBrowserReturn("cancel"));
+  app.post("/api/ozow/return/cancel", handleOzowBrowserReturn("cancel"));
+  app.get("/api/ozow/return/error", handleOzowBrowserReturn("error"));
+  app.post("/api/ozow/return/error", handleOzowBrowserReturn("error"));
 
   // Public contact / support form (no auth) — before authenticated /api mounts
   const contactRateLimit = new Map<string, { count: number; resetAt: number }>();

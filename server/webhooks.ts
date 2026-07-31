@@ -197,3 +197,49 @@ export async function handleOzowPayoutNotificationWebhook(req: Request, res: Res
     return res.status(500).json({ error: "Webhook processing failed" });
   }
 }
+
+/**
+ * Ozow browser return (SuccessUrl / CancelUrl / ErrorUrl).
+ * Ozow may GET or POST result fields here; we 302 to the portal SPA result pages.
+ * Context/order id come from Optional1 / Optional2 (set when creating the payment).
+ */
+export function handleOzowBrowserReturn(kind: "success" | "cancel" | "error") {
+  return (req: Request, res: Response) => {
+    try {
+      const flat = flattenIncoming(req);
+      const context =
+        flat.Optional1 ||
+        flat.optional1 ||
+        flat.context ||
+        "";
+      const id =
+        flat.Optional2 ||
+        flat.optional2 ||
+        flat.id ||
+        "";
+      const status =
+        flat.Status ||
+        flat.status ||
+        (kind === "success" ? "Complete" : kind === "error" ? "Error" : "Cancelled");
+      const ref =
+        flat.TransactionReference ||
+        flat.transactionReference ||
+        "";
+
+      const qs = new URLSearchParams();
+      if (context) qs.set("context", context);
+      if (id) qs.set("id", id);
+      if (status) qs.set("status", status);
+      if (ref) qs.set("ref", ref);
+
+      const path =
+        kind === "success" ? "/payment/success" : "/payment/cancel";
+      const target = qs.toString() ? `${path}?${qs.toString()}` : path;
+      console.info(`[ozow-return] ${kind} → ${target}`);
+      return res.redirect(302, target);
+    } catch (e) {
+      console.error(`[ozow-return] ${kind}`, e);
+      return res.redirect(302, kind === "success" ? "/payment/success" : "/payment/cancel");
+    }
+  };
+}

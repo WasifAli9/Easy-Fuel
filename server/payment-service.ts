@@ -207,8 +207,16 @@ export async function getSupplierBankDetailsForDepotOrder(
 }
 
 export function publicAppUrl(): string {
-  const base = (process.env.PUBLIC_APP_URL || "").replace(/\/$/, "");
+  let base = (process.env.PUBLIC_APP_URL || "").trim().replace(/\/$/, "");
   if (!base) throw new Error("PUBLIC_APP_URL is not configured");
+  // Ozow browser return POSTs to Success/Cancel/Error URLs. HTTP triggers Chrome
+  // "not secure" warnings and often never returns the user to the portal.
+  if (base.startsWith("http://")) {
+    base = `https://${base.slice("http://".length)}`;
+  }
+  if (!/^https:\/\//i.test(base)) {
+    base = `https://${base}`;
+  }
   return base;
 }
 

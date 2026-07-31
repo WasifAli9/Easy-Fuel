@@ -21,6 +21,7 @@ import {
   createOzowPayIn,
   defaultCancelUrl,
   defaultSuccessUrl,
+  defaultErrorUrl,
   isOzowConfigured,
   isOzowPayinDryRun,
 } from "./ozow-service";
@@ -216,8 +217,11 @@ export async function initiateCustomerOrderPayment(
     bankReference: orderId.replace(/-/g, "").slice(0, 20),
     customerName: profileRows[0]?.fullName || customerRows[0]?.companyName || undefined,
     customerEmail: profileRows[0]?.email || undefined,
-    successUrl: defaultSuccessUrl("customer_order", orderId),
-    cancelUrl: defaultCancelUrl("customer_order", orderId),
+    successUrl: defaultSuccessUrl(),
+    cancelUrl: defaultCancelUrl(),
+    errorUrl: defaultErrorUrl(),
+    optional1: "customer_order",
+    optional2: orderId,
   });
 
   await db
@@ -308,8 +312,11 @@ export async function initiateDepotOrderPayment(
     bankReference: orderId.replace(/-/g, "").slice(0, 20),
     customerName: profileRows[0]?.fullName || undefined,
     customerEmail: profileRows[0]?.email || undefined,
-    successUrl: defaultSuccessUrl("depot_order", orderId),
-    cancelUrl: defaultCancelUrl("depot_order", orderId),
+    successUrl: defaultSuccessUrl(),
+    cancelUrl: defaultCancelUrl(),
+    errorUrl: defaultErrorUrl(),
+    optional1: "depot_order",
+    optional2: orderId,
   });
 
   await db
