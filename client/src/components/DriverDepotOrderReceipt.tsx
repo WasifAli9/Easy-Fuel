@@ -190,242 +190,291 @@ export function DriverDepotOrderReceipt({ order, open, onOpenChange }: DriverDep
   const orderDate = formatDate(order.created_at);
   const completedDate = order.completed_at ? formatDate(order.completed_at) : formatDate(order.updated_at);
 
+  const depotAddress = [
+    order.depots?.address_street,
+    order.depots?.address_city,
+    order.depots?.address_province,
+    order.depots?.address_postal_code,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+  const driverPhone =
+    order.drivers?.profile?.phone ??
+    order.driver_profile?.phone ??
+    order.drivers?.phone ??
+    null;
+
+  const hasAnySignature =
+    Boolean(driverSigCandidates[driverSigIndex]) ||
+    Boolean(supplierSigCandidates[supplierSigIndex]) ||
+    Boolean(deliverySigCandidates[deliverySigIndex]);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-card text-card-foreground">
+      <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto bg-card text-card-foreground">
         <DialogHeader>
-          <DialogTitle>Order Receipt</DialogTitle>
+          <DialogTitle>Official receipt</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
-          {/* Receipt: fixed light “document” palette so dark mode UI does not leak low-contrast theme tokens onto white */}
+          {/* Formal print document — light palette independent of app theme */}
           <div
             ref={receiptRef}
-            className="rounded-lg border-2 border-slate-300 bg-white p-8 text-slate-900 shadow-lg"
-            style={{ minHeight: "800px" }}
+            className="mx-auto w-full max-w-[720px] bg-white text-slate-900 shadow-md"
+            style={{
+              fontFamily: '"Segoe UI", Calibri, "Helvetica Neue", Arial, sans-serif',
+              minHeight: "900px",
+            }}
           >
-            {/* Header */}
-            <div className="mb-8 flex items-center justify-between border-b-2 border-slate-300 pb-6">
-              <div className="flex items-center gap-4">
-                <div className="h-16 w-16 rounded-lg flex items-center justify-center border border-slate-200 bg-white">
-                  {logoLoaded ? (
-                    <img 
-                      src="/logo-easyfuel.png" 
-                      alt="EasyFuel Logo" 
-                      className="h-full w-full object-contain p-2"
-                      onError={(e) => {
-                        // Try alternative logo paths
-                        const target = e.target as HTMLImageElement;
-                        const currentSrc = target.src;
-                        if (!currentSrc.includes("/logo.png")) {
-                          target.src = "/logo.png";
-                        } else if (!currentSrc.includes("/icon-192.png")) {
-                          target.src = "/icon-192.png";
-                        } else {
-                          setLogoLoaded(false);
-                        }
-                      }}
-                    />
-                  ) : (
-                    <span className="text-2xl font-bold text-white">EF</span>
-                  )}
-                </div>
-                <div>
-                  <h1 className="text-3xl font-bold text-slate-900">
-                    EasyFuel
-                  </h1>
-                  <p className="text-sm text-slate-600">Fuel Delivery Receipt</p>
-                </div>
-              </div>
-              <div className="text-right">
-                <p className="text-sm text-slate-600">Order ID</p>
-                <p className="text-lg font-bold text-slate-900">#{order.id.slice(0, 8).toUpperCase()}</p>
-              </div>
-            </div>
+            {/* Brand accent bar */}
+            <div className="h-1.5 w-full bg-[#0d9488]" />
 
-            {/* Order Information */}
-            <div className="mb-8 space-y-6">
-              <div className="grid grid-cols-2 gap-6">
-                <div>
-                  <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-600">
-                    Driver Information
-                  </h3>
-                  <div className="rounded-lg border border-slate-200 bg-slate-100 p-4">
-                    <p className="text-lg font-semibold text-slate-900">{driverName}</p>
-                    {order.drivers?.profile?.phone && (
-                      <p className="mt-1 text-sm text-slate-600">{order.drivers.profile.phone}</p>
+            <div className="px-10 py-9">
+              {/* Letterhead */}
+              <div className="flex items-start justify-between gap-6 border-b border-slate-300 pb-6">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden border border-slate-200 bg-white">
+                    {logoLoaded ? (
+                      <img
+                        src="/logo-easyfuel.png"
+                        alt="EasyFuel"
+                        className="h-full w-full object-contain p-1.5"
+                        onError={(e) => {
+                          const target = e.target as HTMLImageElement;
+                          const currentSrc = target.src;
+                          if (!currentSrc.includes("/logo.png")) {
+                            target.src = "/logo.png";
+                          } else if (!currentSrc.includes("/icon-192.png")) {
+                            target.src = "/icon-192.png";
+                          } else {
+                            setLogoLoaded(false);
+                          }
+                        }}
+                      />
+                    ) : (
+                      <span className="text-sm font-bold tracking-tight text-[#0d9488]">EF</span>
                     )}
                   </div>
-                </div>
-                <div>
-                  <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-600">
-                    Depot Information
-                  </h3>
-                  <div className="rounded-lg border border-slate-200 bg-slate-100 p-4">
-                    <p className="text-lg font-semibold text-slate-900">{depotName}</p>
-                    {order.depots?.suppliers?.name && (
-                      <p className="mt-1 text-sm text-slate-600">Supplier: {order.depots.suppliers.name || order.depots.suppliers.registered_name}</p>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-600">
-                  Depot Address
-                </h3>
-                <div className="rounded-lg border border-slate-200 bg-slate-100 p-4">
-                  {order.depots?.address_street ? (
-                    <p className="text-sm text-slate-800">
-                      {[
-                        order.depots.address_street,
-                        order.depots.address_city,
-                        order.depots.address_province,
-                        order.depots.address_postal_code,
-                      ]
-                        .filter(Boolean)
-                        .join(", ")}
+                  <div>
+                    <h1 className="text-[22px] font-semibold tracking-tight text-slate-900">
+                      EasyFuel
+                    </h1>
+                    <p className="mt-0.5 text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500">
+                      Official depot collection receipt
                     </p>
-                  ) : (
-                    <p className="text-sm text-slate-600">Address not available</p>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Fuel Details */}
-            <div className="mb-8">
-              <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-600">
-                Fuel Collection Details
-              </h3>
-              <div className="rounded-lg border border-slate-300 bg-slate-50 p-6">
-                <div className="grid grid-cols-3 gap-4">
-                  <div>
-                    <p className="text-sm text-slate-600">Fuel Type</p>
-                    <p className="mt-1 text-xl font-bold text-slate-900">{fuelType}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-slate-600">Quantity</p>
-                    <p className="mt-1 text-xl font-bold text-slate-900">{litres}L</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-slate-600">Price per Litre</p>
-                    <p className="mt-1 text-xl font-bold text-slate-900">{formatCurrency(pricePerLitre, currency)}</p>
+                    <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
+                      portal.easyfuel.ai
+                    </p>
                   </div>
                 </div>
-              </div>
-            </div>
-
-            {/* Pricing Breakdown */}
-            <div className="mb-8">
-              <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-600">
-                Pricing Breakdown
-              </h3>
-              <div className="overflow-hidden rounded-lg border border-slate-200">
-                <div className="flex items-center justify-between bg-slate-100 p-4">
-                  <span className="font-medium text-slate-800">Subtotal ({litres}L × {formatCurrency(pricePerLitre, currency)})</span>
-                  <span className="font-semibold text-slate-900">{formatCurrency(totalPrice, currency)}</span>
-                </div>
-                <div className="flex items-center justify-between border-t border-slate-200 bg-slate-100 p-4">
-                  <span className="text-lg font-bold text-slate-900">Total Amount</span>
-                  <span className="text-2xl font-bold text-slate-900">
-                    {formatCurrency(totalPrice, currency)}
-                  </span>
+                <div className="text-right">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    Receipt no.
+                  </p>
+                  <p className="mt-1 font-mono text-base font-semibold tracking-wide text-slate-900">
+                    #{order.id.slice(0, 8).toUpperCase()}
+                  </p>
+                  <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    Status
+                  </p>
+                  <p className="mt-1 text-sm font-medium capitalize text-slate-800">
+                    {(order.status || "completed").replace(/_/g, " ")}
+                  </p>
                 </div>
               </div>
-            </div>
 
-            {/* Dates */}
-            <div className="mb-8 grid grid-cols-2 gap-6">
-              <div>
-                <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-600">
-                  Order Date
-                </h3>
-                <p className="text-lg text-slate-900">{orderDate}</p>
+              {/* Parties */}
+              <div className="mt-7 grid grid-cols-2 gap-x-10 gap-y-6">
+                <div>
+                  <p className="border-b border-slate-200 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    Collected by (driver)
+                  </p>
+                  <p className="mt-2.5 text-[15px] font-semibold text-slate-900">{driverName}</p>
+                  {driverPhone ? (
+                    <p className="mt-1 text-[12px] text-slate-600">{driverPhone}</p>
+                  ) : null}
+                </div>
+                <div>
+                  <p className="border-b border-slate-200 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    Issued by (depot)
+                  </p>
+                  <p className="mt-2.5 text-[15px] font-semibold text-slate-900">{depotName}</p>
+                  {supplierName && supplierName !== "Unknown Supplier" ? (
+                    <p className="mt-1 text-[12px] text-slate-600">{supplierName}</p>
+                  ) : null}
+                </div>
+                <div className="col-span-2">
+                  <p className="border-b border-slate-200 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    Depot address
+                  </p>
+                  <p className="mt-2.5 text-[13px] leading-relaxed text-slate-700">
+                    {depotAddress || "Address not recorded"}
+                  </p>
+                </div>
               </div>
-              <div>
-                <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-600">
-                  Completed Date
-                </h3>
-                <p className="text-lg text-slate-900">{completedDate}</p>
-              </div>
-            </div>
 
-            {/* Signatures */}
-            <div className="mt-8 border-t-2 border-slate-300 pt-6">
-              <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-600">
-                Signatures
-              </h3>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                {driverSigCandidates[driverSigIndex] && (
-                  <div className="text-center">
-                    <p className="mb-2 text-xs text-slate-600">Driver Signature</p>
-                    <div className="rounded-lg border border-slate-200 bg-slate-100 p-3">
-                      <img
-                        src={driverSigCandidates[driverSigIndex]}
-                        alt="Driver Signature"
-                        className="mx-auto max-h-32 object-contain"
-                        onError={() => {
-                          if (driverSigIndex + 1 < driverSigCandidates.length) {
-                            setDriverSigIndex((i) => i + 1);
-                          }
-                        }}
-                      />
-                    </div>
-                    <p className="mt-2 text-xs font-medium text-slate-800">{driverName}</p>
-                  </div>
-                )}
-                {supplierSigCandidates[supplierSigIndex] && (
-                  <div className="text-center">
-                    <p className="mb-2 text-xs text-slate-600">Supplier Signature</p>
-                    <div className="rounded-lg border border-slate-200 bg-slate-100 p-3">
-                      <img
-                        src={supplierSigCandidates[supplierSigIndex]}
-                        alt="Supplier Signature"
-                        className="mx-auto max-h-32 object-contain"
-                        onError={() => {
-                          if (supplierSigIndex + 1 < supplierSigCandidates.length) {
-                            setSupplierSigIndex((i) => i + 1);
-                          }
-                        }}
-                      />
-                    </div>
-                    <p className="mt-2 text-xs font-medium text-slate-800">{supplierName}</p>
-                  </div>
-                )}
-                {deliverySigCandidates[deliverySigIndex] && (
-                  <div className="text-center">
-                    <p className="mb-2 text-xs text-slate-600">Driver Receipt Confirmation</p>
-                    <div className="rounded-lg border border-slate-200 bg-slate-100 p-3">
-                      <img
-                        key={`${order?.id ?? "receipt"}-${deliverySigCandidates[deliverySigIndex]}`}
-                        src={deliverySigCandidates[deliverySigIndex]}
-                        alt="Driver Receipt Signature"
-                        className="mx-auto max-h-32 object-contain"
-                        onError={() => {
-                          if (deliverySigIndex + 1 < deliverySigCandidates.length) {
-                            setDeliverySigIndex((i) => i + 1);
-                          }
-                        }}
-                      />
-                    </div>
-                    <p className="mt-2 text-xs font-medium text-slate-800">{driverName}</p>
-                  </div>
-                )}
+              {/* Dates */}
+              <div className="mt-7 grid grid-cols-2 gap-x-10 border border-slate-200 bg-slate-50/80 px-4 py-3">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                    Order placed
+                  </p>
+                  <p className="mt-1 text-[13px] font-medium text-slate-800">{orderDate}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                    Completed
+                  </p>
+                  <p className="mt-1 text-[13px] font-medium text-slate-800">{completedDate}</p>
+                </div>
               </div>
-            </div>
 
-            {/* Footer */}
-            <div className="mt-8 border-t border-slate-200 pt-6 text-center">
-              <p className="text-xs text-slate-600">
-                This is an official receipt from EasyFuel. Please keep this document for your records.
-              </p>
-              <p className="text-xs text-slate-600 mt-2">
-                Generated on {new Date().toLocaleDateString("en-ZA", { year: "numeric", month: "long", day: "numeric" })}
-              </p>
+              {/* Line items table */}
+              <div className="mt-8">
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  Collection details
+                </p>
+                <table className="w-full border-collapse text-left text-[13px]">
+                  <thead>
+                    <tr className="border-y-2 border-slate-800 bg-slate-800 text-white">
+                      <th className="px-3 py-2.5 text-[10px] font-semibold uppercase tracking-[0.12em]">
+                        Description
+                      </th>
+                      <th className="px-3 py-2.5 text-right text-[10px] font-semibold uppercase tracking-[0.12em]">
+                        Qty
+                      </th>
+                      <th className="px-3 py-2.5 text-right text-[10px] font-semibold uppercase tracking-[0.12em]">
+                        Unit price
+                      </th>
+                      <th className="px-3 py-2.5 text-right text-[10px] font-semibold uppercase tracking-[0.12em]">
+                        Amount
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b border-slate-200">
+                      <td className="px-3 py-3.5 align-top">
+                        <p className="font-semibold text-slate-900">{fuelType}</p>
+                        <p className="mt-0.5 text-[11px] text-slate-500">Depot fuel collection</p>
+                      </td>
+                      <td className="px-3 py-3.5 text-right tabular-nums text-slate-800">
+                        {Number(litres).toLocaleString("en-ZA")} L
+                      </td>
+                      <td className="px-3 py-3.5 text-right tabular-nums text-slate-800">
+                        {formatCurrency(pricePerLitre, currency)}
+                      </td>
+                      <td className="px-3 py-3.5 text-right tabular-nums font-medium text-slate-900">
+                        {formatCurrency(totalPrice, currency)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <div className="mt-0 ml-auto w-full max-w-[280px] border-b border-slate-200">
+                  <div className="flex items-center justify-between px-3 py-2 text-[13px] text-slate-600">
+                    <span>Subtotal</span>
+                    <span className="tabular-nums">{formatCurrency(totalPrice, currency)}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-t-2 border-slate-800 bg-slate-50 px-3 py-3">
+                    <span className="text-[12px] font-semibold uppercase tracking-[0.1em] text-slate-800">
+                      Total due
+                    </span>
+                    <span className="text-lg font-bold tabular-nums text-slate-900">
+                      {formatCurrency(totalPrice, currency)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Signatures */}
+              {hasAnySignature ? (
+                <div className="mt-10">
+                  <p className="mb-4 border-b border-slate-200 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    Authorised signatures
+                  </p>
+                  <div className="grid grid-cols-1 gap-8 sm:grid-cols-3">
+                    {driverSigCandidates[driverSigIndex] ? (
+                      <div>
+                        <div className="flex h-24 items-end justify-center border-b border-slate-400 pb-1">
+                          <img
+                            src={driverSigCandidates[driverSigIndex]}
+                            alt="Driver signature"
+                            className="max-h-20 max-w-full object-contain"
+                            onError={() => {
+                              if (driverSigIndex + 1 < driverSigCandidates.length) {
+                                setDriverSigIndex((i) => i + 1);
+                              }
+                            }}
+                          />
+                        </div>
+                        <p className="mt-2 text-[11px] font-medium text-slate-800">{driverName}</p>
+                        <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                          Driver
+                        </p>
+                      </div>
+                    ) : null}
+                    {supplierSigCandidates[supplierSigIndex] ? (
+                      <div>
+                        <div className="flex h-24 items-end justify-center border-b border-slate-400 pb-1">
+                          <img
+                            src={supplierSigCandidates[supplierSigIndex]}
+                            alt="Supplier signature"
+                            className="max-h-20 max-w-full object-contain"
+                            onError={() => {
+                              if (supplierSigIndex + 1 < supplierSigCandidates.length) {
+                                setSupplierSigIndex((i) => i + 1);
+                              }
+                            }}
+                          />
+                        </div>
+                        <p className="mt-2 text-[11px] font-medium text-slate-800">{supplierName}</p>
+                        <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                          Supplier
+                        </p>
+                      </div>
+                    ) : null}
+                    {deliverySigCandidates[deliverySigIndex] ? (
+                      <div>
+                        <div className="flex h-24 items-end justify-center border-b border-slate-400 pb-1">
+                          <img
+                            key={`${order?.id ?? "receipt"}-${deliverySigCandidates[deliverySigIndex]}`}
+                            src={deliverySigCandidates[deliverySigIndex]}
+                            alt="Receipt confirmation signature"
+                            className="max-h-20 max-w-full object-contain"
+                            onError={() => {
+                              if (deliverySigIndex + 1 < deliverySigCandidates.length) {
+                                setDeliverySigIndex((i) => i + 1);
+                              }
+                            }}
+                          />
+                        </div>
+                        <p className="mt-2 text-[11px] font-medium text-slate-800">{driverName}</p>
+                        <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                          Receipt confirmation
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Footer */}
+              <div className="mt-12 border-t border-slate-200 pt-5 text-center">
+                <p className="text-[11px] leading-relaxed text-slate-500">
+                  This document is an official record of fuel collected from the named depot via EasyFuel.
+                  Retain for your records. Payment and fulfilment are confirmed independently of this printout.
+                </p>
+                <p className="mt-2 text-[10px] text-slate-400">
+                  Generated {new Date().toLocaleDateString("en-ZA", {
+                    year: "numeric",
+                    month: "long",
+                    day: "numeric",
+                  })}
+                </p>
+              </div>
             </div>
           </div>
 
-          {/* Download Button */}
           <div className="flex justify-end">
             <Button onClick={handleDownloadPDF} disabled={isGeneratingPDF} className="gap-2">
               {isGeneratingPDF ? (

@@ -255,7 +255,19 @@ export default function SupplierDashboard() {
             <div className="space-y-2">
               <p className="text-xs font-semibold uppercase tracking-widest text-primary/90">Supplier</p>
               <div className="flex flex-wrap items-center gap-3">
-                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">My depots</h1>
+                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
+                  {activeTab === "pricing"
+                    ? "Pricing"
+                    : activeTab === "driver-orders"
+                      ? "Driver orders"
+                      : activeTab === "analytics"
+                        ? "Analytics"
+                        : activeTab === "settlements"
+                          ? "Settlements"
+                          : activeTab === "invoices"
+                            ? "Invoices"
+                            : "My depots"}
+                </h1>
                 {supplierProfile && (
                   <Badge
                     variant={
@@ -271,12 +283,26 @@ export default function SupplierDashboard() {
                   </Badge>
                 )}
               </div>
-              <p className="text-sm text-muted-foreground">Manage your fuel supply locations and depot pricing</p>
+              <p className="text-sm text-muted-foreground">
+                {activeTab === "pricing"
+                  ? "Set fuel prices and stock for each depot"
+                  : activeTab === "driver-orders"
+                    ? "Review and fulfil driver pickup orders"
+                    : activeTab === "analytics"
+                      ? "Track order volume and value across your depots"
+                      : activeTab === "settlements"
+                        ? "View payout batches for completed depot orders"
+                        : activeTab === "invoices"
+                          ? "Download invoices for completed orders"
+                          : "Manage your fuel supply locations and depot details"}
+              </p>
             </div>
-            <Button onClick={handleAddDepot} data-testid="button-add-depot" className="rounded-full shadow-md shrink-0">
-              <Plus className="h-4 w-4 mr-2" />
-              Add depot
-            </Button>
+            {(activeTab === "depots" || activeTab === "pricing") && (
+              <Button onClick={handleAddDepot} data-testid="button-add-depot" className="rounded-full shadow-md shrink-0">
+                <Plus className="h-4 w-4 mr-2" />
+                Add depot
+              </Button>
+            )}
           </div>
         </div>
 
@@ -445,7 +471,12 @@ export default function SupplierDashboard() {
 
           {activeTab === "pricing" && (
             <div className="space-y-4">
-              <SupplierPricingManager />
+              <SupplierPricingManager
+                onGoToDepots={() => {
+                  setActiveTab("depots");
+                  setDepotStatusFilter(null);
+                }}
+              />
             </div>
           )}
 
