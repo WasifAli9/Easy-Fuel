@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Contabo Server — New Project Deployment Guide</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 18mm 16mm 18mm 16mm;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", Calibri, Arial, sans-serif;
+      font-size: 11pt;
+      line-height: 1.45;
+      color: #0f172a;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 24px 20px 48px;
+      background: #fff;
+    }
+    h1 {
+      font-size: 22pt;
+      margin: 0 0 6px;
+      color: #0f172a;
+      letter-spacing: -0.02em;
+    }
+    h2 {
+      font-size: 13pt;
+      margin: 26px 0 10px;
+      padding-bottom: 4px;
+      border-bottom: 2px solid #0f172a;
+      page-break-after: avoid;
+    }
+    h3 {
+      font-size: 11.5pt;
+      margin: 16px 0 6px;
+      color: #334155;
+      page-break-after: avoid;
+    }
+    p { margin: 0 0 8px; }
+    .meta {
+      color: #64748b;
+      font-size: 10pt;
+      margin-bottom: 18px;
+    }
+    .banner {
+      background: #0f172a;
+      color: #fff;
+      padding: 14px 16px;
+      margin: 0 0 20px;
+      font-size: 10.5pt;
+    }
+    .banner strong { color: #5eead4; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 8px 0 14px;
+      font-size: 10pt;
+    }
+    th, td {
+      border: 1px solid #cbd5e1;
+      padding: 7px 9px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #f1f5f9;
+      font-weight: 600;
+    }
+    code, .mono {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 9.5pt;
+      background: #f1f5f9;
+      padding: 1px 4px;
+    }
+    pre {
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 12px 14px;
+      overflow-x: auto;
+      font-size: 9pt;
+      line-height: 1.4;
+      margin: 8px 0 14px;
+      page-break-inside: avoid;
+    }
+    pre code { background: none; color: inherit; padding: 0; }
+    ul, ol { margin: 6px 0 12px; padding-left: 22px; }
+    li { margin: 3px 0; }
+    .check { list-style: none; padding-left: 0; }
+    .check li {
+      margin: 6px 0;
+      padding-left: 26px;
+      position: relative;
+    }
+    .check li::before {
+      content: "☐";
+      position: absolute;
+      left: 0;
+      font-size: 13pt;
+    }
+    .note {
+      border-left: 3px solid #0d9488;
+      background: #f0fdfa;
+      padding: 8px 12px;
+      margin: 10px 0 14px;
+      font-size: 10pt;
+    }
+    .warn {
+      border-left: 3px solid #d97706;
+      background: #fffbeb;
+      padding: 8px 12px;
+      margin: 10px 0 14px;
+      font-size: 10pt;
+    }
+    .footer {
+      margin-top: 28px;
+      padding-top: 10px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 9pt;
+      color: #94a3b8;
+    }
+    @media print {
+      body { padding: 0; }
+      .no-print { display: none !important; }
+      a { color: inherit; text-decoration: none; }
+    }
+    .no-print {
+      background: #ecfdf5;
+      border: 1px solid #99f6e4;
+      padding: 12px 14px;
+      margin-bottom: 20px;
+      font-size: 10.5pt;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="no-print">
+    <strong>Save as PDF:</strong> Press <code>Ctrl+P</code> → Destination: <strong>Save as PDF</strong> →
+    enable <strong>Background graphics</strong> → Save.
+    Suggested filename: <code>Contabo-New-Project-Deploy-Guide.pdf</code>
+  </div>
+
+  <h1>Contabo Server — New Project Deployment Guide</h1>
+  <p class="meta">
+    Host pattern used by EasyFuel / Inspect360 · Server example: <span class="mono">vmi3450363</span> ·
+    IP example: <span class="mono">169.58.40.94</span> · Updated August 2026
+  </p>
+
+  <div class="banner">
+    Use this checklist whenever you deploy a <strong>new app</strong> onto the shared Contabo Ubuntu host.
+    Do not invent a second proxy stack — join the existing <strong>Caddy + Postgres + Docker network</strong>.
+  </div>
+
+  <h2>1. Architecture (how this server works)</h2>
+  <table>
+    <tr><th>Component</th><th>Location / name</th><th>Role</th></tr>
+    <tr>
+      <td>Reverse proxy + HTTPS</td>
+      <td><code>/opt/caddy/</code> · container <code>caddy</code></td>
+      <td>Terminates TLS, routes domains to app containers</td>
+    </tr>
+    <tr>
+      <td>Postgres</td>
+      <td>container <code>postgres</code> (image postgres:16)</td>
+      <td>Shared DB server; each app gets its own database + user</td>
+    </tr>
+    <tr>
+      <td>Docker network</td>
+      <td><code>caddy</code> (external)</td>
+      <td>Apps talk to <code>caddy</code> and <code>postgres</code> by container name</td>
+    </tr>
+    <tr>
+      <td>App folder</td>
+      <td><code>/opt/&lt;appname&gt;/</code></td>
+      <td>Server-only <code>.env</code> + <code>docker-compose.yml</code></td>
+    </tr>
+    <tr>
+      <td>App container</td>
+      <td>e.g. <code>easyfuel</code>, <code>inspect360</code></td>
+      <td>No public ports — only reachable via Caddy on the Docker network</td>
+    </tr>
+  </table>
+
+  <div class="note">
+    <strong>Rule:</strong> App containers must <em>not</em> publish host ports like <code>5002:5002</code>.
+    Caddy reaches them as <code>http://&lt;container&gt;:&lt;port&gt;</code> inside network <code>caddy</code>.
+  </div>
+
+  <h2>2. Before you start — decide these names</h2>
+  <table>
+    <tr><th>Item</th><th>Example</th><th>Your value</th></tr>
+    <tr><td>App short name (folder / container)</td><td><code>myapp</code></td><td>________________</td></tr>
+    <tr><td>Public domain</td><td><code>portal.myapp.ai</code></td><td>________________</td></tr>
+    <tr><td>Internal app port</td><td><code>5000</code> or <code>5002</code></td><td>________________</td></tr>
+    <tr><td>Postgres database name</td><td><code>myapp</code></td><td>________________</td></tr>
+    <tr><td>Postgres app user</td><td><code>myapp_app</code></td><td>________________</td></tr>
+    <tr><td>GHCR image</td><td><code>ghcr.io/USER/myapp:latest</code></td><td>________________</td></tr>
+    <tr><td>Server path</td><td><code>/opt/myapp</code></td><td>________________</td></tr>
+  </table>
+
+  <h2>3. One-time checklist (new project)</h2>
+  <ol class="check">
+    <li>Create DNS <strong>A record</strong>: domain → Contabo public IP (wait until it resolves).</li>
+    <li>Create Postgres database + user + grants (see §4).</li>
+    <li>Create <code>/opt/&lt;app&gt;/</code> with <code>.env</code> and <code>docker-compose.yml</code> (see §5).</li>
+    <li>Add Caddy site block and reload Caddy (see §6).</li>
+    <li>Add GitHub Actions secrets + deploy workflow (see §7).</li>
+    <li>Build/push first image (or push to <code>main</code>) and confirm container is healthy.</li>
+    <li>Restore DB dump / run migrations if needed (see §8).</li>
+    <li>Copy file storage into the Docker volume if the app stores uploads (see §9).</li>
+    <li>Update payment/webhook/callback URLs to the new HTTPS domain.</li>
+    <li>Smoke-test: HTTPS loads, login works, API health, webhooks.</li>
+  </ol>
+
+  <h2>4. Create database on shared Postgres</h2>
+  <p>Admin user on this host is often <code>creativecloud</code> (not always <code>postgres</code>). Confirm first:</p>
+  <pre><code>docker exec -it postgres psql -U creativecloud -d postgres -c '\du'</code></pre>
+  <p>Then create DB + role (replace names/password):</p>
+  <pre><code>docker exec -it postgres psql -U creativecloud -d postgres &lt;&lt;'SQL'
+CREATE USER myapp_app WITH PASSWORD 'STRONG_PASSWORD_HERE';
+CREATE DATABASE myapp OWNER myapp_app;
+GRANT ALL PRIVILEGES ON DATABASE myapp TO myapp_app;
+\c myapp
+GRANT ALL ON SCHEMA public TO myapp_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO myapp_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO myapp_app;
+SQL</code></pre>
+  <div class="warn">
+    App <code>DATABASE_URL</code> host must be <code>postgres</code> (Docker DNS), not <code>localhost</code> and not the public IP.
+  </div>
+  <pre><code>DATABASE_URL=postgresql://myapp_app:STRONG_PASSWORD_HERE@postgres:5432/myapp</code></pre>
+
+  <h2>5. App directory on the server</h2>
+  <pre><code>mkdir -p /opt/myapp
+nano /opt/myapp/.env
+nano /opt/myapp/docker-compose.yml</code></pre>
+
+  <h3>5.1 Typical <code>.env</code> keys</h3>
+  <pre><code>NODE_ENV=production
+PORT=5000
+HOST=0.0.0.0
+TRUST_PROXY=1
+DATABASE_URL=postgresql://myapp_app:...@postgres:5432/myapp
+PUBLIC_APP_URL=https://portal.myapp.ai
+SESSION_SECRET=...
+# + any API keys, Resend, payment gateways, etc.</code></pre>
+  <div class="warn"><strong>Never commit</strong> the server <code>.env</code>. Keep a private password vault copy.</div>
+
+  <h3>5.2 Minimal <code>docker-compose.yml</code> pattern</h3>
+  <pre><code>services:
+  myapp:
+    image: ${MYAPP_IMAGE:-ghcr.io/USER/myapp:latest}
+    container_name: myapp
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "5000"
+      HOST: "0.0.0.0"
+      TRUST_PROXY: "1"
+    volumes:
+      - myapp_storage:/app/storage   # only if needed
+    # NO ports: section
+    networks:
+      - caddy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  myapp_storage:
+
+networks:
+  caddy:
+    external: true</code></pre>
+
+  <h2>6. Caddy (HTTPS + reverse proxy)</h2>
+  <p>Edit shared config carefully:</p>
+  <pre><code>nano /opt/caddy/Caddyfile</code></pre>
+  <p>Add a site block (container name + internal port must match compose):</p>
+  <pre><code>portal.myapp.ai {
+    reverse_proxy myapp:5000
+}</code></pre>
+  <p>Reload (do not recreate blindly if other sites are live):</p>
+  <pre><code>docker exec caddy caddy reload --config /etc/caddy/Caddyfile
+# or from /opt/caddy:
+# docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile</code></pre>
+  <p>Confirm:</p>
+  <pre><code>curl -I https://portal.myapp.ai
+docker ps --filter name=myapp
+docker logs --tail 80 myapp</code></pre>
+
+  <h2>7. GitHub Actions / GHCR deploy</h2>
+  <h3>7.1 Repo secrets</h3>
+  <table>
+    <tr><th>Secret</th><th>Purpose</th></tr>
+    <tr><td><code>CONTABO_HOST</code></td><td>Server IP / hostname</td></tr>
+    <tr><td><code>CONTABO_USER</code></td><td>Usually <code>root</code></td></tr>
+    <tr><td><code>CONTABO_SSH_KEY</code></td><td>Private deploy key</td></tr>
+    <tr><td><code>GHCR_PULL_TOKEN</code></td><td>Optional PAT with <code>read:packages</code> if image is private</td></tr>
+    <tr><td>Build-time tokens</td><td>e.g. <code>VITE_*</code> baked into SPA</td></tr>
+  </table>
+
+  <h3>7.2 Workflow outline</h3>
+  <ol>
+    <li>On push to <code>main</code>: build Docker image → push to <code>ghcr.io/...</code></li>
+    <li>SSH to Contabo → <code>docker login ghcr.io</code> → <code>docker pull</code></li>
+    <li><code>docker compose up -d --force-recreate</code> inside <code>/opt/&lt;app&gt;</code></li>
+  </ol>
+  <div class="note">
+    Day-to-day code deploys: <code>git push origin main</code>. Env-only changes: edit <code>/opt/&lt;app&gt;/.env</code> then recreate the container. DB schema/data is <em>not</em> automatic unless you add a migration step.
+  </div>
+
+  <h2>8. Database migration / restore</h2>
+  <ol>
+    <li>Dump from old host: <code>pg_dump</code> (custom <code>-Fc</code> or plain SQL).</li>
+    <li><code>scp</code> dump to Contabo.</li>
+    <li>Restore, e.g.:</li>
+  </ol>
+  <pre><code>docker cp ./backup.sql postgres:/tmp/backup.sql
+docker exec -i postgres psql -U creativecloud -d myapp &lt; /tmp/backup.sql
+# or pg_restore for custom format</code></pre>
+  <p>Then verify table ownership/grants for <code>myapp_app</code> (fix “permission denied for table …” errors).</p>
+
+  <h2>9. File storage (uploads)</h2>
+  <ol>
+    <li>Zip storage on the old server.</li>
+    <li>Upload to Contabo (WinSCP / <code>scp</code> / Filebin).</li>
+    <li>Copy into the named Docker volume:</li>
+  </ol>
+  <pre><code>docker volume ls | grep myapp
+# Example volume name: myapp_myapp_storage
+
+mkdir -p /tmp/myapp-storage
+unzip -o /tmp/storage.zip -d /tmp/myapp-storage
+# If zip contains a nested "storage/" folder:
+SRC=/tmp/myapp-storage/storage
+
+docker run --rm \
+  -v myapp_myapp_storage:/data \
+  -v "$SRC":/backup:ro \
+  alpine sh -c "cp -a /backup/. /data/ && ls -la /data"
+
+cd /opt/myapp && docker compose up -d --force-recreate</code></pre>
+
+  <h2>10. Post-deploy verification</h2>
+  <ol class="check">
+    <li><code>https://portal.…</code> loads (valid certificate).</li>
+    <li>Login / session cookies work (<code>TRUST_PROXY=1</code>, Caddy forwards proto).</li>
+    <li><code>docker ps</code> shows container healthy.</li>
+    <li>App can read/write DB (no permission errors in logs).</li>
+    <li>Uploads load if storage was migrated.</li>
+    <li>External webhooks (payments, email) point at the new HTTPS URLs.</li>
+    <li>Old server DNS removed / app stopped after cutover.</li>
+  </ol>
+
+  <h2>11. Useful commands (cheat sheet)</h2>
+  <pre><code># Status
+docker ps
+docker logs --tail 100 myapp
+docker exec caddy caddy reload --config /etc/caddy/Caddyfile
+
+# Env change
+nano /opt/myapp/.env
+cd /opt/myapp && docker compose up -d --force-recreate
+
+# DB shell
+docker exec -it postgres psql -U myapp_app -d myapp
+
+# Pull latest image manually
+cd /opt/myapp
+docker pull ghcr.io/USER/myapp:latest
+MYAPP_IMAGE=ghcr.io/USER/myapp:latest docker compose up -d --force-recreate</code></pre>
+
+  <h2>12. Existing apps on this host (reference)</h2>
+  <table>
+    <tr><th>App</th><th>Path</th><th>Domain (example)</th><th>Notes</th></tr>
+    <tr>
+      <td>EasyFuel</td>
+      <td><code>/opt/easyfuel</code></td>
+      <td><code>portal.easyfuel.ai</code></td>
+      <td>Port 5002 · volume <code>easyfuel_easyfuel_storage</code></td>
+    </tr>
+    <tr>
+      <td>Inspect360</td>
+      <td><code>/opt/inspect360</code></td>
+      <td><code>portal.inspect360.ai</code></td>
+      <td>Port 5000 · image often <code>inspect360:local</code></td>
+    </tr>
+  </table>
+
+  <h2>13. Common mistakes</h2>
+  <ul>
+    <li>Using <code>localhost</code> for Postgres from inside a container → use host <code>postgres</code>.</li>
+    <li>Publishing app ports on the host → conflicts and bypasses Caddy.</li>
+    <li><code>PUBLIC_APP_URL</code> with <code>http://</code> → payment redirects / cookies break; use <code>https://</code>.</li>
+    <li>Editing Caddyfile incorrectly → can take down other sites; always reload, then test all domains.</li>
+    <li>Forgetting DB grants → schedulers fail with <code>permission denied for table …</code>.</li>
+    <li>Local Windows <code>.env</code> using Docker paths like <code>/app/storage</code> → wrong for <code>npm run dev</code>; use <code>./storage</code> locally.</li>
+  </ul>
+
+  <div class="footer">
+    Contabo New Project Deployment Guide · Internal ops document · Print / Save as PDF from this HTML file<br />
+    Related repo docs: <code>docs/CONTABO_DEPLOY.md</code>, <code>docs/CONTABO_ARCHITECTURE.html</code>
+  </div>
+
+</body>
+</html>

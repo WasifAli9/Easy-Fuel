@@ -210,9 +210,13 @@ async function createOneApiPayment(
 
   const merchantReference = params.transactionReference.slice(0, 50);
   const expireAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-  const bankReference = (params.bankReference || merchantReference)
-    .replace(/[^a-zA-Z0-9]/g, "")
-    .slice(0, 20);
+  // Ozow bank statement ref: alphanumeric, 1–20 chars. Empty after sanitizing
+  // (UUID-only with hyphens stripped is fine; never send blank — staging 400s
+  // with "Bank reference missing" if BankReference is omitted/empty).
+  const bankReference = (
+    (params.bankReference || merchantReference).replace(/[^a-zA-Z0-9]/g, "") ||
+    `EF${Date.now().toString(36)}`
+  ).slice(0, 20);
 
   const successUrl = params.successUrl;
   const cancelUrl = params.cancelUrl;
@@ -241,6 +245,9 @@ async function createOneApiPayment(
     merchantReference,
     transactionReference: merchantReference,
     bankReference,
+    BankReference: bankReference,
+    beneficiaryReference: bankReference,
+    BeneficiaryReference: bankReference,
     expireAt,
     notifyUrl,
     NotifyUrl: notifyUrl,
@@ -272,6 +279,8 @@ async function createOneApiPayment(
     errorUrl,
     notifyUrl,
     isTest,
+    bankReference,
+    merchantReference,
     optional1: params.optional1 || null,
     optional2: params.optional2 || null,
   });

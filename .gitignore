@@ -11,3 +11,6 @@ vite.config.ts.*
 *.tar.gz
 .expo/
 mobile/.expo/
+mobile/.expo-test-bundle/
+mobile/adb logs.txt
+mobile/dist/

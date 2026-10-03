@@ -29,6 +29,7 @@ import {
   validateActiveFuelTypeId,
 } from "./fuel-type-service";
 import { z } from "zod";
+import { PaymentBlockedError } from "./payment-risk-service";
 import dotenv from "dotenv";
 import { normalizeSignatureForStorage, uploadUrlToObjectPath } from "./local-object-storage";
 import {
@@ -3806,7 +3807,7 @@ router.post("/depot-orders/:orderId/payment", checkDriverCompliance, async (req,
   const { orderId } = req.params;
 
   try {
-    const { initiateDepotOrderPayment, PaymentBlockedError } = await import("./payment-ledger-service");
+    const { initiateDepotOrderPayment } = await import("./payment-ledger-service");
     const result = await initiateDepotOrderPayment(orderId, user.id);
     res.json(result);
   } catch (error: any) {

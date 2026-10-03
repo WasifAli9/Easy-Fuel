@@ -1,0 +1,9 @@
+# Local/dev artifacts — must not ship in EAS uploads or JS bundles
+.expo-test-bundle/
+.expo/
+dist/
+adb logs.txt
+README.md
+QUALITY_AND_RELEASE.md
+.env
+.env.*

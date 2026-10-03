@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EasyFuel — Ozow Payment Integration</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 16mm 14mm 16mm 14mm;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", Calibri, Arial, sans-serif;
+      font-size: 10.5pt;
+      line-height: 1.45;
+      color: #0f172a;
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 20px 18px 40px;
+      background: #fff;
+    }
+    h1 {
+      font-size: 20pt;
+      margin: 0 0 4px;
+      letter-spacing: -0.02em;
+    }
+    .subtitle {
+      color: #475569;
+      margin: 0 0 6px;
+      font-size: 11pt;
+    }
+    .meta {
+      color: #64748b;
+      font-size: 9.5pt;
+      margin-bottom: 18px;
+    }
+    h2 {
+      font-size: 13pt;
+      margin: 22px 0 8px;
+      padding-bottom: 4px;
+      border-bottom: 2px solid #0d9488;
+      page-break-after: avoid;
+      color: #0f766e;
+    }
+    h3 {
+      font-size: 11pt;
+      margin: 14px 0 6px;
+      color: #334155;
+      page-break-after: avoid;
+    }
+    p { margin: 0 0 8px; }
+    ul, ol { margin: 0 0 10px; padding-left: 1.25rem; }
+    li { margin-bottom: 4px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 8px 0 14px;
+      font-size: 9.5pt;
+      page-break-inside: avoid;
+    }
+    th, td {
+      border: 1px solid #cbd5e1;
+      padding: 7px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #f0fdfa;
+      color: #0f766e;
+      font-weight: 600;
+    }
+    code, .mono {
+      font-family: Consolas, "Cascadia Code", monospace;
+      font-size: 9pt;
+      background: #f1f5f9;
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+    .box {
+      border: 1px solid #99f6e4;
+      background: #f0fdfa;
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin: 10px 0 14px;
+      page-break-inside: avoid;
+    }
+    .box.warn {
+      border-color: #fcd34d;
+      background: #fffbeb;
+    }
+    .flow {
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin: 8px 0 14px;
+      background: #f8fafc;
+      page-break-inside: avoid;
+      font-family: Consolas, "Cascadia Code", monospace;
+      font-size: 9pt;
+      white-space: pre-wrap;
+      line-height: 1.5;
+    }
+    .step {
+      margin: 0 0 8px;
+      padding-left: 8px;
+      border-left: 3px solid #0d9488;
+    }
+    .step strong { color: #0f766e; }
+    .footer-note {
+      margin-top: 22px;
+      padding-top: 10px;
+      border-top: 1px solid #e2e8f0;
+      color: #64748b;
+      font-size: 9pt;
+    }
+    @media print {
+      body { padding: 0; max-width: none; }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+  <h1>EasyFuel — Ozow Payment Integration</h1>
+  <p class="subtitle">How payments work: overall flow, pay-in, payout, keys, and environments</p>
+  <p class="meta">Portal: https://portal.easyfuel.ai · Provider: Ozow (South Africa) · Internal reference guide</p>
+
+  <!-- 1. PAYMENT FLOW -->
+  <h2>1. Payment flow (big picture)</h2>
+  <p>
+    EasyFuel uses <strong>Ozow</strong> for two different money movements. They look related, but they use
+    <strong>different APIs and different keys</strong>.
+  </p>
+  <ol>
+    <li><strong>Pay-in</strong> — customer or driver pays EasyFuel (order payment or depot order payment).</li>
+    <li><strong>Payout</strong> — EasyFuel sends money to a driver or supplier bank account after work is complete.</li>
+  </ol>
+
+  <div class="flow">Customer / Driver
+    │
+    │  pays online
+    ▼
+Ozow hosted checkout  ──notify webhook──►  EasyFuel server
+    │                                         │
+    │  browser return                         │  mark payment Complete
+    ▼                                         │  update order / depot order
+Portal payment result page                    │
+                                              ▼
+                                    (optional) Ozow Payout API
+                                              │
+                                              ▼
+                                    Driver / Supplier bank account</div>
+
+  <div class="step"><strong>Step A — Create payment</strong><br />
+    User starts checkout in web or mobile. Server creates a <code>payment_transactions</code> row, then asks Ozow for a checkout URL.
+  </div>
+  <div class="step"><strong>Step B — User pays on Ozow</strong><br />
+    User is redirected to Ozow’s hosted page and completes (or cancels) payment.
+  </div>
+  <div class="step"><strong>Step C — Ozow notifies EasyFuel</strong><br />
+    Ozow calls the <strong>notify webhook</strong>. This is the source of truth that marks the payment complete and updates the order.
+  </div>
+  <div class="step"><strong>Step D — User returns to portal</strong><br />
+    Success / Cancel / Error return URLs bring the user back to EasyFuel’s payment result pages.
+  </div>
+  <div class="step"><strong>Step E — Payout (when applicable)</strong><br />
+    After a verified pay-in, the system may submit a payout to the payee’s bank details via Ozow Payouts API.
+  </div>
+
+  <div class="box">
+    <strong>Important:</strong> Browser return pages show the user a result. The <strong>notify webhook</strong> is what actually confirms money and updates business state. Both must be configured correctly.
+  </div>
+
+  <!-- 2. PAY-IN -->
+  <h2>2. Pay-in (money in)</h2>
+  <p>
+    Pay-in uses Ozow <strong>One API</strong>. The server obtains an OAuth token, creates a payment, and returns a
+    hosted checkout URL for web or mobile.
+  </p>
+
+  <h3>2.1 What pay-in is used for</h3>
+  <ul>
+    <li>Customer delivery order payments (order awaiting payment).</li>
+    <li>Driver → depot order online payments (depot order pending payment).</li>
+  </ul>
+
+  <h3>2.2 How pay-in works</h3>
+  <ol>
+    <li>Server checks Ozow is configured (<code>site code</code>, client credentials, <code>PUBLIC_APP_URL</code>).</li>
+    <li>If <code>OZOW_PAYIN_DRY_RUN=true</code>, no Ozow call is made — user is sent straight to a local success page (dev only).</li>
+    <li>Otherwise: get One API access token → <code>POST /v1/payments</code> → receive checkout URL.</li>
+    <li>User pays on Ozow.</li>
+    <li>Ozow hits <code>/api/webhooks/ozow-payin</code> (signed with merchant private key).</li>
+    <li>Server maps Ozow status (e.g. Complete) and updates the linked order / depot order.</li>
+    <li>User lands on <code>/payment/success</code>, <code>/payment/cancel</code>, or <code>/payment/error</code> via short return routes.</li>
+  </ol>
+
+  <h3>2.3 Return &amp; notify URLs</h3>
+  <p>Built from <code>PUBLIC_APP_URL</code> (must be HTTPS). Also register the same URLs in Ozow Merchant Admin → Site → URLs.</p>
+  <table>
+    <thead>
+      <tr><th>Purpose</th><th>URL</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Success (browser)</td><td><code>https://portal.easyfuel.ai/api/ozow/return/success</code></td></tr>
+      <tr><td>Cancel (browser)</td><td><code>https://portal.easyfuel.ai/api/ozow/return/cancel</code></td></tr>
+      <tr><td>Error (browser)</td><td><code>https://portal.easyfuel.ai/api/ozow/return/error</code></td></tr>
+      <tr><td>Notify (server webhook)</td><td><code>https://portal.easyfuel.ai/api/webhooks/ozow-payin</code></td></tr>
+    </tbody>
+  </table>
+  <div class="box warn">
+    If Success/Cancel/Error are missing in Ozow admin (especially on staging with <code>OZOW_IS_TEST=true</code>),
+    the browser may stop on Ozow’s <code>responsetest.php</code> page and never return to the portal.
+  </div>
+
+  <h3>2.4 Pay-in keys &amp; settings</h3>
+  <table>
+    <thead>
+      <tr><th>Variable</th><th>Role</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>PUBLIC_APP_URL</code></td>
+        <td>Base URL for return + notify links. Production: <code>https://portal.easyfuel.ai</code>. Forced to HTTPS.</td>
+      </tr>
+      <tr>
+        <td><code>OZOW_SITE_CODE</code></td>
+        <td>Merchant / site identifier in Ozow.</td>
+      </tr>
+      <tr>
+        <td><code>OZOW_CLIENT_ID</code></td>
+        <td>One API OAuth client ID (create checkout sessions).</td>
+      </tr>
+      <tr>
+        <td><code>OZOW_CLIENT_SECRET</code></td>
+        <td>One API OAuth client secret. Used for token request (and legacy hash fallback).</td>
+      </tr>
+      <tr>
+        <td><code>OZOW_PRIVATE_KEY</code></td>
+        <td>Merchant private key from Ozow dashboard. Verifies pay-in webhook Hash (SHA512).</td>
+      </tr>
+      <tr>
+        <td><code>OZOW_ONE_API_BASE_URL</code></td>
+        <td>API host. Staging: <code>https://stagingone.ozow.com</code>. Live: <code>https://one.ozow.com</code>.</td>
+      </tr>
+      <tr>
+        <td><code>OZOW_IS_TEST</code></td>
+        <td><code>true</code> = test payment flag sent to Ozow. <code>false</code> for real production payments.</td>
+      </tr>
+      <tr>
+        <td><code>OZOW_PAYIN_DRY_RUN</code></td>
+        <td><code>true</code> = skip Ozow entirely (fake success URL). Local / demo only.</td>
+      </tr>
+      <tr>
+        <td><code>OZOW_WEBHOOK_SKIP_VERIFY</code></td>
+        <td>Only with <code>OZOW_IS_TEST</code>: allow mismatched webhook hash. Never use in production.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Pay-in is considered <strong>configured</strong> when site code, client ID, client secret, and
+    <code>PUBLIC_APP_URL</code> are all set.
+  </p>
+
+  <!-- 3. PAYOUT -->
+  <h2>3. Payout (money out)</h2>
+  <p>
+    Payout uses Ozow <strong>Payouts API</strong> — a separate product from One API pay-in.
+    It sends net amounts to driver or supplier bank accounts after a successful / verified payment.
+  </p>
+
+  <h3>3.1 How payout works</h3>
+  <ol>
+    <li>Pay-in webhook marks the payment Complete and related business state is updated.</li>
+    <li>Server looks up the payee (driver or supplier) and their saved bank details.</li>
+    <li>If bank details are missing, payout is blocked and a warning / notification path is used.</li>
+    <li>Server matches the bank name to an Ozow <code>bankGroupId</code> (from “get available banks”).</li>
+    <li>If <code>OZOW_PAYOUT_DRY_RUN=true</code>, payout is simulated and not sent to Ozow.</li>
+    <li>Otherwise: submit payout request to Ozow Payouts API.</li>
+    <li>Ozow may call payout notification / verification webhooks on your server.</li>
+  </ol>
+
+  <h3>3.2 Payout webhook URLs</h3>
+  <table>
+    <thead>
+      <tr><th>Purpose</th><th>Default URL</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Payout notification</td>
+        <td><code>https://portal.easyfuel.ai/api/webhooks/ozow-payout-notification</code></td>
+      </tr>
+      <tr>
+        <td>Payout verification</td>
+        <td><code>https://portal.easyfuel.ai/api/webhooks/ozow-payout-verification</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <p>These can be overridden with <code>OZOW_PAYOUT_NOTIFICATION_URL</code> / <code>OZOW_PAYOUT_VERIFICATION_URL</code> if needed.</p>
+
+  <h3>3.3 Payout keys &amp; settings</h3>
+  <table>
+    <thead>
+      <tr><th>Variable</th><th>Role</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>OZOW_SITE_CODE</code></td>
+        <td>Same site code as pay-in (shared merchant identity).</td>
+      </tr>
+      <tr>
+        <td><code>OZOW_PAYOUT_API_KEY</code></td>
+        <td><strong>Dedicated</strong> Payouts API key from Ozow. Do not reuse the One API client secret.</td>
+      </tr>
+      <tr>
+        <td><code>OZOW_PAYOUT_ACCESS_TOKEN</code></td>
+        <td>Optional shared secret to authenticate payout webhook callbacks.</td>
+      </tr>
+      <tr>
+        <td><code>OZOW_PAYOUT_API_BASE_URL</code></td>
+        <td>Payouts API host. Default staging: <code>https://stagingpayoutsapi.ozow.com</code>. Set production URL for live.</td>
+      </tr>
+      <tr>
+        <td><code>OZOW_PAYOUT_SUBMIT_PATH</code></td>
+        <td>Submit path (default <code>/v1/requestpayout</code>).</td>
+      </tr>
+      <tr>
+        <td><code>OZOW_PAYOUT_DRY_RUN</code></td>
+        <td><code>true</code> = do not call Ozow payouts (simulate only).</td>
+      </tr>
+      <tr>
+        <td><code>OZOW_IS_TEST</code></td>
+        <td>Also influences payout test behaviour where applicable.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Payout is considered <strong>configured</strong> when <code>OZOW_PAYOUT_API_KEY</code> and
+    <code>OZOW_SITE_CODE</code> are set.
+  </p>
+
+  <!-- 4. HOW IT WORKS END-TO-END -->
+  <h2>4. How it all works together</h2>
+
+  <h3>4.1 End-to-end example (delivery payment)</h3>
+  <ol>
+    <li>Customer places an order → order enters awaiting payment.</li>
+    <li>Customer chooses online payment → EasyFuel creates a payment transaction and Ozow checkout URL.</li>
+    <li>Customer pays on Ozow.</li>
+    <li>Ozow notify webhook → payment marked Complete → order progresses (e.g. paid / assignable).</li>
+    <li>Customer sees success page on the portal / app.</li>
+    <li>Later, when payout rules apply, EasyFuel may transfer the driver’s share to their bank via Payouts API.</li>
+  </ol>
+
+  <h3>4.2 End-to-end example (depot order payment)</h3>
+  <ol>
+    <li>Driver has a depot order in <code>pending_payment</code>.</li>
+    <li>Driver starts online payment → same Ozow pay-in path, with context stored so returns know it is a depot order.</li>
+    <li>Ozow notify → depot order payment verified / updated.</li>
+    <li>Where configured, supplier/depot payout may follow once bank details exist.</li>
+  </ol>
+
+  <h3>4.3 Environments (what to turn on)</h3>
+  <table>
+    <thead>
+      <tr><th>Mode</th><th>Suggested settings</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Local / UI demo</strong></td>
+        <td><code>OZOW_PAYIN_DRY_RUN=true</code> (optional payout dry-run too). No real Ozow calls.</td>
+      </tr>
+      <tr>
+        <td><strong>Staging with Ozow</strong></td>
+        <td>Dry-run off · <code>OZOW_IS_TEST=true</code> · staging One API + staging payouts URLs · URLs registered in Ozow test site.</td>
+      </tr>
+      <tr>
+        <td><strong>Production</strong></td>
+        <td>Dry-run off · <code>OZOW_IS_TEST=false</code> · <code>OZOW_ONE_API_BASE_URL=https://one.ozow.com</code> · live payout base · real keys · webhook verify on · <code>PUBLIC_APP_URL=https://portal.easyfuel.ai</code>.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>4.4 Where secrets live</h3>
+  <ul>
+    <li>All Ozow keys and flags live on the <strong>server</strong> <code>.env</code> (e.g. Contabo <code>/opt/easyfuel/.env</code>).</li>
+    <li>The mobile app only needs the API base URL (e.g. <code>EXPO_PUBLIC_API_BASE_URL</code>). It does <strong>not</strong> hold Ozow secrets.</li>
+    <li>Never commit real keys to git. Keep them in server env / password manager only.</li>
+  </ul>
+
+  <div class="box">
+    <strong>Quick mental model:</strong><br />
+    Pay-in = customer/driver → EasyFuel (One API + client ID/secret + private key).<br />
+    Payout = EasyFuel → driver/supplier bank (Payouts API + payout API key).<br />
+    Webhook notify = truth for “paid”; return URLs = UX for the user coming back.
+  </div>
+
+  <p class="footer-note">
+    EasyFuel Ozow Payment Integration · Generated for internal / ops reference · Do not put live secrets in this document.
+  </p>
+</body>
+</html>

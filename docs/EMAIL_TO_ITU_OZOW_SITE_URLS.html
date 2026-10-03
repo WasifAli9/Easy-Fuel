@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EasyFuel — Request to add Ozow Site URLs</title>
+  <style>
+    body {
+      font-family: "Segoe UI", Arial, Helvetica, sans-serif;
+      font-size: 14px;
+      line-height: 1.55;
+      color: #1a1a1a;
+      max-width: 680px;
+      margin: 24px auto;
+      padding: 0 16px 40px;
+    }
+    p { margin: 0 0 12px; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 12px 0 16px;
+      font-size: 13px;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #f3f4f6; }
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      background: #f5f5f5;
+      padding: 1px 4px;
+    }
+    .note {
+      background: #fff8e6;
+      border: 1px solid #f0d78c;
+      padding: 10px 12px;
+      margin: 14px 0;
+    }
+  </style>
+</head>
+<body>
+  <p>Hi Itu,</p>
+
+  <p>
+    I hope you are well. We are continuing Ozow staging integration testing for
+    <strong>EasyFuel</strong> (<code>portal.easyfuel.ai</code>).
+  </p>
+
+  <p>
+    Could you please add / update the following <strong>Site Webhook URLs</strong>
+    on our <strong>already existing Ozow site</strong>? I do not have permission
+    in the Ozow dashboard to edit these fields myself.
+  </p>
+
+  <div class="note">
+    <strong>Why this is urgent:</strong> without these URLs configured on the site,
+    successful test payments stay on Ozow’s staging result page and do not redirect
+    back to EasyFuel. That is currently blocking our end-to-end pay-in testing.
+  </div>
+
+  <p>Please set the site URLs as follows:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Field</th>
+        <th>URL</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Cancel Url</td>
+        <td><code>https://portal.easyfuel.ai/api/ozow/return/cancel</code></td>
+      </tr>
+      <tr>
+        <td>Error Url</td>
+        <td><code>https://portal.easyfuel.ai/api/ozow/return/error</code></td>
+      </tr>
+      <tr>
+        <td>Success Url</td>
+        <td><code>https://portal.easyfuel.ai/api/ozow/return/success</code></td>
+      </tr>
+      <tr>
+        <td>Notify Url</td>
+        <td><code>https://portal.easyfuel.ai/api/webhooks/ozow-payin</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    These should be applied to our existing EasyFuel / organisation site in
+    <strong>staging</strong> (the site linked to the credentials we are already using).
+  </p>
+
+  <p>
+    Once updated, please confirm so we can re-run a test payment and verify the
+    redirect + notify webhook flow.
+  </p>
+
+  <p>
+    Thank you for your help.<br />
+    Kind regards,<br />
+    <!-- Replace with your name / role before sending -->
+    [Your Name]<br />
+    EasyFuel
+  </p>
+</body>
+</html>

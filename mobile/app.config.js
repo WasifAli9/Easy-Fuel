@@ -17,7 +17,7 @@ export default {
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
     icon: "./assets/images/icon-512.png",
-    assetBundlePatterns: ["**/*"],
+    assetBundlePatterns: ["assets/**/*"],
     splash: {
       image: "./assets/images/icon-512.png",
       resizeMode: "contain",
