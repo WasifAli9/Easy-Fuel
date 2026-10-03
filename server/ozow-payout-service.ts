@@ -536,14 +536,50 @@ async function findPayoutRow(ozowPayoutId: string) {
   return byId[0] ?? null;
 }
 
-export async function verifyPayoutRequest(payload: Record<string, unknown>): Promise<boolean> {
-  const token =
+export function extractPayoutAccessToken(
+  payload: Record<string, unknown>,
+  headers?: Record<string, unknown>,
+): string {
+  const fromBody =
     payload.accessToken ||
     payload.AccessToken ||
     payload.token ||
-    payload.Token;
+    payload.Token ||
+    payload.access_token;
+  if (fromBody != null && String(fromBody).trim() !== "") return String(fromBody).trim();
+
+  if (!headers) return "";
+  const pick = (...names: string[]) => {
+    for (const n of names) {
+      const v = headers[n] ?? headers[n.toLowerCase()];
+      if (v == null) continue;
+      const s = Array.isArray(v) ? String(v[0]) : String(v);
+      if (s.trim()) return s.trim();
+    }
+    return "";
+  };
+  const headerTok = pick("access-token", "accesstoken", "x-access-token", "x-ozow-access-token");
+  if (headerTok) return headerTok;
+  const auth = pick("authorization");
+  if (auth.toLowerCase().startsWith("bearer ")) return auth.slice(7).trim();
+  return "";
+}
+
+/**
+ * Ozow payout verification webhook.
+ * Dashboard only registers the URL — Ozow often sends NO access token.
+ * Reject only when a token is present and does not match.
+ */
+export async function verifyPayoutRequest(
+  payload: Record<string, unknown>,
+  headers?: Record<string, unknown>,
+): Promise<boolean> {
   if (!OZOW_PAYOUT_ACCESS_TOKEN) return true;
-  return String(token) === OZOW_PAYOUT_ACCESS_TOKEN;
+  const token = extractPayoutAccessToken(payload, headers);
+  if (!token) return true;
+  if (token === OZOW_PAYOUT_ACCESS_TOKEN) return true;
+  if (OZOW_PAYOUT_API_KEY && token === OZOW_PAYOUT_API_KEY) return true;
+  return false;
 }
 
 /** Decryption key stored when payout was submitted (for Ozow verification webhook). */

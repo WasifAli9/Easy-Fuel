@@ -7,6 +7,7 @@ import { findPaymentTransactionByReference } from "./payment-service";
 import { completePaymentFromWebhook } from "./payment-ledger-service";
 import {
   verifyPayoutRequest,
+  extractPayoutAccessToken,
   markPayoutCompleted,
   markPayoutFailed,
   markPayoutCancelled,
@@ -77,8 +78,17 @@ export async function handleOzowPayoutVerificationWebhook(req: Request, res: Res
   try {
     const flat = flattenIncoming(req);
     const body = { ...flat, ...(req.body as object) } as Record<string, unknown>;
+    const headerBag = req.headers as Record<string, unknown>;
+    const presentedToken = extractPayoutAccessToken(body, headerBag);
 
-    if (!(await verifyPayoutRequest(body))) {
+    console.info("[ozow-payout-verification] inbound", {
+      method: req.method,
+      bodyKeys: Object.keys(body),
+      hasAccessToken: Boolean(presentedToken),
+    });
+
+    if (!(await verifyPayoutRequest(body, headerBag))) {
+      console.warn("[ozow-payout-verification] rejected: access token mismatch");
       return res.status(401).json({
         verified: false,
         IsVerified: false,
