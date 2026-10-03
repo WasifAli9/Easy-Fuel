@@ -79,7 +79,11 @@ export async function handleOzowPayoutVerificationWebhook(req: Request, res: Res
     const body = { ...flat, ...(req.body as object) } as Record<string, unknown>;
 
     if (!(await verifyPayoutRequest(body))) {
-      return res.status(401).json({ verified: false, error: "Invalid access token" });
+      return res.status(401).json({
+        verified: false,
+        IsVerified: false,
+        error: "Invalid access token",
+      });
     }
 
     const payoutId = String(
@@ -98,23 +102,48 @@ export async function handleOzowPayoutVerificationWebhook(req: Request, res: Res
       const requestedAmount = Number(body.amount || body.Amount || 0);
       const expectedRands = payout.amountCents / 100;
       if (requestedAmount > 0 && Math.abs(requestedAmount - expectedRands) > 0.01) {
-        return res.status(200).json({ verified: false, reason: "Amount mismatch" });
+        console.warn("[ozow-payout-verification] amount mismatch", {
+          payoutId,
+          requestedAmount,
+          expectedRands,
+        });
+        return res.status(200).json({
+          verified: false,
+          IsVerified: false,
+          isVerified: false,
+          reason: "Amount mismatch",
+        });
       }
     }
 
     const decryptionKey = getStoredAccountDecryptionKey(payout);
+    const approved = Boolean(decryptionKey);
+    console.info("[ozow-payout-verification]", {
+      payoutId: payoutId || null,
+      merchantRef: merchantRef || null,
+      found: Boolean(payout),
+      hasDecryptionKey: approved,
+    });
+
+    // Ozow money-out Test 3 requires IsVerified: true + AccountNumberDecryptionKey.
     return res.status(200).json({
-      verified: true,
+      verified: approved,
+      IsVerified: approved,
+      isVerified: approved,
       ...(decryptionKey
         ? {
             accountNumberDecryptionKey: decryptionKey,
             AccountNumberDecryptionKey: decryptionKey,
           }
-        : {}),
+        : { reason: payout ? "Decryption key missing" : "Payout not found" }),
     });
   } catch (e) {
     console.error("[ozow-payout-verification]", e);
-    return res.status(500).json({ verified: false, error: "Verification failed" });
+    return res.status(500).json({
+      verified: false,
+      IsVerified: false,
+      error: "Verification failed",
+    });
   }
 }
 

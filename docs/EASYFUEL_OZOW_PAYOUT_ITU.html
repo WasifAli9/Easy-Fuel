@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EasyFuel — Ozow Payout: Itu brief + test plan</title>
+  <style>
+    body {
+      font-family: "Segoe UI", Arial, Helvetica, sans-serif;
+      font-size: 14px;
+      line-height: 1.55;
+      color: #1a1a1a;
+      max-width: 820px;
+      margin: 24px auto;
+      padding: 0 16px 48px;
+    }
+    h1 { font-size: 22px; margin: 0 0 6px; }
+    h2 {
+      font-size: 16px;
+      margin: 28px 0 10px;
+      padding-bottom: 4px;
+      border-bottom: 2px solid #0d9488;
+      color: #0f766e;
+    }
+    h3 { font-size: 14px; margin: 16px 0 8px; }
+    p { margin: 0 0 10px; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 10px 0 16px;
+      font-size: 13px;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #f0fdfa; }
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      background: #f5f5f5;
+      padding: 1px 4px;
+    }
+    .box {
+      border: 1px solid #99f6e4;
+      background: #f0fdfa;
+      padding: 12px 14px;
+      margin: 12px 0 16px;
+      border-radius: 6px;
+    }
+    .warn {
+      border-color: #f0d78c;
+      background: #fff8e6;
+    }
+    .ok {
+      border-color: #86efac;
+      background: #f0fdf4;
+    }
+    table.results th:nth-child(1) { width: 18%; }
+    table.results th:nth-child(2) { width: 22%; }
+    table.results th:nth-child(3) { width: 32%; }
+    table.results th:nth-child(4) { width: 28%; }
+    table.results td { font-size: 12px; }
+    .email {
+      border: 1px solid #d1d5db;
+      background: #fafafa;
+      padding: 14px 16px;
+      margin: 12px 0 16px;
+    }
+    .who { font-weight: 700; color: #0f766e; }
+    ul { margin: 0 0 12px; padding-left: 1.25rem; }
+    li { margin-bottom: 4px; }
+    .muted { color: #64748b; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>EasyFuel — Ozow payout (money out)</h1>
+  <p class="muted">
+    Staging · portal.easyfuel.ai · Payouts API (not Dashboard bulk CSV) ·
+    Docs: hub.ozow.com Payouts API + Money out test cases
+  </p>
+
+  <h2>1. Email you can send to Itu</h2>
+  <p class="muted">Site URLs are already correct — this email only asks for float / Test 6–7, not URL setup.</p>
+  <div class="email">
+    <p>Hi Itu,</p>
+    <p>
+      We are ready to run <strong>EasyFuel payout (money out)</strong> staging tests for our
+      existing organisation site. Pay-in uses One API; payouts use the
+      <strong>Payouts API</strong> (<code>https://stagingpayoutsapi.ozow.com/v1</code>), not Dashboard bulk CSV.
+    </p>
+    <p>
+      We have already confirmed the site URLs in the Ozow dashboard and they match our app
+      (pay-in Success/Cancel/Error/Notify, plus payout Notify Url and Verification End Point).
+      Staging payout limits on the site are Minimum <strong>R1</strong> / Maximum <strong>R20</strong>, which matches Ozow Tests 1 and 2.
+    </p>
+    <p>Please confirm the remaining items so we can complete official money-out evidence:</p>
+    <ul>
+      <li>Staging <strong>float</strong> is funded for test payouts.</li>
+      <li>Float-balance alert email is configured (Ozow Test 7 — trigger at R99 in staging).</li>
+      <li>How you want us to trigger a <strong>cancelled payout</strong> for Test 6.</li>
+      <li>We can use <strong>stagingdash.ozow.com</strong> to capture payout evidence URLs.</li>
+    </ul>
+    <p>
+      Our integration uses <code>IsRtc = false</code>, encrypts the account number, and responds to
+      verification with <code>IsVerified: true</code> and <code>AccountNumberDecryptionKey</code>.
+      We will run the mandatory API + mock test cases and send evidence via your link.
+    </p>
+    <p>Kind regards,<br />[Your Name]<br />EasyFuel</p>
+  </div>
+
+  <h2>2. What is already good in our code</h2>
+  <ul>
+    <li>Payouts API (not bulk CSV): get available banks → request payout → get payout status.</li>
+    <li>Auth: <code>ApiKey</code> + <code>SiteCode</code> (separate from One API client secret).</li>
+    <li>Staging: <code>IsRtc: false</code> (RTC is not available in staging).</li>
+    <li>Hash: SHA512 of concatenated fields + payout API key (lowercase), per Ozow.</li>
+    <li>Account number encrypted AES-256-CBC; key stored and returned on verification.</li>
+    <li>Verification webhook now returns <code>IsVerified: true</code> + decryption key (Ozow Test 3).</li>
+    <li>Notification webhook handles verificationSuccess, complete, cancelled, failed.</li>
+    <li>Payout is triggered automatically after a <strong>successful pay-in</strong> (not a separate “Pay out” button):
+      customer delivery paid → driver payout; depot order paid → supplier payout.</li>
+  </ul>
+
+  <h2>3. Ozow site URLs — checked 3 Oct 2026</h2>
+  <div class="box ok">
+    <strong>Correct — already saved on the staging site.</strong> No Itu change needed for these URLs.
+  </div>
+  <table>
+    <thead>
+      <tr><th>Type</th><th>Ozow field</th><th>Value on site</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Pay-in</td>
+        <td>Cancel Url</td>
+        <td><code>https://portal.easyfuel.ai/api/ozow/return/cancel</code></td>
+        <td class="status-ok">Correct</td>
+      </tr>
+      <tr>
+        <td>Pay-in</td>
+        <td>Error Url</td>
+        <td><code>https://portal.easyfuel.ai/api/ozow/return/error</code></td>
+        <td class="status-ok">Correct</td>
+      </tr>
+      <tr>
+        <td>Pay-in</td>
+        <td>Success Url</td>
+        <td><code>https://portal.easyfuel.ai/api/ozow/return/success</code></td>
+        <td class="status-ok">Correct</td>
+      </tr>
+      <tr>
+        <td>Pay-in</td>
+        <td>Notify Url</td>
+        <td><code>https://portal.easyfuel.ai/api/webhooks/ozow-payin</code></td>
+        <td class="status-ok">Correct</td>
+      </tr>
+      <tr>
+        <td>Payout</td>
+        <td>Notify Url</td>
+        <td><code>https://portal.easyfuel.ai/api/webhooks/ozow-payout-notification</code></td>
+        <td class="status-ok">Correct</td>
+      </tr>
+      <tr>
+        <td>Payout</td>
+        <td>Verification End Point</td>
+        <td><code>https://portal.easyfuel.ai/api/webhooks/ozow-payout-verification</code></td>
+        <td class="status-ok">Correct</td>
+      </tr>
+      <tr>
+        <td>Payout</td>
+        <td>Minimum Amount</td>
+        <td>1 (R1.00)</td>
+        <td class="status-ok">Matches Ozow Test 1</td>
+      </tr>
+      <tr>
+        <td>Payout</td>
+        <td>Maximum Amount</td>
+        <td>20 (R20.00)</td>
+        <td class="status-ok">Matches Ozow Test 2</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="box warn">
+    Staging payouts that succeed (Tests 3–5) must be <strong>between R1 and R20</strong>.
+    A depot order of R800 will be rejected as above maximum until production limits are raised.
+    For the happy-path app test, use a small order (e.g. R1–R20) or run requestpayout in Postman with amount 10.00.
+  </div>
+
+  <h2>4. Payout test results (Ozow money-out, EasyFuel API path)</h2>
+  <p>
+    Official source:
+    <a href="https://hub.ozow.com/integration-methods/testing/payout-test-cases/#how-the-process-works">Money out test cases</a>
+    and
+    <a href="https://hub.ozow.com/api-reference/payouts-api/">Payouts API</a>.
+    EasyFuel uses the <strong>Payouts API</strong> only. Date of API run: <strong>3 Oct 2026</strong>.
+  </p>
+
+  <table class="results">
+    <thead>
+      <tr>
+        <th>Test</th>
+        <th>What was sent</th>
+        <th>Ozow result</th>
+        <th>How we tested it</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Bulk payout 1</strong> — Successful bulk payout via Dashboard CSV</td>
+        <td>Nothing — EasyFuel does not use Dashboard bulk CSV.</td>
+        <td><strong>Not executed — not applicable.</strong> Skip unless Itu asks for bulk payouts as well as API.</td>
+        <td>N/A for this project. If required later: login stagingdash.ozow.com → Payouts → Bulk Payouts → upload CSV → approve batch → screenshot.</td>
+      </tr>
+      <tr>
+        <td><strong>API-1</strong> — Request payout below minimum (R1)</td>
+        <td>
+          <code>POST /v1/requestpayout</code><br />
+          Amount <code>0.50</code> (R0.50), <code>isRtc: false</code>, ABSA bank group, notify URL on portal.
+        </td>
+        <td>
+          HTTP 200.<br />
+          <code>payoutStatus.errorMessage: "Payout amount below minimum amount"</code><br />
+          <code>status: 1</code>, <code>subStatus: 101</code>, empty <code>payoutId</code>.
+        </td>
+        <td>Staging Payouts API from our test script (same calls as Postman), using org keys in <code>.env</code>. Command: <code>node scripts/ozow-payout-staging-tests.mjs</code></td>
+      </tr>
+      <tr>
+        <td><strong>API-2</strong> — Request payout above maximum (R20)</td>
+        <td>
+          <code>POST /v1/requestpayout</code><br />
+          Amount <code>21.00</code> (R21), <code>isRtc: false</code>, same bank / notify URL.
+        </td>
+        <td>
+          HTTP 200.<br />
+          <code>payoutStatus.errorMessage: "Payout amount exceeds maximum amount"</code><br />
+          <code>status: 1</code>, <code>subStatus: 101</code>, empty <code>payoutId</code>.
+        </td>
+        <td>Same script / Postman-equivalent against <code>https://stagingpayoutsapi.ozow.com/v1/requestpayout</code>.</td>
+      </tr>
+      <tr>
+        <td><strong>API-3</strong> — Verification webhook: respond with <code>IsVerified: true</code> + decryption key</td>
+        <td>Not sent as a completed Dashboard-verified flow yet. Code is ready to receive Ozow’s verification POST at our verification URL.</td>
+        <td>
+          <strong>Not executed.</strong> Need a payout that Ozow actually verifies (amount R1–R20) and a Dashboard screenshot of the verification success timestamp.
+        </td>
+        <td>
+          Deploy latest code (IsVerified fix). Create a staging payout of R1–R20 (script already created payout
+          <code>20261003-22bb-405f-9876-4f86f6f2eef1</code> — open it in stagingdash). Confirm webhook in EasyFuel logs
+          <code>[ozow-payout-verification]</code>. Save Dashboard URL as evidence.
+        </td>
+      </tr>
+      <tr>
+        <td><strong>API-4</strong> — Notification URL receives <code>verificationSuccess</code></td>
+        <td>Nothing extra — Ozow sends this after Test 3 succeeds.</td>
+        <td>
+          <strong>Not executed.</strong> Completes automatically after Test 3. Confirm under “Payout responses” on the payout in Dashboard.
+        </td>
+        <td>After Test 3: stagingdash → that payout → Payout responses showing notify to <code>/api/webhooks/ozow-payout-notification</code>. Copy URL / screenshot.</td>
+      </tr>
+      <tr>
+        <td><strong>API-5</strong> — Payout complete notification</td>
+        <td>Same valid staging payout (R1–R20) after verification finishes.</td>
+        <td>
+          <strong>Not executed.</strong> Dashboard must show the payout as successful and a complete notification to our notify URL.
+        </td>
+        <td>Wait for Ozow to complete the R10 payout (or a new R10 one). Screenshot Dashboard success. Check EasyFuel logs <code>[ozow-payout-notification]</code>.</td>
+      </tr>
+      <tr>
+        <td><strong>API-6</strong> — Payout cancelled notification</td>
+        <td>Not sent — Ozow does not document a single “cancel this” JSON field for us to guess.</td>
+        <td>
+          <strong>Not executed.</strong> Ask Itu how they want a cancelled payout produced in staging, then confirm our notify URL gets cancelled and Dashboard shows it.
+        </td>
+        <td>Itu / staging process. Our app already maps cancelled status on <code>/api/webhooks/ozow-payout-notification</code>.</td>
+      </tr>
+      <tr>
+        <td><strong>API-7</strong> — Low float balance alert (R99 in staging)</td>
+        <td>Nothing from EasyFuel — Ozow emails the float-alert user when staging float hits R99.</td>
+        <td>
+          <strong>Not executed.</strong> Need a screenshot of the alert email. Not an EasyFuel API call.
+        </td>
+        <td>Confirm with Itu that the alert recipient is set. Drain or wait until float ≤ R99, or ask Itu to trigger. Save the email screenshot.</td>
+      </tr>
+      <tr>
+        <td><strong>API-8</strong> — CDV / account number validation (<code>1234567890</code>)</td>
+        <td>
+          <code>POST /v1/requestpayout</code><br />
+          Amount <code>10.00</code>, account number <code>1234567890</code>, ABSA, <code>isRtc: false</code>.
+        </td>
+        <td>
+          HTTP 200.<br />
+          <code>payoutId: 20261003-d898-46b2-a844-a81cc059d126</code><br />
+          <code>payoutStatus.status: 1</code>, <code>subStatus: 201</code>, empty errorMessage.
+          <br /><em>Still open Dashboard to confirm CDV is visible (Ozow evidence is the Dashboard URL).</em>
+        </td>
+        <td>Same staging API script. Next: open this payout on stagingdash and save the URL if it shows CDV.</td>
+      </tr>
+      <tr>
+        <td><strong>API-9</strong> — Get payout status</td>
+        <td>
+          First: valid payout amount <code>10.00</code> →
+          <code>payoutId 20261003-22bb-405f-9876-4f86f6f2eef1</code>.<br />
+          Then: <code>GET /v1/getpayout?payoutId=20261003-22bb-405f-9876-4f86f6f2eef1</code>
+        </td>
+        <td>
+          HTTP 200 JSON.<br />
+          <code>amount: 10</code>, <code>isRtc: false</code>,
+          notify URL = portal payout-notification,
+          <code>payoutStatus.status: 1</code>, <code>subStatus: 201</code>.
+        </td>
+        <td>Same staging API script (equivalent to Postman GET getpayout).</td>
+      </tr>
+      <tr>
+        <td><strong>Mock-1</strong> — Account decryption failed</td>
+        <td>
+          Mock config: <code>IsAccountDecryptionFailed: true</code> (confirmed on getconfig).<br />
+          Then mock <code>requestpayout</code> amount 10.
+        </td>
+        <td>
+          <strong>Not executed (complete evidence).</strong> Config flag turned on, but mock request returned
+          <code>"Payout Request Failed"</code> with empty <code>payoutId</code>, so <code>getMockPayout</code> could not be called.
+          Ozow wants both JSON bodies.
+        </td>
+        <td>
+          Retry on <code>https://stagingpayoutsapi.ozow.com/mock/v1</code>: gettestconfiguration → settestconfiguration (only this flag true) →
+          submit a full hashed mock payout → getMockPayout. Reset flags after. Save both JSON responses.
+        </td>
+      </tr>
+      <tr>
+        <td><strong>Mock-2</strong> — Not verified response</td>
+        <td>Mock config: <code>IsNotVerifiedResponse: true</code>, then mock requestpayout R10.</td>
+        <td>
+          <strong>Not executed (complete evidence).</strong> Flag set, mock request
+          <code>"Payout Request Failed"</code>, no payoutId, no getMockPayout JSON.
+        </td>
+        <td>Same 5 mock steps as Mock-1, only <code>IsNotVerifiedResponse: true</code>. Reset config after.</td>
+      </tr>
+      <tr>
+        <td><strong>Mock-3</strong> — Account decryption key missing</td>
+        <td>Attempted set of decryption-key-missing flag, then mock requestpayout.</td>
+        <td>
+          <strong>Not executed (complete evidence).</strong> After setconfig, getconfig still showed
+          <code>isAccountNumberDecryptionKeyMissing: false</code> (flag name mismatch). Mock request failed with no payoutId.
+        </td>
+        <td>
+          Use Ozow’s field <code>IsAccountNumberDecryptionKeyMissing</code> (as returned by gettestconfiguration).
+          Repeat the 5 mock steps; save mock request JSON + getMockPayout JSON.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="box">
+    <strong>Executed so far:</strong> API-1, API-2, API-8 (API response), API-9.<br />
+    <strong>Still to finish for Ozow sign-off:</strong> API-3, 4, 5 (Dashboard + webhooks), API-6 (Itu), API-7 (email),
+    Mock-1–3 (full JSON), and Dashboard URL for API-8 CDV.
+  </div>
+
+  <h2>5. What you should do (checklist)</h2>
+  <ol>
+    <li>Deploy the latest code to Contabo (pay-in BankReference fix + payout IsVerified fix).</li>
+    <li>On Contabo <code>/opt/easyfuel/.env</code>:
+      <code>OZOW_PAYOUT_DRY_RUN=false</code>, org payout API key, <code>OZOW_IS_TEST=true</code>,
+      then <code>docker compose up -d --force-recreate</code>.</li>
+    <li>Site URLs are already correct — do not wait on Itu for URL setup. Still confirm float if payouts fail with a float error.</li>
+    <li>Confirm a driver or supplier has complete bank details (KYC).</li>
+    <li><strong>Happy path:</strong> Pay-in on staging, then payout amount must be <strong>R1–R20</strong> (site max is 20).
+      R800 depot orders will fail Test 3–5 on staging. Then check logs for
+      <code>[ozow-payout]</code> and <code>[ozow-payout-verification]</code>.</li>
+    <li>Open <a href="https://stagingdash.ozow.com">stagingdash.ozow.com</a>, copy payout URLs for Tests 3–5.</li>
+    <li>API-1, API-2, API-8 (API JSON), API-9 are already run. Still: Dashboard for API-8 CDV; API-3–5 in stagingdash; Mock-1–3 full JSON; ask Itu for Test 6 and 7.</li>
+    <li>Ask Itu about Test 6 (cancel) and Test 7 (float email).</li>
+    <li>Submit evidence using the link Itu provides.</li>
+  </ol>
+
+  <h2>6. Staging rules (do not skip)</h2>
+  <ul>
+    <li>Always <code>IsRtc: false</code> (already in our code).</li>
+    <li>No real funds; use Ozow test float.</li>
+    <li>Site min/max is R1–R20. Tests 1–2 use &lt; R1 and &gt; R20 via API. Happy path (Tests 3–5) must stay inside R1–R20 — not R800 depot totals.</li>
+    <li>Mock payouts do <strong>not</strong> appear on the Dashboard — JSON only.</li>
+  </ul>
+
+  <h2>7. After go-live (later — not now)</h2>
+  <p>
+    Production payouts are not self-service. After Ozow signs off, they collect production
+    config and enable live payouts. Then switch
+    <code>OZOW_PAYOUT_API_BASE_URL</code> to production and <code>OZOW_IS_TEST=false</code>
+    with production keys — only after Itu confirms.
+  </p>
+
+  <p class="muted">
+    EasyFuel internal + Itu briefing · Update [Your Name] before sending · Do not paste live secrets in this file.
+  </p>
+</body>
+</html>

@@ -332,6 +332,7 @@ export async function submitOzowPayout(params: CreatePayoutParams): Promise<stri
     const branchCode =
       (params.bank.branchCode || bankGroup.universalBranchCode || "").replace(/\D/g, "").slice(0, 10);
     const notifyUrl = payoutNotificationUrl();
+    const verificationUrl = payoutVerificationUrl();
     const isRtc = false;
 
     const encryptionKeyHex = newPayoutEncryptionKeyHex();
@@ -364,6 +365,7 @@ export async function submitOzowPayout(params: CreatePayoutParams): Promise<stri
         customerBankReference,
         isRtc,
         notifyUrl,
+        verificationUrl,
         bankGroupId: bankGroup.bankGroupId,
         branchCode,
         accountNumberLen: encryptedAccount.length,
@@ -378,6 +380,9 @@ export async function submitOzowPayout(params: CreatePayoutParams): Promise<stri
       customerBankReference,
       isRtc,
       notifyUrl,
+      NotifyUrl: notifyUrl,
+      verificationUrl,
+      VerificationUrl: verificationUrl,
       bankingDetails: {
         bankGroupId: bankGroup.bankGroupId,
         accountNumber: encryptedAccount,
